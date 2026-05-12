@@ -1,12 +1,12 @@
+use crate::{
+    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
+    Strong, VirtualMachineRef as VirtualMachine,
+};
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
+use bun_core::{OwnedString, String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
-use crate::{
-    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,
-    StringJsc, VirtualMachineRef as VirtualMachine,
-};
-use bun_core::{strings, OwnedString, String as BunString};
 
 // `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
 // Mirrored as a transparent `u8` because the schema enum is *open* in Zig
@@ -148,8 +148,15 @@ impl Default for CustomLoader {
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
 // params are by-value `JSValue`/scalars → `safe fn`.
 unsafe extern "C" {
-    pub safe fn JSCommonJSExtensions__appendFunction(global: &JSGlobalObject, value: JSValue) -> u32;
-    pub safe fn JSCommonJSExtensions__setFunction(global: &JSGlobalObject, index: u32, value: JSValue);
+    pub safe fn JSCommonJSExtensions__appendFunction(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> u32;
+    pub safe fn JSCommonJSExtensions__setFunction(
+        global: &JSGlobalObject,
+        index: u32,
+        value: JSValue,
+    );
     /// Returns the index of the last value, which must have it's references updated to `index`
     pub safe fn JSCommonJSExtensions__swapRemove(global: &JSGlobalObject, index: u32) -> u32;
 }
@@ -194,8 +201,11 @@ fn on_require_extension_modify(
     // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
     // PERF(port): Zig aliased the map's key storage directly; the resolver's
     // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>` here, so we clone.
-    vm.transpiler.resolver.opts.extra_cjs_extensions =
-        vm.commonjs_custom_extensions.keys().to_vec().into_boxed_slice();
+    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
+        .commonjs_custom_extensions
+        .keys()
+        .to_vec()
+        .into_boxed_slice();
     Ok(())
 }
 
@@ -218,8 +228,11 @@ fn on_require_extension_modify_non_function(
 
     // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
     // PERF(port): see `on_require_extension_modify`.
-    vm.transpiler.resolver.opts.extra_cjs_extensions =
-        vm.commonjs_custom_extensions.keys().to_vec().into_boxed_slice();
+    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
+        .commonjs_custom_extensions
+        .keys()
+        .to_vec()
+        .into_boxed_slice();
     Ok(())
 }
 

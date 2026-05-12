@@ -19,15 +19,20 @@ pub struct NullableAllocator {
 
 impl Default for NullableAllocator {
     fn default() -> Self {
-        Self { ptr: core::ptr::null_mut(), vtable: None }
+        Self {
+            ptr: core::ptr::null_mut(),
+            vtable: None,
+        }
     }
 }
 
 impl NullableAllocator {
     /// A `NullableAllocator` with no backing allocator. `const` so it can be
     /// used in `const` initializers (e.g. `ZigString.Slice::EMPTY`).
-    pub const NULL: NullableAllocator =
-        NullableAllocator { ptr: core::ptr::null_mut(), vtable: None };
+    pub const NULL: NullableAllocator = NullableAllocator {
+        ptr: core::ptr::null_mut(),
+        vtable: None,
+    };
 
     #[inline]
     pub const fn null() -> NullableAllocator {
@@ -49,7 +54,10 @@ impl NullableAllocator {
     #[inline]
     pub fn init(alloc: Option<StdAllocator>) -> NullableAllocator {
         match alloc {
-            Some(a) => Self { ptr: a.ptr, vtable: Some(a.vtable) },
+            Some(a) => Self {
+                ptr: a.ptr,
+                vtable: Some(a.vtable),
+            },
             None => Self::default(),
         }
     }
@@ -67,7 +75,10 @@ impl NullableAllocator {
 
     #[inline]
     pub fn get(&self) -> Option<StdAllocator> {
-        Some(StdAllocator { ptr: self.ptr, vtable: self.vtable? })
+        Some(StdAllocator {
+            ptr: self.ptr,
+            vtable: self.vtable?,
+        })
     }
 
     pub fn free(&self, bytes: &[u8]) {

@@ -8,8 +8,8 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
 
-use crate::lockfile::{package, Lockfile};
-use crate::{Dependency, DependencyID, PackageID, INVALID_DEPENDENCY_ID};
+use crate::lockfile::{Lockfile, package};
+use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
 
 pub use super::installer::Installer;
 
@@ -169,7 +169,9 @@ pub struct OrderedArraySet<T> {
 
 impl<T: Clone> Clone for OrderedArraySet<T> {
     fn clone(&self) -> Self {
-        Self { list: self.list.clone() }
+        Self {
+            list: self.list.clone(),
+        }
     }
 }
 
@@ -292,7 +294,6 @@ pub mod entry {
     pub type List = MultiArrayList<Entry>;
     pub type Dependencies = OrderedArraySet<DependenciesItem>;
 
-    
     pub struct Entry {
         // Used to get dependency name for destination path and peers
         // for store path
@@ -636,7 +637,7 @@ pub mod entry {
 }
 
 pub use entry::Entry;
-pub use entry::{EntryColumns};
+pub use entry::EntryColumns;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -645,8 +646,8 @@ pub use entry::{EntryColumns};
 // A node used to represent the full dependency tree. Uniqueness is determined
 // from `pkg_id` and `peers`
 pub mod node {
-    use crate::lockfile::package::PackageColumns as _;
     use super::*;
+    use crate::lockfile::package::PackageColumns as _;
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
@@ -655,7 +656,6 @@ pub mod node {
     /// disambiguating name for callers building the dependency vec.
     pub use super::Ids as DependencyIds;
 
-    
     pub struct Node {
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
@@ -762,7 +762,8 @@ pub mod node {
                 BStr::new(dep_name),
                 BStr::new(dep_version),
                 BStr::new(pkg_names[self.pkg_id as usize].slice(string_buf)),
-                pkg_resolutions[self.pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
+                pkg_resolutions[self.pkg_id as usize]
+                    .fmt(string_buf, bun_core::fmt::PathSep::Posix),
             );
         }
     }
@@ -835,6 +836,6 @@ pub mod node {
 }
 
 pub use node::Node;
-pub use node::{NodeColumns};
+pub use node::NodeColumns;
 
 // ported from: src/install/isolated_install/Store.zig

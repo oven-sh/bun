@@ -1,38 +1,38 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
-use bun_collections::{VecExt, ByteVecExt};
 use bun_alloc::ArenaVecExt as _;
+use bun_collections::{ByteVecExt, VecExt};
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use std::io::Write as _;
 
-use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
-use bun_ast::Loader;
-use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::{self as Transpiler};
-use bun_bundler::transpiler::{MacroJSCtx, ParseResult, ParseOptions};
-use bun_core::Error;
-use bun_jsc::{
-    self as jsc, ArgumentsSlice, CallFrame, JSArrayIterator, JSGlobalObject, JSPromise,
-    JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsError, JsResult, LogJsc,
-    StringJsc, ComptimeStringMapExt,
-};
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::{Encoding, StringOrBuffer};
+use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
+use bun_ast::Expr;
+use bun_ast::Loader;
+use bun_ast::{ImportRecord, ImportRecordFlags};
+use bun_bundler::options::{self, PackagesOption, SourceMapOption};
+use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
+use bun_bundler::{self as Transpiler};
+use bun_core::Error;
+use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
-use bun_ast::Expr;
-use bun_js_parser::lexer as JSLexer;
 use bun_js_printer as JSPrinter;
-use bun_ast::{ImportRecord, ImportRecordFlags};
+use bun_jsc::ZigStringJsc as _;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::{
+    self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
+    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsError, JsResult,
+    LogJsc, StringJsc,
+};
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
-use bun_options_types::schema::api;
-use bun_core::{String as BunString, ZigString};
 use bun_collections::ArrayHashMapExt;
+use bun_core::{String as BunString, ZigString};
+use bun_options_types::schema::api;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
 // aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.
@@ -190,7 +190,7 @@ impl Config {
 
                 let Some(define_obj) = define.get_object() else {
                     return Err(
-                        global.throw_invalid_arguments(format_args!("define must be an object")),
+                        global.throw_invalid_arguments(format_args!("define must be an object"))
                     );
                 };
 
@@ -365,7 +365,7 @@ impl Config {
                 let is_object = kind.is_object();
                 if !(kind.is_string_like() || is_object) {
                     return Err(
-                        global.throw_invalid_arguments(format_args!("macro must be an object")),
+                        global.throw_invalid_arguments(format_args!("macro must be an object"))
                     );
                 }
 
@@ -485,7 +485,7 @@ impl Config {
         if let Some(exports) = object.get_truthy(global, "exports")? {
             if !exports.is_object() {
                 return Err(
-                    global.throw_invalid_arguments(format_args!("exports must be an object")),
+                    global.throw_invalid_arguments(format_args!("exports must be an object"))
                 );
             }
 
@@ -515,7 +515,9 @@ impl Config {
                 if total_name_buf_len > 0 {
                     let mut buf: Vec<u8> = Vec::with_capacity(total_name_buf_len as usize);
                     // errdefer buf.deinit(allocator) → Drop
-                    bun_core::handle_oom(replacements.ensure_unused_capacity(string_count as usize));
+                    bun_core::handle_oom(
+                        replacements.ensure_unused_capacity(string_count as usize),
+                    );
                     {
                         let mut length_iter = JSArrayIterator::init(eliminate, global)?;
                         while let Some(value) = length_iter.next()? {
@@ -557,14 +559,13 @@ impl Config {
             if let Some(replace) = exports.get_truthy(global, "replace")? {
                 let Some(replace_obj) = replace.get_object() else {
                     return Err(
-                        global.throw_invalid_arguments(format_args!("replace must be an object")),
+                        global.throw_invalid_arguments(format_args!("replace must be an object"))
                     );
                 };
 
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
                 let replace_obj_ref = unsafe { &*replace_obj };
-                let mut iter =
-                    JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
+                let mut iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
                 // defer iter.deinit() → Drop
 
                 if iter.len > 0 {
@@ -756,7 +757,9 @@ impl<'a> TransformTask<'a> {
         // Must happen AFTER the move into the Box so the address is stable.
         let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
         transform_task.transpiler.linker.resolver = resolver_ptr;
-        transform_task.transpiler.set_log(&raw mut transform_task.log);
+        transform_task
+            .transpiler
+            .set_log(&raw mut transform_task.log);
         // `set_arena(bun.default_allocator)` — Rust `Transpiler` carries an
         // `&Arena`, not a generic allocator. The work-thread `run()` immediately
         // overwrites it with the local arena, so leave the copied pointer as-is
@@ -786,7 +789,9 @@ impl<'a> TransformTask<'a> {
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
-            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
+            Some(ts) => ts
+                .merge_jsx(self.transpiler.options.jsx.clone().into())
+                .into(),
             None => self.transpiler.options.jsx.clone(),
         };
 
@@ -834,10 +839,11 @@ impl<'a> TransformTask<'a> {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        let printed = match self
-            .transpiler
-            .print(parse_result, &mut printer, Transpiler::transpiler::PrintFormat::EsmAscii)
-        {
+        let printed = match self.transpiler.print(
+            parse_result,
+            &mut printer,
+            Transpiler::transpiler::PrintFormat::EsmAscii,
+        ) {
             Ok(n) => n,
             Err(err) => {
                 self.err = Some(err);
@@ -960,136 +966,137 @@ fn export_replacement_value(
 }
 
 impl JSTranspiler {
-// JsClass construct hook — invoked via the codegen'd `${T}Class__construct`
-// shim emitted by `#[bun_jsc::JsClass]`, NOT via `#[host_fn]` (constructors
-// return `*mut Self`, not `JSValue`, so the free-fn shim would be ill-typed).
-pub fn constructor(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<*mut JSTranspiler> {
-    let arguments = callframe.arguments_old::<3>();
+    // JsClass construct hook — invoked via the codegen'd `${T}Class__construct`
+    // shim emitted by `#[bun_jsc::JsClass]`, NOT via `#[host_fn]` (constructors
+    // return `*mut Self`, not `JSValue`, so the free-fn shim would be ill-typed).
+    pub fn constructor(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<*mut JSTranspiler> {
+        let arguments = callframe.arguments_old::<3>();
 
-    // PORT NOTE: reshaped — Zig allocates `this` first with `transpiler = undefined` and
-    // assigns it later. Rust cannot leave a non-POD field uninitialized in a live Box
-    // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
-    // stack first, then move both into the Box.
-    // TODO(port): in-place init — if Phase B needs the Box allocated up-front (e.g. stable
-    // address for resolver backrefs), switch the field to `MaybeUninit<Transpiler>`.
-    let mut config = Config {
-        log: bun_ast::Log::init(),
-        ..Default::default()
-    };
-    let arena = Box::new(Arena::new());
-    // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
-    // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
-    // the borrow to 'static, so launder through a raw ptr.
-    let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
+        // PORT NOTE: reshaped — Zig allocates `this` first with `transpiler = undefined` and
+        // assigns it later. Rust cannot leave a non-POD field uninitialized in a live Box
+        // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
+        // stack first, then move both into the Box.
+        // TODO(port): in-place init — if Phase B needs the Box allocated up-front (e.g. stable
+        // address for resolver backrefs), switch the field to `MaybeUninit<Transpiler>`.
+        let mut config = Config {
+            log: bun_ast::Log::init(),
+            ..Default::default()
+        };
+        let arena = Box::new(Arena::new());
+        // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
+        // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
+        // the borrow to 'static, so launder through a raw ptr.
+        let arena_ref: &'static Arena =
+            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
 
-    // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
-    // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
-    // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
+        // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
+        // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
+        // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
 
-    let config_arg = if arguments.len > 0 {
-        arguments.ptr[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    config.from_js(global, config_arg, arena_ref)?;
+        let config_arg = if arguments.len > 0 {
+            arguments.ptr[0]
+        } else {
+            JSValue::UNDEFINED
+        };
+        config.from_js(global, config_arg, arena_ref)?;
 
-    if global.has_exception() {
-        return Err(bun_jsc::JsError::Thrown);
-    }
+        if global.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
 
-    if (config.log.warnings + config.log.errors) > 0 {
-        return Err(
-            global.throw_value(config.log.to_js(global, "Failed to create transpiler")?),
-        );
-    }
+        if (config.log.warnings + config.log.errors) > 0 {
+            return Err(
+                global.throw_value(config.log.to_js(global, "Failed to create transpiler")?)
+            );
+        }
 
-    // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-    let vm = VirtualMachine::get().as_mut();
-    let transpiler = match Transpiler::Transpiler::init(
-        arena_ref,
-        &raw mut config.log,
-        config.transform.clone(),
-        Some(vm.transpiler.env),
-    ) {
-        Ok(t) => t,
-        Err(err) => {
+        // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+        let vm = VirtualMachine::get().as_mut();
+        let transpiler = match Transpiler::Transpiler::init(
+            arena_ref,
+            &raw mut config.log,
+            config.transform.clone(),
+            Some(vm.transpiler.env),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                let log = &mut config.log;
+                if (log.warnings + log.errors) > 0 {
+                    return Err(
+                        global.throw_value(log.to_js(global, "Failed to create transpiler")?)
+                    );
+                }
+                return Err(global.throw_error(err, "Error creating transpiler"));
+            }
+        };
+
+        let this: Box<JSTranspiler> = Box::new(JSTranspiler {
+            config: JsCell::new(config),
+            arena,
+            transpiler: JsCell::new(transpiler),
+            scan_pass_result: JsCell::new(ScanPassResult::init()),
+            buffer_writer: JsCell::new(None),
+            log_level: bun_ast::Level::Err,
+            ref_count: bun_ptr::RefCount::init(),
+        });
+        // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
+
+        // PORT NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
+        // into `Transpiler::init`, giving a stable address. We built `config` on the stack and
+        // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
+        // stack slot. Re-point it at the heap-stable field now that the Box exists.
+        // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
+        // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
+        // alias-free.
+        let config = unsafe { this.config.get_mut() };
+        let transpiler = unsafe { this.transpiler.get_mut() };
+        transpiler.set_log(&raw mut config.log);
+
+        transpiler.options.no_macros = config.no_macros;
+        transpiler.configure_linker_with_auto_jsx(false);
+        transpiler.options.env.behavior = options::EnvBehavior::disable;
+        if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
             if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, "Failed to create transpiler")?),
-                );
+                return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
             }
-            return Err(global.throw_error(err, "Error creating transpiler"));
+            return Err(global.throw_error(err, "Failed to load define"));
         }
-    };
 
-    let this: Box<JSTranspiler> = Box::new(JSTranspiler {
-        config: JsCell::new(config),
-        arena,
-        transpiler: JsCell::new(transpiler),
-        scan_pass_result: JsCell::new(ScanPassResult::init()),
-        buffer_writer: JsCell::new(None),
-        log_level: bun_ast::Level::Err,
-        ref_count: bun_ptr::RefCount::init(),
-    });
-    // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
-
-    // PORT NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
-    // into `Transpiler::init`, giving a stable address. We built `config` on the stack and
-    // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
-    // stack slot. Re-point it at the heap-stable field now that the Box exists.
-    // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
-    // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
-    // alias-free.
-    let config = unsafe { this.config.get_mut() };
-    let transpiler = unsafe { this.transpiler.get_mut() };
-    transpiler.set_log(&raw mut config.log);
-
-    transpiler.options.no_macros = config.no_macros;
-    transpiler.configure_linker_with_auto_jsx(false);
-    transpiler.options.env.behavior = options::EnvBehavior::disable;
-    if let Err(err) = transpiler.configure_defines() {
-        let log = &mut config.log;
-        if (log.warnings + log.errors) > 0 {
-            return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
+        if config.macro_map.count() > 0 {
+            transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
         }
-        return Err(global.throw_error(err, "Failed to load define"));
+
+        // REPL mode disables DCE to preserve expressions like `42`
+        transpiler.options.dead_code_elimination =
+            config.dead_code_elimination && !config.repl_mode;
+        transpiler.options.minify_whitespace = config.minify_whitespace;
+
+        // Keep defaults for these
+        if config.minify_syntax {
+            transpiler.options.minify_syntax = true;
+        }
+
+        if config.minify_identifiers {
+            transpiler.options.minify_identifiers = true;
+        }
+
+        transpiler.options.transform_only = !transpiler.options.allow_runtime;
+
+        transpiler.options.tree_shaking = config.tree_shaking;
+        transpiler.options.trim_unused_imports = config.trim_unused_imports;
+        transpiler.options.allow_runtime = config.runtime.allow_runtime;
+        transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
+        transpiler.options.inlining = config.runtime.inlining;
+        transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
+        transpiler.options.react_fast_refresh = false;
+        transpiler.options.repl_mode = config.repl_mode;
+
+        Ok(bun_core::heap::into_raw(this))
     }
-
-    if config.macro_map.count() > 0 {
-        transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
-    }
-
-    // REPL mode disables DCE to preserve expressions like `42`
-    transpiler.options.dead_code_elimination =
-        config.dead_code_elimination && !config.repl_mode;
-    transpiler.options.minify_whitespace = config.minify_whitespace;
-
-    // Keep defaults for these
-    if config.minify_syntax {
-        transpiler.options.minify_syntax = true;
-    }
-
-    if config.minify_identifiers {
-        transpiler.options.minify_identifiers = true;
-    }
-
-    transpiler.options.transform_only = !transpiler.options.allow_runtime;
-
-    transpiler.options.tree_shaking = config.tree_shaking;
-    transpiler.options.trim_unused_imports = config.trim_unused_imports;
-    transpiler.options.allow_runtime = config.runtime.allow_runtime;
-    transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
-    transpiler.options.inlining = config.runtime.inlining;
-    transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
-    transpiler.options.react_fast_refresh = false;
-    transpiler.options.repl_mode = config.repl_mode;
-
-    Ok(bun_core::heap::into_raw(this))
-}
 
     pub fn finalize(self: Box<Self>) {
         bun_ptr::finalize_js_box_noop(self);
@@ -1243,7 +1250,9 @@ impl JSTranspiler {
         let source = bun_ast::Source::init_path_string(name, processed_code);
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone().into()).into(),
+            Some(ts) => ts
+                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
+                .into(),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
@@ -1295,8 +1304,7 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)?
-        else {
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         // defer code_holder.deinit() → Drop
@@ -1339,8 +1347,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result =
-            self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
+        let parse_result = self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1373,11 +1380,7 @@ impl JSTranspiler {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn transform(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn transform(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
@@ -1385,9 +1388,11 @@ impl JSTranspiler {
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
-            return Err(
-                global.throw_invalid_argument_type("transform", "code", "string or Uint8Array"),
-            );
+            return Err(global.throw_invalid_argument_type(
+                "transform",
+                "code",
+                "string or Uint8Array",
+            ));
         };
 
         let allow_string_object = true;
@@ -1399,9 +1404,11 @@ impl JSTranspiler {
             allow_string_object,
         )?
         else {
-            return Err(
-                global.throw_invalid_argument_type("transform", "code", "string or Uint8Array"),
-            );
+            return Err(global.throw_invalid_argument_type(
+                "transform",
+                "code",
+                "string or Uint8Array",
+            ));
         };
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (is_async=true) already protected; adopt into a `ThreadSafe` so any
@@ -1556,9 +1563,11 @@ impl JSTranspiler {
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
-        if let Err(err) = unsafe { self.transpiler_mut() }
-            .print(parse_result, &mut printer, Transpiler::transpiler::PrintFormat::EsmAscii)
-        {
+        if let Err(err) = unsafe { self.transpiler_mut() }.print(
+            parse_result,
+            &mut printer,
+            Transpiler::transpiler::PrintFormat::EsmAscii,
+        ) {
             self.buffer_writer.set(Some(printer.ctx));
             return Err(global.throw_error(err, "Failed to print code"));
         }
@@ -1717,7 +1726,9 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone().into()).into(),
+            Some(ts) => ts
+                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
+                .into(),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
@@ -1735,9 +1746,7 @@ impl JSTranspiler {
         // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
         // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
         // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
-        let define = unsafe {
-            &*(&raw const *transpiler.options.define)
-        };
+        let define = unsafe { &*(&raw const *transpiler.options.define) };
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with
@@ -1760,9 +1769,7 @@ impl JSTranspiler {
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
                 if (log.warnings + log.errors) > 0 {
-                    return Err(
-                        global.throw_value(log.to_js(global, "Failed to scan imports")?),
-                    );
+                    return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
                 }
                 return Err(global.throw_error(err, "Failed to scan imports"));
             }

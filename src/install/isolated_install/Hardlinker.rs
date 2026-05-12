@@ -6,8 +6,8 @@ use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
-use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 use bun_paths::path_options::AssumeOk as _;
+use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
 type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
 type OsPath = Path<

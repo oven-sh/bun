@@ -1,10 +1,12 @@
 // posix types live in `crate::posix` (moved from bun_sys).
-pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
+pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,
@@ -242,7 +244,11 @@ impl GetErrno for usize {
     fn get_errno(self) -> E {
         // `as` between same-width usize/isize is a bit-reinterpretation (Zig: @bitCast)
         let signed = self as isize;
-        let int = if signed > -4096 && signed < 0 { -signed } else { 0 };
+        let int = if signed > -4096 && signed < 0 {
+            -signed
+        } else {
+            0
+        };
         // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
         unsafe { core::mem::transmute::<u16, E>(int as u16) }
     }

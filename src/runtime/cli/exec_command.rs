@@ -4,8 +4,8 @@ use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
-use bun_paths::{self, PathBuffer};
 use crate::shell::Interpreter;
+use bun_paths::{self, PathBuffer};
 use bun_sys;
 
 use crate::command::Context;
@@ -70,20 +70,27 @@ impl ExecCommand {
         // sound for the single CLI dispatch thread.
         let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
-        let parts: [&[u8]; 2] = [
-            cwd,
-            b"[eval]",
-        ];
+        let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
         // SAFETY: `init_global` returns the thread-local singleton raw pointer;
         // reborrow `&'static mut` for the duration of the interpreter run (no
         // other live `&mut` to the same `MiniEventLoop` on this thread).
         let mini_ref = unsafe { &mut *mini };
-        let code = match Interpreter::init_and_run_from_source(ctx, mini_ref, script_path, &script, None) {
+        let code = match Interpreter::init_and_run_from_source(
+            ctx,
+            mini_ref,
+            script_path,
+            &script,
+            None,
+        ) {
             Ok(c) => c,
             Err(err) => {
-                Output::err(err, "failed to run script <b>{}<r>", (BStr::new(script_path),));
+                Output::err(
+                    err,
+                    "failed to run script <b>{}<r>",
+                    (BStr::new(script_path),),
+                );
                 Global::exit(1);
             }
         };

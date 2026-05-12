@@ -8,10 +8,9 @@
 //! introduced; this only makes the existing edge direct.
 
 #![allow(non_snake_case)]
-
 #![warn(unreachable_pub)]
-pub mod bunfig;
 pub mod arguments;
+pub mod bunfig;
 
-pub use bunfig::Bunfig;
 pub use arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bunfig::Bunfig;

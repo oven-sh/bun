@@ -2,16 +2,21 @@
 //!
 //! Port of `src/patch/patch.zig`.
 
-#![allow(unused, dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(
+    unused,
+    dead_code,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals
+)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
+use bun_core::{PathString, strings};
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, platform, PathBuffer};
-use bun_core::{strings, PathString};
+use bun_paths::{self as paths, PathBuffer, platform};
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
@@ -61,7 +66,10 @@ struct ApplyState {
 
 impl ApplyState {
     fn new() -> Self {
-        Self { pathbuf: PathBuffer::uninit(), patch_dir_abs_path: None }
+        Self {
+            pathbuf: PathBuffer::uninit(),
+            patch_dir_abs_path: None,
+        }
     }
 
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
@@ -110,9 +118,10 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let path_to_make = paths::resolve_path::join_z::<platform::Auto>(
-                            &[abs_patch_dir.as_bytes(), todir],
-                        );
+                        let path_to_make = paths::resolve_path::join_z::<platform::Auto>(&[
+                            abs_patch_dir.as_bytes(),
+                            todir,
+                        ]);
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(Fd::cwd(), path_to_make.as_bytes(), 0o755)
                         {
@@ -254,11 +263,7 @@ impl<'a> PatchFile<'a> {
 /// we can speed it up by:
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(
-    patch: &FilePatch<'_>,
-    patch_dir: Fd,
-    state: &mut ApplyState,
-) -> sys::Result<()> {
+fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
     // PERF(port): was arena.arena().dupeZ — profile in Phase B
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
@@ -270,17 +275,16 @@ fn apply_patch(
         #[cfg(not(unix))]
         let r = {
             let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => {
-                    paths::resolve_path::join_z::<platform::Auto>(&[p.as_bytes(), file_path.as_bytes()])
-                }
+                sys::Result::Ok(p) => paths::resolve_path::join_z::<platform::Auto>(&[
+                    p.as_bytes(),
+                    file_path.as_bytes(),
+                ]),
                 sys::Result::Err(e) => return sys::Result::Err(e),
             };
             sys::stat(p)
         };
         match r {
-            sys::Result::Err(e) => {
-                return sys::Result::Err(e.with_path(file_path.as_bytes()))
-            }
+            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
             sys::Result::Ok(stat) => stat,
         }
     };
@@ -295,14 +299,13 @@ fn apply_patch(
     // PERF(port): was arena vs default_allocator selection — profile in Phase B
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
-    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4)
-    {
+    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
             return sys::Result::Err(
                 sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
                     .with_path(file_path.as_bytes()),
-            )
+            );
         }
     };
 
@@ -317,8 +320,7 @@ fn apply_patch(
         // Adjust to account for the changes
         for hunk in &patch.hunks {
             count = usize::try_from(
-                i64::try_from(count).expect("int cast")
-                    + i64::from(hunk.header.patched.len)
+                i64::try_from(count).expect("int cast") + i64::from(hunk.header.patched.len)
                     - i64::from(hunk.header.original.len),
             )
             .unwrap();
@@ -388,10 +390,7 @@ fn apply_patch(
                     }
 
                     // Zig: addManyAt + @memcpy
-                    lines.splice(
-                        line_cursor..line_cursor,
-                        part.lines.iter().copied(),
-                    );
+                    lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
                     line_cursor += part.lines.len();
                     if part.no_newline_at_end_of_file {
                         let _ = lines.pop();
@@ -773,7 +772,11 @@ mod json {
         // Zig field name is `type`; Rust field is `ty`.
         write!(w, "{{\"type\":\"{}\",\"lines\":", part_type_tag(p.ty))?;
         write_list(w, &p.lines, |w, line| write_str(w, line))?;
-        write!(w, ",\"no_newline_at_end_of_file\":{}}}", p.no_newline_at_end_of_file)
+        write!(
+            w,
+            ",\"no_newline_at_end_of_file\":{}}}",
+            p.no_newline_at_end_of_file
+        )
     }
 
     fn write_hunk(w: &mut impl Write, h: &Hunk<'_>) -> Result {
@@ -924,7 +927,12 @@ pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
                 // TODO: the parser can be refactored to remove this as it is a hacky workaround, like detecting while parsing if legacy diffs are used
                 if err == ParseErr::hunk_header_integrity_check_failed {
                     lines_parser.reset();
-                    lines_parser.parse(file, ParseOpts { support_legacy_diffs: true })?;
+                    lines_parser.parse(
+                        file,
+                        ParseOpts {
+                            support_legacy_diffs: true,
+                        },
+                    )?;
                     break 'brk;
                 }
                 return Err(err);
@@ -961,10 +969,12 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                     return Err(ParseErr::rename_from_and_to_not_give);
                 }
 
-                result.parts.push(PatchFilePart::FileRename(Box::new(FileRename {
-                    from_path: file.rename_from.unwrap(),
-                    to_path: file.rename_to.unwrap(),
-                })));
+                result
+                    .parts
+                    .push(PatchFilePart::FileRename(Box::new(FileRename {
+                        from_path: file.rename_from.unwrap(),
+                        to_path: file.rename_to.unwrap(),
+                    })));
 
                 destination_file_path = file.rename_to;
             }
@@ -973,42 +983,52 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                     .diff_line_from_path
                     .or(file.from_path)
                     .ok_or(ParseErr::no_path_given_for_file_deletion)?;
-                result.parts.push(PatchFilePart::FileDeletion(Box::new(FileDeletion {
-                    hunk: if !file.hunks.is_empty() {
-                        let value = mem::replace(
-                            &mut file.hunks[0],
-                            Hunk { header: Header::EMPTY, ..Default::default() },
-                        );
-                        Some(Box::new(value))
-                    } else {
-                        None
-                    },
-                    path,
-                    mode: parse_file_mode(file.deleted_file_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
-                    hash: file.before_hash,
-                })));
+                result
+                    .parts
+                    .push(PatchFilePart::FileDeletion(Box::new(FileDeletion {
+                        hunk: if !file.hunks.is_empty() {
+                            let value = mem::replace(
+                                &mut file.hunks[0],
+                                Hunk {
+                                    header: Header::EMPTY,
+                                    ..Default::default()
+                                },
+                            );
+                            Some(Box::new(value))
+                        } else {
+                            None
+                        },
+                        path,
+                        mode: parse_file_mode(file.deleted_file_mode.unwrap())
+                            .ok_or(ParseErr::bad_file_mode)?,
+                        hash: file.before_hash,
+                    })));
             }
             PatchFilePartKind::FileCreation => {
                 let path = file
                     .diff_line_to_path
                     .or(file.to_path)
                     .ok_or(ParseErr::no_path_given_for_file_creation)?;
-                result.parts.push(PatchFilePart::FileCreation(Box::new(FileCreation {
-                    hunk: if !file.hunks.is_empty() {
-                        let value = mem::replace(
-                            &mut file.hunks[0],
-                            Hunk { header: Header::EMPTY, ..Default::default() },
-                        );
-                        Some(Box::new(value))
-                    } else {
-                        None
-                    },
-                    path,
-                    mode: parse_file_mode(file.new_file_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
-                    hash: file.after_hash,
-                })));
+                result
+                    .parts
+                    .push(PatchFilePart::FileCreation(Box::new(FileCreation {
+                        hunk: if !file.hunks.is_empty() {
+                            let value = mem::replace(
+                                &mut file.hunks[0],
+                                Hunk {
+                                    header: Header::EMPTY,
+                                    ..Default::default()
+                                },
+                            );
+                            Some(Box::new(value))
+                        } else {
+                            None
+                        },
+                        path,
+                        mode: parse_file_mode(file.new_file_mode.unwrap())
+                            .ok_or(ParseErr::bad_file_mode)?,
+                        hash: file.after_hash,
+                    })));
             }
             PatchFilePartKind::FilePatch | PatchFilePartKind::FileModeChange => {
                 destination_file_path = file.to_path.or(file.diff_line_to_path);
@@ -1020,22 +1040,26 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             && file.new_mode.is_some()
             && file.old_mode.unwrap() != file.new_mode.unwrap()
         {
-            result.parts.push(PatchFilePart::FileModeChange(Box::new(FileModeChange {
-                path: destination_file_path.unwrap(),
-                old_mode: parse_file_mode(file.old_mode.unwrap())
-                    .ok_or(ParseErr::bad_file_mode)?,
-                new_mode: parse_file_mode(file.new_mode.unwrap())
-                    .ok_or(ParseErr::bad_file_mode)?,
-            })));
+            result
+                .parts
+                .push(PatchFilePart::FileModeChange(Box::new(FileModeChange {
+                    path: destination_file_path.unwrap(),
+                    old_mode: parse_file_mode(file.old_mode.unwrap())
+                        .ok_or(ParseErr::bad_file_mode)?,
+                    new_mode: parse_file_mode(file.new_mode.unwrap())
+                        .ok_or(ParseErr::bad_file_mode)?,
+                })));
         }
 
         if destination_file_path.is_some() && !file.hunks.is_empty() {
-            result.parts.push(PatchFilePart::FilePatch(Box::new(FilePatch {
-                path: destination_file_path.unwrap(),
-                hunks: file.take_hunks(),
-                before_hash: file.before_hash,
-                after_hash: file.after_hash,
-            })));
+            result
+                .parts
+                .push(PatchFilePart::FilePatch(Box::new(FilePatch {
+                    path: destination_file_path.unwrap(),
+                    hunks: file.take_hunks(),
+                    before_hash: file.before_hash,
+                    after_hash: file.after_hash,
+                })));
         }
     }
 
@@ -1062,7 +1086,11 @@ struct ScalarSplitIter<'a> {
 
 impl<'a> ScalarSplitIter<'a> {
     fn new(buffer: &'a [u8], delimiter: u8) -> Self {
-        Self { buffer, index: Some(0), delimiter }
+        Self {
+            buffer,
+            index: Some(0),
+            delimiter,
+        }
     }
 
     fn next(&mut self) -> Option<&'a [u8]> {
@@ -1089,7 +1117,10 @@ struct LookbackIterator<'a> {
 
 impl<'a> LookbackIterator<'a> {
     pub(crate) fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
-        Self { inner, prev_index: 0 }
+        Self {
+            inner,
+            prev_index: 0,
+        }
     }
 
     pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
@@ -1154,7 +1185,10 @@ impl<'a> PatchLinesParser<'a> {
         // PORT NOTE: reshaped for borrowck — take result vec, clear it, reinit self.
         let mut result = mem::take(&mut self.result);
         result.clear();
-        *self = Self { result, ..Default::default() };
+        *self = Self {
+            result,
+            ..Default::default()
+        };
     }
 
     pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
@@ -1216,15 +1250,11 @@ impl<'a> PatchLinesParser<'a> {
                             WHITESPACE,
                         ));
                     } else if line.starts_with(b"new file mode ") {
-                        self.current_file_patch.new_file_mode = Some(strings::trim(
-                            &line[b"new file mode ".len()..],
-                            WHITESPACE,
-                        ));
+                        self.current_file_patch.new_file_mode =
+                            Some(strings::trim(&line[b"new file mode ".len()..], WHITESPACE));
                     } else if line.starts_with(b"rename from ") {
-                        self.current_file_patch.rename_from = Some(strings::trim(
-                            &line[b"rename from ".len()..],
-                            WHITESPACE,
-                        ));
+                        self.current_file_patch.rename_from =
+                            Some(strings::trim(&line[b"rename from ".len()..], WHITESPACE));
                     } else if line.starts_with(b"rename to ") {
                         self.current_file_patch.rename_to =
                             Some(strings::trim(&line[b"rename to ".len()..], WHITESPACE));
@@ -1460,7 +1490,11 @@ fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     // @@ -100,32 +100,32 @@
     // ^^^^
     // this part
-    if !(line.len() >= 4 && line[0] == b'@' && line[1] == b'@' && line[2] == b' ' && line[3] == b'-')
+    if !(line.len() >= 4
+        && line[0] == b'@'
+        && line[1] == b'@'
+        && line[2] == b' '
+        && line[3] == b'-')
     {
         // TODO: store line
         return Err(ParseErr::bad_header_line);
@@ -1491,7 +1525,10 @@ fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     if line.len() >= 3 && line[0] == b' ' && line[1] == b'@' && line[2] == b'@' {
         return Ok(Hunk {
             header: Header {
-                original: HeaderRange { start: first_result.line_nr, len: first_result.line_count },
+                original: HeaderRange {
+                    start: first_result.line_nr,
+                    len: first_result.line_count,
+                },
                 patched: HeaderRange {
                     start: second_result.line_nr,
                     len: second_result.line_count,
@@ -1988,9 +2025,8 @@ fn git_diff_postprocess(
 
         if !skip {
             // a/$old_folder/
-            if let Some(idx) =
-                strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
-                    .map(|i| i as usize)
+            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
+                .map(|i| i as usize)
             {
                 let old_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2003,9 +2039,8 @@ fn git_diff_postprocess(
                 continue;
             }
             // b/$new_folder/
-            if let Some(idx) =
-                strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-                    .map(|i| i as usize)
+            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
+                .map(|i| i as usize)
             {
                 let new_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2020,14 +2055,11 @@ fn git_diff_postprocess(
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {
                 if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], old_folder)
-                        .map(|i| i as usize)
+                    strings::index_of(&stdout[line_start..line_end], old_folder).map(|i| i as usize)
                 {
                     let line = &stdout[line_start..line_end];
                     if idx + old_folder.len() < line_len && line[idx + old_folder.len()] == b'/' {
-                        stdout.drain(
-                            line_start + idx..line_start + idx + old_folder.len() + 1,
-                        );
+                        stdout.drain(line_start + idx..line_start + idx + old_folder.len() + 1);
                         cursor = line_start;
                         saw_a_folder = Some(line_idx as usize);
                         continue;
@@ -2036,14 +2068,11 @@ fn git_diff_postprocess(
             }
             if saw_b_folder.is_none() || saw_b_folder.unwrap() != line_idx as usize {
                 if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], new_folder)
-                        .map(|i| i as usize)
+                    strings::index_of(&stdout[line_start..line_end], new_folder).map(|i| i as usize)
                 {
                     let line = &stdout[line_start..line_end];
                     if idx + new_folder.len() < line_len && line[idx + new_folder.len()] == b'/' {
-                        stdout.drain(
-                            line_start + idx..line_start + idx + new_folder.len() + 1,
-                        );
+                        stdout.drain(line_start + idx..line_start + idx + new_folder.len() + 1);
                         cursor = line_start;
                         saw_b_folder = Some(line_idx as usize);
                         continue;

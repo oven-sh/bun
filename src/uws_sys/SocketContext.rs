@@ -27,7 +27,11 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     }
     // libc exposes mtime as `st_mtime` (sec) + `st_mtime_nsec` (nsec) on
     // Linux/BSD/macOS. Widen to i64 (already i64 on LP64; cast is a no-op).
-    Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
+    Some([
+        st.st_mtime as i64,
+        st.st_mtime_nsec as i64,
+        st.st_size as i64,
+    ])
 }
 
 #[cfg(windows)]
@@ -85,7 +89,11 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
-    Some([(ticks / 10_000_000) as i64, (ticks % 10_000_000) as i64 * 100, size as i64])
+    Some([
+        (ticks / 10_000_000) as i64,
+        (ticks % 10_000_000) as i64 * 100,
+        size as i64,
+    ])
 }
 
 #[repr(C)]

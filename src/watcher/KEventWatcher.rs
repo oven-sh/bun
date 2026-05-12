@@ -94,7 +94,10 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     if count < 128 / 2 {
         let remain: c_int = 128 - count;
         let off = usize::try_from(count).expect("int cast");
-        let ts = libc::timespec { tv_sec: 0, tv_nsec: 100_000 }; // 0.0001 seconds
+        let ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 100_000,
+        }; // 0.0001 seconds
         // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
         let extra: c_int = unsafe {
             c::kevent(

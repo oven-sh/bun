@@ -13,8 +13,8 @@
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
 
-use crate::defines;
 use crate as js_ast;
+use crate::defines;
 use bun_ast::ExprData;
 use std::sync::OnceLock;
 
@@ -25,11 +25,9 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Array", b"from"],
     &[b"Array", b"isArray"],
     &[b"Array", b"of"],
-
     // JSON: Static methods
     &[b"JSON", b"parse"],
     &[b"JSON", b"stringify"],
-
     // Math: Static properties
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math#Static_properties
     &[b"Math", b"E"],
@@ -40,7 +38,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Math", b"PI"],
     &[b"Math", b"SQRT1_2"],
     &[b"Math", b"SQRT2"],
-
     // Math: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math#Static_methods
     &[b"Math", b"abs"],
@@ -78,7 +75,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Math", b"tan"],
     &[b"Math", b"tanh"],
     &[b"Math", b"trunc"],
-
     // Number: Static methods
     &[b"Number", b"isFinite"],
     &[b"Number", b"isInteger"],
@@ -86,7 +82,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Number", b"isSafeInteger"],
     &[b"Number", b"parseFloat"],
     &[b"Number", b"parseInt"],
-
     // Object: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Static_methods
     &[b"Object", b"assign"],
@@ -112,7 +107,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Object", b"seal"],
     &[b"Object", b"setPrototypeOf"],
     &[b"Object", b"values"],
-
     // Object: Instance methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Instance_methods
     &[b"Object", b"prototype", b"__defineGetter__"],
@@ -127,7 +121,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Object", b"prototype", b"unwatch"],
     &[b"Object", b"prototype", b"valueOf"],
     &[b"Object", b"prototype", b"watch"],
-
     // Reflect: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
     &[b"Reflect", b"apply"],
@@ -143,7 +136,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Reflect", b"preventExtensions"],
     &[b"Reflect", b"set"],
     &[b"Reflect", b"setPrototypeOf"],
-
     // Symbol: Static properties
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_properties
     &[b"Symbol", b"asyncDispose"],
@@ -161,11 +153,9 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"Symbol", b"toPrimitive"],
     &[b"Symbol", b"toStringTag"],
     &[b"Symbol", b"unscopables"],
-
     // Symbol: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_methods
     &[b"Symbol", b"keyFor"],
-
     // Console method references are assumed to have no side effects
     // https://developer.mozilla.org/en-US/docs/Web/API/console
     &[b"console", b"assert"],
@@ -187,11 +177,9 @@ pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     &[b"console", b"timeLog"],
     &[b"console", b"trace"],
     &[b"console", b"warn"],
-
     &[b"Promise", b"resolve"],
     &[b"Promise", b"reject"],
     &[b"Promise", b"all"],
-
     // Crypto: Static methods
     &[b"crypto", b"randomUUID"],
 ];
@@ -200,7 +188,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Calling Symbol.for("foo") never throws (unless it's a rope string)
     // This improves React bundle sizes slightly.
     &[b"Symbol", b"for"],
-
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
@@ -237,10 +224,12 @@ fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
 }
 
 mod identifiers {
-    use super::{defines, js_ast, ExprData, OnceLock, SyncDefineData};
+    use super::{ExprData, OnceLock, SyncDefineData, defines, js_ast};
 
     const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
-    const INF_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::INFINITY };
+    const INF_VAL: js_ast::E::Number = js_ast::E::Number {
+        value: f64::INFINITY,
+    };
 
     // Step 2. Swap in certain literal values because those can be constant folded
     pub fn undefined() -> &'static defines::IdentifierDefine {

@@ -109,7 +109,10 @@ impl CaseInsensitiveAsciiStringContext {
     /// `bun.CaseInsensitiveASCIIStringContext.pre` (src/bun.zig:1031).
     #[inline]
     pub fn pre(input: &[u8]) -> CaseInsensitiveAsciiPrehashed<'_> {
-        CaseInsensitiveAsciiPrehashed { value: Self::hash_bytes(input), input }
+        CaseInsensitiveAsciiPrehashed {
+            value: Self::hash_bytes(input),
+            input,
+        }
     }
 }
 
@@ -150,7 +153,9 @@ impl<C: Default> Default for BoxedSliceContext<C> {
     }
 }
 
-impl<C: ArrayHashContext<[u8]>, A: Allocator> ArrayHashContext<Box<[u8], A>> for BoxedSliceContext<C> {
+impl<C: ArrayHashContext<[u8]>, A: Allocator> ArrayHashContext<Box<[u8], A>>
+    for BoxedSliceContext<C>
+{
     #[inline]
     fn hash(&self, key: &Box<[u8], A>) -> u32 {
         self.0.hash(&**key)
@@ -508,7 +513,11 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// context is accepted and ignored — capacity reservation is purely a Vec
     /// operation here.
     #[inline]
-    pub fn ensure_total_capacity_context<Ctx>(&mut self, n: usize, _ctx: Ctx) -> Result<(), AllocError> {
+    pub fn ensure_total_capacity_context<Ctx>(
+        &mut self,
+        n: usize,
+        _ctx: Ctx,
+    ) -> Result<(), AllocError> {
         self.ensure_total_capacity(n)
     }
 
@@ -594,7 +603,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     #[inline]
     pub fn unlock_pointers(&self) {
         #[cfg(debug_assertions)]
-        self.pointer_stability.store(false, core::sync::atomic::Ordering::Relaxed);
+        self.pointer_stability
+            .store(false, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── slice access ──────────────────────────────────────────────────────
@@ -745,7 +755,9 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// O(1); mirrors Zig `removeFromIndexByIndex` for the `pop`/`shrink` path.
     #[inline]
     fn index_remove_tail(&mut self, tail: usize, tail_hash: u32) {
-        let Some(index) = self.index.as_deref_mut() else { return };
+        let Some(index) = self.index.as_deref_mut() else {
+            return;
+        };
         if let Ok(slot) = index.find_entry(spread_hash(tail_hash), |&i| i as usize == tail) {
             slot.remove();
         }
@@ -757,7 +769,9 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// O(1); mirrors Zig `removeFromIndexByIndex` + `updateEntryIndex`.
     #[inline]
     fn index_swap_remove(&mut self, removed: usize, removed_hash: u32) {
-        let Some(index) = self.index.as_deref_mut() else { return };
+        let Some(index) = self.index.as_deref_mut() else {
+            return;
+        };
         if let Ok(slot) = index.find_entry(spread_hash(removed_hash), |&i| i as usize == removed) {
             slot.remove();
         }
@@ -765,8 +779,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if old_last != removed {
             // The element now at `removed` carried its hash with it.
             let moved_hash = self.hashes[removed];
-            if let Some(slot) =
-                index.find_mut(spread_hash(moved_hash), |&i| i as usize == old_last)
+            if let Some(slot) = index.find_mut(spread_hash(moved_hash), |&i| i as usize == old_last)
             {
                 *slot = removed as u32;
             }
@@ -834,7 +847,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
                 &mut *self.values.as_mut_ptr().add(index),
             )
         };
-        GetOrPutResult { found_existing, index, key_ptr, value_ptr }
+        GetOrPutResult {
+            found_existing,
+            index,
+            key_ptr,
+            value_ptr,
+        }
     }
 
     /// Mutable access to the entry at `index` (key + value). Returns `None` if
@@ -875,7 +893,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
-        self.get_index_adapted(key, adapter).map(|i| &self.values[i])
+        self.get_index_adapted(key, adapter)
+            .map(|i| &self.values[i])
     }
 
     /// Zig `getPtrContext` / `getPtrAdapted` — mutable value lookup using an
@@ -954,7 +973,8 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), AllocError> {
         let h = self.ctx.hash(&key);
         debug_assert!(
-            self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)).is_none(),
+            self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx))
+                .is_none(),
             "put_no_clobber: key already present",
         );
         self.push_entry(key, value, h);
@@ -980,7 +1000,9 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     pub fn swap_remove(&mut self, key: &K) -> bool {
-        let Some(i) = self.get_index(key) else { return false };
+        let Some(i) = self.get_index(key) else {
+            return false;
+        };
         self.swap_remove_at(i);
         true
     }
@@ -1030,7 +1052,11 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if let Some(idx) = self.find_hash(h, |k, i| self.ctx.eql(&key, k, i)) {
             MapEntry::Occupied(OccupiedEntry { map: self, idx })
         } else {
-            MapEntry::Vacant(VacantEntry { map: self, key, hash: h })
+            MapEntry::Vacant(VacantEntry {
+                map: self,
+                key,
+                hash: h,
+            })
         }
     }
 }
@@ -1198,7 +1224,10 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
     type Key = K;
     type Value = V;
-    type Iterator<'a> = Iter<'a, K, V> where Self: 'a;
+    type Iterator<'a>
+        = Iter<'a, K, V>
+    where
+        Self: 'a;
     fn iterator(&mut self) -> Iter<'_, K, V> {
         ArrayHashMap::iterator(self)
     }
@@ -1228,14 +1257,20 @@ pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
 
 impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
     fn default() -> Self {
-        Self { inner: ArrayHashMap::new(), ctx: C::default() }
+        Self {
+            inner: ArrayHashMap::new(),
+            ctx: C::default(),
+        }
     }
 }
 
 impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
     pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self { inner: self.inner.clone()?, ctx: C::default() })
+        Ok(Self {
+            inner: self.inner.clone()?,
+            ctx: C::default(),
+        })
     }
 }
 
@@ -1324,7 +1359,9 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
     }
 
     pub fn swap_remove(&mut self, key: &[u8]) -> bool {
-        let Some(i) = self.find(key) else { return false };
+        let Some(i) = self.find(key) else {
+            return false;
+        };
         self.inner.swap_remove_at(i);
         true
     }
@@ -1382,7 +1419,10 @@ impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArr
 impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
     type Key = Box<[u8], A>;
     type Value = V;
-    type Iterator<'a> = Iter<'a, Box<[u8], A>, V> where Self: 'a;
+    type Iterator<'a>
+        = Iter<'a, Box<[u8], A>, V>
+    where
+        Self: 'a;
     fn iterator(&mut self) -> Iter<'_, Box<[u8], A>, V> {
         self.inner.iterator()
     }
@@ -1464,7 +1504,9 @@ pub struct StringHashMapKey<A: Allocator + Default = DefaultAlloc> {
 const SHMK_OWNED_BIT: usize = 1 << (usize::BITS - 1);
 
 // Compile-time check: with a ZST allocator the key is exactly two words.
-const _: () = assert!(core::mem::size_of::<StringHashMapKey<DefaultAlloc>>() == 2 * core::mem::size_of::<usize>());
+const _: () = assert!(
+    core::mem::size_of::<StringHashMapKey<DefaultAlloc>>() == 2 * core::mem::size_of::<usize>()
+);
 
 // `NonNull<u8>` is `!Send`/`!Sync`; restore the auto-traits the enum had
 // (both payloads were `Send + Sync` for any sendable/syncable `A`).
@@ -1489,7 +1531,11 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
         let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
-        Self { ptr, len_tag: s.len(), _alloc: PhantomData }
+        Self {
+            ptr,
+            len_tag: s.len(),
+            _alloc: PhantomData,
+        }
     }
 
     /// Owned-key constructor (previously the `Owned` variant). Takes ownership
@@ -1497,7 +1543,10 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     #[inline]
     pub fn owned(b: Box<[u8], A>) -> Self {
         let len = b.len();
-        debug_assert!(len & SHMK_OWNED_BIT == 0, "slice len cannot exceed isize::MAX");
+        debug_assert!(
+            len & SHMK_OWNED_BIT == 0,
+            "slice len cannot exceed isize::MAX"
+        );
         // Discard the stored `A` — for every `A` in use (`Global`,
         // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
         // is the same instance. `into_raw_with_allocator` because on current
@@ -1505,7 +1554,11 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         let (raw, _alloc) = Box::into_raw_with_allocator(b);
         // SAFETY: `Box::into_raw_with_allocator` never returns null.
         let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
-        Self { ptr, len_tag: len | SHMK_OWNED_BIT, _alloc: PhantomData }
+        Self {
+            ptr,
+            len_tag: len | SHMK_OWNED_BIT,
+            _alloc: PhantomData,
+        }
     }
 }
 
@@ -1575,7 +1628,11 @@ impl<A: Allocator + Default> Clone for StringHashMapKey<A> {
             Self::owned(box_key::<A>(self))
         } else {
             // Borrowed: copy the (ptr, len) pair; nothing to free on drop.
-            Self { ptr: self.ptr, len_tag: self.len_tag, _alloc: PhantomData }
+            Self {
+                ptr: self.ptr,
+                len_tag: self.len_tag,
+                _alloc: PhantomData,
+            }
         }
     }
 }
@@ -1655,10 +1712,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     #[inline]
     pub const fn new_in(alloc: A) -> Self {
         Self {
-            inner: hashbrown::HashMap::with_hasher_in(
-                core::hash::BuildHasherDefault::new(),
-                alloc,
-            ),
+            inner: hashbrown::HashMap::with_hasher_in(core::hash::BuildHasherDefault::new(), alloc),
         }
     }
 }
@@ -1809,10 +1863,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     /// requires the owned key) but on hit it is dropped without a second
     /// probe. Full prehash reuse needs a `raw_entry`-style API — tracked in
     /// the `get_adapted` PERF note above.
-    pub fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
+    pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         Ok(self.get_or_put_context_adapted(key, ()))
     }
 
@@ -1856,10 +1907,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     /// Same contract as [`put_borrowed`]: the bytes behind `key` must outlive
     /// the entry's residency in `self`.
     #[inline]
-    pub unsafe fn get_or_put_borrowed(
-        &mut self,
-        key: &[u8],
-    ) -> StringHashMapGetOrPut<'_, V> {
+    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::EntryRef;
         // SAFETY: caller contract above; see `put_borrowed`.
         let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
@@ -1898,10 +1946,13 @@ pub mod StringHashMapContext {
     /// can skip rehashing. Returns a `Prehashed` adapter.
     #[inline]
     pub fn pre(input: &[u8]) -> super::string_hash_map::Prehashed<'_> {
-        super::string_hash_map::Prehashed { value: bun_wyhash::hash(input), input }
+        super::string_hash_map::Prehashed {
+            value: bun_wyhash::hash(input),
+            input,
+        }
     }
 
-    pub use super::string_hash_map::{hash, Prehashed, PrehashedCaseInsensitive};
+    pub use super::string_hash_map::{Prehashed, PrehashedCaseInsensitive, hash};
 }
 
 /// Namespace mirroring `std.hash_map` so call sites can write
@@ -1925,7 +1976,10 @@ pub mod string_hash_map {
     impl<'a> Prehashed<'a> {
         #[inline]
         pub fn new(input: &'a [u8]) -> Self {
-            Self { value: hash(input), input }
+            Self {
+                value: hash(input),
+                input,
+            }
         }
         #[inline]
         pub fn hash(&self, s: &[u8]) -> u64 {
@@ -1951,7 +2005,10 @@ pub mod string_hash_map {
         pub fn init(input: &[u8]) -> Self {
             let mut out = vec![0u8; input.len()].into_boxed_slice();
             bun_core::strings::copy_lowercase(input, &mut out);
-            Self { value: hash(&out), input: out }
+            Self {
+                value: hash(&out),
+                input: out,
+            }
         }
         #[inline]
         pub fn hash(&self, s: &[u8]) -> u64 {
@@ -1994,7 +2051,9 @@ impl StringSet {
     }
 
     pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self { map: self.map.clone()? })
+        Ok(Self {
+            map: self.map.clone()?,
+        })
     }
 
     #[inline]
@@ -2058,7 +2117,10 @@ pub struct StringHashMapUnownedKey {
 impl StringHashMapUnownedKey {
     #[inline]
     pub fn init(s: &[u8]) -> Self {
-        Self { hash: bun_wyhash::hash(s), len: s.len() }
+        Self {
+            hash: bun_wyhash::hash(s),
+            len: s.len(),
+        }
     }
 }
 

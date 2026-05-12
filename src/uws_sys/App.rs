@@ -5,14 +5,13 @@ use core::ptr;
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
-use crate::{
-    us_socket_t, uws_res, ListenSocket as UwsListenSocket, Opcode, Request,
-    WebSocketBehavior,
-};
-use crate::socket_context::BunSocketContextOptions;
 use crate::response::Response;
-use crate::web_socket::c::uws_ws;
+use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::NewWebSocket as WebSocket;
+use crate::web_socket::c::uws_ws;
+use crate::{
+    ListenSocket as UwsListenSocket, Opcode, Request, WebSocketBehavior, us_socket_t, uws_res,
+};
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -380,7 +379,13 @@ impl<const SSL: bool> App<SSL> {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
         // comptime, casting user_data and ListenSocket. Phase B: macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
-        c::uws_app_listen(Self::SSL_FLAG, self.as_raw(), port, Some(handler), user_data)
+        c::uws_app_listen(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            port,
+            Some(handler),
+            user_data,
+        )
     }
 
     pub fn on_client_error(
@@ -537,7 +542,13 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
-    pub fn ws(&mut self, pattern: &[u8], ctx: *mut c_void, id: usize, behavior_: WebSocketBehavior) {
+    pub fn ws(
+        &mut self,
+        pattern: &[u8],
+        ctx: *mut c_void,
+        id: usize,
+        behavior_: WebSocketBehavior,
+    ) {
         let mut behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
         unsafe {
@@ -590,13 +601,15 @@ impl<const SSL: bool> ListenSocket<SSL> {
     pub fn close(&mut self) {
         // S008: ListenSocket<SSL> is layout-identical to crate::ListenSocket
         // (both ZST opaques) — safe deref via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).close()
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .close()
     }
 
     #[inline]
     pub fn get_local_port(&mut self) -> i32 {
         // S008: opaque ZST cast as above.
-        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).get_local_port()
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .get_local_port()
     }
 
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<'static, SSL> {
@@ -625,14 +638,10 @@ pub type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    pub type uws_listen_handler =
-        Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
-    pub type uws_method_handler =
-        Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
-    pub type uws_filter_handler =
-        Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
-    pub type uws_missing_server_handler =
-        Option<extern "C" fn(*const c_char, *mut c_void)>;
+    pub type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
+    pub type uws_method_handler = Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
+    pub type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
+    pub type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
 
     unsafe extern "C" {
         pub safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
@@ -654,7 +663,11 @@ pub mod c {
             require_host_header: bool,
             use_strict_method_validation: bool,
         );
-        pub safe fn uws_app_set_max_http_header_size(ssl: i32, app: &mut uws_app_t, max_header_size: u64);
+        pub safe fn uws_app_set_max_http_header_size(
+            ssl: i32,
+            app: &mut uws_app_t,
+            max_header_size: u64,
+        );
         pub fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,

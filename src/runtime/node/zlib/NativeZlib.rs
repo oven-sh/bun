@@ -13,108 +13,116 @@ use crate::node::node_zlib_binding::Error;
 // TODO(b2-blocked): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
 
 mod _impl {
-use super::*;
-use core::cell::Cell;
+    use super::*;
+    use core::cell::Cell;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask};
+    use bun_jsc::{
+        CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
+    };
 
-use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
-use crate::node::util::validators;
+    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
+    use crate::node::util::validators;
 
-/// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-/// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
-/// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-/// struct-init site; the body never dereferences the pointer.
-fn noop_task_callback(_task: *mut WorkPoolTask) {}
+    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
+    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+    /// struct-init site; the body never dereferences the pointer.
+    fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-// `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
-// `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
+    // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
+    // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-/// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-/// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
-/// zero it invokes [`NativeZlib::deinit`].
-#[bun_jsc::JsClass]
-#[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
-pub struct NativeZlib {
-    pub ref_count: Cell<u32>,
-    // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
-    // centralises the single unsafe deref so the trait impl is safe.
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
-    pub stream: JsCell<Context>,
-    pub write_result: Cell<Option<*mut u32>>,
-    pub poll_ref: JsCell<CountedKeepAlive>,
-    pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
-    pub write_in_progress: Cell<bool>,
-    pub pending_close: Cell<bool>,
-    pub pending_reset: Cell<bool>,
-    pub closed: Cell<bool>,
-    pub task: JsCell<WorkPoolTask>,
-}
-
-// `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
-// write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-// finalize onto this type. In Rust these are provided as inherent methods on
-// `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-// struct, not a trait).
-// TODO(port): verify CompressionStream<T> surface matches the Zig mixin re-exports.
-
-impl NativeZlib {
-    // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
-    // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
-        let arguments = frame.arguments_undef::<4>();
-
-        let mode = arguments.ptr[0];
-        if !mode.is_number() {
-            return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-        }
-        let mode_double = mode.as_number();
-        if mode_double % 1.0 != 0.0 {
-            return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-        }
-        let mode_int: i64 = mode_double as i64;
-        if mode_int < 1 || mode_int > 7 {
-            return Err(global.throw_range_error(mode_int, bun_jsc::RangeErrorOptions {
-                field_name: b"mode",
-                min: 1,
-                max: 7,
-                msg: b"",
-            }));
-        }
-
-        let mut stream = Context::default();
-        stream.mode = c::NodeMode::from_int(mode_int as u8);
-        Ok(Box::new(Self {
-            ref_count: Cell::new(1),
-            // JSC_BORROW backref — the global outlives this m_ctx payload.
-            global_this: bun_ptr::BackRef::new(global),
-            stream: JsCell::new(stream),
-            write_result: Cell::new(None),
-            poll_ref: JsCell::new(CountedKeepAlive::default()),
-            this_value: JsCell::new(StrongOptional::empty()),
-            write_in_progress: Cell::new(false),
-            pending_close: Cell::new(false),
-            pending_reset: Cell::new(false),
-            closed: Cell::new(false),
-            task: JsCell::new(WorkPoolTask { node: Default::default(), callback: noop_task_callback }),
-        }))
+    /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
+    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
+    /// zero it invokes [`NativeZlib::deinit`].
+    #[bun_jsc::JsClass]
+    #[derive(bun_ptr::CellRefCounted)]
+    #[ref_count(destroy = Self::deinit)]
+    pub struct NativeZlib {
+        pub ref_count: Cell<u32>,
+        // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+        // centralises the single unsafe deref so the trait impl is safe.
+        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        pub stream: JsCell<Context>,
+        pub write_result: Cell<Option<*mut u32>>,
+        pub poll_ref: JsCell<CountedKeepAlive>,
+        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        pub write_in_progress: Cell<bool>,
+        pub pending_close: Cell<bool>,
+        pub pending_reset: Cell<bool>,
+        pub closed: Cell<bool>,
+        pub task: JsCell<WorkPoolTask>,
     }
 
-    //// adding this didnt help much but leaving it here to compare the number with later
-    pub fn estimated_size(&self) -> usize {
-        // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
-        const INTERNAL_STATE_SIZE: usize = 3309;
-        mem::size_of::<Self>() + INTERNAL_STATE_SIZE
-    }
+    // `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
+    // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
+    // finalize onto this type. In Rust these are provided as inherent methods on
+    // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
+    // struct, not a trait).
+    // TODO(port): verify CompressionStream<T> surface matches the Zig mixin re-exports.
 
-    #[bun_jsc::host_fn(method)]
-    pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_undef::<7>();
-        let this_value = frame.this();
+    impl NativeZlib {
+        // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
+        // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
+        pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+            let arguments = frame.arguments_undef::<4>();
 
-        if arguments.len != 7 {
-            return Err(global
+            let mode = arguments.ptr[0];
+            if !mode.is_number() {
+                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
+            }
+            let mode_double = mode.as_number();
+            if mode_double % 1.0 != 0.0 {
+                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
+            }
+            let mode_int: i64 = mode_double as i64;
+            if mode_int < 1 || mode_int > 7 {
+                return Err(global.throw_range_error(
+                    mode_int,
+                    bun_jsc::RangeErrorOptions {
+                        field_name: b"mode",
+                        min: 1,
+                        max: 7,
+                        msg: b"",
+                    },
+                ));
+            }
+
+            let mut stream = Context::default();
+            stream.mode = c::NodeMode::from_int(mode_int as u8);
+            Ok(Box::new(Self {
+                ref_count: Cell::new(1),
+                // JSC_BORROW backref — the global outlives this m_ctx payload.
+                global_this: bun_ptr::BackRef::new(global),
+                stream: JsCell::new(stream),
+                write_result: Cell::new(None),
+                poll_ref: JsCell::new(CountedKeepAlive::default()),
+                this_value: JsCell::new(StrongOptional::empty()),
+                write_in_progress: Cell::new(false),
+                pending_close: Cell::new(false),
+                pending_reset: Cell::new(false),
+                closed: Cell::new(false),
+                task: JsCell::new(WorkPoolTask {
+                    node: Default::default(),
+                    callback: noop_task_callback,
+                }),
+            }))
+        }
+
+        //// adding this didnt help much but leaving it here to compare the number with later
+        pub fn estimated_size(&self) -> usize {
+            // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
+            const INTERNAL_STATE_SIZE: usize = 3309;
+            mem::size_of::<Self>() + INTERNAL_STATE_SIZE
+        }
+
+        #[bun_jsc::host_fn(method)]
+        pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+            let arguments = frame.arguments_undef::<7>();
+            let this_value = frame.this();
+
+            if arguments.len != 7 {
+                return Err(global
                 .err(
                     bun_jsc::ErrorCode::MISSING_ARGS,
                     format_args!(
@@ -122,85 +130,95 @@ impl NativeZlib {
                     ),
                 )
                 .throw());
+            }
+
+            let window_bits =
+                validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
+            let level = validators::validate_int32(global, arguments.ptr[1], "level", None, None)?;
+            let mem_level =
+                validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
+            let strategy =
+                validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
+            // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
+            let write_result = arguments.ptr[4]
+                .as_array_buffer(global)
+                .unwrap()
+                .as_u32()
+                .as_mut_ptr();
+            let write_callback =
+                validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
+            // the call to `stream.init` below (E0716 otherwise).
+            let dictionary_buf;
+            let dictionary = if arguments.ptr[6].is_undefined() {
+                None
+            } else {
+                dictionary_buf = arguments.ptr[6].as_array_buffer(global).unwrap();
+                Some(dictionary_buf.byte_slice())
+            };
+
+            self.write_result.set(Some(write_result));
+            js::write_callback_set_cached(
+                this_value,
+                global,
+                write_callback.with_async_context_if_needed(global),
+            );
+
+            // Keep the dictionary alive by keeping a reference to it in the JS object.
+            if dictionary.is_some() {
+                js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
+            }
+
+            self.stream
+                .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
+
+            Ok(JSValue::UNDEFINED)
         }
 
-        let window_bits = validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
-        let level = validators::validate_int32(global, arguments.ptr[1], "level", None, None)?;
-        let mem_level = validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
-        let strategy = validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
-        // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-        let write_result = arguments.ptr[4]
-            .as_array_buffer(global)
-            .unwrap()
-            .as_u32()
-            .as_mut_ptr();
-        let write_callback = validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
-        // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
-        // the call to `stream.init` below (E0716 otherwise).
-        let dictionary_buf;
-        let dictionary = if arguments.ptr[6].is_undefined() {
-            None
-        } else {
-            dictionary_buf = arguments.ptr[6].as_array_buffer(global).unwrap();
-            Some(dictionary_buf.byte_slice())
-        };
+        #[bun_jsc::host_fn(method)]
+        pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+            let arguments = frame.arguments_undef::<2>();
 
-        self.write_result.set(Some(write_result));
-        js::write_callback_set_cached(this_value, global, write_callback.with_async_context_if_needed(global));
+            if arguments.len != 2 {
+                return Err(global
+                    .err(
+                        bun_jsc::ErrorCode::MISSING_ARGS,
+                        format_args!("params(level, strategy)"),
+                    )
+                    .throw());
+            }
 
-        // Keep the dictionary alive by keeping a reference to it in the JS object.
-        if dictionary.is_some() {
-            js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
+            let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
+            let strategy =
+                validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
+
+            let err = self.stream.with_mut(|s| s.set_params(level, strategy));
+            if err.is_error() {
+                // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+                // `run_callback` may re-enter `close()`/`reset()` via a fresh
+                // `&Self` from `m_ctx`; interior mutability makes that sound.
+                CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
+            }
+            Ok(JSValue::UNDEFINED)
         }
 
-        self.stream.with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
-
-        Ok(JSValue::UNDEFINED)
+        /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
+        /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
+        /// box is freed here (`bun.destroy(this)` in Zig).
+        fn deinit(this: *mut Self) {
+            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
+            // is the heap::alloc pointer produced at construction. `this_value`
+            // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
+            // heap::take below.
+            unsafe {
+                (*this).stream.with_mut(|s| s.close());
+                drop(bun_core::heap::take(this));
+            }
+        }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_undef::<2>();
-
-        if arguments.len != 2 {
-            return Err(global
-                .err(
-                    bun_jsc::ErrorCode::MISSING_ARGS,
-                    format_args!("params(level, strategy)"),
-                )
-                .throw());
-        }
-
-        let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
-        let strategy = validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
-
-        let err = self.stream.with_mut(|s| s.set_params(level, strategy));
-        if err.is_error() {
-            // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
-            // `run_callback` may re-enter `close()`/`reset()` via a fresh
-            // `&Self` from `m_ctx`; interior mutability makes that sound.
-            CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
-        }
-        Ok(JSValue::UNDEFINED)
-    }
-
-    /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
-    /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
-    /// box is freed here (`bun.destroy(this)` in Zig).
-    fn deinit(this: *mut Self) {
-        // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
-        // is the heap::alloc pointer produced at construction. `this_value`
-        // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
-        // heap::take below.
-        unsafe {
-            (*this).stream.with_mut(|s| s.close());
-            drop(bun_core::heap::take(this));
-        }
-    }
-}
-
-crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
-crate::__compression_stream_mixin_reexports!(NativeZlib);
+    crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
+    crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
 pub use _impl::NativeZlib;
@@ -319,18 +337,10 @@ impl Context {
         // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
         match self.mode {
             DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateSetDictionary(
-                    &raw mut self.state,
-                    dict_ptr,
-                    dict_len,
-                );
+                self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
             INFLATERAW => unsafe {
-                self.err = c::inflateSetDictionary(
-                    &raw mut self.state,
-                    dict_ptr,
-                    dict_len,
-                );
+                self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
             _ => {}
         }
@@ -511,13 +521,7 @@ impl Context {
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
             // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
-            self.err = unsafe {
-                c::inflateSetDictionary(
-                    &raw mut self.state,
-                    dict_ptr,
-                    dict_len,
-                )
-            };
+            self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {
                 // SAFETY: FFI — state is an initialized inflate stream.

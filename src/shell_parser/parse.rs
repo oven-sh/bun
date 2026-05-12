@@ -3,7 +3,12 @@
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(non_camel_case_types, non_snake_case, dead_code, clippy::too_many_arguments)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    dead_code,
+    clippy::too_many_arguments
+)]
 
 use core::fmt;
 use core::mem::size_of;
@@ -12,7 +17,7 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use bun_core::{self as bun_str, immutable as strings, String as BunString};
+use bun_core::{self as bun_str, String as BunString, immutable as strings};
 
 // PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
 // Phase-A draft referenced it as `CodepointCursor`; alias here so the body
@@ -189,77 +194,116 @@ pub mod ast {
     #[strum(serialize_all = "kebab-case")] // TODO(port): tag names must match Zig exactly ("-a", "==", etc.)
     pub enum CondExprOp {
         /// -a file: True if file exists.
-        #[strum(serialize = "-a")] DashA,
+        #[strum(serialize = "-a")]
+        DashA,
         /// -b file: True if file exists and is a block special file.
-        #[strum(serialize = "-b")] DashB,
+        #[strum(serialize = "-b")]
+        DashB,
         /// -c file: True if file exists and is a character special file.
-        #[strum(serialize = "-c")] DashC,
+        #[strum(serialize = "-c")]
+        DashC,
         /// -d file: True if file exists and is a directory.
-        #[strum(serialize = "-d")] DashD,
+        #[strum(serialize = "-d")]
+        DashD,
         /// -e file: True if file exists.
-        #[strum(serialize = "-e")] DashE,
+        #[strum(serialize = "-e")]
+        DashE,
         /// -f file: True if file exists and is a regular file.
-        #[strum(serialize = "-f")] DashF,
+        #[strum(serialize = "-f")]
+        DashF,
         /// -g file: True if file exists and its set-group-id bit is set.
-        #[strum(serialize = "-g")] DashG,
+        #[strum(serialize = "-g")]
+        DashG,
         /// -h file: True if file exists and is a symbolic link.
-        #[strum(serialize = "-h")] DashH,
+        #[strum(serialize = "-h")]
+        DashH,
         /// -k file: True if file exists and its "sticky" bit is set.
-        #[strum(serialize = "-k")] DashK,
+        #[strum(serialize = "-k")]
+        DashK,
         /// -p file: True if file exists and is a named pipe (FIFO).
-        #[strum(serialize = "-p")] DashP,
+        #[strum(serialize = "-p")]
+        DashP,
         /// -r file: True if file exists and is readable.
-        #[strum(serialize = "-r")] DashR,
+        #[strum(serialize = "-r")]
+        DashR,
         /// -s file: True if file exists and has a size greater than zero.
-        #[strum(serialize = "-s")] DashS,
+        #[strum(serialize = "-s")]
+        DashS,
         /// -t fd: True if file descriptor fd is open and refers to a terminal.
-        #[strum(serialize = "-t")] DashT,
+        #[strum(serialize = "-t")]
+        DashT,
         /// -u file: True if file exists and its set-user-id bit is set.
-        #[strum(serialize = "-u")] DashU,
+        #[strum(serialize = "-u")]
+        DashU,
         /// -w file: True if file exists and is writable.
-        #[strum(serialize = "-w")] DashW,
+        #[strum(serialize = "-w")]
+        DashW,
         /// -x file: True if file exists and is executable.
-        #[strum(serialize = "-x")] DashX,
+        #[strum(serialize = "-x")]
+        DashX,
         /// -G file: True if file exists and is owned by the effective group id.
-        #[strum(serialize = "-G")] DashCapG,
+        #[strum(serialize = "-G")]
+        DashCapG,
         /// -L file: True if file exists and is a symbolic link.
-        #[strum(serialize = "-L")] DashCapL,
+        #[strum(serialize = "-L")]
+        DashCapL,
         /// -N file: True if file exists and has been modified since it was last read.
-        #[strum(serialize = "-N")] DashCapN,
+        #[strum(serialize = "-N")]
+        DashCapN,
         /// -O file: True if file exists and is owned by the effective user id.
-        #[strum(serialize = "-O")] DashCapO,
+        #[strum(serialize = "-O")]
+        DashCapO,
         /// -S file: True if file exists and is a socket.
-        #[strum(serialize = "-S")] DashCapS,
+        #[strum(serialize = "-S")]
+        DashCapS,
         /// file1 -ef file2
-        #[strum(serialize = "-ef")] DashEf,
+        #[strum(serialize = "-ef")]
+        DashEf,
         /// file1 -nt file2
-        #[strum(serialize = "-nt")] DashNt,
+        #[strum(serialize = "-nt")]
+        DashNt,
         /// file1 -ot file2
-        #[strum(serialize = "-ot")] DashOt,
+        #[strum(serialize = "-ot")]
+        DashOt,
         /// -o optname
-        #[strum(serialize = "-o")] DashO,
+        #[strum(serialize = "-o")]
+        DashO,
         /// -v varname
-        #[strum(serialize = "-v")] DashV,
+        #[strum(serialize = "-v")]
+        DashV,
         /// -R varname
-        #[strum(serialize = "-R")] DashCapR,
+        #[strum(serialize = "-R")]
+        DashCapR,
         /// -z string
-        #[strum(serialize = "-z")] DashZ,
+        #[strum(serialize = "-z")]
+        DashZ,
         /// -n string
-        #[strum(serialize = "-n")] DashN,
+        #[strum(serialize = "-n")]
+        DashN,
         /// string1 == string2
-        #[strum(serialize = "==")] EqEq,
+        #[strum(serialize = "==")]
+        EqEq,
         /// string1 != string2
-        #[strum(serialize = "!=")] NotEq,
+        #[strum(serialize = "!=")]
+        NotEq,
         /// string1 < string2
-        #[strum(serialize = "<")] Lt,
+        #[strum(serialize = "<")]
+        Lt,
         /// string1 > string2
-        #[strum(serialize = ">")] Gt,
-        #[strum(serialize = "-eq")] DashEq,
-        #[strum(serialize = "-ne")] DashNe,
-        #[strum(serialize = "-lt")] DashLt,
-        #[strum(serialize = "-le")] DashLe,
-        #[strum(serialize = "-gt")] DashGt,
-        #[strum(serialize = "-ge")] DashGe,
+        #[strum(serialize = ">")]
+        Gt,
+        #[strum(serialize = "-eq")]
+        DashEq,
+        #[strum(serialize = "-ne")]
+        DashNe,
+        #[strum(serialize = "-lt")]
+        DashLt,
+        #[strum(serialize = "-le")]
+        DashLe,
+        #[strum(serialize = "-gt")]
+        DashGt,
+        #[strum(serialize = "-ge")]
+        DashGe,
     }
 
     impl CondExprOp {
@@ -285,25 +329,49 @@ pub mod ast {
         /// Single-arg ops: name starts with '-' and len == 2.
         // TODO(port): Zig built this via @typeInfo reflection over enum fields. Hand-rolled here.
         pub const SINGLE_ARG_OPS: &'static [(&'static str, CondExprOp)] = &[
-            ("-a", CondExprOp::DashA), ("-b", CondExprOp::DashB), ("-c", CondExprOp::DashC),
-            ("-d", CondExprOp::DashD), ("-e", CondExprOp::DashE), ("-f", CondExprOp::DashF),
-            ("-g", CondExprOp::DashG), ("-h", CondExprOp::DashH), ("-k", CondExprOp::DashK),
-            ("-p", CondExprOp::DashP), ("-r", CondExprOp::DashR), ("-s", CondExprOp::DashS),
-            ("-t", CondExprOp::DashT), ("-u", CondExprOp::DashU), ("-w", CondExprOp::DashW),
-            ("-x", CondExprOp::DashX), ("-G", CondExprOp::DashCapG), ("-L", CondExprOp::DashCapL),
-            ("-N", CondExprOp::DashCapN), ("-O", CondExprOp::DashCapO), ("-S", CondExprOp::DashCapS),
-            ("-o", CondExprOp::DashO), ("-v", CondExprOp::DashV), ("-R", CondExprOp::DashCapR),
-            ("-z", CondExprOp::DashZ), ("-n", CondExprOp::DashN),
+            ("-a", CondExprOp::DashA),
+            ("-b", CondExprOp::DashB),
+            ("-c", CondExprOp::DashC),
+            ("-d", CondExprOp::DashD),
+            ("-e", CondExprOp::DashE),
+            ("-f", CondExprOp::DashF),
+            ("-g", CondExprOp::DashG),
+            ("-h", CondExprOp::DashH),
+            ("-k", CondExprOp::DashK),
+            ("-p", CondExprOp::DashP),
+            ("-r", CondExprOp::DashR),
+            ("-s", CondExprOp::DashS),
+            ("-t", CondExprOp::DashT),
+            ("-u", CondExprOp::DashU),
+            ("-w", CondExprOp::DashW),
+            ("-x", CondExprOp::DashX),
+            ("-G", CondExprOp::DashCapG),
+            ("-L", CondExprOp::DashCapL),
+            ("-N", CondExprOp::DashCapN),
+            ("-O", CondExprOp::DashCapO),
+            ("-S", CondExprOp::DashCapS),
+            ("-o", CondExprOp::DashO),
+            ("-v", CondExprOp::DashV),
+            ("-R", CondExprOp::DashCapR),
+            ("-z", CondExprOp::DashZ),
+            ("-n", CondExprOp::DashN),
         ];
 
         /// Binary ops: NOT (name starts with '-' and len == 2).
         pub const BINARY_OPS: &'static [(&'static str, CondExprOp)] = &[
-            ("-ef", CondExprOp::DashEf), ("-nt", CondExprOp::DashNt), ("-ot", CondExprOp::DashOt),
-            ("==", CondExprOp::EqEq), ("!=", CondExprOp::NotEq),
-            ("<", CondExprOp::Lt), (">", CondExprOp::Gt),
-            ("-eq", CondExprOp::DashEq), ("-ne", CondExprOp::DashNe),
-            ("-lt", CondExprOp::DashLt), ("-le", CondExprOp::DashLe),
-            ("-gt", CondExprOp::DashGt), ("-ge", CondExprOp::DashGe),
+            ("-ef", CondExprOp::DashEf),
+            ("-nt", CondExprOp::DashNt),
+            ("-ot", CondExprOp::DashOt),
+            ("==", CondExprOp::EqEq),
+            ("!=", CondExprOp::NotEq),
+            ("<", CondExprOp::Lt),
+            (">", CondExprOp::Gt),
+            ("-eq", CondExprOp::DashEq),
+            ("-ne", CondExprOp::DashNe),
+            ("-lt", CondExprOp::DashLt),
+            ("-le", CondExprOp::DashLe),
+            ("-gt", CondExprOp::DashGt),
+            ("-ge", CondExprOp::DashGe),
         ];
     }
 
@@ -555,15 +623,25 @@ pub mod ast {
 
     impl RedirectFlags {
         #[inline]
-        pub fn stdin(self) -> bool { self.contains(Self::STDIN) }
+        pub fn stdin(self) -> bool {
+            self.contains(Self::STDIN)
+        }
         #[inline]
-        pub fn stdout(self) -> bool { self.contains(Self::STDOUT) }
+        pub fn stdout(self) -> bool {
+            self.contains(Self::STDOUT)
+        }
         #[inline]
-        pub fn stderr(self) -> bool { self.contains(Self::STDERR) }
+        pub fn stderr(self) -> bool {
+            self.contains(Self::STDERR)
+        }
         #[inline]
-        pub fn append(self) -> bool { self.contains(Self::APPEND) }
+        pub fn append(self) -> bool {
+            self.contains(Self::APPEND)
+        }
         #[inline]
-        pub fn duplicate_out(self) -> bool { self.contains(Self::DUPLICATE_OUT) }
+        pub fn duplicate_out(self) -> bool {
+            self.contains(Self::DUPLICATE_OUT)
+        }
 
         // PORT NOTE: shell.zig RedirectFlags.isEmpty() — bitflags already
         // generates `is_empty()`; expose under the Zig spelling for parity.
@@ -576,10 +654,18 @@ pub mod ast {
             match io_kind {
                 IoKind::Stdin => self.stdin(),
                 IoKind::Stdout => {
-                    if self.duplicate_out() { !self.stdout() } else { self.stdout() }
+                    if self.duplicate_out() {
+                        !self.stdout()
+                    } else {
+                        self.stdout()
+                    }
                 }
                 IoKind::Stderr => {
-                    if self.duplicate_out() { !self.stderr() } else { self.stderr() }
+                    if self.duplicate_out() {
+                        !self.stderr()
+                    } else {
+                        self.stderr()
+                    }
                 }
             }
         }
@@ -602,16 +688,26 @@ pub mod ast {
             // against those exact values. Using `libc::O_CREAT` (0x100) /
             // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
             // through `from_bun_o`, so `> file` failed to create the target.
-            #[cfg(not(windows))] const O_RDONLY: i32 = libc::O_RDONLY;
-            #[cfg(not(windows))] const O_WRONLY: i32 = libc::O_WRONLY;
-            #[cfg(not(windows))] const O_CREAT: i32 = libc::O_CREAT;
-            #[cfg(not(windows))] const O_TRUNC: i32 = libc::O_TRUNC;
-            #[cfg(not(windows))] const O_APPEND: i32 = libc::O_APPEND;
-            #[cfg(windows)] const O_RDONLY: i32 = 0o0;
-            #[cfg(windows)] const O_WRONLY: i32 = 0o1;
-            #[cfg(windows)] const O_CREAT: i32 = 0o100;
-            #[cfg(windows)] const O_TRUNC: i32 = 0o1000;
-            #[cfg(windows)] const O_APPEND: i32 = 0o2000;
+            #[cfg(not(windows))]
+            const O_RDONLY: i32 = libc::O_RDONLY;
+            #[cfg(not(windows))]
+            const O_WRONLY: i32 = libc::O_WRONLY;
+            #[cfg(not(windows))]
+            const O_CREAT: i32 = libc::O_CREAT;
+            #[cfg(not(windows))]
+            const O_TRUNC: i32 = libc::O_TRUNC;
+            #[cfg(not(windows))]
+            const O_APPEND: i32 = libc::O_APPEND;
+            #[cfg(windows)]
+            const O_RDONLY: i32 = 0o0;
+            #[cfg(windows)]
+            const O_WRONLY: i32 = 0o1;
+            #[cfg(windows)]
+            const O_CREAT: i32 = 0o100;
+            #[cfg(windows)]
+            const O_TRUNC: i32 = 0o1000;
+            #[cfg(windows)]
+            const O_APPEND: i32 = 0o2000;
 
             let read_write_flags: i32 = if self.stdin() {
                 O_RDONLY
@@ -619,15 +715,31 @@ pub mod ast {
                 O_WRONLY | O_CREAT
             };
             let extra: i32 = if self.append() { O_APPEND } else { O_TRUNC };
-            if self.stdin() { read_write_flags } else { extra | read_write_flags }
+            if self.stdin() {
+                read_write_flags
+            } else {
+                extra | read_write_flags
+            }
         }
 
-        pub fn lt() -> RedirectFlags { Self::STDIN }
-        pub fn lt_lt() -> RedirectFlags { Self::STDIN | Self::APPEND }
-        pub fn gt() -> RedirectFlags { Self::STDOUT }
-        pub fn gt_gt() -> RedirectFlags { Self::APPEND | Self::STDOUT }
-        pub fn amp_gt() -> RedirectFlags { Self::STDOUT | Self::STDERR }
-        pub fn amp_gt_gt() -> RedirectFlags { Self::APPEND | Self::STDOUT | Self::STDERR }
+        pub fn lt() -> RedirectFlags {
+            Self::STDIN
+        }
+        pub fn lt_lt() -> RedirectFlags {
+            Self::STDIN | Self::APPEND
+        }
+        pub fn gt() -> RedirectFlags {
+            Self::STDOUT
+        }
+        pub fn gt_gt() -> RedirectFlags {
+            Self::APPEND | Self::STDOUT
+        }
+        pub fn amp_gt() -> RedirectFlags {
+            Self::STDOUT | Self::STDERR
+        }
+        pub fn amp_gt_gt() -> RedirectFlags {
+            Self::APPEND | Self::STDOUT | Self::STDERR
+        }
 
         pub fn merge(a: RedirectFlags, b: RedirectFlags) -> RedirectFlags {
             RedirectFlags::from_bits_retain(a.bits() | b.bits())
@@ -709,8 +821,11 @@ pub mod ast {
             }
 
             if let Atom::Simple(l) = &self {
-                let Atom::Compound(r) = &right else { unreachable!() };
-                let atoms = bump.alloc_slice_fill_with(1 + r.atoms.len(), |_| SimpleAtom::QuotedEmpty);
+                let Atom::Compound(r) = &right else {
+                    unreachable!()
+                };
+                let atoms =
+                    bump.alloc_slice_fill_with(1 + r.atoms.len(), |_| SimpleAtom::QuotedEmpty);
                 atoms[0] = l.clone();
                 atoms[1..].clone_from_slice(r.atoms);
                 return Ok(Atom::Compound(CompoundAtom {
@@ -721,8 +836,12 @@ pub mod ast {
                 }));
             }
 
-            let Atom::Compound(l) = &self else { unreachable!() };
-            let Atom::Simple(r) = &right else { unreachable!() };
+            let Atom::Compound(l) = &self else {
+                unreachable!()
+            };
+            let Atom::Simple(r) = &right else {
+                unreachable!()
+            };
             let atoms = bump.alloc_slice_fill_with(1 + l.atoms.len(), |_| SimpleAtom::QuotedEmpty);
             atoms[..l.atoms.len()].clone_from_slice(l.atoms);
             atoms[l.atoms.len()] = r.clone();
@@ -770,9 +889,7 @@ pub mod ast {
         pub fn has_tilde_expansion(&self) -> bool {
             match self {
                 Atom::Simple(s) => matches!(s, SimpleAtom::Tilde),
-                Atom::Compound(c) => {
-                    !c.atoms.is_empty() && matches!(c.atoms[0], SimpleAtom::Tilde)
-                }
+                Atom::Compound(c) => !c.atoms.is_empty() && matches!(c.atoms[0], SimpleAtom::Tilde),
             }
         }
     }
@@ -917,10 +1034,7 @@ impl<'bump> Parser<'bump> {
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
             jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
-            errors: core::mem::replace(
-                &mut self.errors,
-                bun_alloc::ArenaVec::new_in(self.alloc),
-            ),
+            errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
         }
     }
@@ -951,13 +1065,20 @@ impl<'bump> Parser<'bump> {
         if self.tokens.is_empty()
             || (self.tokens.len() == 1 && matches!(self.tokens[0], Token::Eof))
         {
-            return Ok(ast::Script { stmts: stmts.into_bump_slice() });
+            return Ok(ast::Script {
+                stmts: stmts.into_bump_slice(),
+            });
         }
 
         while if self.inside_subshell.is_none() {
             !self.r#match(TokenTag::Eof)
         } else {
-            !self.match_any(&[TokenTag::Eof, self.inside_subshell.expect("infallible: checked is_some").closing_tok()])
+            !self.match_any(&[
+                TokenTag::Eof,
+                self.inside_subshell
+                    .expect("infallible: checked is_some")
+                    .closing_tok(),
+            ])
         } {
             self.skip_newlines();
             stmts.push(self.parse_stmt()?);
@@ -968,7 +1089,9 @@ impl<'bump> Parser<'bump> {
         } else {
             let _ = self.expect(TokenTag::Eof);
         }
-        Ok(ast::Script { stmts: stmts.into_bump_slice() })
+        Ok(ast::Script {
+            stmts: stmts.into_bump_slice(),
+        })
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
@@ -981,7 +1104,9 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
+                self.inside_subshell
+                    .expect("infallible: checked is_some")
+                    .closing_tok(),
             ])
         } {
             let expr = self.parse_expr()?;
@@ -995,7 +1120,9 @@ impl<'bump> Parser<'bump> {
             exprs.push(expr);
         }
 
-        Ok(ast::Stmt { exprs: exprs.into_bump_slice() })
+        Ok(ast::Stmt {
+            exprs: exprs.into_bump_slice(),
+        })
     }
 
     fn parse_expr(&mut self) -> ParseResult<ast::Expr<'bump>> {
@@ -1089,11 +1216,7 @@ impl<'bump> Parser<'bump> {
         }
     }
 
-    fn is_if_clause_text_token_impl(
-        &self,
-        range: TextRange,
-        if_clause_token: IfClauseTok,
-    ) -> bool {
+    fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
         let tagname = Self::extract_if_clause_text_token(if_clause_token);
         self.text(range) == tagname
     }
@@ -1117,17 +1240,25 @@ impl<'bump> Parser<'bump> {
         }
 
         if self.is_if_clause_text_token(IfClauseTok::If) {
-            return self.parse_if_clause()?.to_expr(self.alloc).map_err(Into::into);
+            return self
+                .parse_if_clause()?
+                .to_expr(self.alloc)
+                .map_err(Into::into);
         }
 
         match self.peek().tag() {
             TokenTag::DoubleBracketOpen => {
-                return self.parse_cond_expr()?.to_expr(self.alloc).map_err(Into::into);
+                return self
+                    .parse_cond_expr()?
+                    .to_expr(self.alloc)
+                    .map_err(Into::into);
             }
             _ => {}
         }
 
-        self.parse_simple_cmd()?.to_expr(self.alloc).map_err(Into::into)
+        self.parse_simple_cmd()?
+            .to_expr(self.alloc)
+            .map_err(Into::into)
     }
 
     fn parse_subshell(&mut self) -> ParseResult<ast::Subshell<'bump>> {
@@ -1242,7 +1373,9 @@ impl<'bump> Parser<'bump> {
             self.add_error(format_args!("Expected a single, simple word"))?;
             return Err(ParseError::Expected.into());
         }
-        let Token::Text(range) = op_tok else { unreachable!() };
+        let Token::Text(range) = op_tok else {
+            unreachable!()
+        };
         let txt = self.text(range);
 
         for &(name, op) in ast::CondExprOp::BINARY_OPS {
@@ -1298,7 +1431,12 @@ impl<'bump> Parser<'bump> {
             !self.peek_any_comptime_ifclausetok(until) && !self.peek_any_comptime(&[TokenTag::Eof])
         } else {
             !self.peek_any_ifclausetok(until)
-                && !self.peek_any(&[self.inside_subshell.expect("infallible: checked is_some").closing_tok(), TokenTag::Eof])
+                && !self.peek_any(&[
+                    self.inside_subshell
+                        .expect("infallible: checked is_some")
+                        .closing_tok(),
+                    TokenTag::Eof,
+                ])
         } {
             self.skip_newlines();
             let stmt = self.parse_stmt()?;
@@ -1356,7 +1494,11 @@ impl<'bump> Parser<'bump> {
                     return Err(ParseError::Expected.into());
                 }
                 else_parts.append(else_);
-                Ok(ast::If { cond, then, else_parts })
+                Ok(ast::If {
+                    cond,
+                    then,
+                    else_parts,
+                })
             }
             IfClauseTok::Elif => {
                 loop {
@@ -1396,11 +1538,19 @@ impl<'bump> Parser<'bump> {
                     ))?;
                     return Err(ParseError::Expected.into());
                 }
-                Ok(ast::If { cond, then, else_parts })
+                Ok(ast::If {
+                    cond,
+                    then,
+                    else_parts,
+                })
             }
             IfClauseTok::Fi => {
                 let _ = self.expect_if_clause_text_token(IfClauseTok::Fi);
-                Ok(ast::If { cond, then, else_parts: SmolList::zeroes() })
+                Ok(ast::If {
+                    cond,
+                    then,
+                    else_parts: SmolList::zeroes(),
+                })
             }
         }
     }
@@ -1414,7 +1564,9 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
+                self.inside_subshell
+                    .expect("infallible: checked is_some")
+                    .closing_tok(),
             ])
         } {
             if let Some(assign) = self.parse_assign()? {
@@ -1431,7 +1583,9 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
+                self.inside_subshell
+                    .expect("infallible: checked is_some")
+                    .closing_tok(),
             ])
         };
         if at_end {
@@ -1474,7 +1628,9 @@ impl<'bump> Parser<'bump> {
     fn parse_redirect(&mut self) -> ParseResult<ParsedRedirect<'bump>> {
         let has_redirect = self.r#match(TokenTag::Redirect);
         let redirect = if has_redirect {
-            let Token::Redirect(r) = self.prev() else { unreachable!() };
+            let Token::Redirect(r) = self.prev() else {
+                unreachable!()
+            };
             r
         } else {
             ast::RedirectFlags::default()
@@ -1482,7 +1638,9 @@ impl<'bump> Parser<'bump> {
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
                 if self.r#match(TokenTag::JSObjRef) {
-                    let Token::JSObjRef(obj_ref) = self.prev() else { unreachable!() };
+                    let Token::JSObjRef(obj_ref) = self.prev() else {
+                        unreachable!()
+                    };
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
@@ -1501,7 +1659,10 @@ impl<'bump> Parser<'bump> {
             None
         };
         // TODO check for multiple redirects and error
-        Ok(ParsedRedirect { flags: redirect, redirect: redirect_file })
+        Ok(ParsedRedirect {
+            flags: redirect,
+            redirect: redirect_file,
+        })
     }
 
     /// Try to parse an assignment. If no assignment could be parsed then return
@@ -1559,7 +1720,10 @@ impl<'bump> Parser<'bump> {
                         };
                         let left = ast::Atom::Simple(ast::SimpleAtom::Text(txt_value));
                         let merged = left.merge(right, self.alloc)?;
-                        break 'var_decl Some(ast::Assign { label, value: merged });
+                        break 'var_decl Some(ast::Assign {
+                            label,
+                            value: merged,
+                        });
                     }
                     None
                 };
@@ -1592,7 +1756,11 @@ impl<'bump> Parser<'bump> {
                 Token::Eof | Token::Semicolon | Token::Newline => false,
                 t => {
                     if self.inside_subshell.is_some()
-                        && self.inside_subshell.expect("infallible: checked is_some").closing_tok() == t.tag()
+                        && self
+                            .inside_subshell
+                            .expect("infallible: checked is_some")
+                            .closing_tok()
+                            == t.tag()
                     {
                         false
                     } else {
@@ -1728,7 +1896,11 @@ impl<'bump> Parser<'bump> {
                     Token::OpenParen | Token::CloseParen => {
                         self.add_error(format_args!(
                             "Unexpected token: `{}`",
-                            if peeked.tag() == TokenTag::OpenParen { "(" } else { ")" }
+                            if peeked.tag() == TokenTag::OpenParen {
+                                "("
+                            } else {
+                                ")"
+                            }
                         ))?;
                         return Err(ParseError::Unexpected.into());
                     }
@@ -1784,7 +1956,11 @@ impl<'bump> Parser<'bump> {
     fn is_at_end(&self) -> bool {
         self.peek().tag() == TokenTag::Eof
             || (self.inside_subshell.is_some()
-                && self.inside_subshell.expect("infallible: checked is_some").closing_tok() == self.peek().tag())
+                && self
+                    .inside_subshell
+                    .expect("infallible: checked is_some")
+                    .closing_tok()
+                    == self.peek().tag())
     }
 
     fn expect(&mut self, toktag: TokenTag) -> Token {
@@ -1813,7 +1989,11 @@ impl<'bump> Parser<'bump> {
             || tag == TokenTag::Eof
             || tag == TokenTag::Newline
             || (self.inside_subshell.is_some()
-                && tag == self.inside_subshell.expect("infallible: checked is_some").closing_tok())
+                && tag
+                    == self
+                        .inside_subshell
+                        .expect("infallible: checked is_some")
+                        .closing_tok())
     }
 
     fn expect_delimit(&mut self) -> Token {
@@ -1823,7 +2003,11 @@ impl<'bump> Parser<'bump> {
             || self.check(TokenTag::Newline)
             || self.check(TokenTag::Eof)
             || (self.inside_subshell.is_some()
-                && self.check(self.inside_subshell.expect("infallible: checked is_some").closing_tok()))
+                && self.check(
+                    self.inside_subshell
+                        .expect("infallible: checked is_some")
+                        .closing_tok(),
+                ))
         {
             return self.advance();
         }
@@ -1877,7 +2061,9 @@ impl<'bump> Parser<'bump> {
 
     fn peek_any_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
         let peektok = self.peek();
-        let Token::Text(range) = peektok else { return false };
+        let Token::Text(range) = peektok else {
+            return false;
+        };
         let txt = self.text(range);
         for &tag in toktags {
             if txt == <&'static str>::from(tag).as_bytes() {
@@ -1958,10 +2144,7 @@ impl<'bump> Parser<'bump> {
         // PORT NOTE: bumpalo::collections::Vec<u8> doesn't impl io::Write.
         // Format into a stack String, then bump-copy. PERF(port): collapse to
         // a bumpalo `String` writer once available.
-        let s = bun_alloc::ArenaString::from_str_in(
-            &std::fmt::format(args),
-            self.alloc,
-        );
+        let s = bun_alloc::ArenaString::from_str_in(&std::fmt::format(args), self.alloc);
         let msg = s.into_bump_str().as_bytes();
         self.errors.push(ParserError { msg });
         Ok(())
@@ -2008,11 +2191,21 @@ impl IfClauseTok {
     }
 
     pub fn from_text(txt: &[u8]) -> Option<IfClauseTok> {
-        if txt == b"if" { return Some(IfClauseTok::If); }
-        if txt == b"else" { return Some(IfClauseTok::Else); }
-        if txt == b"elif" { return Some(IfClauseTok::Elif); }
-        if txt == b"then" { return Some(IfClauseTok::Then); }
-        if txt == b"fi" { return Some(IfClauseTok::Fi); }
+        if txt == b"if" {
+            return Some(IfClauseTok::If);
+        }
+        if txt == b"else" {
+            return Some(IfClauseTok::Else);
+        }
+        if txt == b"elif" {
+            return Some(IfClauseTok::Elif);
+        }
+        if txt == b"then" {
+            return Some(IfClauseTok::Then);
+        }
+        if txt == b"fi" {
+            return Some(IfClauseTok::Fi);
+        }
         None
     }
 }
@@ -2357,12 +2550,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     fn continue_from_sublexer(&mut self, sublexer: &mut Self) {
         log!("[lex] drop sublexer");
         let bump = sublexer.strpool.bump();
-        self.strpool =
-            core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
-        self.tokens =
-            core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
-        self.errors =
-            core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
+        self.strpool = core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
+        self.tokens = core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
+        self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
 
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;
@@ -2414,7 +2604,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         while i < bytes.len() && !SPECIAL_CHARS_TABLE.is_set(bytes[i] as usize) {
                             i += 1;
                         }
-                        if i > start { Some((bytes, start, i)) } else { None }
+                        if i > start {
+                            Some((bytes, start, i))
+                        } else {
+                            None
+                        }
                     }
                     Src::Unicode(_) => None,
                 };
@@ -2428,7 +2622,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     // Keep prev/current consistent with what per-char eat()
                     // would have left behind (read by `#` whitespace check
                     // and is_immediately_escaped_quote).
-                    let last = InputChar { char: u32::from(run[run.len() - 1] & 0x7F), escaped: false };
+                    let last = InputChar {
+                        char: u32::from(run[run.len() - 1] & 0x7F),
+                        escaped: false,
+                    };
                     if run.len() >= 2 {
                         self.chars.prev = Some(InputChar {
                             char: u32::from(run[run.len() - 2] & 0x7F),
@@ -2555,7 +2752,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     match p2.char {
                                         c2 if matches!(
                                             u8::try_from(c2),
-                                            Ok(b' ' | b'\r' | b'\n' | b'\t' | b';' | b'&' | b'|'
+                                            Ok(b' '
+                                                | b'\r'
+                                                | b'\n'
+                                                | b'\t'
+                                                | b';'
+                                                | b'&'
+                                                | b'|'
                                                 | b'>')
                                         ) =>
                                         {
@@ -2694,7 +2897,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
 
-                            let peeked = self.peek().unwrap_or(InputChar { char: 0, escaped: false });
+                            let peeked = self.peek().unwrap_or(InputChar {
+                                char: 0,
+                                escaped: false,
+                            });
                             if !peeked.escaped && peeked.char == u32::from(b'(') {
                                 self.break_word(false)?;
                                 self.eat_subshell(SubShellKind::Dollar)?;
@@ -2863,12 +3069,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
                             if next.char == u32::from(b'>') && !next.escaped {
                                 let _ = self.eat();
-                                let inner = if self.eat_simple_redirect_operator(RedirectDirection::Out)
-                                {
-                                    ast::RedirectFlags::amp_gt_gt()
-                                } else {
-                                    ast::RedirectFlags::amp_gt()
-                                };
+                                let inner =
+                                    if self.eat_simple_redirect_operator(RedirectDirection::Out) {
+                                        ast::RedirectFlags::amp_gt_gt()
+                                    } else {
+                                        ast::RedirectFlags::amp_gt()
+                                    };
                                 self.tokens.push(Token::Redirect(inner));
                             } else if next.escaped || next.char != u32::from(b'&') {
                                 self.tokens.push(Token::Ampersand);
@@ -2998,11 +3204,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     #[inline]
     fn is_immediately_escaped_quote(&self) -> bool {
         (self.chars.state == CharState::Double
-            && self.chars.current.is_some_and(|c| !c.escaped && c.char == u32::from(b'"'))
-            && self.chars.prev.is_some_and(|p| !p.escaped && p.char == u32::from(b'"')))
+            && self
+                .chars
+                .current
+                .is_some_and(|c| !c.escaped && c.char == u32::from(b'"'))
+            && self
+                .chars
+                .prev
+                .is_some_and(|p| !p.escaped && p.char == u32::from(b'"')))
             || (self.chars.state == CharState::Single
-                && self.chars.current.is_some_and(|c| !c.escaped && c.char == u32::from(b'\''))
-                && self.chars.prev.is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
+                && self
+                    .chars
+                    .current
+                    .is_some_and(|c| !c.escaped && c.char == u32::from(b'\''))
+                && self
+                    .chars
+                    .prev
+                    .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
     fn break_word_impl(
@@ -3401,7 +3619,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // This works regardless of the lexer's current quote state (Normal/Single/Double)
             // because the \x08 marker is processed before quote-state handling.
             let pos = self.j;
-            self.tokens.push(Token::DoubleQuotedText(TextRange { start: pos, end: pos }));
+            self.tokens.push(Token::DoubleQuotedText(TextRange {
+                start: pos,
+                end: pos,
+            }));
             return Ok(());
         }
         self.append_string_to_str_pool(bunstr)
@@ -3423,13 +3644,24 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         bytes[..LEX_JS_STRING_PREFIX.len() - 1] == LEX_JS_STRING_PREFIX[1..]
     }
 
-    fn bump_cursor_ascii(&mut self, new_idx: usize, prev_ascii_char: Option<u8>, cur_ascii_char: u8) {
+    fn bump_cursor_ascii(
+        &mut self,
+        new_idx: usize,
+        prev_ascii_char: Option<u8>,
+        cur_ascii_char: u8,
+    ) {
         if ENCODING == StringEncoding::Ascii {
             self.chars.src.set_ascii_i(new_idx);
             if let Some(pc) = prev_ascii_char {
-                self.chars.prev = Some(InputChar { char: pc as u32, escaped: false });
+                self.chars.prev = Some(InputChar {
+                    char: pc as u32,
+                    escaped: false,
+                });
             }
-            self.chars.current = Some(InputChar { char: cur_ascii_char as u32, escaped: false });
+            self.chars.current = Some(InputChar {
+                char: cur_ascii_char as u32,
+                escaped: false,
+            });
             return;
         }
         // Set the cursor to decode the codepoint at new_idx.
@@ -3438,9 +3670,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         // TODO(port): direct field access on SrcUnicode cursor — encapsulate in helper.
         self.chars.src.set_unicode_cursor(new_idx);
         if let Some(pc) = prev_ascii_char {
-            self.chars.prev = Some(InputChar { char: pc as u32, escaped: false });
+            self.chars.prev = Some(InputChar {
+                char: pc as u32,
+                escaped: false,
+            });
         }
-        self.chars.current = Some(InputChar { char: cur_ascii_char as u32, escaped: false });
+        self.chars.current = Some(InputChar {
+            char: cur_ascii_char as u32,
+            escaped: false,
+        });
     }
 
     fn matches_ascii_literal(&mut self, literal: &[u8]) -> bool {
@@ -3497,7 +3735,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
 
-            let idx = match bun_core::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10) {
+            let idx = match bun_core::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10)
+            {
                 Ok(n) => n,
                 Err(_) => {
                     let mut e = Vec::new();
@@ -3657,7 +3896,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let mut slice = [CP::default(); N];
         let mut i: usize = 0;
         while let Some(result) = self.peek() {
-            let Ok(v) = CP::try_from(result.char) else { return None };
+            let Ok(v) = CP::try_from(result.char) else {
+                return None;
+            };
             slice[i] = v;
             i += 1;
             let _ = self.eat();
@@ -3700,9 +3941,13 @@ pub struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
 
 impl SrcAsciiIndexValue {
     #[inline]
-    fn char(self) -> u8 { self.0 & 0x7F }
+    fn char(self) -> u8 {
+        self.0 & 0x7F
+    }
     #[inline]
-    fn escaped(self) -> bool { (self.0 & 0x80) != 0 }
+    fn escaped(self) -> bool {
+        (self.0 & 0x80) != 0
+    }
 }
 
 impl<'a> SrcAscii<'a> {
@@ -3769,7 +4014,11 @@ impl<'a> SrcUnicode<'a> {
         Self::advance(bytes, &mut cursor);
         let mut next_cursor = cursor;
         Self::advance(bytes, &mut next_cursor);
-        Self { bytes, cursor, next_cursor }
+        Self {
+            bytes,
+            cursor,
+            next_cursor,
+        }
     }
 
     #[inline]
@@ -3777,7 +4026,10 @@ impl<'a> SrcUnicode<'a> {
         if self.cursor.width as usize + self.cursor.i as usize > self.bytes.len() {
             return None;
         }
-        Some(SrcUnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width })
+        Some(SrcUnicodeIndexValue {
+            char: self.cursor.c as u32,
+            width: self.cursor.width,
+        })
     }
 
     #[inline]
@@ -3823,7 +4075,9 @@ pub enum Src<'a> {
 
 impl<'a> Src<'a> {
     fn set_ascii_i(&mut self, new_idx: usize) {
-        if let Src::Ascii(a) = self { a.i = new_idx; }
+        if let Src::Ascii(a) = self {
+            a.i = new_idx;
+        }
     }
     fn set_unicode_cursor(&mut self, new_idx: usize) {
         if let Src::Unicode(u) = self {
@@ -3858,7 +4112,12 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         } else {
             Src::Unicode(SrcUnicode::init(bytes))
         };
-        Self { src, state: CharState::Normal, prev: None, current: None }
+        Self {
+            src,
+            state: CharState::Normal,
+            prev: None,
+            current: None,
+        }
     }
 
     pub fn src_bytes(&self) -> &'a [u8] {
@@ -3872,11 +4131,15 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         let bytes = self.src_bytes();
         match &self.src {
             Src::Ascii(a) => {
-                if a.i >= bytes.len() { return b""; }
+                if a.i >= bytes.len() {
+                    return b"";
+                }
                 &bytes[a.i..]
             }
             Src::Unicode(u) => {
-                if u.cursor.i as usize >= bytes.len() { return b""; }
+                if u.cursor.i as usize >= bytes.len() {
+                    return b"";
+                }
                 &bytes[u.cursor.i as usize..]
             }
         }
@@ -3918,7 +4181,10 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
             }
         };
         if char != u32::from(b'\\') || self.state == CharState::Single {
-            return Some(InputChar { char, escaped: false });
+            return Some(InputChar {
+                char,
+                escaped: false,
+            });
         }
 
         // Handle backslash
@@ -3946,14 +4212,22 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     {
                         char = peeked;
                     }
-                    _ => return Some(InputChar { char, escaped: false }),
+                    _ => {
+                        return Some(InputChar {
+                            char,
+                            escaped: false,
+                        });
+                    }
                 }
             }
             // We checked `self.state == .Single` above so this is impossible
             CharState::Single => unreachable!(),
         }
 
-        Some(InputChar { char, escaped: true })
+        Some(InputChar {
+            char,
+            escaped: true,
+        })
     }
 }
 
@@ -3981,7 +4255,9 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
     // PORT NOTE: `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
     // ASCII-range matches below; negative sentinel never matches anyway.
     match cursor.c as u32 {
-        c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => return false,
+        c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
+            return false;
+        }
         c if (u32::from(b'a')..=u32::from(b'z')).contains(&c)
             || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
             || c == u32::from(b'_') => {}
@@ -4053,9 +4329,40 @@ fn is_all_ascii(s: &[u8]) -> bool {
 
 /// Characters that need to be escaped
 pub const SPECIAL_CHARS: [u8; 34] = [
-    b'~', b'[', b']', b'#', b';', b'\n', b'*', b'{', b',', b'}', b'`', b'$', b'=', b'(', b')',
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'|', b'>', b'<', b'&', b'\'',
-    b'"', b' ', b'\\', SPECIAL_JS_CHAR,
+    b'~',
+    b'[',
+    b']',
+    b'#',
+    b';',
+    b'\n',
+    b'*',
+    b'{',
+    b',',
+    b'}',
+    b'`',
+    b'$',
+    b'=',
+    b'(',
+    b')',
+    b'0',
+    b'1',
+    b'2',
+    b'3',
+    b'4',
+    b'5',
+    b'6',
+    b'7',
+    b'8',
+    b'9',
+    b'|',
+    b'>',
+    b'<',
+    b'&',
+    b'\'',
+    b'"',
+    b' ',
+    b'\\',
+    SPECIAL_JS_CHAR,
 ];
 
 // PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
@@ -4065,7 +4372,9 @@ pub const SPECIAL_CHARS: [u8; 34] = [
 pub struct ByteTable(pub [bool; 256]);
 impl ByteTable {
     #[inline]
-    pub const fn is_set(&self, idx: usize) -> bool { self.0[idx] }
+    pub const fn is_set(&self, idx: usize) -> bool {
+        self.0[idx]
+    }
 }
 pub const SPECIAL_CHARS_TABLE: ByteTable = {
     let mut table = [false; 256];
@@ -4227,9 +4536,7 @@ impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
 impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     pub fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
-        unsafe {
-            core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize)
-        }
+        unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
     }
 
     pub fn slice_mut(&mut self) -> &mut [T] {
@@ -4295,15 +4602,21 @@ pub trait MemoryCost {
 }
 impl<'a> MemoryCost for ast::Atom<'a> {
     #[inline]
-    fn memory_cost(&self) -> usize { self.memory_cost() }
+    fn memory_cost(&self) -> usize {
+        self.memory_cost()
+    }
 }
 impl<'a> MemoryCost for ast::Stmt<'a> {
     #[inline]
-    fn memory_cost(&self) -> usize { self.memory_cost() }
+    fn memory_cost(&self) -> usize {
+        self.memory_cost()
+    }
 }
 impl<T: MemoryCost, const N: usize> MemoryCost for SmolList<T, N> {
     #[inline]
-    fn memory_cost(&self) -> usize { self.memory_cost() }
+    fn memory_cost(&self) -> usize {
+        self.memory_cost()
+    }
 }
 
 impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {

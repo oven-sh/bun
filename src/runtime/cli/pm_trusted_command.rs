@@ -3,21 +3,22 @@ use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
+use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
+    LoadResult, Lockfile,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
-    package::{PackageColumns as _, PackageColumns as _},
-    tree, LoadResult, Lockfile,
+    package::{PackageColumns as _},
+    tree,
 };
 use bun_install::package_manager_real::{
-    update_lockfile_if_needed, PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH,
+    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
 };
 use bun_install::{
-    self as install, DependencyID, LifecycleScriptSubprocess, PackageID, PackageManager,
-    Resolution, DEFAULT_TRUSTED_DEPENDENCIES_LIST,
+    self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
+    PackageID, PackageManager, Resolution,
 };
 use bun_paths::AutoAbsPath;
-use bun_core::strings;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -287,7 +288,8 @@ impl TrustCommand {
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
             }
         }
-        let trust_all = strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
+        let trust_all =
+            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
 
         if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();
@@ -352,7 +354,8 @@ impl TrustCommand {
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
             let node_modules_dir =
-                match bun_sys::open_dir(bun_sys::Dir::cwd(), node_modules.relative_path.as_bytes()) {
+                match bun_sys::open_dir(bun_sys::Dir::cwd(), node_modules.relative_path.as_bytes())
+                {
                     Ok(d) => d,
                     Err(e) if e == bun_core::err!(ENOENT) => {
                         node_modules_path.set_length(nm_saved);
@@ -459,8 +462,7 @@ impl TrustCommand {
             // immediately consumed by `Node::start` (returns an owned `Node`
             // with raw backrefs into `pm.progress`).
             unsafe {
-                (*pm_raw).progress.supports_ansi_escape_codes =
-                    Output::enable_ansi_colors_stderr();
+                (*pm_raw).progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
                 scripts_node = (*pm_raw)
                     .progress
                     .start(b"", 0)
@@ -544,8 +546,7 @@ impl TrustCommand {
         // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
         // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
         // consume it after the final write — matches Zig's by-value `File`.
-        let root_file =
-            unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
+        let root_file = unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
@@ -562,16 +563,21 @@ impl TrustCommand {
         // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
         // `pack_command`).
-        let mut package_json: bun_ast::Expr =
-            match bun_parsers::json::parse_utf8(&package_json_source, unsafe { ctx.log_mut() }, &bump) {
-                Ok(v) => v.into(),
-                Err(err) => {
-                    let _ = ctx.log_ref().print(std::ptr::from_mut(Output::error_writer()));
+        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
+            &package_json_source,
+            unsafe { ctx.log_mut() },
+            &bump,
+        ) {
+            Ok(v) => v.into(),
+            Err(err) => {
+                let _ = ctx
+                    .log_ref()
+                    .print(std::ptr::from_mut(Output::error_writer()));
 
-                    Output::err_generic("failed to parse package.json: {s}", (err.name(),));
-                    Global::crash();
-                }
-            };
+                Output::err_generic("failed to parse package.json: {s}", (err.name(),));
+                Global::crash();
+            }
+        };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         #[cfg(debug_assertions)]
@@ -596,8 +602,7 @@ impl TrustCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
-                let resolution =
-                    &lockfile.packages.items_resolution()[info.package_id as usize];
+                let resolution = &lockfile.packages.items_resolution()[info.package_id as usize];
                 if info.skip {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Untrusted);
@@ -626,7 +631,8 @@ impl TrustCommand {
                     .as_mut()
                     .unwrap()
                     .put(
-                        bun_semver::string::Builder::string_hash(name) as install::TruncatedPackageNameHash,
+                        bun_semver::string::Builder::string_hash(name)
+                            as install::TruncatedPackageNameHash,
                         (),
                     )?;
             }
@@ -646,10 +652,9 @@ impl TrustCommand {
         drop(load_lockfile);
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve((package_json_contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+        buffer_writer.buffer.list.reserve(
+            (package_json_contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()),
+        );
         buffer_writer.append_newline = !package_json_contents.is_empty()
             && package_json_contents[package_json_contents.len() - 1] == b'\n';
         let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
@@ -686,7 +691,11 @@ impl TrustCommand {
             total_scripts_ran,
             if total_scripts_ran > 1 { "s" } else { "" },
             total_packages_with_scripts,
-            if total_packages_with_scripts > 1 { "s" } else { "" },
+            if total_packages_with_scripts > 1 {
+                "s"
+            } else {
+                ""
+            },
         ));
 
         Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());

@@ -1,22 +1,22 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
-use std::borrow::Cow;
-use bun_core::strings;
-use bun_core::{Output, Global};
 use bun_collections::VecExt;
-use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
-use bun_resolver::fs as Fs;
-use bun_resolver::fs::PathResolverExt as _;
-#[allow(unused_imports)]
-use bun_resolver as resolver;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_core::strings;
+use bun_core::{Global, Output};
 #[allow(unused_imports)]
 use bun_dotenv as DotEnv;
-#[allow(unused_imports)]
-use bun_url::URL;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
+#[allow(unused_imports)]
+use bun_resolver as resolver;
+use bun_resolver::fs as Fs;
+use bun_resolver::fs::PathResolverExt as _;
+use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+#[allow(unused_imports)]
+use bun_url::URL;
+use std::borrow::Cow;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
 // `analytics::features::*` counters are pure telemetry side effects; the
@@ -35,7 +35,7 @@ mod analytics {
         pub static external: AtomicUsize = AtomicUsize::new(0);
     }
 }
-use enum_map::{EnumMap, Enum};
+use enum_map::{Enum, EnumMap};
 
 pub use crate::defines;
 pub use defines::Define;
@@ -100,7 +100,8 @@ pub fn validate_path(
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
     // buffer which is then boxed (matches the arena.dupe in the Zig path).
     let _ = path_kind;
-    let out = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
+    let out =
+        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {
         log.add_error_fmt(
             None,
@@ -152,7 +153,10 @@ const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
 fn default_wildcard_patterns() -> Vec<WildcardPattern> {
     DEFAULT_WILDCARD_PATTERNS
         .iter()
-        .map(|(p, s)| WildcardPattern { prefix: Box::from(*p), suffix: Box::from(*s) })
+        .map(|(p, s)| WildcardPattern {
+            prefix: Box::from(*p),
+            suffix: Box::from(*s),
+        })
         .collect()
 }
 
@@ -197,8 +201,7 @@ pub fn init_external_modules(
         return result;
     }
 
-    let mut patterns: Vec<WildcardPattern> =
-        Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
+    let mut patterns: Vec<WildcardPattern> = Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
     // PERF(port): was appendSliceAssumeCapacity
     patterns.extend(default_wildcard_patterns());
 
@@ -361,18 +364,21 @@ impl TargetExt for Target {
     fn out_extensions(self) -> StringHashMap<&'static [u8]> {
         let mut exts = StringHashMap::<&'static [u8]>::default();
 
-        const OUT_EXTENSIONS_LIST: &[&[u8]] =
-            &[b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json"];
+        const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
+            b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
+        ];
 
         // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
         // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2).expect("OOM");
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
+                .expect("OOM");
             for ext in OUT_EXTENSIONS_LIST {
                 exts.put(ext, b".mjs").expect("OOM");
             }
         } else {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1).expect("OOM");
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
+                .expect("OOM");
             exts.put(b".mjs", b".js").expect("OOM");
         }
 
@@ -589,8 +595,16 @@ pub fn get_loader_and_virtual_source<'a>(
         // Spec: `bun.pathLiteral("/[eval]")` — the eval/stdin entry path is built
         // via `bun.pathLiteral` (cli.zig / run_command.zig / bun.js.zig), which
         // rewrites `/` → `\` on Windows, so the suffix uses the platform separator.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) { b"\\[stdin]" } else { b"/[stdin]" };
+        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[eval]"
+        } else {
+            b"/[eval]"
+        };
+        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[stdin]"
+        } else {
+            b"/[stdin]"
+        };
         if strings::ends_with(specifier, EVAL_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -622,8 +636,7 @@ pub fn get_loader_and_virtual_source<'a>(
                 // or normalized specifier), which outlives the `virtual_source`
                 // returned to the caller — matches Zig `getLoaderAndVirtualSource`
                 // where `Fs.Path` and `logger.Source.path` share one type.
-                let static_text: &'static [u8] =
-                    bun_ast::StoreStr::new(path.text).slice();
+                let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
                     path: bun_paths::fs::Path::init(static_text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
@@ -652,7 +665,9 @@ pub fn get_loader_and_virtual_source<'a>(
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        jsc_vm.read_dir_info_package_json(dir).map(|p| unsafe { &*p })
+        jsc_vm
+            .read_dir_info_package_json(dir)
+            .map(|p| unsafe { &*p })
     } else {
         None
     };
@@ -866,7 +881,12 @@ impl ESMConditions {
         let require = self.require.clone()?;
         let style = self.style.clone()?;
 
-        Ok(ESMConditions { default, import, require, style })
+        Ok(ESMConditions {
+            default,
+            import,
+            require,
+            style,
+        })
     }
 
     pub fn append_slice(&mut self, conditions: &[&[u8]]) -> Result<(), bun_alloc::AllocError> {
@@ -943,8 +963,12 @@ pub fn defines_from_transform_options(
     let mut behavior = api::DotEnvBehavior::disable;
 
     'load_env: {
-        let Some(env) = env_loader else { break 'load_env };
-        let Some(framework) = framework_env else { break 'load_env };
+        let Some(env) = env_loader else {
+            break 'load_env;
+        };
+        let Some(framework) = framework_env else {
+            break 'load_env;
+        };
 
         if cfg!(debug_assertions) {
             debug_assert!(framework.behavior != api::DotEnvBehavior::None);
@@ -961,10 +985,8 @@ pub fn defines_from_transform_options(
         // `api::DotEnvBehavior` is the same type as `DotEnv::DotEnvBehavior`
         // (re-export), so no conversion needed.
         let api_defaults = framework.to_api().defaults;
-        let default_keys: Vec<&[u8]> =
-            api_defaults.keys.iter().map(|k| k.as_ref()).collect();
-        let default_values: Vec<&[u8]> =
-            api_defaults.values.iter().map(|v| v.as_ref()).collect();
+        let default_keys: Vec<&[u8]> = api_defaults.keys.iter().map(|k| k.as_ref()).collect();
+        let default_values: Vec<&[u8]> = api_defaults.values.iter().map(|v| v.as_ref()).collect();
         defines::copy_env_for_define(
             env,
             &mut user_defines,
@@ -998,7 +1020,8 @@ pub fn defines_from_transform_options(
                     } else {
                         use std::io::Write;
                         let mut v = Vec::new();
-                        write!(&mut v, "\"{}\"", bstr::BStr::new(node_env)).expect("infallible: in-memory write");
+                        write!(&mut v, "\"{}\"", bstr::BStr::new(node_env))
+                            .expect("infallible: in-memory write");
                         break 'brk v.into_boxed_slice();
                     }
                 }
@@ -1012,8 +1035,10 @@ pub fn defines_from_transform_options(
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
         if let Some(value) = target.process_browser_define_value() {
-            user_defines
-                .get_or_put_value(default_user_defines::process_browser_define::KEY, Box::from(value.as_bytes()))?;
+            user_defines.get_or_put_value(
+                default_user_defines::process_browser_define::KEY,
+                Box::from(value.as_bytes()),
+            )?;
         }
     }
 
@@ -1045,15 +1070,9 @@ pub fn defines_from_transform_options(
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
 const DEFAULT_LOADER_EXT: &[&[u8]] = &[
-    b".jsx", b".json",
-    b".js", b".mjs",
-    b".cjs", b".css",
+    b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-    b".ts", b".tsx",
-    b".mts", b".cts",
-    b".toml", b".yaml",
-    b".yml", b".wasm",
-    b".txt", b".text",
+    b".ts", b".tsx", b".mts", b".cts", b".toml", b".yaml", b".yml", b".wasm", b".txt", b".text",
     b".jsonc", b".json5",
 ];
 
@@ -1061,25 +1080,8 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
 const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
 
 const NODE_MODULES_DEFAULT_LOADER_EXT: &[&[u8]] = &[
-    b".jsx",
-    b".js",
-    b".cjs",
-    b".mjs",
-    b".ts",
-    b".mts",
-    b".toml",
-    b".yaml",
-    b".yml",
-    b".txt",
-    b".json",
-    b".jsonc",
-    b".json5",
-    b".css",
-    b".tsx",
-    b".cts",
-    b".wasm",
-    b".text",
-    b".html",
+    b".jsx", b".js", b".cjs", b".mjs", b".ts", b".mts", b".toml", b".yaml", b".yml", b".txt",
+    b".json", b".jsonc", b".json5", b".css", b".tsx", b".cts", b".wasm", b".text", b".html",
 ];
 
 #[derive(Debug, Clone)]
@@ -1092,7 +1094,9 @@ impl Default for ResolveFileExtensions {
     fn default() -> Self {
         ResolveFileExtensions {
             node_modules: ResolveFileExtensionsGroup {
-                esm: owned_string_list(bundle_options_defaults::node_modules::MODULE_EXTENSION_ORDER),
+                esm: owned_string_list(
+                    bundle_options_defaults::node_modules::MODULE_EXTENSION_ORDER,
+                ),
                 default: owned_string_list(bundle_options_defaults::node_modules::EXTENSION_ORDER),
             },
             default: ResolveFileExtensionsGroup::default(),
@@ -1158,8 +1162,16 @@ pub fn loaders_from_transform_options(
     }
 
     let total_capacity = input_loaders.extensions.len()
-        + if target.is_bun() { DEFAULT_LOADER_EXT_BUN.len() } else { 0 }
-        + if target == Target::Browser { DEFAULT_LOADER_EXT_BROWSER.len() } else { 0 }
+        + if target.is_bun() {
+            DEFAULT_LOADER_EXT_BUN.len()
+        } else {
+            0
+        }
+        + if target == Target::Browser {
+            DEFAULT_LOADER_EXT_BROWSER.len()
+        } else {
+            0
+        }
         + DEFAULT_LOADER_EXT.len();
 
     let mut loaders = StringArrayHashMap::<Loader>::default();
@@ -1675,7 +1687,6 @@ impl<'a> BundleOptions<'a> {
         !self.defines_loaded
     }
 
-    
     // TODO(b2-blocked): defines_from_transform_options (see above) +
     // api::TransformOptions.define field (peechy `TransformOptions` body still
     // opaque).
@@ -1743,7 +1754,6 @@ impl<'a> BundleOptions<'a> {
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
-        
         use core::sync::atomic::Ordering;
 
         let target = <Target as bun_options_types::TargetExt>::from_api(transform.target);
@@ -1867,7 +1877,7 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-         // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+        // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
         {
             analytics::features::define
                 .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
@@ -1934,11 +1944,12 @@ impl<'a> BundleOptions<'a> {
                 opts.allow_runtime = false;
             }
             Target::Bun => {
-                opts.import_path_format = if opts.import_path_format == ImportPathFormat::AbsoluteUrl {
-                    ImportPathFormat::AbsoluteUrl
-                } else {
-                    ImportPathFormat::AbsolutePath
-                };
+                opts.import_path_format =
+                    if opts.import_path_format == ImportPathFormat::AbsoluteUrl {
+                        ImportPathFormat::AbsoluteUrl
+                    } else {
+                        ImportPathFormat::AbsolutePath
+                    };
 
                 opts.env.behavior = api::DotEnvBehavior::LoadAll;
                 if transform.extension_order.is_empty() {
@@ -2014,12 +2025,16 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-         // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+        // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
         {
-            analytics::features::macros
-                .fetch_add(usize::from(opts.target == Target::BunMacro), Ordering::Relaxed);
-            analytics::features::external
-                .fetch_add(usize::from(!transform.external.is_empty()), Ordering::Relaxed);
+            analytics::features::macros.fetch_add(
+                usize::from(opts.target == Target::BunMacro),
+                Ordering::Relaxed,
+            );
+            analytics::features::external.fetch_add(
+                usize::from(!transform.external.is_empty()),
+                Ordering::Relaxed,
+            );
         }
         Ok(opts)
     }
@@ -2050,9 +2065,8 @@ pub mod bundle_options_defaults {
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
 
-    pub const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] = &[
-        b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json",
-    ];
+    pub const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
+        &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
     pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
@@ -2181,7 +2195,11 @@ impl TransformOptions {
             entry_point,
             // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
             main_fields: Target::default_main_fields_map()[Target::Browser],
-            jsx: if loader.is_jsx() { Some(jsx::Pragma::default()) } else { None },
+            jsx: if loader.is_jsx() {
+                Some(jsx::Pragma::default())
+            } else {
+                None
+            },
             react_fast_refresh: false,
             inject: None,
             origin: b"",
@@ -2248,7 +2266,6 @@ pub struct Env {
     pub prefix: Box<[u8]>,
     pub defaults: EnvList,
     // arena: dropped (global mimalloc)
-
     /// List of explicit env files to load (e..g specified by --env-file args)
     pub files: Box<[Box<[u8]>]>,
 
@@ -2283,7 +2300,10 @@ impl Env {
         self.defaults.ensure_total_capacity(capacity as usize)
     }
 
-    pub fn set_defaults_map(&mut self, defaults: api::StringMap) -> Result<(), bun_alloc::AllocError> {
+    pub fn set_defaults_map(
+        &mut self,
+        defaults: api::StringMap,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
         if defaults.keys.is_empty() {
@@ -2324,7 +2344,10 @@ impl Env {
         }
     }
 
-    pub fn set_from_loaded(&mut self, config: api::LoadedEnvConfig) -> Result<(), bun_alloc::AllocError> {
+    pub fn set_from_loaded(
+        &mut self,
+        config: api::LoadedEnvConfig,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.behavior = match config.dotenv {
             api::DotEnvBehavior::prefix => api::DotEnvBehavior::prefix,
             api::DotEnvBehavior::load_all => api::DotEnvBehavior::load_all,
@@ -2350,7 +2373,11 @@ impl Env {
     }
 
     // For reading from package.json
-    pub fn get_or_put_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub fn get_or_put_value(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), bun_alloc::AllocError> {
         let slice = self.defaults.slice();
         for _key in slice.items::<"key", Box<[u8]>>().iter() {
             if key == &**_key {
@@ -2358,7 +2385,10 @@ impl Env {
             }
         }
 
-        self.defaults.append(EnvEntry { key: Box::from(key), value: Box::from(value) })
+        self.defaults.append(EnvEntry {
+            key: Box::from(key),
+            value: Box::from(value),
+        })
     }
 }
 
@@ -2553,9 +2583,7 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Name => {
                 PathTemplate::write_replacing_slashes_on_windows(writer, name)?
             }
-            PlaceholderField::Ext => {
-                PathTemplate::write_replacing_slashes_on_windows(writer, ext)?
-            }
+            PlaceholderField::Ext => PathTemplate::write_replacing_slashes_on_windows(writer, ext)?,
             PlaceholderField::Hash => {
                 if let Some(hash) = hash {
                     writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
@@ -2600,12 +2628,24 @@ impl PathTemplate {
 
     pub const CHUNK: PathTemplateConst = PathTemplateConst {
         data: b"./chunk-[hash].[ext]",
-        placeholder: PlaceholderConst { name: b"chunk", ext: b"js", dir: b"", hash: None, target: b"" },
+        placeholder: PlaceholderConst {
+            name: b"chunk",
+            ext: b"js",
+            dir: b"",
+            hash: None,
+            target: b"",
+        },
     };
 
     pub const CHUNK_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/chunk-[hash].[ext]",
-        placeholder: PlaceholderConst { name: b"chunk", ext: b"js", dir: b"", hash: None, target: b"" },
+        placeholder: PlaceholderConst {
+            name: b"chunk",
+            ext: b"js",
+            dir: b"",
+            hash: None,
+            target: b"",
+        },
     };
 
     pub const FILE: PathTemplateConst = PathTemplateConst {
@@ -2677,8 +2717,13 @@ pub struct PlaceholderConst {
 }
 
 impl PlaceholderConst {
-    pub const DEFAULT: PlaceholderConst =
-        PlaceholderConst { dir: b"", name: b"", ext: b"", hash: None, target: b"" };
+    pub const DEFAULT: PlaceholderConst = PlaceholderConst {
+        dir: b"",
+        name: b"",
+        ext: b"",
+        hash: None,
+        target: b"",
+    };
 }
 
 impl PathTemplateConst {

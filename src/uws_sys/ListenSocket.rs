@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_core::Fd;
 
-use crate::{us_socket_t, SocketGroup, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -16,7 +16,10 @@ impl ListenSocket {
         us_listen_socket_close(self)
     }
 
-    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn get_local_address<'a>(
+        &mut self,
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], bun_core::Error> {
         // TODO(port): narrow error set
         self.get_socket().local_address(buf)
     }
@@ -32,9 +35,13 @@ impl ListenSocket {
         unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
     }
 
-    pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<'static, IS_SSL> {
+    pub fn socket<const IS_SSL: bool>(
+        &mut self,
+    ) -> crate::socket::NewSocketHandler<'static, IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
-        crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(self.get_socket()))
+        crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(
+            self.get_socket(),
+        ))
     }
 
     /// Group accepted sockets are linked into.
@@ -53,8 +60,14 @@ impl ListenSocket {
         let raw = us_listen_socket_get_fd(self);
         // SOCKET → kind=system (mask bit 63); `from_native` would store the
         // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
-        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
-        #[cfg(not(windows))] { Fd::from_native(raw) }
+        #[cfg(windows)]
+        {
+            Fd::from_system(raw as *mut core::ffi::c_void)
+        }
+        #[cfg(not(windows))]
+        {
+            Fd::from_native(raw)
+        }
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
@@ -92,17 +105,17 @@ impl ListenSocket {
     /// because the pointee is caller-owned external storage — materializing a
     /// `&mut T` here could alias the caller's own live reference to it. Mirrors
     /// Zig's `?*T` return (Zig pointers freely alias).
-    pub fn find_server_name_userdata<T>(&mut self, hostname: &core::ffi::CStr) -> Option<NonNull<T>> {
+    pub fn find_server_name_userdata<T>(
+        &mut self,
+        hostname: &core::ffi::CStr,
+    ) -> Option<NonNull<T>> {
         // SAFETY: self and hostname valid; caller guarantees the stored userdata
         // is a *T (mirrors Zig `@ptrCast(@alignCast(...))`).
         let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
         NonNull::new(p.cast::<T>())
     }
 
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char),
-    ) {
+    pub fn on_server_name(&mut self, cb: extern "C" fn(*mut ListenSocket, *const c_char)) {
         us_listen_socket_on_server_name(self, cb)
     }
 }

@@ -124,7 +124,9 @@ impl ClientSession {
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
-            let Some(client) = stream.client else { continue };
+            let Some(client) = stream.client else {
+                continue;
+            };
             let client = client_mut(client);
             if client.async_http_id != async_http_id {
                 continue;
@@ -240,7 +242,9 @@ impl ClientSession {
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
             // Copy `client` field — no `&mut Stream` materialized.
-            let Some(cl) = stream_ref(stream_ptr).client else { continue };
+            let Some(cl) = stream_ref(stream_ptr).client else {
+                continue;
+            };
             // `Stream.client` is a live backref while attached; `ParentRef`
             // reads the Copy `async_http_id` field via shared deref.
             if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {

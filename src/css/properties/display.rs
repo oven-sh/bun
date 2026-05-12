@@ -1,7 +1,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
-use crate::{Parser, Printer, PrintErr, VendorPrefix};
+use crate::{Parser, PrintErr, Printer, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -122,9 +122,7 @@ impl DisplayPair {
                 _ => DisplayOutside::Block,
             });
 
-            if list_item
-                && !matches!(final_inside, DisplayInside::Flow | DisplayInside::FlowRoot)
-            {
+            if list_item && !matches!(final_inside, DisplayInside::Flow | DisplayInside::FlowRoot) {
                 return Err(input.new_custom_error(css::ParserError::invalid_declaration));
             }
 
@@ -161,7 +159,11 @@ impl DisplayPair {
         } else {
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
         };
-        Ok(DisplayPair { outside: DisplayOutside::Inline, inside, is_list_item: false })
+        Ok(DisplayPair {
+            outside: DisplayOutside::Inline,
+            inside,
+            is_list_item: false,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

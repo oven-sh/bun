@@ -2,7 +2,7 @@ use crate::helpers;
 use crate::inlines;
 use crate::parser::{self, Parser};
 use crate::ref_defs::RefDef;
-use crate::types::{SpanDetail, SpanType, TextType, OFF};
+use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
 // PORT NOTE: Phase-A draft used `Span` / `SpanAttrs`; real types are
 // `SpanType` / `SpanDetail`.
@@ -85,7 +85,9 @@ impl Parser<'_> {
             pos += 1;
             // Skip whitespace (including newlines from merged paragraph lines)
             while pos < content.len()
-                && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+                && (helpers::is_blank(content[pos])
+                    || content[pos] == b'\n'
+                    || content[pos] == b'\r')
             {
                 pos += 1;
             }
@@ -140,7 +142,9 @@ impl Parser<'_> {
 
             // Skip whitespace (including newlines)
             while pos < content.len()
-                && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+                && (helpers::is_blank(content[pos])
+                    || content[pos] == b'\n'
+                    || content[pos] == b'\r')
             {
                 pos += 1;
             }
@@ -150,7 +154,11 @@ impl Parser<'_> {
             if pos < content.len()
                 && (content[pos] == b'"' || content[pos] == b'\'' || content[pos] == b'(')
             {
-                let close_char: u8 = if content[pos] == b'(' { b')' } else { content[pos] };
+                let close_char: u8 = if content[pos] == b'(' {
+                    b')'
+                } else {
+                    content[pos]
+                };
                 pos += 1;
                 let title_start = pos;
                 while pos < content.len() && content[pos] != close_char {
@@ -168,7 +176,9 @@ impl Parser<'_> {
 
             // Skip whitespace (including newlines)
             while pos < content.len()
-                && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+                && (helpers::is_blank(content[pos])
+                    || content[pos] == b'\n'
+                    || content[pos] == b'\r')
             {
                 pos += 1;
             }
@@ -189,7 +199,11 @@ impl Parser<'_> {
                 } else if is_image {
                     self.renderer.enter_span(
                         Span::Img,
-                        SpanAttrs { href: dest, title, ..Default::default() },
+                        SpanAttrs {
+                            href: dest,
+                            title,
+                            ..Default::default()
+                        },
                     )?;
                     self.image_nesting_level += 1;
                     self.process_inline_content(label, 0)?;
@@ -198,7 +212,11 @@ impl Parser<'_> {
                 } else {
                     self.renderer.enter_span(
                         Span::A,
-                        SpanAttrs { href: dest, title, ..Default::default() },
+                        SpanAttrs {
+                            href: dest,
+                            title,
+                            ..Default::default()
+                        },
                     )?;
                     self.link_nesting_level += 1;
                     self.process_inline_content(label, 0)?;
@@ -226,7 +244,11 @@ impl Parser<'_> {
                 }
             }
             if pos < content.len() && content[pos] == b']' {
-                let ref_label = if pos > ref_start { &content[ref_start..pos] } else { label };
+                let ref_label = if pos > ref_start {
+                    &content[ref_start..pos]
+                } else {
+                    label
+                };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
                     // PORT NOTE: reshaped for borrowck — clone owned dest/title so the
@@ -249,7 +271,11 @@ impl Parser<'_> {
         // Shortcut reference link: [text] (no following [)
         // Per CommonMark spec, shortcut refs must NOT be followed by [
         // Note: if followed by ( and inline link parsing failed above, still try shortcut
-        let char_after_label: u8 = if label_end + 1 < content.len() { content[label_end + 1] } else { 0 };
+        let char_after_label: u8 = if label_end + 1 < content.len() {
+            content[label_end + 1]
+        } else {
+            0
+        };
         if char_after_label != b'[' {
             if let Some(ref_def) = self.lookup_ref_def(label) {
                 // PORT NOTE: reshaped for borrowck — clone owned dest/title.
@@ -305,7 +331,11 @@ impl Parser<'_> {
             }
         }
         if depth != 0 {
-            return BracketLinkMatch { is_link: false, label_end: 0, link_end: 0 };
+            return BracketLinkMatch {
+                is_link: false,
+                label_end: 0,
+                link_end: 0,
+            };
         }
 
         let label_end = pos;
@@ -315,7 +345,11 @@ impl Parser<'_> {
             // Shortcut reference check
             let inner_label = &content[start + 1..label_end];
             let is_ref = self.lookup_ref_def(inner_label).is_some();
-            return BracketLinkMatch { is_link: is_ref, label_end, link_end: label_end + 1 };
+            return BracketLinkMatch {
+                is_link: is_ref,
+                label_end,
+                link_end: label_end + 1,
+            };
         }
 
         // Inline link: ](...)
@@ -340,7 +374,11 @@ impl Parser<'_> {
                 if p < content.len() && content[p] == b'>' {
                     p += 1;
                 } else {
-                    return BracketLinkMatch { is_link: false, label_end, link_end: label_end + 1 };
+                    return BracketLinkMatch {
+                        is_link: false,
+                        label_end,
+                        link_end: label_end + 1,
+                    };
                 }
             } else {
                 let mut paren_depth: u32 = 0;
@@ -367,7 +405,9 @@ impl Parser<'_> {
                 p += 1;
             }
             // Optional title
-            if p < content.len() && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(') {
+            if p < content.len()
+                && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(')
+            {
                 let close_ch: u8 = if content[p] == b'(' { b')' } else { content[p] };
                 p += 1;
                 while p < content.len() && content[p] != close_ch {
@@ -388,7 +428,11 @@ impl Parser<'_> {
                 p += 1;
             }
             if p < content.len() && content[p] == b')' {
-                return BracketLinkMatch { is_link: true, label_end, link_end: p + 1 };
+                return BracketLinkMatch {
+                    is_link: true,
+                    label_end,
+                    link_end: p + 1,
+                };
             }
         }
 
@@ -412,7 +456,11 @@ impl Parser<'_> {
                     &content[start + 1..label_end]
                 };
                 if self.lookup_ref_def(ref_label).is_some() {
-                    return BracketLinkMatch { is_link: true, label_end, link_end: p + 1 };
+                    return BracketLinkMatch {
+                        is_link: true,
+                        label_end,
+                        link_end: p + 1,
+                    };
                 }
             }
         }
@@ -420,10 +468,18 @@ impl Parser<'_> {
         // Shortcut reference
         let inner_label = &content[start + 1..label_end];
         if self.lookup_ref_def(inner_label).is_some() {
-            return BracketLinkMatch { is_link: true, label_end, link_end: label_end + 1 };
+            return BracketLinkMatch {
+                is_link: true,
+                label_end,
+                link_end: label_end + 1,
+            };
         }
 
-        BracketLinkMatch { is_link: false, label_end, link_end: label_end + 1 }
+        BracketLinkMatch {
+            is_link: false,
+            label_end,
+            link_end: label_end + 1,
+        }
     }
 
     /// Check if a link label contains an inner link construct.
@@ -535,7 +591,10 @@ impl Parser<'_> {
         // Render the wikilink
         self.renderer.enter_span(
             Span::Wikilink,
-            SpanAttrs { href: target, ..Default::default() },
+            SpanAttrs {
+                href: target,
+                ..Default::default()
+            },
         )?;
         self.process_inline_content(label, 0)?;
         self.renderer.leave_span(Span::Wikilink)?;
@@ -557,7 +616,11 @@ impl Parser<'_> {
         } else if is_image {
             self.renderer.enter_span(
                 Span::Img,
-                SpanAttrs { href: dest, title, ..Default::default() },
+                SpanAttrs {
+                    href: dest,
+                    title,
+                    ..Default::default()
+                },
             )?;
             self.image_nesting_level += 1;
             self.process_inline_content(label_content, 0)?;
@@ -566,7 +629,11 @@ impl Parser<'_> {
         } else {
             self.renderer.enter_span(
                 Span::A,
-                SpanAttrs { href: dest, title, ..Default::default() },
+                SpanAttrs {
+                    href: dest,
+                    title,
+                    ..Default::default()
+                },
             )?;
             self.link_nesting_level += 1;
             self.process_inline_content(label_content, 0)?;
@@ -609,7 +676,10 @@ impl Parser<'_> {
                     uri_end += 1;
                 }
                 if uri_end < content.len() && content[uri_end] == b'>' {
-                    return Some(Autolink { end_pos: uri_end + 1, is_email: false });
+                    return Some(Autolink {
+                        end_pos: uri_end + 1,
+                        is_email: false,
+                    });
                 }
             }
 
@@ -661,7 +731,10 @@ impl Parser<'_> {
                     && dot_count > 0
                     && helpers::is_alpha_num(content[email_pos - 1])
                 {
-                    return Some(Autolink { end_pos: email_pos + 1, is_email: true });
+                    return Some(Autolink {
+                        end_pos: email_pos + 1,
+                        is_email: true,
+                    });
                 }
             }
         }
@@ -672,7 +745,12 @@ impl Parser<'_> {
     pub fn render_autolink(&mut self, url: &[u8], is_email: bool) -> crate::types::JsResult<()> {
         self.renderer.enter_span(
             Span::A,
-            SpanAttrs { href: url, autolink: true, autolink_email: is_email, ..Default::default() },
+            SpanAttrs {
+                href: url,
+                autolink: true,
+                autolink_email: is_email,
+                ..Default::default()
+            },
         )?;
         self.emit_text(TextType::Normal, url)?;
         self.renderer.leave_span(Span::A)?;

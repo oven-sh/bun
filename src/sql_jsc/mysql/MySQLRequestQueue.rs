@@ -1,10 +1,10 @@
+use crate::jsc::JSValue;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::JsCell;
 use bun_ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use core::cell::Cell;
 use core::ptr::NonNull;
-use crate::jsc::JSValue;
 
 use crate::mysql::js_mysql_query::JSMySQLQuery;
 // PORT NOTE: Zig re-exports `MySQLConnection` from JSMySQLConnection.zig — the
@@ -94,9 +94,11 @@ impl MySQLRequestQueue {
             item.mark_as_prepared();
         } else if item.is_running() {
             if item.is_pipelined() {
-                self.pipelined_requests.set(self.pipelined_requests.get() - 1);
+                self.pipelined_requests
+                    .set(self.pipelined_requests.get() - 1);
             } else {
-                self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() - 1);
+                self.nonpipelinable_requests
+                    .set(self.nonpipelinable_requests.get() - 1);
             }
         }
     }
@@ -133,8 +135,7 @@ impl MySQLRequestQueue {
         'advance: {
             let mut offset: usize = 0;
 
-            while queue_ref.requests.get().readable_length() > offset
-                && conn_ref.is_able_to_write()
+            while queue_ref.requests.get().readable_length() > offset && conn_ref.is_able_to_write()
             {
                 let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(offset);
                 // Queue holds a ref on every request; pointer is non-null and
@@ -276,13 +277,17 @@ impl MySQLRequestQueue {
             self.is_ready_for_query.set(false);
 
             if req.is_pipelined() {
-                self.pipelined_requests.set(self.pipelined_requests.get() + 1);
+                self.pipelined_requests
+                    .set(self.pipelined_requests.get() + 1);
             } else {
-                self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() + 1);
+                self.nonpipelinable_requests
+                    .set(self.nonpipelinable_requests.get() + 1);
             }
         }
         req.ref_();
-        self.requests.with_mut(|q| q.write_item(request)).expect("OOM");
+        self.requests
+            .with_mut(|q| q.write_item(request))
+            .expect("OOM");
     }
 
     #[inline]

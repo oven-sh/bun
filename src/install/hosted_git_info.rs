@@ -53,13 +53,13 @@ use core::ops::Range;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
+use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
-use bun_url::whatwg::URL as JscUrl;
-use bun_core::{strings, OwnedString};
+use bun_core::{OwnedString, strings};
 use bun_url::PercentEncoding;
-use bstr::BStr;
-use enum_map::{enum_map, Enum, EnumMap};
+use bun_url::whatwg::URL as JscUrl;
+use enum_map::{Enum, EnumMap, enum_map};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
@@ -170,8 +170,8 @@ impl HostedGitInfo {
         let writable = sb.writable();
         // PORT NOTE: Zig `PercentEncoding.decode(Writer, writer, input)` ported via the
         // fixed-buffer `decode_into(out, input) -> Result<u32, _>` overload in bun_url.
-        let decoded_len =
-            PercentEncoding::decode_into(writable, input).map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
+        let decoded_len = PercentEncoding::decode_into(writable, input)
+            .map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
         sb.len += decoded_len;
         Ok(start..start + decoded_len)
     }
@@ -273,9 +273,9 @@ impl HostedGitInfo {
         // `parsed.url` is `OwnedJscUrl`; Drop handles `defer parsed.url.deinit()`.
 
         let host_provider = match parsed.proto {
-            UrlProtocol::WellFormed(p) => {
-                p.host_provider().or_else(|| HostProvider::from_url_domain(&parsed.url))
-            }
+            UrlProtocol::WellFormed(p) => p
+                .host_provider()
+                .or_else(|| HostProvider::from_url_domain(&parsed.url)),
             UrlProtocol::Unknown => HostProvider::from_url_domain(&parsed.url),
             UrlProtocol::Custom(_) => HostProvider::from_url(&parsed.url),
         };
@@ -327,7 +327,11 @@ impl HostedGitInfo {
 
         // Get committish from URL fragment (from-url.js line 92-94)
         let fragment = parsed.url.fragment_identifier().to_owned_slice();
-        let committish: Option<&[u8]> = if !fragment.is_empty() { Some(&fragment) } else { None };
+        let committish: Option<&[u8]> = if !fragment.is_empty() {
+            Some(&fragment)
+        } else {
+            None
+        };
 
         // copy_from will URL-decode user, project, and committish
         Ok(Some(HostedGitInfo::copy_from(
@@ -395,7 +399,10 @@ pub fn parse_url(npa_str: &[u8]) -> Result<ParsedUrl<'_>, ParseUrlError> {
     //                      accepts strings.
     let maybe_url = proto_pair.to_url();
     if let Some(url) = maybe_url {
-        return Ok(ParsedUrl { url, proto: proto_pair.protocol });
+        return Ok(ParsedUrl {
+            url,
+            proto: proto_pair.protocol,
+        });
     }
 
     // Now that may fail, if the URL is not nicely formatted. In that case, we try to correct the
@@ -403,7 +410,10 @@ pub fn parse_url(npa_str: &[u8]) -> Result<ParsedUrl<'_>, ParseUrlError> {
     let corrected = correct_url(&proto_pair)?;
     let corrected_url = corrected.to_url();
     if let Some(url) = corrected_url {
-        return Ok(ParsedUrl { url, proto: corrected.protocol });
+        return Ok(ParsedUrl {
+            url,
+            proto: corrected.protocol,
+        });
     }
 
     // Otherwise, we complain.
@@ -700,9 +710,7 @@ impl<'a> UrlProtocolPair<'a> {
 
         match self.protocol {
             // If we have no protocol, we can assume it is git+ssh.
-            UrlProtocol::Unknown => {
-                Self::concat_parts_to_url(&[b"git+ssh://", self.url_slice()])
-            }
+            UrlProtocol::Unknown => Self::concat_parts_to_url(&[b"git+ssh://", self.url_slice()]),
             UrlProtocol::Custom(proto_str) => {
                 Self::concat_parts_to_url(&[proto_str, b"//", self.url_slice()])
             }
@@ -751,8 +759,11 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     if let Some(url_protocol) = WellDefinedProtocol::from_string_with_colon(proto_slice) {
         // We need to slice off the protocol from the string. Note there are two very annoying
         // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
-        let post_colon =
-            strings::substring(npa_str, Some(usize::try_from(first_colon_idx + 1).expect("int cast")), None);
+        let post_colon = strings::substring(
+            npa_str,
+            Some(usize::try_from(first_colon_idx + 1).expect("int cast")),
+            None,
+        );
 
         return UrlProtocolPair {
             url: UrlProtocolPairUrl::Unmanaged(if post_colon.starts_with(b"//") {
@@ -863,19 +874,21 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
 pub fn correct_url<'a>(
     url_proto_pair: &UrlProtocolPair<'a>,
 ) -> Result<UrlProtocolPair<'a>, AllocError> {
-    let at_idx: isize =
-        if let Some(idx) = strings::last_index_before_char(url_proto_pair.url_slice(), b'@', b'#') {
-            isize::try_from(idx).expect("int cast")
-        } else {
-            -1
-        };
+    let at_idx: isize = if let Some(idx) =
+        strings::last_index_before_char(url_proto_pair.url_slice(), b'@', b'#')
+    {
+        isize::try_from(idx).expect("int cast")
+    } else {
+        -1
+    };
 
-    let col_idx: isize =
-        if let Some(idx) = strings::last_index_before_char(url_proto_pair.url_slice(), b':', b'#') {
-            isize::try_from(idx).expect("int cast")
-        } else {
-            -1
-        };
+    let col_idx: isize = if let Some(idx) =
+        strings::last_index_before_char(url_proto_pair.url_slice(), b':', b'#')
+    {
+        isize::try_from(idx).expect("int cast")
+    } else {
+        -1
+    };
 
     if col_idx > at_idx {
         let mut duped: Box<[u8]> = Box::from(url_proto_pair.url_slice());
@@ -1410,16 +1423,19 @@ pub mod formatters {
     pub mod extract {
         use super::*;
 
-        pub type Type =
-            fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
         pub fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else { return Ok(None); };
-            let Some(project_part) = iter.next() else { return Ok(None); };
+            let Some(user_part) = iter.next() else {
+                return Ok(None);
+            };
+            let Some(project_part) = iter.next() else {
+                return Ok(None);
+            };
             let type_part = iter.next();
             let committish_part = iter.next();
 
@@ -1483,8 +1499,12 @@ pub mod formatters {
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else { return Ok(None); };
-            let Some(project_part) = iter.next() else { return Ok(None); };
+            let Some(user_part) = iter.next() else {
+                return Ok(None);
+            };
+            let Some(project_part) = iter.next() else {
+                return Ok(None);
+            };
             let aux = iter.next();
 
             if let Some(a) = aux {
@@ -1502,8 +1522,11 @@ pub mod formatters {
             let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> =
-                if !fragment.is_empty() { Some(fragment) } else { None };
+            let committish: Option<&[u8]> = if !fragment.is_empty() {
+                Some(fragment)
+            } else {
+                None
+            };
 
             let mut sb = StringBuilder::default();
             sb.count(user_part);
@@ -1588,7 +1611,9 @@ pub mod formatters {
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(mut user_part) = iter.next() else { return Ok(None); };
+            let Some(mut user_part) = iter.next() else {
+                return Ok(None);
+            };
             let mut project_part = iter.next();
             let aux = iter.next();
 
@@ -1604,7 +1629,11 @@ pub mod formatters {
             }
 
             let project = strings::trim_suffix(project_part.unwrap(), b".git");
-            let user: Option<&[u8]> = if !user_part.is_empty() { Some(user_part) } else { None };
+            let user: Option<&[u8]> = if !user_part.is_empty() {
+                Some(user_part)
+            } else {
+                None
+            };
 
             if project.is_empty() {
                 return Ok(None);
@@ -1613,8 +1642,11 @@ pub mod formatters {
             let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> =
-                if !fragment.is_empty() { Some(fragment) } else { None };
+            let committish: Option<&[u8]> = if !fragment.is_empty() {
+                Some(fragment)
+            } else {
+                None
+            };
 
             let mut sb = StringBuilder::default();
             if let Some(u) = user {
@@ -1625,7 +1657,9 @@ pub mod formatters {
                 sb.count(c);
             }
 
-            let Ok(()) = sb.allocate() else { return Ok(None); };
+            let Ok(()) = sb.allocate() else {
+                return Ok(None);
+            };
 
             let user_slice = match user {
                 Some(u) => {
@@ -1662,8 +1696,12 @@ pub mod formatters {
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else { return Ok(None); };
-            let Some(project_part) = iter.next() else { return Ok(None); };
+            let Some(user_part) = iter.next() else {
+                return Ok(None);
+            };
+            let Some(project_part) = iter.next() else {
+                return Ok(None);
+            };
             let aux = iter.next();
 
             if let Some(a) = aux {
@@ -1681,8 +1719,11 @@ pub mod formatters {
             let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> =
-                if !fragment.is_empty() { Some(fragment) } else { None };
+            let committish: Option<&[u8]> = if !fragment.is_empty() {
+                Some(fragment)
+            } else {
+                None
+            };
 
             let mut sb = StringBuilder::default();
             sb.count(user_part);
@@ -1691,7 +1732,9 @@ pub mod formatters {
                 sb.count(c);
             }
 
-            let Ok(()) = sb.allocate() else { return Ok(None); };
+            let Ok(()) = sb.allocate() else {
+                return Ok(None);
+            };
 
             // PORT NOTE: Zig inlines PercentEncoding.decode here instead of calling
             // decodeAndAppend (returns null instead of erroring on decode failure).

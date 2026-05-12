@@ -2,9 +2,9 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-use core::ffi::c_char;
 #[cfg(target_os = "linux")]
 use core::ffi::CStr;
+use core::ffi::c_char;
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_void};
 #[cfg(unix)]
@@ -77,7 +77,10 @@ pub type IoCounters = bun_windows_sys::IO_COUNTERS;
 #[cfg(windows)]
 unsafe extern "system" {
     // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
-    fn GetProcessIoCounters(handle: bun_sys::windows::HANDLE, counters: *mut IoCounters) -> core::ffi::c_int;
+    fn GetProcessIoCounters(
+        handle: bun_sys::windows::HANDLE,
+        counters: *mut IoCounters,
+    ) -> core::ffi::c_int;
 }
 
 #[cfg(windows)]
@@ -114,7 +117,8 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
         // tips the "does not use 100% cpu > install" test (`cpuTime.total <
         // 750_000`) on Windows aarch64. Diverge from spec and convert
         // correctly: `(ticks % 10_000_000) / 10`.
-        let mut temp: u64 = ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
+        let mut temp: u64 =
+            ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
             usage_info.stime.sec = (temp / 10_000_000) as i64;
             usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
@@ -175,38 +179,122 @@ pub trait RusageFields {
 
 #[cfg(unix)]
 impl RusageFields for libc::rusage {
-    #[inline] fn utime_sec(&self) -> i64 { self.ru_utime.tv_sec as i64 }
-    #[inline] fn utime_usec(&self) -> i64 { self.ru_utime.tv_usec as i64 }
-    #[inline] fn stime_sec(&self) -> i64 { self.ru_stime.tv_sec as i64 }
-    #[inline] fn stime_usec(&self) -> i64 { self.ru_stime.tv_usec as i64 }
-    #[inline] fn maxrss_(&self) -> f64 { self.ru_maxrss as f64 }
-    #[inline] fn ixrss_(&self) -> f64 { self.ru_ixrss as f64 }
-    #[inline] fn nswap_(&self) -> f64 { self.ru_nswap as f64 }
-    #[inline] fn inblock_(&self) -> f64 { self.ru_inblock as f64 }
-    #[inline] fn oublock_(&self) -> f64 { self.ru_oublock as f64 }
-    #[inline] fn msgsnd_(&self) -> f64 { self.ru_msgsnd as f64 }
-    #[inline] fn msgrcv_(&self) -> f64 { self.ru_msgrcv as f64 }
-    #[inline] fn nsignals_(&self) -> f64 { self.ru_nsignals as f64 }
-    #[inline] fn nvcsw_(&self) -> f64 { self.ru_nvcsw as f64 }
-    #[inline] fn nivcsw_(&self) -> f64 { self.ru_nivcsw as f64 }
+    #[inline]
+    fn utime_sec(&self) -> i64 {
+        self.ru_utime.tv_sec as i64
+    }
+    #[inline]
+    fn utime_usec(&self) -> i64 {
+        self.ru_utime.tv_usec as i64
+    }
+    #[inline]
+    fn stime_sec(&self) -> i64 {
+        self.ru_stime.tv_sec as i64
+    }
+    #[inline]
+    fn stime_usec(&self) -> i64 {
+        self.ru_stime.tv_usec as i64
+    }
+    #[inline]
+    fn maxrss_(&self) -> f64 {
+        self.ru_maxrss as f64
+    }
+    #[inline]
+    fn ixrss_(&self) -> f64 {
+        self.ru_ixrss as f64
+    }
+    #[inline]
+    fn nswap_(&self) -> f64 {
+        self.ru_nswap as f64
+    }
+    #[inline]
+    fn inblock_(&self) -> f64 {
+        self.ru_inblock as f64
+    }
+    #[inline]
+    fn oublock_(&self) -> f64 {
+        self.ru_oublock as f64
+    }
+    #[inline]
+    fn msgsnd_(&self) -> f64 {
+        self.ru_msgsnd as f64
+    }
+    #[inline]
+    fn msgrcv_(&self) -> f64 {
+        self.ru_msgrcv as f64
+    }
+    #[inline]
+    fn nsignals_(&self) -> f64 {
+        self.ru_nsignals as f64
+    }
+    #[inline]
+    fn nvcsw_(&self) -> f64 {
+        self.ru_nvcsw as f64
+    }
+    #[inline]
+    fn nivcsw_(&self) -> f64 {
+        self.ru_nivcsw as f64
+    }
 }
 
 impl RusageFields for WinRusage {
-    #[inline] fn utime_sec(&self) -> i64 { self.utime.sec }
-    #[inline] fn utime_usec(&self) -> i64 { self.utime.usec }
-    #[inline] fn stime_sec(&self) -> i64 { self.stime.sec }
-    #[inline] fn stime_usec(&self) -> i64 { self.stime.usec }
-    #[inline] fn maxrss_(&self) -> f64 { self.maxrss as f64 }
+    #[inline]
+    fn utime_sec(&self) -> i64 {
+        self.utime.sec
+    }
+    #[inline]
+    fn utime_usec(&self) -> i64 {
+        self.utime.usec
+    }
+    #[inline]
+    fn stime_sec(&self) -> i64 {
+        self.stime.sec
+    }
+    #[inline]
+    fn stime_usec(&self) -> i64 {
+        self.stime.usec
+    }
+    #[inline]
+    fn maxrss_(&self) -> f64 {
+        self.maxrss as f64
+    }
     // Zig declares these as `u0` on Windows — always zero.
-    #[inline] fn ixrss_(&self) -> f64 { 0.0 }
-    #[inline] fn nswap_(&self) -> f64 { 0.0 }
-    #[inline] fn inblock_(&self) -> f64 { self.inblock as f64 }
-    #[inline] fn oublock_(&self) -> f64 { self.oublock as f64 }
-    #[inline] fn msgsnd_(&self) -> f64 { 0.0 }
-    #[inline] fn msgrcv_(&self) -> f64 { 0.0 }
-    #[inline] fn nsignals_(&self) -> f64 { 0.0 }
-    #[inline] fn nvcsw_(&self) -> f64 { 0.0 }
-    #[inline] fn nivcsw_(&self) -> f64 { 0.0 }
+    #[inline]
+    fn ixrss_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn nswap_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn inblock_(&self) -> f64 {
+        self.inblock as f64
+    }
+    #[inline]
+    fn oublock_(&self) -> f64 {
+        self.oublock as f64
+    }
+    #[inline]
+    fn msgsnd_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn msgrcv_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn nsignals_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn nvcsw_(&self) -> f64 {
+        0.0
+    }
+    #[inline]
+    fn nivcsw_(&self) -> f64 {
+        0.0
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -335,11 +423,17 @@ impl PosixStdio {
     // Constructor helpers — keep parity with `WindowsStdio::buffer(*mut Pipe)`
     // so `sync::SyncStdio::to_stdio` can spell both platforms uniformly.
     #[inline]
-    pub fn inherit() -> Self { PosixStdio::Inherit }
+    pub fn inherit() -> Self {
+        PosixStdio::Inherit
+    }
     #[inline]
-    pub fn ignore() -> Self { PosixStdio::Ignore }
+    pub fn ignore() -> Self {
+        PosixStdio::Ignore
+    }
     #[inline]
-    pub fn buffer() -> Self { PosixStdio::Buffer }
+    pub fn buffer() -> Self {
+        PosixStdio::Buffer
+    }
 }
 
 pub struct PosixSpawnResult {
@@ -418,7 +512,10 @@ impl PosixSpawnResult {
     #[cfg(target_os = "linux")]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open));
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENOSYS,
+                bun_sys::Tag::pidfd_open,
+            ));
         }
 
         let pidfd_flags = Self::pidfd_flags_for_linux();
@@ -479,7 +576,10 @@ impl PosixSpawnResult {
 
     #[cfg(not(target_os = "linux"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open))
+        Err(bun_sys::Error::from_code(
+            bun_sys::E::ENOSYS,
+            bun_sys::Tag::pidfd_open,
+        ))
     }
 }
 
@@ -573,8 +673,6 @@ pub fn spawn_process_posix(
     argv: Argv,
     envp: Envp,
 ) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
-    
-
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
@@ -586,7 +684,10 @@ pub fn spawn_process_posix(
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
-    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF as i32, libc::POSIX_SPAWN_SETSIGMASK as i32);
+    let (setsigdef, setsigmask) = (
+        libc::POSIX_SPAWN_SETSIGDEF as i32,
+        libc::POSIX_SPAWN_SETSIGMASK as i32,
+    );
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
     let mut flags: i32 = setsigdef | setsigmask;
@@ -675,7 +776,11 @@ pub fn spawn_process_posix(
     #[cfg_attr(not(target_os = "linux"), allow(unused_labels))]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
-        let flag: u32 = (if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY }) as u32;
+        let flag: u32 = (if i == 0 {
+            bun_sys::O::RDONLY
+        } else {
+            bun_sys::O::WRONLY
+        }) as u32;
 
         match stdio_options[i] {
             PosixStdio::Dup2(dup2) => {
@@ -696,12 +801,7 @@ pub fn spawn_process_posix(
                 actions.inherit(fileno)?;
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
-                actions.open_z(
-                    fileno,
-                    c"/dev/null",
-                    flag | bun_sys::O::CREAT as u32,
-                    0o664,
-                )?;
+                actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
@@ -718,11 +818,11 @@ pub fn spawn_process_posix(
                             _ => c"spawn_stdio_generic",
                         };
 
-                        let fd = match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess)
-                        {
-                            Ok(fd) => fd,
-                            Err(_) => break 'use_memfd,
-                        };
+                        let fd =
+                            match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
+                                Ok(fd) => fd,
+                                Err(_) => break 'use_memfd,
+                            };
 
                         cleanup.to_close_on_error.push(fd);
                         cleanup.to_set_cloexec.push(fd);
@@ -743,7 +843,10 @@ pub fn spawn_process_posix(
                         Ok(p) => p,
                         Err(e) => return Ok(Err(e)),
                     };
-                    break 'brk [pair[if i == 0 { 1 } else { 0 }], pair[if i == 0 { 0 } else { 1 }]];
+                    break 'brk [
+                        pair[if i == 0 { 1 } else { 0 }],
+                        pair[if i == 0 { 0 } else { 1 }],
+                    ];
                 };
 
                 // Note: we intentionally do NOT call shutdown() on the
@@ -834,24 +937,25 @@ pub fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(
+                actions.open_z(fileno, c"/dev/null", bun_sys::O::RDWR as u32, 0o664)?;
+                extra_fds.push(ExtraPipe::Unavailable);
+            }
+            PosixStdio::Path(path) => {
+                actions.open(
                     fileno,
-                    c"/dev/null",
-                    bun_sys::O::RDWR as u32,
+                    path,
+                    (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32,
                     0o664,
                 )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Path(path) => {
-                actions.open(fileno, path, (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32, 0o664)?;
-                extra_fds.push(ExtraPipe::Unavailable);
-            }
             PosixStdio::Ipc | PosixStdio::Buffer => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
-                let fds: [Fd; 2] = match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
-                    Ok(p) => p,
-                    Err(e) => return Ok(Err(e)),
-                };
+                let fds: [Fd; 2] =
+                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
+                        Ok(p) => p,
+                        Err(e) => return Ok(Err(e)),
+                    };
 
                 if !options.sync && !is_ipc {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {

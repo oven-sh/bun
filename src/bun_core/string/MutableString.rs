@@ -1,5 +1,5 @@
+use crate::string::{ZStr, strings};
 use bun_alloc::AllocError;
-use crate::string::{strings, ZStr};
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
 /// `bun_ast::E::String`). Low tier defines the interface; high tier
@@ -176,8 +176,8 @@ impl MutableString {
         }
 
         // TODO(b0): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
-        use crate::string::lexer_tables as js_lexer_tables;
         use crate::string::lexer as js_lexer;
+        use crate::string::lexer_tables as js_lexer_tables;
 
         // Common case: no gap necessary. No allocation necessary.
         needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
@@ -193,8 +193,7 @@ impl MutableString {
         }
 
         if !needs_gap {
-            let remapped =
-                js_lexer_tables::strict_mode_reserved_word_remap(str).unwrap_or(str);
+            let remapped = js_lexer_tables::strict_mode_reserved_word_remap(str).unwrap_or(str);
             return Ok(Box::<[u8]>::from(remapped));
         }
 
@@ -253,8 +252,7 @@ impl MutableString {
 
     pub fn copy(&mut self, str: impl AsRef<[u8]>) -> Result<(), AllocError> {
         let str = str.as_ref();
-        self.list
-            .reserve(str.len().saturating_sub(self.list.len()));
+        self.list.reserve(str.len().saturating_sub(self.list.len()));
 
         if self.list.is_empty() {
             // Zig: list.insertSlice(allocator, 0, str)
@@ -364,7 +362,8 @@ impl MutableString {
     #[inline]
     pub fn append_int(&mut self, int: u64) -> Result<(), AllocError> {
         let mut b = [0u8; 20];
-        self.list.extend_from_slice(crate::fmt::int_as_bytes(&mut b, int));
+        self.list
+            .extend_from_slice(crate::fmt::int_as_bytes(&mut b, int));
         Ok(())
     }
 
@@ -458,7 +457,10 @@ impl MutableString {
         core::array::from_fn(|i| {
             let r = ranges[i];
             let s = &self.list[r.0..r.1];
-            SocketBuffer { iov_base: s.as_ptr(), iov_len: s.len() }
+            SocketBuffer {
+                iov_base: s.as_ptr(),
+                iov_len: s.len(),
+            }
         })
     }
 
@@ -466,7 +468,6 @@ impl MutableString {
         self.list.extend_from_slice(bytes);
         Ok(bytes.len())
     }
-
 }
 
 // Zig: `MutableString.init2048` is the default `Init` fn passed to
@@ -533,10 +534,7 @@ impl<'a> BufferedWriter<'a> {
     /// Write a E.String to the buffer.
     /// This automatically encodes UTF-16 into UTF-8 using
     /// the same code path as TextEncoder
-    pub fn write_string(
-        &mut self,
-        bytes: &mut dyn EStringRef,
-    ) -> Result<usize, AllocError> {
+    pub fn write_string(&mut self, bytes: &mut dyn EStringRef) -> Result<usize, AllocError> {
         // was `&mut bun_ast::E::String`; now vtable dispatch.
         if bytes.is_utf8() {
             return self.write_all(bytes.slice());
@@ -562,7 +560,8 @@ impl<'a> BufferedWriter<'a> {
             // TODO(port): confirm and fix upstream.
             let old = self.context.list.len();
             // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
-            let tail = unsafe { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
+            let tail =
+                unsafe { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
             let decoded = strings::copy_utf16_into_utf8(tail, bytes);
             self.context.list.truncate(old + decoded.written as usize);
             return Ok(pending.len());
@@ -573,10 +572,8 @@ impl<'a> BufferedWriter<'a> {
                 self.flush()?;
             }
             let pos = self.pos;
-            let decoded = strings::copy_utf16_into_utf8(
-                &mut self.buffer[pos..pos + bytes.len() * 2],
-                bytes,
-            );
+            let decoded =
+                strings::copy_utf16_into_utf8(&mut self.buffer[pos..pos + bytes.len() * 2], bytes);
             self.pos += decoded.written as usize;
         }
 

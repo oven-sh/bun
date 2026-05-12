@@ -271,11 +271,7 @@ impl fmt::Display for NameFormatter {
                 if !name.is_empty() {
                     if self.enable_color {
                         if self.is_async {
-                            write!(
-                                f,
-                                Output::pretty_fmt!("<r><b><i>async {}<r>", true),
-                                name,
-                            )?;
+                            write!(f, Output::pretty_fmt!("<r><b><i>async {}<r>", true), name,)?;
                         } else {
                             write!(f, Output::pretty_fmt!("<r><b><i>{}<r>", true), name)?;
                         }

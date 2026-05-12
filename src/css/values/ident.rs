@@ -1,7 +1,7 @@
-use bun_collections::VecExt;
+use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
-use crate::SmallList;
+use bun_collections::VecExt;
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -161,11 +161,13 @@ impl DashedIdentReference {
                 }
                 _ => None,
             };
-            let name = dest
-                .css_module
-                .as_mut()
-                .unwrap()
-                .reference_dashed(bump, ident_v, &self.from, specifier_path, source_index);
+            let name = dest.css_module.as_mut().unwrap().reference_dashed(
+                bump,
+                ident_v,
+                &self.from,
+                specifier_path,
+                source_index,
+            );
             if let Some(name) = name {
                 dest.write_str(b"--")?;
                 return dest.serialize_name(name);
@@ -190,7 +192,7 @@ arena_slice_newtype! {
 // type aliases are unstable in Rust; expose as a free type alias instead.
 // bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
 // hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
- // blocked_on: bun_collections::ArrayHashMap surface
+// blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
@@ -200,7 +202,9 @@ impl DashedIdent {
         if !strings::starts_with(ident, b"--") {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-        Ok(DashedIdent { v: std::ptr::from_ref::<[u8]>(ident) })
+        Ok(DashedIdent {
+            v: std::ptr::from_ref::<[u8]>(ident),
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -218,7 +222,9 @@ arena_slice_newtype! {
 impl Ident {
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
         let ident = input.expect_ident()?;
-        Ok(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
+        Ok(Ident {
+            v: std::ptr::from_ref::<[u8]>(ident),
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -272,9 +278,13 @@ pub type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 #[inline(always)]
 pub fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
     #[cfg(debug_assertions)]
-    { (_raw, _arena) }
+    {
+        (_raw, _arena)
+    }
     #[cfg(not(debug_assertions))]
-    { core::marker::PhantomData }
+    {
+        core::marker::PhantomData
+    }
 }
 
 impl IdentOrRef {
@@ -367,7 +377,8 @@ impl IdentOrRef {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
             // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice = std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
+            let slice =
+                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
             return Some(Ident { v: slice });
         }
         None
@@ -419,8 +430,9 @@ impl IdentOrRef {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
             // TODO(port): verify upstream intent; preserving behavior verbatim.
-            let bytes =
-                unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2) };
+            let bytes = unsafe {
+                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
+            };
             hasher.update(bytes);
         }
     }
@@ -471,7 +483,9 @@ impl CustomIdent {
         if !valid {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-        Ok(CustomIdent { v: std::ptr::from_ref::<[u8]>(ident) })
+        Ok(CustomIdent {
+            v: std::ptr::from_ref::<[u8]>(ident),
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

@@ -4,7 +4,8 @@
 #![allow(unused, non_snake_case, dead_code)]
 #![warn(unused_must_use)]
 
-#[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
+#[path = "LinuxMemFdAllocator.rs"]
+pub mod linux_mem_fd_allocator;
 
 pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 

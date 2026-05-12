@@ -40,7 +40,9 @@ pub struct Timer {
 impl Timer {
     pub fn start() -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
-        Ok(Self { started: std::time::Instant::now() })
+        Ok(Self {
+            started: std::time::Instant::now(),
+        })
     }
 
     pub fn read(&self) -> u64 {

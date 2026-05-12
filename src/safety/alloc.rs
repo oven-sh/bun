@@ -15,7 +15,7 @@
 
 use core::fmt;
 
-use bun_alloc::{basic, NullableAllocator, StdAllocator};
+use bun_alloc::{NullableAllocator, StdAllocator, basic};
 use bun_core::{Output, StoredTrace};
 
 /// Returns true if `alloc` definitely has a valid `.ptr`.
@@ -37,8 +37,16 @@ fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
     if !core::ptr::eq(alloc1.vtable, alloc2.vtable) {
         return true;
     }
-    let ptr1 = if has_ptr(alloc1) { alloc1.ptr } else { return false };
-    let ptr2 = if has_ptr(alloc2) { alloc2.ptr } else { return false };
+    let ptr1 = if has_ptr(alloc1) {
+        alloc1.ptr
+    } else {
+        return false;
+    };
+    let ptr2 = if has_ptr(alloc2) {
+        alloc2.ptr
+    } else {
+        return false;
+    };
     ptr1 != ptr2
 }
 
@@ -76,7 +84,9 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
             "allocator mismatch",
             format_args!(
                 "vtables are both {:p} but pointers differ: {:p} and {:p}",
-                std::ptr::from_ref(alloc1.vtable), ptr1, ptr2,
+                std::ptr::from_ref(alloc1.vtable),
+                ptr1,
+                ptr2,
             ),
         );
     }
@@ -142,7 +152,9 @@ impl CheckedAllocator {
         }
         #[cfg(feature = "ci_assert")]
         {
-            let Some(old_alloc) = self.allocator.get() else { return };
+            let Some(old_alloc) = self.allocator.get() else {
+                return;
+            };
             if !guaranteed_mismatch(old_alloc, alloc) {
                 return;
             }

@@ -67,7 +67,10 @@ pub mod TestingAPIs {
         {
             let err = Error {
                 // @intCast → checked narrowing; target is Error.errno's int type.
-                errno: arguments[0].to_int32().try_into().expect("infallible: size matches"),
+                errno: arguments[0]
+                    .to_int32()
+                    .try_into()
+                    .expect("infallible: size matches"),
                 syscall: bun_sys::Tag::open,
                 from_libuv: true,
                 ..Default::default()
@@ -113,10 +116,7 @@ pub mod TestingAPIs {
     /// correct per-target layout (bionic included), so this is a sanity check
     /// rather than a fix-carrier — the layout bug was Zig-stdlib-specific.
     #[bun_jsc::host_fn]
-    pub fn sigaction_layout(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn sigaction_layout(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(unix))]
         {
             let _ = global;
@@ -124,7 +124,7 @@ pub mod TestingAPIs {
         }
         #[cfg(unix)]
         {
-            use bun_sys::posix::{sigaction, sigset_t, Sigaction};
+            use bun_sys::posix::{Sigaction, sigaction, sigset_t};
             extern "C" fn sentry(_: core::ffi::c_int) {}
             unsafe extern "C" {
                 fn sigemptyset(set: *mut sigset_t) -> core::ffi::c_int;
@@ -168,7 +168,11 @@ pub mod TestingAPIs {
             };
 
             let installed = JSValue::create_empty_object(global, 2);
-            installed.put(global, b"handler", JSValue::js_number(sentry as *const () as usize as f64));
+            installed.put(
+                global,
+                b"handler",
+                JSValue::js_number(sentry as *const () as usize as f64),
+            );
             installed.put(global, b"flags", JSValue::js_number(act_flags as f64));
             let rb = JSValue::create_empty_object(global, 2);
             rb.put(global, b"handler", JSValue::js_number(rb_handler as f64));

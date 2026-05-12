@@ -88,12 +88,8 @@ pub const CODEGEN_PATH: &[u8] = build_options::CODEGEN_PATH;
 
 // TYPE_ONLY: bun_semver::Version moves to bun_core (move-in pass).
 pub const VERSION: crate::Version = build_options::VERSION;
-pub const VERSION_STRING: &str = const_format::formatcp!(
-    "{}.{}.{}",
-    VERSION.major,
-    VERSION.minor,
-    VERSION.patch
-);
+pub const VERSION_STRING: &str =
+    const_format::formatcp!("{}.{}.{}", VERSION.major, VERSION.minor, VERSION.patch);
 #[allow(non_upper_case_globals)]
 pub const version_string: &str = VERSION_STRING;
 

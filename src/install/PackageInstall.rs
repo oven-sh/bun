@@ -1,21 +1,24 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::{Global, Output};
 use bun_core::Progress::Progress;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
+use bun_core::{Global, Output};
+use bun_core::{MutableString, ZStr};
+use bun_paths::strings;
+use bun_paths::{
+    self as path, MAX_PATH_BYTES, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR, WPathBuffer,
+};
 use bun_semver::String as SemverString;
-use bun_paths::strings; use bun_core::{ MutableString, ZStr};
-use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, FdExt, OpenDirOptions};
-use bun_threading::{ThreadPool, WaitGroup};
+use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, OpenDirOptions, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
+use bun_threading::{ThreadPool, WaitGroup};
 
-use crate::{
-    bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution, BuntagHashBuf, Lockfile,
-    Npm, PackageID, PackageManager, Repository, Resolution, TruncatedPackageNameHash,
-};
 use crate::package_installer::NodeModulesFolder;
+use crate::{
+    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
+    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+};
 
 // TODO(port): `std.fs.Dir` is used pervasively here; Zig has a TODO to switch to `bun.FD.Dir`.
 // Phase A maps it to `bun_sys::Dir` (an Fd-backed dir handle). Method names (.close(), .fd,
@@ -190,7 +193,11 @@ pub enum InstallResult {
 impl InstallResult {
     /// Init a Result with the 'fail' tag. use `.Success` for the 'success' tag.
     #[inline]
-    pub fn fail(err: bun_core::Error, step: Step, _trace: Option<&bun_crash_handler::StackTrace>) -> InstallResult {
+    pub fn fail(
+        err: bun_core::Error,
+        step: Step,
+        _trace: Option<&bun_crash_handler::StackTrace>,
+    ) -> InstallResult {
         InstallResult::Failure(Failure {
             err,
             step,
@@ -489,8 +496,9 @@ impl<TaskType> NewTaskQueue<TaskType> {
     {
         self.wait_group.add_one();
         // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
-        self.thread_pool
-            .schedule(Batch::from(unsafe { std::ptr::from_mut::<WorkPoolTask>((*task).task()) }));
+        self.thread_pool.schedule(Batch::from(unsafe {
+            std::ptr::from_mut::<WorkPoolTask>((*task).task())
+        }));
     }
 
     pub fn wait(&self) {
@@ -596,16 +604,17 @@ impl HardLinkWindowsInstallTask {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask { callback: Self::run_from_thread_pool, node: ThreadPoolNode::default() },
+            task: WorkPoolTask {
+                callback: Self::run_from_thread_pool,
+                node: ThreadPoolNode::default(),
+            },
             err: None,
         }))
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, task)
-        };
+        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
@@ -708,9 +717,7 @@ struct UninstallTask {
 impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
-        let uninstall_task: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, task)
-        };
+        let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
         let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
 
@@ -787,9 +794,10 @@ impl<'a> PackageInstall<'a> {
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
-        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(
-            &[self.destination_dir_subpath.as_bytes(), bunhashtag],
-        );
+        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
+            self.destination_dir_subpath.as_bytes(),
+            bunhashtag,
+        ]);
 
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
             return false;
@@ -840,9 +848,9 @@ impl<'a> PackageInstall<'a> {
         );
         // PERF(port): was stack-fallback alloc — profile in Phase B
 
-        let Ok(bun_tag_file) =
-            self.node_modules
-                .read_small_file(root_node_modules_dir, bun_tag_path)
+        let Ok(bun_tag_file) = self
+            .node_modules
+            .read_small_file(root_node_modules_dir, bun_tag_path)
         else {
             return false;
         };
@@ -865,7 +873,10 @@ impl<'a> PackageInstall<'a> {
             }
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {
-                if self.lockfile.is_workspace_tree_id(self.node_modules.tree_id) {
+                if self
+                    .lockfile
+                    .is_workspace_tree_id(self.node_modules.tree_id)
+                {
                     self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag)
                 } else {
                     self.verify_transitive_symlinked_folder(root_node_modules_dir)
@@ -880,7 +891,10 @@ impl<'a> PackageInstall<'a> {
             }
             // TODO(port): borrowck — patch borrowed from self while calling &mut self method.
             // Clone the small Patch fields or restructure.
-            let patch_copy = Patch { path: patch.path.clone(), contents_hash: patch.contents_hash };
+            let patch_copy = Patch {
+                path: patch.path.clone(),
+                contents_hash: patch.contents_hash,
+            };
             return self.verify_patch_hash(&patch_copy, root_node_modules_dir);
         }
         verified
@@ -907,7 +921,9 @@ impl<'a> PackageInstall<'a> {
         let dest_len = self.destination_dir_subpath.len();
         // Zig: `bun.copy(u8, buf[len..], sep_str ++ "package.json")` — write the
         // literal directly into the path buffer; no intermediate Vec.
-        let suffix: &[u8] = &[SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n'];
+        let suffix: &[u8] = &[
+            SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
+        ];
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
         // SAFETY: NUL written above.
@@ -956,12 +972,15 @@ impl<'a> PackageInstall<'a> {
         }
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum = if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
-            // workspaces aren't required to have a version
-            br#"{"name":""}"#.len() + self.package_name.len()
-        } else {
-            br#"{"name":"","version":""}"#.len() + self.package_name.len() + self.package_version.len()
-        };
+        let minimum =
+            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
+                // workspaces aren't required to have a version
+                br#"{"name":""}"#.len() + self.package_name.len()
+            } else {
+                br#"{"name":"","version":""}"#.len()
+                    + self.package_name.len()
+                    + self.package_version.len()
+            };
 
         if total < minimum {
             return None;
@@ -1035,8 +1054,8 @@ impl<'a> PackageInstall<'a> {
         // https://github.com/oven-sh/bun/issues/13563
         let found_version_end =
             strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
-        let expected_version_end =
-            strings::last_index_of_char(self.package_version, b'+').unwrap_or(self.package_version.len());
+        let expected_version_end = strings::last_index_of_char(self.package_version, b'+')
+            .unwrap_or(self.package_version.len());
         // Check if the version matches
         if found_version[..found_version_end] != self.package_version[..expected_version_end] {
             let offset = 'brk: {
@@ -1111,15 +1130,16 @@ impl<'a> PackageInstall<'a> {
                         // two raw `from_raw_mut` reconstructions over the same
                         // buffer (which were UB-adjacent as aliased `&mut`s).
                         let path_ = ZStr::from_buf(&stackpath, path_len);
-                        let basename =
-                            ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
+                        let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         match sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_) {
                             Ok(()) => {}
                             // `get_errno` bounds-checks (SUCCESS for out-of-range errno) — avoids
                             // `from_raw`'s release-mode transmute on an unexpected value.
                             Err(e) => match e.get_errno() {
                                 sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
-                                sys::Errno::EOPNOTSUPP => return Err(bun_core::err!("NotSupported")),
+                                sys::Errno::EOPNOTSUPP => {
+                                    return Err(bun_core::err!("NotSupported"));
+                                }
                                 sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
                                 sys::Errno::EEXIST => {}
@@ -1137,9 +1157,10 @@ impl<'a> PackageInstall<'a> {
             Ok(real_file_count)
         }
 
-        let subdir = match destination_dir
-            .make_open_path(self.destination_dir_subpath.as_bytes(), OpenDirOptions::default())
-        {
+        let subdir = match destination_dir.make_open_path(
+            self.destination_dir_subpath.as_bytes(),
+            OpenDirOptions::default(),
+        ) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
         };
@@ -1155,14 +1176,16 @@ impl<'a> PackageInstall<'a> {
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
-    fn install_with_clonefile(&mut self, destination_dir: Dir) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_clonefile(
+        &mut self,
+        destination_dir: Dir,
+    ) -> Result<InstallResult, bun_core::Error> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
                 let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
-                let subdir =
-                    ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
+                let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
                 let _ = sys::mkdirat(destination_dir.fd(), subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
@@ -1225,9 +1248,18 @@ impl<'a> PackageInstall<'a> {
         // PORT NOTE: `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
         #[cfg(windows)]
         const NODE_MODULES_LIT: &OSPathSlice = &[
-            b'n' as u16, b'o' as u16, b'd' as u16, b'e' as u16, b'_' as u16,
-            b'm' as u16, b'o' as u16, b'd' as u16, b'u' as u16, b'l' as u16,
-            b'e' as u16, b's' as u16,
+            b'n' as u16,
+            b'o' as u16,
+            b'd' as u16,
+            b'e' as u16,
+            b'_' as u16,
+            b'm' as u16,
+            b'o' as u16,
+            b'd' as u16,
+            b'u' as u16,
+            b'l' as u16,
+            b'e' as u16,
+            b's' as u16,
         ];
         #[cfg(not(windows))]
         const NODE_MODULES_LIT: &OSPathSlice = b"node_modules";
@@ -1254,7 +1286,10 @@ impl<'a> PackageInstall<'a> {
         {
             state.subdir = match destbase.make_open_path(
                 destpath.as_bytes(),
-                OpenDirOptions { iterate: true, ..Default::default() },
+                OpenDirOptions {
+                    iterate: true,
+                    ..Default::default()
+                },
             ) {
                 Ok(d) => d,
                 Err(err) => {
@@ -1410,10 +1445,17 @@ impl<'a> PackageInstall<'a> {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
-                                windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
+                                windows::CreateDirectoryExW(
+                                    src.as_ptr(),
+                                    dest.as_ptr(),
+                                    core::ptr::null_mut(),
+                                )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path.as_slice());
+                                let _ = bun_sys::MakePath::make_path_u16(
+                                    destination_dir_,
+                                    entry.path.as_slice(),
+                                );
                             }
                         }
                         EntryKind::File => {
@@ -1422,9 +1464,14 @@ impl<'a> PackageInstall<'a> {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
-                                    let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
+                                    let _ = bun_sys::MakePath::make_path_u16(
+                                        destination_dir_,
+                                        entry_dirname,
+                                    );
                                     // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                                    if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
+                                    if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
+                                        != 0
+                                    {
                                         continue;
                                     }
                                 }
@@ -1438,12 +1485,18 @@ impl<'a> PackageInstall<'a> {
                                     Output::pretty_errorln(format_args!(
                                         "<r><red>{}<r>: copying file {}",
                                         <&'static str>::from(err),
-                                        bun_core::fmt::fmt_os_path(entry.path.as_slice(), Default::default())
+                                        bun_core::fmt::fmt_os_path(
+                                            entry.path.as_slice(),
+                                            Default::default()
+                                        )
                                     ));
                                 } else {
                                     Output::pretty_errorln(format_args!(
                                         "<r><red>error<r> copying file {}",
-                                        bun_core::fmt::fmt_os_path(entry.path.as_slice(), Default::default())
+                                        bun_core::fmt::fmt_os_path(
+                                            entry.path.as_slice(),
+                                            Default::default()
+                                        )
                                     ));
                                 }
 
@@ -1482,10 +1535,9 @@ impl<'a> PackageInstall<'a> {
                     let outfile = match create(entry.path) {
                         Ok(f) => f,
                         Err(_) => 'brk: {
-                            let entry_dirname =
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    entry.path.as_bytes(),
-                                );
+                            let entry_dirname = bun_paths::resolve_path::dirname::<
+                                bun_paths::platform::Auto,
+                            >(entry.path.as_bytes());
                             if !entry_dirname.is_empty() {
                                 let _ = bun_sys::MakePath::make_path::<OSPathChar>(
                                     destination_dir_,
@@ -1503,7 +1555,10 @@ impl<'a> PackageInstall<'a> {
                                     Output::pretty_errorln(format_args!(
                                         "<r><red>{}<r>: copying file {}",
                                         bstr::BStr::new(err.name()),
-                                        bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
+                                        bun_core::fmt::fmt_os_path(
+                                            entry.path.as_bytes(),
+                                            Default::default()
+                                        )
                                     ));
                                     Global::crash();
                                 }
@@ -1514,16 +1569,20 @@ impl<'a> PackageInstall<'a> {
 
                     #[cfg(unix)]
                     {
-                        let Ok(stat) = sys::fstat(in_file) else { continue };
+                        let Ok(stat) = sys::fstat(in_file) else {
+                            continue;
+                        };
                         // `sys::fchmod` is the safe by-value-fd wrapper (kernel
                         // validates the fd; no memory-safety preconditions).
                         // Result intentionally ignored to match Zig's `_ = c.fchmod(...)`.
                         let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
                     }
 
-                    if let Err(err) =
-                        bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    {
+                    if let Err(err) = bun_sys::copy_file::copy_file_with_state(
+                        in_file,
+                        outfile,
+                        &mut copy_file_state,
+                    ) {
                         if let Some(progress) = progress_.as_deref_mut() {
                             progress.root.end();
                             progress.refresh();
@@ -1744,7 +1803,8 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO") {
+                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")
+                    {
                         return Err(err);
                     }
                 }
@@ -1821,8 +1881,7 @@ impl<'a> PackageInstall<'a> {
                                 .copy_from_slice(entry.path.as_bytes());
                             head2[target_len] = 0;
                             // SAFETY: NUL written above.
-                            let target =
-                                ZStr::from_buf(&head2, target_len);
+                            let target = ZStr::from_buf(&head2, target_len);
 
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)
@@ -1869,42 +1928,47 @@ impl<'a> PackageInstall<'a> {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
-                                windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
+                                windows::CreateDirectoryExW(
+                                    src.as_ptr(),
+                                    dest.as_ptr(),
+                                    core::ptr::null_mut(),
+                                )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(destination_dir, entry.path.as_slice());
+                                let _ = bun_sys::MakePath::make_path_u16(
+                                    destination_dir,
+                                    entry.path.as_slice(),
+                                );
                             }
                         }
-                        EntryKind::File => {
-                            match sys::symlink_w(dest, src, Default::default()) {
-                                Err(err) => {
-                                    if let Some(entry_dirname) =
-                                        bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                    {
-                                        let _ = bun_sys::MakePath::make_path_u16(
-                                            destination_dir,
-                                            entry_dirname,
-                                        );
-                                        if sys::symlink_w(dest, src, Default::default()).is_ok() {
-                                            continue;
-                                        }
+                        EntryKind::File => match sys::symlink_w(dest, src, Default::default()) {
+                            Err(err) => {
+                                if let Some(entry_dirname) =
+                                    bun_paths::Dirname::dirname_u16(entry.path.as_slice())
+                                {
+                                    let _ = bun_sys::MakePath::make_path_u16(
+                                        destination_dir,
+                                        entry_dirname,
+                                    );
+                                    if sys::symlink_w(dest, src, Default::default()).is_ok() {
+                                        continue;
                                     }
-
-                                    if PackageManager::verbose_install() {
-                                        bun_core::run_once! {{
-                                            Output::warn(format_args!(
-                                                "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                                                bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
-                                                bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
-                                            ));
-                                        }}
-                                    }
-
-                                    return Err(err.into());
                                 }
-                                Ok(_) => {}
+
+                                if PackageManager::verbose_install() {
+                                    bun_core::run_once! {{
+                                        Output::warn(format_args!(
+                                            "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
+                                            bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
+                                            bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
+                                        ));
+                                    }}
+                                }
+
+                                return Err(err.into());
                             }
-                        }
+                            Ok(_) => {}
+                        },
                         _ => unreachable!(), // handled above
                     }
                 }
@@ -1943,7 +2007,8 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO") {
+                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")
+                    {
                         return Err(err);
                     }
                 }
@@ -2013,7 +2078,10 @@ impl<'a> PackageInstall<'a> {
                 );
                 let task = bun_core::heap::into_raw(Box::new(UninstallTask {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
-                    task: WorkPoolTask { callback: UninstallTask::run, node: ThreadPoolNode::default() },
+                    task: WorkPoolTask {
+                        callback: UninstallTask::run,
+                        node: ThreadPoolNode::default(),
+                    },
                 }));
                 let pm = crate::package_manager::get();
                 // SAFETY: `uninstall_before_install` runs on the install main thread.
@@ -2028,7 +2096,9 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: task is a valid heap allocation; .task is the intrusive node.
                 PackageManager::get()
                     .thread_pool
-                    .schedule(Batch::from(unsafe { core::ptr::addr_of_mut!((*task).task) }));
+                    .schedule(Batch::from(unsafe {
+                        core::ptr::addr_of_mut!((*task).task)
+                    }));
             }
         }
     }
@@ -2067,10 +2137,16 @@ impl<'a> PackageInstall<'a> {
     }
 
     #[cfg(windows)]
-    pub fn is_dangling_windows_bin_link(node_mod_fd: Fd, path: &[u16], temp_buffer: &mut [u8]) -> bool {
+    pub fn is_dangling_windows_bin_link(
+        node_mod_fd: Fd,
+        path: &[u16],
+        temp_buffer: &mut [u8],
+    ) -> bool {
         use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
         let bin_path = 'bin_path: {
-            let Ok(file) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd) else {
+            let Ok(file) =
+                sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd)
+            else {
                 return true;
             };
             let _close = sys::CloseOnDrop::file(&file);
@@ -2106,8 +2182,9 @@ impl<'a> PackageInstall<'a> {
         // component; mirror that with an Option around resolve_path::dirname.
         let dirname_slice =
             path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
-        let subdir: Option<&[u8]> =
-            (!dirname_slice.is_empty() && dirname_slice != dest_path.as_bytes()).then_some(dirname_slice);
+        let subdir: Option<&[u8]> = (!dirname_slice.is_empty()
+            && dirname_slice != dest_path.as_bytes())
+        .then_some(dirname_slice);
 
         let mut dest_buf = PathBuffer::uninit();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
@@ -2149,13 +2226,17 @@ impl<'a> PackageInstall<'a> {
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(err) => return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None),
+                Err(err) => {
+                    return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None);
+                }
             };
             let res = sys::get_fd_path(fd, &mut to_buf);
             fd.close();
             match res {
                 Ok(s) => &*s,
-                Err(err) => return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None),
+                Err(err) => {
+                    return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None);
+                }
             }
         };
         let to_path_len = to_path.len();
@@ -2229,10 +2310,7 @@ impl<'a> PackageInstall<'a> {
                 Err(err_) => 'brk: {
                     let mut err = err_;
                     if err.get_errno() == sys::E::EEXIST {
-                        let _ = sys::rmdirat(
-                            destination_dir.fd(),
-                            self.destination_dir_subpath,
-                        );
+                        let _ = sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath);
                         match sys::symlink_or_junction(dest_z, target_z, None) {
                             Err(e) => err = e,
                             Ok(_) => break 'brk,
@@ -2251,7 +2329,11 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         {
             let dest_dir = if let Some(dir) = subdir {
-                match bun_sys::MakePath::make_open_path(destination_dir, dir, OpenDirOptions::default()) {
+                match bun_sys::MakePath::make_open_path(
+                    destination_dir,
+                    dir,
+                    OpenDirOptions::default(),
+                ) {
                     Ok(d) => d,
                     Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
                 }
@@ -2335,27 +2417,27 @@ impl<'a> PackageInstall<'a> {
                             }
 
                             let subpath_len =
-                                strings::without_trailing_slash(self.cache_dir_subpath.as_bytes()).len();
+                                strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())
+                                    .len();
                             buf[subpath_len] = SEP;
                             // SAFETY: p points into the long-lived cached_package_folder_name_buf;
                             // subpath_len is in bounds (was the prior NUL position).
-                            let _restore = scopeguard::guard(buf.as_mut_ptr(), move |p: *mut u8| unsafe {
-                                *p.add(subpath_len) = 0;
-                            });
+                            let _restore =
+                                scopeguard::guard(buf.as_mut_ptr(), move |p: *mut u8| unsafe {
+                                    *p.add(subpath_len) = 0;
+                                });
                             buf[subpath_len + 1..subpath_len + 1 + b"package.json\0".len()]
                                 .copy_from_slice(b"package.json\0");
                             // SAFETY: NUL written above.
-                            let subpath = ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
+                            let subpath =
+                                ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
                             break 'package_json_exists sys::exists_at(
                                 self.cache_dir.fd(),
                                 subpath,
                             );
                         }
-                        _ => sys::directory_exists_at(
-                            self.cache_dir.fd(),
-                            self.cache_dir_subpath,
-                        )
-                        .unwrap_or(false),
+                        _ => sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
+                            .unwrap_or(false),
                     };
                     if exists {
                         manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
@@ -2366,7 +2448,8 @@ impl<'a> PackageInstall<'a> {
                     .unwrap_or_else(|| {
                         panic!("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")
                     });
-                let cache_dir_subpath_without_patch_hash = &self.cache_dir_subpath.as_bytes()[..idx];
+                let cache_dir_subpath_without_patch_hash =
+                    &self.cache_dir_subpath.as_bytes()[..idx];
                 // PORT NOTE: Zig wrote into the global `bun.path.join_buf` thread-local; use a
                 // stack PathBuffer here instead (same size, no shared state).
                 let mut join_buf = PathBuffer::uninit();
@@ -2374,7 +2457,8 @@ impl<'a> PackageInstall<'a> {
                     .copy_from_slice(cache_dir_subpath_without_patch_hash);
                 join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
                 // SAFETY: NUL written above.
-                let subpath = ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
+                let subpath =
+                    ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
                 let exists =
                     sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
                 if exists {
@@ -2390,8 +2474,8 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists = sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
-            .unwrap_or(false);
+        let exists =
+            sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath).unwrap_or(false);
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
@@ -2417,7 +2501,9 @@ impl<'a> PackageInstall<'a> {
         let mut supported_method_to_use = method_;
 
         if resolution_tag == resolution::Tag::Folder
-            && !self.lockfile.is_workspace_tree_id(self.node_modules.tree_id)
+            && !self
+                .lockfile
+                .is_workspace_tree_id(self.node_modules.tree_id)
         {
             supported_method_to_use = Method::Symlink;
         }

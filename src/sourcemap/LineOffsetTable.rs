@@ -1,8 +1,8 @@
 use core::mem;
 
 use bun_alloc::AllocError;
-use bun_collections::{VecExt, MultiArrayList};
 use bun_ast::Loc;
+use bun_collections::{MultiArrayList, VecExt};
 use bun_core::strings;
 
 /// The source map specification is very loose and does not specify what

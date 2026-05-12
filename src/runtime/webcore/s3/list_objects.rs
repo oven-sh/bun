@@ -4,8 +4,8 @@ use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
+use bun_core::{self as bstr, ZigStringSlice as Utf8Slice, strings};
 use bun_ptr::RawSlice;
-use bun_core::{self as bstr, strings, ZigStringSlice as Utf8Slice};
 
 pub struct S3ListObjectsOptions {
     // Self-referential views: these borrow from the corresponding
@@ -95,8 +95,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
         js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter)?;
         js_result.put_optional_utf8(global_object, b"startAfter", self.start_after)?;
         js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type)?;
-        js_result.put_optional_utf8(global_object, b"continuationToken", self.continuation_token)?;
-        js_result.put_optional_utf8(global_object, b"nextContinuationToken", self.next_continuation_token)?;
+        js_result.put_optional_utf8(
+            global_object,
+            b"continuationToken",
+            self.continuation_token,
+        )?;
+        js_result.put_optional_utf8(
+            global_object,
+            b"nextContinuationToken",
+            self.next_continuation_token,
+        )?;
         js_result.put_optional(global_object, b"isTruncated", self.is_truncated);
         js_result.put_optional(global_object, b"keyCount", self.key_count.map(|n| n as f64));
         js_result.put_optional(global_object, b"maxKeys", self.max_keys.map(|n| n as f64));
@@ -113,20 +121,48 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 );
 
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
-                object_info.put_optional_utf8(global_object, b"checksumAlgorithme", item.checksum_algorithme)?;
-                object_info.put_optional_utf8(global_object, b"checksumType", item.checksum_type)?;
-                object_info.put_optional_utf8(global_object, b"lastModified", item.last_modified)?;
-                object_info.put_optional(global_object, b"size", item.object_size.map(|n| n as f64));
-                object_info.put_optional_utf8(global_object, b"storageClass", item.storage_class)?;
+                object_info.put_optional_utf8(
+                    global_object,
+                    b"checksumAlgorithme",
+                    item.checksum_algorithme,
+                )?;
+                object_info.put_optional_utf8(
+                    global_object,
+                    b"checksumType",
+                    item.checksum_type,
+                )?;
+                object_info.put_optional_utf8(
+                    global_object,
+                    b"lastModified",
+                    item.last_modified,
+                )?;
+                object_info.put_optional(
+                    global_object,
+                    b"size",
+                    item.object_size.map(|n| n as f64),
+                );
+                object_info.put_optional_utf8(
+                    global_object,
+                    b"storageClass",
+                    item.storage_class,
+                )?;
 
                 if let Some(owner) = &item.owner {
                     let js_owner = JSValue::create_empty_object(global_object, 0);
                     js_owner.put_optional_utf8(global_object, b"id", owner.id)?;
-                    js_owner.put_optional_utf8(global_object, b"displayName", owner.display_name)?;
+                    js_owner.put_optional_utf8(
+                        global_object,
+                        b"displayName",
+                        owner.display_name,
+                    )?;
                     object_info.put(global_object, b"owner", js_owner);
                 }
 
-                js_contents.put_index(global_object, u32::try_from(i).expect("int cast"), object_info)?;
+                js_contents.put_index(
+                    global_object,
+                    u32::try_from(i).expect("int cast"),
+                    object_info,
+                )?;
             }
 
             js_result.put(global_object, b"contents", js_contents);
@@ -143,14 +179,14 @@ impl<'a> S3ListObjectsV2Result<'a> {
                     b"prefix",
                     create_utf8_for_js(global_object, prefix)?,
                 );
-                js_common_prefixes.put_index(global_object, u32::try_from(i).expect("int cast"), js_prefix)?;
+                js_common_prefixes.put_index(
+                    global_object,
+                    u32::try_from(i).expect("int cast"),
+                    js_prefix,
+                )?;
             }
 
-            js_result.put(
-                global_object,
-                b"commonPrefixes",
-                js_common_prefixes,
-            );
+            js_result.put(global_object, b"commonPrefixes", js_common_prefixes);
         }
 
         Ok(js_result)
@@ -275,7 +311,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
                                         // std.mem.replacementSize / std.mem.replace
                                         // for "&quot;" → "\""
-                                        let output = strings::replace_owned(input, b"&quot;", b"\"");
+                                        let output =
+                                            strings::replace_owned(input, b"&quot;", b"\"");
                                         if output.len() != input.len() {
                                             etag_owned = Some(output);
                                             etag = None; // sentinel: owned path uses etag_owned
@@ -294,8 +331,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
                                         if let Some(id_start) = strings::index_of(owner, b"<ID>") {
                                             let id_start_pos = id_start + 4;
-                                            if let Some(id_end) =
-                                                strings::index_of(owner, b"</ID>")
+                                            if let Some(id_end) = strings::index_of(owner, b"</ID>")
                                             {
                                                 let is_not_empty = id_start_pos < id_end;
                                                 if is_not_empty {
@@ -547,7 +583,9 @@ pub fn get_list_objects_options_from_js(
         return Ok(list_objects_options);
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)? {
+    if let Some(slice) =
+        get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)?
+    {
         list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
         list_objects_options._continuation_token = Some(slice);
     }
@@ -557,7 +595,8 @@ pub fn get_list_objects_options_from_js(
         list_objects_options._delimiter = Some(slice);
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)? {
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)?
+    {
         list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
         list_objects_options._encoding_type = Some(slice);
     }

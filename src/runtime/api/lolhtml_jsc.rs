@@ -1,8 +1,8 @@
 //! JSC bridge for lol-html `HTMLString`. Keeps `src/lolhtml_sys/` free of JSC types.
 
+use bun_core::{String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_lolhtml_sys::HTMLString;
-use bun_core::{strings, String as BunString};
 
 /// `HTMLString.toString` — port of `lol_html.zig:HTMLString.toString`.
 ///

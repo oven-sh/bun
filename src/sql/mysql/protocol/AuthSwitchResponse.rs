@@ -1,7 +1,7 @@
 // Auth switch response packet
 
-use crate::shared::Data;
 use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::shared::Data;
 
 #[derive(Default)]
 pub struct AuthSwitchResponse {

@@ -1,18 +1,18 @@
 use bstr::BStr;
 
-use bun_core::{err, Global, Output};
-use bun_paths::{platform, resolve_path, AbsPath, PathBuffer};
 use bun_core::strings;
+use bun_core::{Global, Output, err};
+use bun_paths::{AbsPath, PathBuffer, platform, resolve_path};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
 
+use bun_install::Features;
 use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
-use bun_install::lockfile_real::{package::Package, Lockfile};
+use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, attempt_to_create_package_json, global_link_dir_path, options::LogLevel,
-    package_manager_options, setup_global_dir, CommandLineArguments, PackageManager, Subcommand,
+    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
 };
-use bun_install::Features;
 
 use crate::command::ContextData;
 

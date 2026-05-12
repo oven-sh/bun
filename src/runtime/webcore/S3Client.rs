@@ -1,13 +1,13 @@
 use bstr::BStr;
 
-use bun_core::output;
-use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 use crate::node::PathLike;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
-use crate::webcore::s3::client::{ACL, StorageClass, S3Credentials};
+use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
+use bun_core::output;
+use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
 
@@ -84,7 +84,11 @@ impl S3CredentialsExt for S3Credentials {
 
 #[inline]
 fn opt_js(v: JSValue) -> Option<JSValue> {
-    if v.is_empty_or_undefined_or_null() { None } else { Some(v) }
+    if v.is_empty_or_undefined_or_null() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -267,7 +271,12 @@ impl S3Client {
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
         // only to lazily memoize — single-threaded JS event-loop discipline applies.
         let env_creds = crate::webcore::fetch::s3_credentials_from_env(
-            global.bun_vm().as_mut().transpiler.env_mut().get_s3_credentials(),
+            global
+                .bun_vm()
+                .as_mut()
+                .transpiler
+                .env_mut()
+                .get_s3_credentials(),
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
@@ -374,7 +383,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn presign(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn presign(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -390,7 +403,9 @@ impl S3Client {
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!("Expected a path to presign")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected a path to presign"))
+                );
             }
         };
 
@@ -427,8 +442,9 @@ impl S3Client {
                         )
                         .throw());
                 }
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a path to check if it exists")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected a path to check if it exists"
+                )));
             }
         };
         let options = args.next_eat();
@@ -463,8 +479,9 @@ impl S3Client {
                         )
                         .throw());
                 }
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a path to check the size of")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected a path to check the size of"
+                )));
             }
         };
         let options = args.next_eat();
@@ -499,8 +516,9 @@ impl S3Client {
                         )
                         .throw());
                 }
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a path to check the stat of")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected a path to check the stat of"
+                )));
             }
         };
         let options = args.next_eat();
@@ -597,7 +615,10 @@ impl S3Client {
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
-        store.data.as_s3().list_objects(store, global, object_keys, options)
+        store
+            .data
+            .as_s3()
+            .list_objects(store, global, object_keys, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -677,7 +698,10 @@ impl S3Client {
         S3File::stat(global, callframe)
     }
 
-    pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn static_list_objects(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_as_array::<2>();
         let object_keys = args[0];
         let options = opt_js(args[1]);
@@ -685,7 +709,12 @@ impl S3Client {
         // get credentials from env — `Transpiler::env_mut` is the safe accessor
         // for the process-singleton dotenv loader (set during init).
         let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
-            global.bun_vm().as_mut().transpiler.env_mut().get_s3_credentials(),
+            global
+                .bun_vm()
+                .as_mut()
+                .transpiler
+                .env_mut()
+                .get_s3_credentials(),
         );
 
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
@@ -698,7 +727,10 @@ impl S3Client {
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
-        store.data.as_s3().list_objects(store, global, object_keys, options)
+        store
+            .data
+            .as_s3()
+            .list_objects(store, global, object_keys, options)
     }
 }
 

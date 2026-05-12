@@ -11,10 +11,7 @@ impl CopyOutResponse {
     ) -> Result<(), bun_core::Error> {
         let _ = reader;
         let _ = self;
-        bun_core::output::panic(format_args!(
-            "TODO: not implemented {}",
-            "CopyOutResponse",
-        ));
+        bun_core::output::panic(format_args!("TODO: not implemented {}", "CopyOutResponse",));
     }
 }
 

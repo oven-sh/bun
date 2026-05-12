@@ -53,7 +53,10 @@ pub mod npm {
         pub fn default_url_hash() -> u64 {
             use bun_wyhash::Wyhash11;
             // strings.withoutTrailingSlash strips exactly one trailing '/'.
-            Wyhash11::hash(0, &Self::DEFAULT_URL.as_bytes()[..Self::DEFAULT_URL.len() - 1])
+            Wyhash11::hash(
+                0,
+                &Self::DEFAULT_URL.as_bytes()[..Self::DEFAULT_URL.len() - 1],
+            )
         }
     }
 }
@@ -76,8 +79,8 @@ use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
 use bun_ast as ast;
-use bun_core::{strings, String as BunString};
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
+use bun_core::{String as BunString, strings};
 
 // LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
 // Zig called it inline. The bodies are defined `#[no_mangle]` in
@@ -195,9 +198,7 @@ impl PnpmMatcher {
                 let pattern = s.slice(&arena);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,
-                    Err(CreateMatcherError::OutOfMemory) => {
-                        return Err(FromExprError::OutOfMemory)
-                    }
+                    Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
                     Err(CreateMatcherError::InvalidRegExp) => {
                         log.add_error_fmt_opts(
                             format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
@@ -221,14 +222,11 @@ impl PnpmMatcher {
                         let matcher = match create_matcher(pattern, &mut buf) {
                             Ok(m) => m,
                             Err(CreateMatcherError::OutOfMemory) => {
-                                return Err(FromExprError::OutOfMemory)
+                                return Err(FromExprError::OutOfMemory);
                             }
                             Err(CreateMatcherError::InvalidRegExp) => {
                                 log.add_error_fmt_opts(
-                                    format_args!(
-                                        "Invalid regex: {}",
-                                        bstr::BStr::new(pattern)
-                                    ),
+                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
                                     bun_ast::AddErrorOptions {
                                         loc: pattern_expr.loc,
                                         redact_sensitive_information: true,
@@ -364,7 +362,10 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     }
 
     if trimmed == b"*" {
-        return Ok(Matcher { pattern: Pattern::MatchAll, is_exclude });
+        return Ok(Matcher {
+            pattern: Pattern::MatchAll,
+            is_exclude,
+        });
     }
 
     // Writer.Allocating can only fail with OutOfMemory; Vec::push aborts on
@@ -382,7 +383,10 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 
-    Ok(Matcher { pattern: Pattern::Regex(regex), is_exclude })
+    Ok(Matcher {
+        pattern: Pattern::Regex(regex),
+        is_exclude,
+    })
 }
 
 // ported from: src/install/PnpmMatcher.zig

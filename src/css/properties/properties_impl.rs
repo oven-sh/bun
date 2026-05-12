@@ -2,10 +2,10 @@
 
 use crate as css;
 
-use css::css_properties::CustomPropertyName;
-use css::Printer;
 use css::PrintErr;
+use css::Printer;
 use css::VendorPrefix;
+use css::css_properties::CustomPropertyName;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
 use bun_core::strings;
@@ -59,7 +59,10 @@ pub mod property_id_mixin {
         // bitflag field and tests it. `PREFIX_FLAGS` is the same set in the same order;
         // `contains` replaces the `@field` test.
         dest.write_comma_separated(
-            PREFIX_FLAGS.iter().copied().filter(|p| prefix_value.contains(*p)),
+            PREFIX_FLAGS
+                .iter()
+                .copied()
+                .filter(|p| prefix_value.contains(*p)),
             |d, p| {
                 p.to_css(d)?;
                 d.write_str(name)

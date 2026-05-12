@@ -1,28 +1,28 @@
+use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
-use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_core::{self, err, Error, Output};
 use bun_core::strings;
+use bun_core::{self, Error, Output, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
-use bun_ast::import_record::{ImportRecord, Flags as ImportRecordFlags};
+use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
+use crate as js_parser;
 use crate::defines::Define;
 use crate::lexer as js_lexer;
-use bun_ast as js_ast;
-use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
-use bun_ast::g::Decl;
 use crate::p::P;
-use crate as js_parser;
-use bun_ast::{DeclaredSymbol, StmtList};
 use crate::parser::{
     Jest, JsxNone, JsxReact, JsxT, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
     ScanPassResult, SideEffects, WrapMode,
 };
+use bun_ast as js_ast;
+use bun_ast::g::Decl;
+use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
+use bun_ast::{DeclaredSymbol, StmtList};
 
 // Named instantiations of `P<'_, TS, J, SCAN>` matching the Zig
 // `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
@@ -60,7 +60,6 @@ macro_rules! init_p {
         scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
     }};
 }
-
 
 pub struct Parser<'a> {
     pub options: Options<'a>,
@@ -441,7 +440,10 @@ impl<'a> Parser<'a> {
         }
 
         // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
+        let mut opts = ParseStatementOptions {
+            is_module_scope: true,
+            ..Default::default()
+        };
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -452,7 +454,11 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded");
+                    p.log().add_error(
+                        Some(p.source),
+                        p.lexer.loc(),
+                        b"Maximum call stack size exceeded",
+                    );
                     return Ok(());
                 }
                 return Err(e);
@@ -471,9 +477,15 @@ impl<'a> Parser<'a> {
                 // - require("foo")
                 let new_unused = import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
                     || (import_record.kind == bun_ast::ImportKind::Stmt
-                        && !import_record.flags.contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
-                        && !import_record.flags.contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN));
-                import_record.flags.set(ImportRecordFlags::IS_UNUSED, new_unused);
+                        && !import_record
+                            .flags
+                            .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+                        && !import_record
+                            .flags
+                            .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN));
+                import_record
+                    .flags
+                    .set(ImportRecordFlags::IS_UNUSED, new_unused);
             }
 
             // PORT NOTE: `scan_pass.used_symbols`/`import_records` are still
@@ -571,7 +583,8 @@ impl<'a> Parser<'a> {
         // backing storage to an `ArrayList(arena)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
-        p.symbols = bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
+        p.symbols =
+            bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
 
         p.prepare_for_visit_pass()?;
 
@@ -615,7 +628,12 @@ impl<'a> Parser<'a> {
             }
             js_ast::ExportsKind::None
         };
-        Ok(crate::Result::Ast(p.to_ast(&mut parts, exports_kind, WrapMode::None, b"")?))
+        Ok(crate::Result::Ast(p.to_ast(
+            &mut parts,
+            exports_kind,
+            WrapMode::None,
+            b"",
+        )?))
     }
 
     pub fn analyze(
@@ -656,7 +674,10 @@ impl<'a> Parser<'a> {
         let _ = hashbang;
 
         // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
+        let mut opts = ParseStatementOptions {
+            is_module_scope: true,
+            ..Default::default()
+        };
         let mut parse_tracer = bun_core::perf::trace("JSParser.parse");
 
         let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
@@ -724,7 +745,14 @@ impl<'a> Parser<'a> {
         // destructure here and hand the owned `lexer`/`options` straight to
         // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
         // double-free hazard.
-        let Parser { options, lexer, log, source, define, bump } = self;
+        let Parser {
+            options,
+            lexer,
+            log,
+            source,
+            define,
+            bump,
+        } = self;
 
         // `lexer.log` aliases `log`; route through the centralised
         // `Lexer::log()` accessor so this site stays safe.
@@ -779,7 +807,9 @@ impl<'a> Parser<'a> {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
-        if true /* TODO(b2-blocked): feature_flag */ {
+        if true
+        /* TODO(b2-blocked): feature_flag */
+        {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
                 // resolver `fs::Path` (not the logger stub) — inline their
@@ -803,7 +833,10 @@ impl<'a> Parser<'a> {
         }
 
         // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
+        let mut opts = ParseStatementOptions {
+            is_module_scope: true,
+            ..Default::default()
+        };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         // Parsing seems to take around 2x as much time as visiting.
@@ -816,7 +849,11 @@ impl<'a> Parser<'a> {
                 parse_tracer.end();
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded");
+                    p.log().add_error(
+                        Some(p.source),
+                        p.lexer.loc(),
+                        b"Maximum call stack size exceeded",
+                    );
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
                     return Err(err!("SyntaxError"));
@@ -933,8 +970,7 @@ impl<'a> Parser<'a> {
             // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
             // copy, mirroring the Zig `[]ScopeOrder` slice value.
             let arena = p.arena;
-            let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> =
-                BumpVec::new_in(arena);
+            let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
@@ -949,8 +985,7 @@ impl<'a> Parser<'a> {
                         // Map stores `&'a [ScopeOrder]` (Zig `[]ScopeOrder` slice
                         // value); shared borrow may freely alias the inner
                         // re-lookup performed by `append_part → visit_stmts`.
-                        p.scope_order_to_visit =
-                            p.scopes_in_order_for_enum.values()[idx];
+                        p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
@@ -1057,11 +1092,9 @@ impl<'a> Parser<'a> {
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry");
-                        let enum_scope_count =
-                            p.scopes_in_order_for_enum.values()[idx].len();
+                        let enum_scope_count = p.scopes_in_order_for_enum.values()[idx].len();
                         // Advance the shared-slice cursor past this enum's scopes.
-                        p.scope_order_to_visit =
-                            &p.scope_order_to_visit[enum_scope_count..];
+                        p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
@@ -1099,27 +1132,51 @@ impl<'a> Parser<'a> {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
                     bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-                let decls = p.arena.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                let decls = p
+                    .arena
+                    .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
                 if uses_dirname {
                     decls[0] = G::Decl {
-                        binding: p.b(B::Identifier { r#ref: p.dirname_ref }, bun_ast::Loc::EMPTY),
+                        binding: p.b(
+                            B::Identifier {
+                                r#ref: p.dirname_ref,
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
                         value: Some(p.new_expr(
-                            E::String { data: p.source.path.name.dir.into(), ..Default::default() },
+                            E::String {
+                                data: p.source.path.name.dir.into(),
+                                ..Default::default()
+                            },
                             bun_ast::Loc::EMPTY,
                         )),
                     };
                     // PERF(port): was assume_capacity
-                    declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: p.dirname_ref,
+                        is_top_level: true,
+                    });
                 }
                 if uses_filename {
                     decls[uses_dirname as usize] = G::Decl {
-                        binding: p.b(B::Identifier { r#ref: p.filename_ref }, bun_ast::Loc::EMPTY),
+                        binding: p.b(
+                            B::Identifier {
+                                r#ref: p.filename_ref,
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
                         value: Some(p.new_expr(
-                            E::String { data: p.source.path.text.into(), ..Default::default() },
+                            E::String {
+                                data: p.source.path.text.into(),
+                                ..Default::default()
+                            },
                             bun_ast::Loc::EMPTY,
                         )),
                     };
-                    declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: p.filename_ref,
+                        is_top_level: true,
+                    });
                 }
 
                 let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
@@ -1157,7 +1214,10 @@ impl<'a> Parser<'a> {
             if !p.imports_to_convert_from_require.as_slice().is_empty() {
                 let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
                     p.imports_to_convert_from_require.len(),
-                    |_| Stmt { loc: bun_ast::Loc::EMPTY, data: js_ast::StmtData::SEmpty(S::Empty {}) },
+                    |_| Stmt {
+                        loc: bun_ast::Loc::EMPTY,
+                        data: js_ast::StmtData::SEmpty(S::Empty {}),
+                    },
                 );
                 before.reserve(p.imports_to_convert_from_require.len());
 
@@ -1170,7 +1230,10 @@ impl<'a> Parser<'a> {
                     let (ns_ref, ns_loc, import_record_id) = {
                         let deferred_import = &p.imports_to_convert_from_require[i];
                         (
-                            deferred_import.namespace.ref_.expect("infallible: ref bound"),
+                            deferred_import
+                                .namespace
+                                .ref_
+                                .expect("infallible: ref bound"),
                             deferred_import.namespace.loc,
                             deferred_import.import_record_id,
                         )
@@ -1361,8 +1424,9 @@ impl<'a> Parser<'a> {
                                         // Borrow the arena/Vec-backed records as a Vec view
                                         // (matches `P::to_ast`); `p` is dropped immediately
                                         // after this return so no double-ownership.
-                                        import_records:
-                                            unsafe { Vec::from_bump_slice(p.import_records.items_mut()) },
+                                        import_records: unsafe {
+                                            Vec::from_bump_slice(p.import_records.items_mut())
+                                        },
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
@@ -1420,14 +1484,13 @@ impl<'a> Parser<'a> {
                                             js_ast::ExprData::ERequireString(r) => r,
                                             _ => unreachable!(),
                                         };
-                                        p.export_star_import_records
-                                            .push(req.import_record_index);
-                                        let namespace_ref = p
-                                            .imports_to_convert_from_require
-                                            .as_slice()[req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_
-                                            .unwrap();
+                                        p.export_star_import_records.push(req.import_record_index);
+                                        let namespace_ref =
+                                            p.imports_to_convert_from_require.as_slice()
+                                                [req.unwrapped_id as usize]
+                                                .namespace
+                                                .ref_
+                                                .unwrap();
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
@@ -1506,7 +1569,9 @@ impl<'a> Parser<'a> {
             //    export const foo = 123
             //    export * as ns from './foo'
             //
-            if false /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */ {
+            if false
+            /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
+            {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
                 // the semantic difference here is in export default statements
@@ -1529,8 +1594,8 @@ impl<'a> Parser<'a> {
 
                                         export_star = Some(&**star);
                                     }
-                                    js_ast::StmtData::SEmpty(_)
-                                    | js_ast::StmtData::SComment(_) => {}
+                                    js_ast::StmtData::SEmpty(_) | js_ast::StmtData::SComment(_) => {
+                                    }
                                     _ => {
                                         break 'brk None;
                                     }
@@ -1544,8 +1609,9 @@ impl<'a> Parser<'a> {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // See note on the matching arm above re double-ownership.
-                            import_records:
-                                unsafe { Vec::from_bump_slice(p.import_records.items_mut()) },
+                            import_records: unsafe {
+                                Vec::from_bump_slice(p.import_records.items_mut())
+                            },
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),
@@ -1584,7 +1650,9 @@ impl<'a> Parser<'a> {
 
                 let import_record: Option<&ImportRecord> = 'brk: {
                     for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED) {
+                        if import_record.flags.intersects(
+                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                        ) {
                             continue;
                         }
                         if import_record.kind == bun_ast::ImportKind::Stmt {
@@ -1608,7 +1676,9 @@ impl<'a> Parser<'a> {
                             let _ = write!(
                                 &mut v,
                                 "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter { text: record.path.text }
+                                bun_core::fmt::QuotedFormatter {
+                                    text: record.path.text
+                                }
                             );
                             std::borrow::Cow::Owned(v)
                         },
@@ -1617,14 +1687,18 @@ impl<'a> Parser<'a> {
 
                     if uses_module_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(b"This file is CommonJS because 'module' was used"),
+                            text: std::borrow::Cow::Borrowed(
+                                b"This file is CommonJS because 'module' was used",
+                            ),
                             ..Default::default()
                         });
                     }
 
                     if uses_exports_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(b"This file is CommonJS because 'exports' was used"),
+                            text: std::borrow::Cow::Borrowed(
+                                b"This file is CommonJS because 'exports' was used",
+                            ),
                             ..Default::default()
                         });
                     }
@@ -1688,7 +1762,9 @@ impl<'a> Parser<'a> {
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     let uses_any_import_statements = 'brk: {
                         for import_record in p.import_records.items() {
-                            if import_record.flags.intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED) {
+                            if import_record.flags.intersects(
+                                ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                            ) {
                                 continue;
                             }
                             if import_record.kind == bun_ast::ImportKind::Stmt {
@@ -1740,12 +1816,19 @@ impl<'a> Parser<'a> {
             let count = (uses_dirname as usize) + (uses_filename as usize);
             let mut declared_symbols =
                 bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let decls = p.arena.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+            let decls = p
+                .arena
+                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
             if uses_dirname {
                 // var __dirname = import.meta
                 let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                 decls[0] = G::Decl {
-                    binding: p.b(B::Identifier { r#ref: p.dirname_ref }, bun_ast::Loc::EMPTY),
+                    binding: p.b(
+                        B::Identifier {
+                            r#ref: p.dirname_ref,
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"dir".into(),
@@ -1756,13 +1839,21 @@ impl<'a> Parser<'a> {
                         bun_ast::Loc::EMPTY,
                     )),
                 };
-                declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    ref_: p.dirname_ref,
+                    is_top_level: true,
+                });
             }
             if uses_filename {
                 // var __filename = import.meta.path
                 let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                 decls[uses_dirname as usize] = G::Decl {
-                    binding: p.b(B::Identifier { r#ref: p.filename_ref }, bun_ast::Loc::EMPTY),
+                    binding: p.b(
+                        B::Identifier {
+                            r#ref: p.filename_ref,
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"path".into(),
@@ -1773,7 +1864,10 @@ impl<'a> Parser<'a> {
                         bun_ast::Loc::EMPTY,
                     )),
                 };
-                declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    ref_: p.filename_ref,
+                    is_top_level: true,
+                });
             }
 
             let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
@@ -1861,13 +1955,15 @@ impl<'a> Parser<'a> {
                 );
 
                 // Create object binding pattern for destructuring
-                let mut properties =
-                    BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
+                let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
                 for (symbol_name, get_ref) in Jest::FIELDS {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         let key = p.new_expr(
-                            E::String { data: symbol_name.as_bytes().into(), ..Default::default() },
+                            E::String {
+                                data: symbol_name.as_bytes().into(),
+                                ..Default::default()
+                            },
                             bun_ast::Loc::EMPTY,
                         );
                         let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
@@ -1877,19 +1973,34 @@ impl<'a> Parser<'a> {
                             value,
                             default_value: None,
                         });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: r,
+                            is_top_level: true,
+                        });
                     }
                 }
                 let properties = bun_ast::StoreSlice::from_bump(properties);
 
                 // Create: const { test, expect, ... } = require("bun:test")
-                let binding = p.b(B::Object { properties, is_single_line: false }, bun_ast::Loc::EMPTY);
+                let binding = p.b(
+                    B::Object {
+                        properties,
+                        is_single_line: false,
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
                 let value = p.new_expr(
-                    E::RequireString { import_record_index: import_record_id, ..Default::default() },
+                    E::RequireString {
+                        import_record_index: import_record_id,
+                        ..Default::default()
+                    },
                     bun_ast::Loc::EMPTY,
                 );
                 let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl { binding, value: Some(value) });
+                decls.append_assume_capacity(G::Decl {
+                    binding,
+                    value: Some(value),
+                });
 
                 let local_stmt = p.s(
                     S::Local {
@@ -1922,12 +2033,18 @@ impl<'a> Parser<'a> {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
-                            name: js_ast::LocRef { ref_: Some(r), loc: bun_ast::Loc::EMPTY },
+                            name: js_ast::LocRef {
+                                ref_: Some(r),
+                                loc: bun_ast::Loc::EMPTY,
+                            },
                             alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
                             alias_loc: bun_ast::Loc::EMPTY,
                             original_name: js_ast::StoreStr::new(b""),
                         });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: r,
+                            is_top_level: true,
+                        });
                     }
                 }
                 let clauses = bun_ast::StoreSlice::from_bump(clauses);
@@ -2012,10 +2129,8 @@ impl<'a> Parser<'a> {
             // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
             // semantically a no-op vs. the Zig.
-            let import_source: &'a [u8] =
-                p.arena.alloc_slice_copy(p.options.jsx.import_source());
-            let package_name: &'a [u8] =
-                p.arena.alloc_slice_copy(&p.options.jsx.package_name);
+            let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
+            let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
@@ -2052,10 +2167,9 @@ impl<'a> Parser<'a> {
         }
 
         if p.server_components_wrap_ref.is_valid() {
-            let fw = p
-                .options
-                .framework
-                .unwrap_or_else(|| panic!("server components requires a framework configured, but none was set"));
+            let fw = p.options.framework.unwrap_or_else(|| {
+                panic!("server components requires a framework configured, but none was set")
+            });
             let sc = fw.server_components.as_ref().unwrap();
             p.generate_react_refresh_import(
                 &mut before,
@@ -2161,7 +2275,9 @@ impl<'a> Parser<'a> {
         // p.popScope();
 
         #[cfg(not(target_arch = "wasm32"))]
-        if true /* TODO(b2-blocked): feature_flag */ {
+        if true
+        /* TODO(b2-blocked): feature_flag */
+        {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
                     // disable this for:
@@ -2173,7 +2289,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(crate::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
+        Ok(crate::Result::Ast(p.to_ast(
+            &mut parts,
+            exports_kind,
+            wrap_mode,
+            hashbang,
+        )?))
     }
 
     // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)

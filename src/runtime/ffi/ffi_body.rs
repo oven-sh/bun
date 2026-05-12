@@ -9,16 +9,16 @@ use std::sync::{Once, OnceLock};
 
 use bstr::BStr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{env_var, fmt as bun_fmt, zstr, Output, ZBox};
-use bun_jsc::{
-    self as jsc, host_fn, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
-};
 use crate::napi;
-use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::{Output, ZBox, env_var, fmt as bun_fmt, zstr};
+use bun_core::{ZStr, ZigString, strings};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
+    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc, host_fn,
+};
+use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_core::{strings, ZStr, ZigString};
 use bun_sys::{self, Fd};
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
@@ -160,7 +160,7 @@ unsafe extern "C" {
 /// the TCC-JIT'd C trampolines via `add_symbol`. Declared locally while the
 /// `bun_jsc::ffi` module stays gated.
 mod exposed_to_ffi {
-    use super::{c_void, JSGlobalObject, JSValue};
+    use super::{JSGlobalObject, JSValue, c_void};
     unsafe extern "C" {
         #[link_name = "JSC__JSValue__toInt64"]
         pub fn JSVALUE_TO_INT64(value: JSValue) -> i64;
@@ -395,8 +395,14 @@ mod stdarg {
                 state
                     .add_symbols(&[
                         ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
-                        ("__stdoutp", core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>()),
-                        ("__stderrp", core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>()),
+                        (
+                            "__stdoutp",
+                            core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>(),
+                        ),
+                        (
+                            "__stderrp",
+                            core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>(),
+                        ),
                     ])
                     .expect("Failed to add macos symbols");
             }
@@ -564,8 +570,7 @@ impl CompileC {
             if trimmed.is_empty() {
                 return;
             }
-            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
-                .set(bun_core::ZBox::from_bytes(trimmed));
+            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_bytes(trimmed));
         }
         #[cfg(target_os = "linux")]
         {
@@ -576,9 +581,10 @@ impl CompileC {
             #[cfg(target_arch = "x86_64")]
             {
                 if dir_exists(b"/usr/include/x86_64-linux-gnu") {
-                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
-                        bun_core::ZBox::from_vec_with_nul(b"/usr/include/x86_64-linux-gnu".to_vec()),
-                    );
+                    let _ =
+                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
+                            b"/usr/include/x86_64-linux-gnu".to_vec(),
+                        ));
                 } else if dir_exists(b"/usr/include") {
                     let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
                         .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
@@ -596,9 +602,10 @@ impl CompileC {
             #[cfg(target_arch = "aarch64")]
             {
                 if dir_exists(b"/usr/include/aarch64-linux-gnu") {
-                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
-                        bun_core::ZBox::from_vec_with_nul(b"/usr/include/aarch64-linux-gnu".to_vec()),
-                    );
+                    let _ =
+                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
+                            b"/usr/include/aarch64-linux-gnu".to_vec(),
+                        ));
                 } else if dir_exists(b"/usr/include") {
                     let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
                         .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
@@ -659,7 +666,7 @@ impl CompileC {
         }) {
             Ok(s) => s,
             Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(bun_core::err!("OutOfMemory"))
+                return Err(bun_core::err!("OutOfMemory"));
             }
             Err(_) => {
                 debug_assert!(self.has_deferred_errors());
@@ -692,7 +699,9 @@ impl CompileC {
                     if !sdkroot.is_empty() {
                         let include_dir = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
-                        >(sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]);
+                        >(
+                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]
+                        );
                         if state.add_sys_include_path(include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(bun_core::err!("JSError"));
@@ -700,7 +709,9 @@ impl CompileC {
 
                         let lib_dir = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
-                        >(sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]);
+                        >(
+                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]
+                        );
                         if state.add_library_path(lib_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add library path"));
                             return Err(bun_core::err!("JSError"));
@@ -723,10 +734,7 @@ impl CompileC {
                 }
 
                 if dir_exists(b"/opt/homebrew/lib") {
-                    if state
-                        .add_library_path(zstr!("/opt/homebrew/lib"))
-                        .is_err()
-                    {
+                    if state.add_library_path(zstr!("/opt/homebrew/lib")).is_err() {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
@@ -759,10 +767,7 @@ impl CompileC {
             }
 
             if dir_exists(b"/usr/local/lib") {
-                if state
-                    .add_library_path(zstr!("/usr/local/lib"))
-                    .is_err()
-                {
+                if state.add_library_path(zstr!("/usr/local/lib")).is_err() {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
                 }
             }
@@ -801,7 +806,8 @@ impl CompileC {
             }
         }
 
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for include_dir in self.include_dirs.items.iter() {
             if state.add_sys_include_path(include_dir).is_err() {
@@ -810,11 +816,13 @@ impl CompileC {
             }
         }
 
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         CompilerRT::define(state);
 
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for symbol in self.symbols.map.values() {
             if symbol.needs_napi_env() {
@@ -830,13 +838,11 @@ impl CompileC {
 
         for define in self.define.iter() {
             state.define_symbol(&define[0], &define[1]);
-            self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+            self.error_check()
+                .map_err(|_| bun_core::err!("DeferredErrors"))?;
         }
 
-        if let Err(_) = self
-            .source
-            .add(state, &mut self.current_file_for_errors)
-        {
+        if let Err(_) = self.source.add(state, &mut self.current_file_for_errors) {
             if !self.deferred_errors.is_empty() {
                 return Err(bun_core::err!("DeferredErrors"));
             } else {
@@ -850,7 +856,8 @@ impl CompileC {
         CompilerRT::inject(state);
         stdarg::inject(state);
 
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for library_dir in self.library_dirs.items.iter() {
             // register all, even if some fail. Only fail after all have been registered.
@@ -858,19 +865,22 @@ impl CompileC {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
             }
         }
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for library in self.libraries.items.iter() {
             // register all, even if some fail.
             let _ = state.add_library(library);
         }
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         // TinyCC now manages relocation memory internally
         if dangerously_run_without_jit_protections(|| state.relocate()).is_err() {
             if !self.has_deferred_errors() {
-                self.deferred_errors
-                    .push(Box::<[u8]>::from(&b"tcc_relocate returned a negative value"[..]));
+                self.deferred_errors.push(Box::<[u8]>::from(
+                    &b"tcc_relocate returned a negative value"[..],
+                ));
             }
             return Err(bun_core::err!("DeferredErrors"));
         }
@@ -896,7 +906,8 @@ impl CompileC {
             entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr().cast::<c_void>());
         }
 
-        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
+        self.error_check()
+            .map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         Ok(state_ptr)
     }
@@ -1017,7 +1028,8 @@ impl FFI {
         let symbols_object: JSValue = object
             .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
-        if !global_this.has_exception() && (symbols_object.is_empty() || !symbols_object.is_object())
+        if !global_this.has_exception()
+            && (symbols_object.is_empty() || !symbols_object.is_object())
         {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"symbols",
@@ -1031,11 +1043,9 @@ impl FFI {
         }
 
         // SAFETY: already checked that symbols_object is an object
-        if let Some(val) = generate_symbols(
-            global_this,
-            &mut compile_c.symbols.map,
-            unsafe { &*symbols_object.get_object().unwrap() },
-        )? {
+        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
+            &*symbols_object.get_object().unwrap()
+        })? {
             if !val.is_empty() && !global_this.has_exception() {
                 return Err(global_this.throw_value(val));
             }
@@ -1046,7 +1056,9 @@ impl FFI {
             return Err(global_this.throw(format_args!("Expected at least one exported symbol")));
         }
 
-        if let Some(library_value) = object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))? {
+        if let Some(library_value) =
+            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
+        {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
 
@@ -1140,7 +1152,9 @@ impl FFI {
             return Err(JsError::Thrown);
         }
 
-        if let Some(source_value) = object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))? {
+        if let Some(source_value) =
+            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
+        {
             if source_value.is_array() {
                 compile_c.source = Source::Files(Vec::new());
                 let mut iter = source_value.array_iterator(global_this)?;
@@ -1195,9 +1209,7 @@ impl FFI {
                         write!(&mut combined, "{}\n", BStr::new(deferred_error)).ok();
                     }
 
-                    return Err(
-                        global_this.throw(format_args!("{}", BStr::new(&combined)))
-                    );
+                    return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
                 } else if err == bun_core::err!("JSError") {
                     return Err(JsError::Thrown);
                 } else if err == bun_core::err!("OutOfMemory") {
@@ -1304,7 +1316,9 @@ impl FFI {
         let func = &mut function;
 
         if let Some(val) = generate_symbol_for_function(global_this, interface, func)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global_this)))
+            .unwrap_or_else(|_| {
+                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
+            })
         {
             return Ok(val);
         }
@@ -1324,12 +1338,10 @@ impl FFI {
                 let message = ZigString::init(msg).to_error_instance(global_this);
                 Ok(message)
             }
-            Step::Pending => {
-                Ok(ZigString::init(
-                    b"Failed to compile, but not sure why. Please report this bug",
-                )
-                .to_error_instance(global_this))
-            }
+            Step::Pending => Ok(ZigString::init(
+                b"Failed to compile, but not sure why. Please report this bug",
+            )
+            .to_error_instance(global_this)),
             Step::Compiled(_) => {
                 let function_ = bun_core::heap::into_raw(Box::new(core::mem::take(func)));
                 // SAFETY: function_ is a valid heap::alloc pointer
@@ -1346,11 +1358,7 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(
-        &self,
-        _global_this: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
         if self.closed.get() {
             return Ok(JSValue::UNDEFINED);
@@ -1430,9 +1438,7 @@ impl FFI {
             let mut arraylist: Vec<u8> = Vec::new();
             if function.print_source_code(&mut arraylist).is_err() {
                 // an error while generating source code
-                return Ok(
-                    ZigString::init(b"Error while printing code").to_error_instance(global)
-                );
+                return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
             // PERF(port): was appendAssumeCapacity
@@ -1504,8 +1510,8 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, unsafe { &*object }).unwrap_or(Some(JSValue::ZERO))
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
+            .unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             return val;
@@ -1562,8 +1568,7 @@ impl FFI {
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
         for function in symbols.values_mut() {
-            let function_name =
-                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
             // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
@@ -1653,8 +1658,8 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, unsafe { &*object }).unwrap_or(Some(JSValue::ZERO))
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
+            .unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             return val;
@@ -1670,8 +1675,7 @@ impl FFI {
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
         for function in symbols.values_mut() {
-            let function_name =
-                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
 
             if function.symbol_from_dynamic_library.is_none() {
                 let ret = global.to_invalid_arguments(format_args!(
@@ -1827,8 +1831,7 @@ pub fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            ZigString::static_(b"Cannot return napi_env to JavaScript")
-                .to_error_instance(global),
+            ZigString::static_(b"Cannot return napi_env to JavaScript").to_error_instance(global),
         ));
     }
 
@@ -1843,8 +1846,7 @@ pub fn generate_symbol_for_function(
 
     if function.threadsafe && return_type != ABIType::Void {
         return Ok(Some(
-            ZigString::static_(b"Threadsafe functions must return void")
-                .to_error_instance(global),
+            ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));
     }
 
@@ -2072,7 +2074,10 @@ impl Function {
 
         if let Some(env) = napi_env {
             if state
-                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), std::ptr::from_ref(env).cast::<c_void>())
+                .add_symbol(
+                    zstr!("Bun__thisFFIModuleNapiEnv"),
+                    std::ptr::from_ref(env).cast::<c_void>(),
+                )
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2140,7 +2145,9 @@ impl Function {
             // SAFETY: best-effort debug write; failures are swallowed
             unsafe {
                 let fd = libc::open(
-                    b"/tmp/bun-ffi-callback-source.c\0".as_ptr().cast::<c_char>(),
+                    b"/tmp/bun-ffi-callback-source.c\0"
+                        .as_ptr()
+                        .cast::<c_char>(),
                     libc::O_CREAT | libc::O_WRONLY,
                     0o644,
                 );
@@ -2171,7 +2178,7 @@ impl Function {
         }) {
             Ok(s) => s,
             Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(bun_core::err!("TCCMissing"))
+                return Err(bun_core::err!("TCCMissing"));
             }
             // 1. .Memory is always a valid option, so InvalidOptions is
             //    impossible
@@ -2234,7 +2241,10 @@ impl Function {
                 _ => FFI_Callback_call as *const c_void,
             }
         };
-        if state.add_symbol(zstr!("FFI_Callback_call"), callback_sym).is_err() {
+        if state
+            .add_symbol(zstr!("FFI_Callback_call"), callback_sym)
+            .is_err()
+        {
             self.fail(b"Failed to add FFI callback symbol");
             return Ok(());
         }
@@ -2404,7 +2414,11 @@ impl Function {
         writer.write_all(b"return ")?;
 
         if self.return_type != ABIType::Void {
-            write!(writer, "{}.asZigRepr", self.return_type.to_js(b"return_value"))?;
+            write!(
+                writer,
+                "{}.asZigRepr",
+                self.return_type.to_js(b"return_value")
+            )?;
         } else {
             writer.write_all(b"ValueUndefined.asZigRepr")?;
         }
@@ -2475,13 +2489,22 @@ impl Function {
 
         if !self.arg_types.is_empty() {
             let mut arg_buf = [0u8; 512];
-            write!(writer, " ZIG_REPR_TYPE arguments[{}];\n", self.arg_types.len())?;
+            write!(
+                writer,
+                " ZIG_REPR_TYPE arguments[{}];\n",
+                self.arg_types.len()
+            )?;
 
             arg_buf[0..3].copy_from_slice(b"arg");
             for (i, arg) in self.arg_types.iter().enumerate() {
                 let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
-                write!(writer, "arguments[{}] = {}.asZigRepr;\n", i, arg.to_js(arg_name))?;
+                write!(
+                    writer,
+                    "arguments[{}] = {}.asZigRepr;\n",
+                    i,
+                    arg.to_js(arg_name)
+                )?;
             }
         }
 
@@ -2592,7 +2615,7 @@ impl Step {
 }
 
 // ─── ABIType ────────────────────────────────────────────────────────────────
-use super::abi_type::{ABIType, ABI_TYPE_LABEL, EnumMapFormatter, ToCFormatter, ToJSFormatter};
+use super::abi_type::{ABI_TYPE_LABEL, ABIType, EnumMapFormatter, ToCFormatter, ToJSFormatter};
 
 // ─── CompilerRT ─────────────────────────────────────────────────────────────
 
@@ -2682,10 +2705,7 @@ impl CompilerRT {
             // by `include_bytes!` + the explicit length math below.
             const LIBTCC1: &[u8] = include_bytes!("libtcc1.c");
             let libtcc1_z = ZBox::from_bytes(LIBTCC1);
-            if state
-                .compile_string(&libtcc1_z)
-                .is_err()
-            {
+            if state.compile_string(&libtcc1_z).is_err() {
                 if cfg!(debug_assertions) {
                     panic!("Failed to compile libtcc1.c");
                 }
@@ -2708,7 +2728,10 @@ impl CompilerRT {
                 "JSArrayBufferView__offsetOfVector",
                 offsets.js_array_buffer_view_offset_of_vector as i64,
             ),
-            ("JSCell__offsetOfType", offsets.js_cell_offset_of_type as i64),
+            (
+                "JSCell__offsetOfType",
+                offsets.js_cell_offset_of_type as i64,
+            ),
             (
                 "JSTypeArrayBufferViewMin",
                 jsc::JSType::MIN_TYPED_ARRAY.0 as i64,
@@ -2751,16 +2774,28 @@ impl CompilerRT {
             .expect("unreachable");
 
         state
-            .add_symbol(zstr!("JSVALUE_TO_INT64_SLOW"), WORKAROUND.jsvalue_to_int64 as *const c_void)
+            .add_symbol(
+                zstr!("JSVALUE_TO_INT64_SLOW"),
+                WORKAROUND.jsvalue_to_int64 as *const c_void,
+            )
             .expect("unreachable");
         state
-            .add_symbol(zstr!("JSVALUE_TO_UINT64_SLOW"), WORKAROUND.jsvalue_to_uint64 as *const c_void)
+            .add_symbol(
+                zstr!("JSVALUE_TO_UINT64_SLOW"),
+                WORKAROUND.jsvalue_to_uint64 as *const c_void,
+            )
             .expect("unreachable");
         state
-            .add_symbol(zstr!("INT64_TO_JSVALUE_SLOW"), WORKAROUND.int64_to_jsvalue as *const c_void)
+            .add_symbol(
+                zstr!("INT64_TO_JSVALUE_SLOW"),
+                WORKAROUND.int64_to_jsvalue as *const c_void,
+            )
             .expect("unreachable");
         state
-            .add_symbol(zstr!("UINT64_TO_JSVALUE_SLOW"), WORKAROUND.uint64_to_jsvalue as *const c_void)
+            .add_symbol(
+                zstr!("UINT64_TO_JSVALUE_SLOW"),
+                WORKAROUND.uint64_to_jsvalue as *const c_void,
+            )
             .expect("unreachable");
     }
 }

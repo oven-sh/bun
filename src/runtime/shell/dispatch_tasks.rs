@@ -114,7 +114,10 @@ impl ShellCondExprStatTask {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
-            interp, owned.task.cond, &owned.task.stat, &owned.task.path,
+            interp,
+            owned.task.cond,
+            &owned.task.stat,
+            &owned.task.path,
         );
     }
 }

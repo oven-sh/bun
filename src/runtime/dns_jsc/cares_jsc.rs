@@ -2,12 +2,14 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
-use core::ffi::{c_int, CStr};
+use core::ffi::{CStr, c_int};
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError};
 use bun_core::{self as bstr, strings};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
+};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
@@ -32,10 +34,7 @@ pub fn hostent_to_js_response(
         }
         // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
         let name = unsafe { bun_core::ffi::cstr(this.h_name) }.to_bytes();
-        return bun_string_jsc::to_js_array(
-            global_this,
-            &[bstr::String::borrow_utf8(name)],
-        );
+        return bun_string_jsc::to_js_array(global_this, &[bstr::String::borrow_utf8(name)]);
     }
 
     if this.h_aliases.is_null() {
@@ -59,11 +58,7 @@ pub fn hostent_to_js_response(
         }
         // SAFETY: alias is a non-null NUL-terminated C string from c-ares.
         let alias_slice = unsafe { bun_core::ffi::cstr(alias) }.to_bytes();
-        array.put_index(
-            global_this,
-            count,
-            utf8_to_js(global_this, alias_slice)?,
-        )?;
+        array.put_index(global_this, count, utf8_to_js(global_this, alias_slice)?)?;
         count += 1;
     }
 
@@ -138,7 +133,11 @@ pub fn hostent_with_ttls_to_js_response(
             result_object.put(
                 global_this,
                 b"ttl",
-                if let Some(val) = ttl { JSValue::js_number(val as f64) } else { JSValue::UNDEFINED },
+                if let Some(val) = ttl {
+                    JSValue::js_number(val as f64)
+                } else {
+                    JSValue::UNDEFINED
+                },
             );
             array.put_index(global_this, count, result_object)?;
             count += 1;
@@ -187,7 +186,8 @@ pub fn addr_info_to_js_array(
         return JSValue::create_empty_array(global_this, 0);
     }
     // SAFETY: node is non-null (checked above); c-ares owns the linked list.
-    let array = JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
+    let array =
+        JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
 
     {
         let mut j: u32 = 0;
@@ -298,7 +298,11 @@ pub fn caa_reply_to_js(
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
 
-    obj.put(global_this, b"critical", JSValue::js_number(this.critical as f64));
+    obj.put(
+        global_this,
+        b"critical",
+        JSValue::js_number(this.critical as f64),
+    );
 
     let property = this.property_bytes();
     let value = this.value_bytes();
@@ -322,8 +326,16 @@ pub fn srv_reply_to_js(
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);
 
-    obj.put(global_this, b"priority", JSValue::js_number(this.priority as f64));
-    obj.put(global_this, b"weight", JSValue::js_number(this.weight as f64));
+    obj.put(
+        global_this,
+        b"priority",
+        JSValue::js_number(this.priority as f64),
+    );
+    obj.put(
+        global_this,
+        b"weight",
+        JSValue::js_number(this.weight as f64),
+    );
     obj.put(global_this, b"port", JSValue::js_number(this.port as f64));
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
@@ -347,7 +359,11 @@ pub fn mx_reply_to_js(
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
-    obj.put(global_this, b"priority", JSValue::js_number(this.priority as f64));
+    obj.put(
+        global_this,
+        b"priority",
+        JSValue::js_number(this.priority as f64),
+    );
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
     let host = unsafe { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
@@ -380,9 +396,8 @@ pub fn txt_reply_to_js_for_any(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array = cares_list_to_js_array(this, global_this, |node, g| {
-        utf8_to_js(g, node.txt_bytes())
-    })?;
+    let array =
+        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
     // PORT NOTE: Zig used `JSObject.create(.{ .entries = array }, global)`. No
     // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
     let obj = JSValue::create_empty_object(global_this, 1);
@@ -405,7 +420,11 @@ pub fn naptr_reply_to_js(
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 6);
 
-    obj.put(global_this, b"preference", JSValue::js_number(this.preference as f64));
+    obj.put(
+        global_this,
+        b"preference",
+        JSValue::js_number(this.preference as f64),
+    );
     obj.put(global_this, b"order", JSValue::js_number(this.order as f64));
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
@@ -422,7 +441,11 @@ pub fn naptr_reply_to_js(
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
     let replacement = unsafe { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
-    obj.put(global_this, b"replacement", utf8_to_js(global_this, replacement)?);
+    obj.put(
+        global_this,
+        b"replacement",
+        utf8_to_js(global_this, replacement)?,
+    );
 
     Ok(obj)
 }
@@ -443,11 +466,27 @@ pub fn soa_reply_to_js(
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 7);
 
-    obj.put(global_this, b"serial", JSValue::js_number(this.serial as f64));
-    obj.put(global_this, b"refresh", JSValue::js_number(this.refresh as f64));
+    obj.put(
+        global_this,
+        b"serial",
+        JSValue::js_number(this.serial as f64),
+    );
+    obj.put(
+        global_this,
+        b"refresh",
+        JSValue::js_number(this.refresh as f64),
+    );
     obj.put(global_this, b"retry", JSValue::js_number(this.retry as f64));
-    obj.put(global_this, b"expire", JSValue::js_number(this.expire as f64));
-    obj.put(global_this, b"minttl", JSValue::js_number(this.minttl as f64));
+    obj.put(
+        global_this,
+        b"expire",
+        JSValue::js_number(this.expire as f64),
+    );
+    obj.put(
+        global_this,
+        b"minttl",
+        JSValue::js_number(this.minttl as f64),
+    );
 
     // SAFETY: nsname is a non-null NUL-terminated C string from c-ares.
     let nsname = unsafe { bun_core::ffi::cstr(this.nsname.cast()) }.to_bytes();
@@ -455,7 +494,11 @@ pub fn soa_reply_to_js(
 
     // SAFETY: hostmaster is a non-null NUL-terminated C string from c-ares.
     let hostmaster = unsafe { bun_core::ffi::cstr(this.hostmaster.cast()) }.to_bytes();
-    obj.put(global_this, b"hostmaster", utf8_to_js(global_this, hostmaster)?);
+    obj.put(
+        global_this,
+        b"hostmaster",
+        utf8_to_js(global_this, hostmaster)?,
+    );
 
     Ok(obj)
 }
@@ -495,7 +538,11 @@ fn any_reply_append(
         *dst = src.to_ascii_uppercase();
     }
 
-    transformed.put(global_this, b"type", bstr::String::ascii(upper).to_js(global_this)?);
+    transformed.put(
+        global_this,
+        b"type",
+        bstr::String::ascii(upper).to_js(global_this)?,
+    );
     array.put_index(global_this, *i, transformed)?;
     *i += 1;
     Ok(())
@@ -565,32 +612,38 @@ pub fn any_reply_to_js(
         // SAFETY: non-null c-ares-owned linked list head.
         // PORT NOTE: txt is the only reply type whose Zig struct defines `toJSForAny`, so
         // `anyReplyAppendAll`'s `@hasDecl(.., "toJSForAny")` branch dispatched to it.
-        let response = txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
+        let response =
+            txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
     }
     if !this.srv_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        let response = srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
+        let response =
+            srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
         any_reply_append_all(global_this, array, &mut i, response, b"srv")?;
     }
     if !this.ptr_reply.is_null() {
         // SAFETY: non-null c-ares-owned hostent.
-        let response = hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
+        let response =
+            hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ptr")?;
     }
     if !this.naptr_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        let response = naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
+        let response =
+            naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"naptr")?;
     }
     if !this.soa_reply.is_null() {
         // SAFETY: non-null c-ares-owned soa reply.
-        let response = soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
+        let response =
+            soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"soa")?;
     }
     if !this.caa_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        let response = caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
+        let response =
+            caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
     }
 
@@ -612,7 +665,12 @@ impl ErrorDeferred {
         hostname: Option<bstr::String>,
         promise: bun_jsc::JSPromiseStrong,
     ) -> Box<ErrorDeferred> {
-        Box::new(ErrorDeferred { errno, syscall, hostname, promise })
+        Box::new(ErrorDeferred {
+            errno,
+            syscall,
+            hostname,
+            promise,
+        })
     }
 
     pub fn reject(mut self: Box<Self>, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -641,8 +699,13 @@ impl ErrorDeferred {
             ..Default::default()
         };
 
-        let instance = system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
-        instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
+        let instance =
+            system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
+        instance.put(
+            global_this,
+            b"name",
+            bstr::String::static_(b"DNSException").to_js(global_this)?,
+        );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit — matches
         // Zig's `defer this.deinit()`; hostname was `take()`n above to avoid double-deref.
@@ -675,8 +738,13 @@ impl ErrorDeferred {
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
-        global_this.bun_vm().as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(context, Context::callback));
+        global_this
+            .bun_vm()
+            .as_mut()
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+                context,
+                Context::callback,
+            ));
     }
 }
 
@@ -712,7 +780,11 @@ pub fn error_to_js_with_syscall(
         ..Default::default()
     }
     .to_error_instance(global_this);
-    instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
+    instance.put(
+        global_this,
+        b"name",
+        bstr::String::static_(b"DNSException").to_js(global_this)?,
+    );
     Ok(instance)
 }
 
@@ -737,7 +809,11 @@ pub fn error_to_js_with_syscall_and_hostname(
         ..Default::default()
     }
     .to_error_instance(global_this);
-    instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
+    instance.put(
+        global_this,
+        b"name",
+        bstr::String::static_(b"DNSException").to_js(global_this)?,
+    );
     Ok(instance)
 }
 

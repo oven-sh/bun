@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
 use bun_alloc::AllocError;
-use bun_bundler::options::BundleOptions;
 use bun_bundler::Transpiler;
+use bun_bundler::options::BundleOptions;
 use bun_core::err;
+use bun_core::{PathString, ZStr};
+use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
-use bun_core::{strings, StringOrTinyString};
-use bun_core::{PathString, ZStr};
 use bun_sys::{self, Fd};
 
 declare_scope!(jest, hidden);
@@ -122,7 +122,9 @@ impl<'a> Scanner<'a> {
         let path: &[u8] =
             unsafe { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
 
-        let root = self.read_dir_with_name(path, None).map_err(|_| ScanError::OutOfMemory)?;
+        let root = self
+            .read_dir_with_name(path, None)
+            .map_err(|_| ScanError::OutOfMemory)?;
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
@@ -218,9 +220,10 @@ impl<'a> Scanner<'a> {
             {
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
                 let path2 = self.fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
-                let Ok(child_fd) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, path2.as_bytes())
-                else {
+                let Ok(child_fd) = bun_sys::open_dir_no_renaming_or_deleting_windows(
+                    Fd::INVALID,
+                    path2.as_bytes(),
+                ) else {
                     continue;
                 };
                 let child_dir = bun_sys::Dir::from_fd(child_fd);
@@ -253,8 +256,13 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
-        unsafe { &mut *real_fs }
-            .read_directory_with_iterator(name, handle.map(|d| d.fd), 0, true, iter)
+        unsafe { &mut *real_fs }.read_directory_with_iterator(
+            name,
+            handle.map(|d| d.fd),
+            0,
+            true,
+            iter,
+        )
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -441,11 +449,6 @@ impl<'a> Scanner<'a> {
     }
 }
 
-pub const TEST_NAME_SUFFIXES: [&[u8]; 4] = [
-    b".test",
-    b"_test",
-    b".spec",
-    b"_spec",
-];
+pub const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
 
 // ported from: src/cli/test/Scanner.zig

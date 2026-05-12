@@ -3,7 +3,7 @@
 //! JSC-dependent constructors (from_js / from_generated / read_from_blob /
 //! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
 
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -142,13 +142,21 @@ impl SSLConfig {
     /// Borrow `server_name` as bytes (no trailing NUL). None if null.
     #[inline]
     pub fn server_name_bytes(&self) -> Option<&[u8]> {
-        if self.server_name.is_null() { None } else { Some(cstr_bytes(self.server_name)) }
+        if self.server_name.is_null() {
+            None
+        } else {
+            Some(cstr_bytes(self.server_name))
+        }
     }
 
     /// Borrow `protos` as bytes (no trailing NUL). None if null.
     #[inline]
     pub fn protos_bytes(&self) -> Option<&[u8]> {
-        if self.protos.is_null() { None } else { Some(cstr_bytes(self.protos)) }
+        if self.protos.is_null() {
+            None
+        } else {
+            Some(cstr_bytes(self.protos))
+        }
     }
 
     /// Extract the raw `*const SSLConfig` from an optional shared handle for

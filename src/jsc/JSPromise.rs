@@ -7,10 +7,10 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
 // so import them under aliases.
 use crate::strong::Optional as JscStrong;
-use crate::weak::{Weak as JscWeak, WeakRefType};
-use crate::{JsTerminated, TopExceptionScope};
 use crate::top_exception_scope::SourceLocation;
 use crate::virtual_machine::VirtualMachine;
+use crate::weak::{Weak as JscWeak, WeakRefType};
+use crate::{JsTerminated, TopExceptionScope};
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -38,13 +38,25 @@ pub enum Status {
 // raw (caller derefs).
 unsafe extern "C" {
     safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
-    safe fn JSC__JSPromise__rejectedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
+    safe fn JSC__JSPromise__rejectedPromise(
+        arg0: &JSGlobalObject,
+        js_value1: JSValue,
+    ) -> *mut JSPromise;
     /// **DEPRECATED** This function does not notify the VM about the rejection,
     /// meaning it will not trigger unhandled rejection handling. Use
     /// `JSC__JSPromise__rejectedPromise` instead.
-    safe fn JSC__JSPromise__rejectedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
-    safe fn JSC__JSPromise__resolvedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
-    safe fn JSC__JSPromise__resolvedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
+    safe fn JSC__JSPromise__rejectedPromiseValue(
+        arg0: &JSGlobalObject,
+        js_value1: JSValue,
+    ) -> JSValue;
+    safe fn JSC__JSPromise__resolvedPromise(
+        arg0: &JSGlobalObject,
+        js_value1: JSValue,
+    ) -> *mut JSPromise;
+    safe fn JSC__JSPromise__resolvedPromiseValue(
+        arg0: &JSGlobalObject,
+        js_value1: JSValue,
+    ) -> JSValue;
     safe fn JSC__JSPromise__wrap(
         arg0: &JSGlobalObject,
         ctx: *mut c_void,
@@ -63,7 +75,11 @@ unsafe extern "C" {
     // after the call.
     safe fn JSC__JSPromise__resolve(this: &mut JSPromise, global: &JSGlobalObject, value: JSValue);
     safe fn JSC__JSPromise__reject(this: &mut JSPromise, global: &JSGlobalObject, value: JSValue);
-    safe fn JSC__JSPromise__rejectAsHandled(this: &mut JSPromise, global: &JSGlobalObject, value: JSValue);
+    safe fn JSC__JSPromise__rejectAsHandled(
+        this: &mut JSPromise,
+        global: &JSGlobalObject,
+        value: JSValue,
+    );
 }
 
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
@@ -75,7 +91,9 @@ pub struct Weak<T> {
 
 impl<T> Default for Weak<T> {
     fn default() -> Self {
-        Self { weak: JscWeak::default() }
+        Self {
+            weak: JscWeak::default(),
+        }
     }
 }
 
@@ -165,7 +183,11 @@ pub struct Strong {
 }
 
 impl Strong {
-    pub const fn empty() -> Self { Self { strong: JscStrong::empty() } }
+    pub const fn empty() -> Self {
+        Self {
+            strong: JscStrong::empty(),
+        }
+    }
 
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
         let Some(v) = self.strong.get() else { return };
@@ -178,7 +200,11 @@ impl Strong {
         let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).resolve(global, val);
     }
 
-    pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> Result<(), JsTerminated> {
+    pub fn reject(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JsResult<JSValue>,
+    ) -> Result<(), JsTerminated> {
         let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
         self.swap().reject(global, Ok(val))
     }
@@ -200,7 +226,11 @@ impl Strong {
     }
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
+    pub fn reject_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), JsTerminated> {
         // RAII for Zig's `loop.enter(); defer loop.exit();` — the safe wrapper
         // funnels through the single audited deref in `enter_event_loop_scope`.
         let _guard = VirtualMachine::get().enter_event_loop_scope();
@@ -217,7 +247,11 @@ impl Strong {
     }
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), JsTerminated> {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.resolve(global, val)
     }
@@ -245,7 +279,9 @@ impl Strong {
     pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
         // No `as_promise()` debug-check here: this is reached from finalizers
         // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
-        Self { strong: JscStrong::create(value, global) }
+        Self {
+            strong: JscStrong::create(value, global),
+        }
     }
 
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
@@ -341,15 +377,12 @@ impl JSPromise {
         let mut ctx = Wrapper { f: Some(f) };
         // `ctx` outlives the synchronous FFI call; `call::<F>` matches the expected
         // `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
-        let promise = JSC__JSPromise__wrap(
-            global,
-            (&raw mut ctx).cast::<c_void>(),
-            call::<F>,
-        );
+        let promise = JSC__JSPromise__wrap(global, (&raw mut ctx).cast::<c_void>(), call::<F>);
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
         // so a pending non-termination exception here indicates a bug; assert and
         // surface termination as JsTerminated (matching JSPromise.zig:202-207).
-        scope.assert_no_exception_except_termination()
+        scope
+            .assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)?;
         Ok(promise)
     }
@@ -366,7 +399,9 @@ impl JSPromise {
         }
 
         if value.is_any_error() {
-            return Self::dangerously_create_rejected_promise_value_without_notifying_vm(global, value);
+            return Self::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global, value,
+            );
         }
 
         Self::resolved_promise_value(global, value)
@@ -460,7 +495,11 @@ impl JSPromise {
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
-    pub fn reject(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> Result<(), JsTerminated> {
+    pub fn reject(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JsResult<JSValue>,
+    ) -> Result<(), JsTerminated> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
@@ -494,7 +533,11 @@ impl JSPromise {
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
-    pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn reject_as_handled(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), JsTerminated> {
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)

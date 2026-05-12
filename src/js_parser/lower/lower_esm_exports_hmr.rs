@@ -1,13 +1,13 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use bun_alloc::AllocError;
-use bun_collections::StringArrayHashMap;
 use bun_ast::import_record;
+use bun_collections::StringArrayHashMap;
+use bun_collections::VecExt;
 
-use bun_ast::{self as js_ast, Binding, Expr, Stmt, B, E, G, S};
 use crate::p::P;
 use crate::parser::{JsxT, ReactRefresh, Ref, TempRef};
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
 // PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
 // re-gate); replicate it here so this file can un-gate independently. Body is
@@ -18,18 +18,21 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
     default_name: Option<&'p [u8]>,
 ) -> Ref {
     let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
-    let name: &'p [u8] = (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
-        p.temp_ref_count += 1;
-        bun_alloc::arena_format!(in p.arena, "__bun_temp_ref_{:x}$", p.temp_ref_count)
-            .into_bump_str()
-            .as_bytes()
-    });
+    let name: &'p [u8] =
+        (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
+            p.temp_ref_count += 1;
+            bun_alloc::arena_format!(in p.arena, "__bun_temp_ref_{:x}$", p.temp_ref_count)
+                .into_bump_str()
+                .as_bytes()
+        });
     let r#ref = p
         .new_symbol(js_ast::symbol::Kind::Other, name)
         .expect("oom");
 
-    p.temp_refs_to_declare
-        .push(TempRef { r#ref, ..Default::default() });
+    p.temp_refs_to_declare.push(TempRef {
+        r#ref,
+        ..Default::default()
+    });
 
     VecExt::append(&mut p.current_scope_mut().generated, r#ref);
 
@@ -88,7 +91,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     let binding = st.decls.slice()[i].binding;
                     let value = st.decls.slice()[i].value;
                     let Some(value) = value else {
-                        *st.decls.mut_(new_len) = G::Decl { binding, value: None };
+                        *st.decls.mut_(new_len) = G::Decl {
+                            binding,
+                            value: None,
+                        };
                         new_len += 1;
                         self.visit_binding_to_export(p, binding)?;
                         continue;
@@ -114,14 +120,20 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                     ..Default::default()
                                 });
                             } else {
-                                *st.decls.mut_(new_len) = G::Decl { binding, value: Some(value) };
+                                *st.decls.mut_(new_len) = G::Decl {
+                                    binding,
+                                    value: Some(value),
+                                };
                                 new_len += 1;
                                 self.visit_binding_to_export(p, binding)?;
                             }
                         }
 
                         _ => {
-                            *st.decls.mut_(new_len) = G::Decl { binding, value: Some(value) };
+                            *st.decls.mut_(new_len) = G::Decl {
+                                binding,
+                                value: Some(value),
+                            };
                             new_len += 1;
                             self.visit_binding_to_export(p, binding)?;
                         }
@@ -141,17 +153,26 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     && matches!(st.value, js_ast::StmtOrExpr::Stmt(s) if matches!(s.data, js_ast::StmtData::SFunction(_)))
                 {
                     'fast_refresh_edge_case: {
-                        let js_ast::StmtOrExpr::Stmt(s) = &st.value else { unreachable!() };
-                        let js_ast::StmtData::SFunction(f) = s.data else { unreachable!() };
+                        let js_ast::StmtOrExpr::Stmt(s) = &st.value else {
+                            unreachable!()
+                        };
+                        let js_ast::StmtData::SFunction(f) = s.data else {
+                            unreachable!()
+                        };
                         let Some(symbol) = f.func.name else {
                             break 'fast_refresh_edge_case;
                         };
-                        let name = p.symbols[symbol.ref_.expect("infallible: ref bound").inner_index() as usize].original_name;
+                        let name = p.symbols
+                            [symbol.ref_.expect("infallible: ref bound").inner_index() as usize]
+                            .original_name;
                         if ReactRefresh::is_componentish_name(name.slice()) {
                             // Lower to a function statement, and reference the function in the export list.
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                                value: Some(Expr::init_identifier(symbol.ref_.expect("infallible: ref bound"), stmt.loc)),
+                                value: Some(Expr::init_identifier(
+                                    symbol.ref_.expect("infallible: ref bound"),
+                                    stmt.loc,
+                                )),
                                 ..Default::default()
                             });
                             break 'stmt *s;
@@ -166,7 +187,11 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         js_ast::StmtData::SClass(c) => {
                             c.class.can_be_moved()
                                 && (if let Some(name) = c.class.class_name {
-                                    p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                    p.symbols[name
+                                        .ref_
+                                        .expect("infallible: ref bound")
+                                        .inner_index()
+                                        as usize]
                                         .use_count_estimate
                                         == 0
                                 } else {
@@ -175,7 +200,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         }
                         js_ast::StmtData::SFunction(f) => {
                             if let Some(name) = f.func.name {
-                                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                p.symbols[name.ref_.expect("infallible: ref bound").inner_index()
+                                    as usize]
                                     .use_count_estimate
                                     == 0
                             } else {
@@ -209,7 +235,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         let temp_id = generate_temp_ref(p, Some(b"default_export"));
                         self.last_part
                             .declared_symbols
-                            .append(js_ast::DeclaredSymbol { ref_: temp_id, is_top_level: true })?;
+                            .append(js_ast::DeclaredSymbol {
+                                ref_: temp_id,
+                                is_top_level: true,
+                            })?;
                         self.last_part
                             .symbol_uses
                             .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
@@ -225,14 +254,17 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         // SAFETY: as above — POD-shaped read out of arena.
                         let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
                         let mut decls = bun_alloc::AstAlloc::vec();
-                        VecExt::append(&mut decls, G::Decl {
-                            binding: Binding::alloc(
-                                p.arena,
-                                B::Identifier { r#ref: temp_id },
-                                stmt.loc,
-                            ),
-                            value: Some(value),
-                        });
+                        VecExt::append(
+                            &mut decls,
+                            G::Decl {
+                                binding: Binding::alloc(
+                                    p.arena,
+                                    B::Identifier { r#ref: temp_id },
+                                    stmt.loc,
+                                ),
+                                value: Some(value),
+                            },
+                        );
                         break 'stmt Stmt::alloc(
                             S::Local {
                                 kind: js_ast::LocalKind::KConst,
@@ -247,9 +279,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(
                                 match s.data {
-                                    js_ast::StmtData::SClass(class) => {
-                                        class.class.class_name.unwrap().ref_.expect("infallible: ref bound")
-                                    }
+                                    js_ast::StmtData::SClass(class) => class
+                                        .class
+                                        .class_name
+                                        .unwrap()
+                                        .ref_
+                                        .expect("infallible: ref bound"),
                                     js_ast::StmtData::SFunction(func) => {
                                         func.func.name.unwrap().ref_.expect("infallible: ref bound")
                                     }
@@ -269,12 +304,21 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     break 'stmt stmt;
                 }
 
-                let class_name_ref = st.class.class_name.unwrap().ref_.expect("infallible: ref bound");
+                let class_name_ref = st
+                    .class
+                    .class_name
+                    .unwrap()
+                    .ref_
+                    .expect("infallible: ref bound");
                 // Export as CommonJS
                 self.export_props.push(G::Property {
                     key: Some(Expr::init(
                         // SAFETY: arena-owned name slice valid for the parse.
-                        E::EString::init(p.symbols[class_name_ref.inner_index() as usize].original_name.slice()),
+                        E::EString::init(
+                            p.symbols[class_name_ref.inner_index() as usize]
+                                .original_name
+                                .slice(),
+                        ),
                         stmt.loc,
                     )),
                     value: Some(Expr::init_identifier(class_name_ref, stmt.loc)),
@@ -421,7 +465,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
     ) -> Result<DeduplicatedImportResult, AllocError> {
-        let path_text = p.import_records.items()[import_record_index as usize].path.text;
+        let path_text = p.import_records.items()[import_record_index as usize]
+            .path
+            .text;
         let gop = self.imports_seen.get_or_put(path_text)?;
         if gop.found_existing {
             let stmt_index = gop.value_ptr.stmt_index;
@@ -451,11 +497,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
                     let prev_len = stmt.items.len();
-                    let concat = p
-                        .arena
-                        .alloc_slice_fill_with(prev_len + items_len, |_| {
-                            js_ast::ClauseItem::default()
-                        });
+                    let concat = p.arena.alloc_slice_fill_with(prev_len + items_len, |_| {
+                        js_ast::ClauseItem::default()
+                    });
                     // SAFETY: src/dst non-overlapping arena allocations of correct length;
                     // ClauseItem is POD-shaped.
                     unsafe {
@@ -524,7 +568,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         *gop.value_ptr = ImportRef {
             stmt_index: u32::try_from(self.stmts.len() - 1).expect("int cast"),
         };
-        Ok(DeduplicatedImportResult { namespace_ref, import_record_index })
+        Ok(DeduplicatedImportResult {
+            namespace_ref,
+            import_record_index,
+        })
     }
 
     fn visit_binding_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
@@ -561,10 +608,20 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     ) -> Result<(), AllocError> {
         let (kind, has_been_assigned_to, original_name) = {
             let symbol = &p.symbols[ref_.inner_index() as usize];
-            (symbol.kind, symbol.has_been_assigned_to, symbol.original_name)
+            (
+                symbol.kind,
+                symbol.has_been_assigned_to,
+                symbol.original_name,
+            )
         };
         let id = if kind == js_ast::symbol::Kind::Import {
-            Expr::init(E::ImportIdentifier { ref_, ..Default::default() }, loc)
+            Expr::init(
+                E::ImportIdentifier {
+                    ref_,
+                    ..Default::default()
+                },
+                loc,
+            )
         } else {
             Expr::init_identifier(ref_, loc)
         };
@@ -592,7 +649,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let arg1 = generate_temp_ref(p, Some(original_name.slice()));
             self.last_part
                 .declared_symbols
-                .append(js_ast::DeclaredSymbol { ref_: arg1, is_top_level: true })?;
+                .append(js_ast::DeclaredSymbol {
+                    ref_: arg1,
+                    is_top_level: true,
+                })?;
             self.last_part
                 .symbol_uses
                 .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
@@ -711,7 +771,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .put(p.module_ref, js_ast::symbol::Use { count_estimate: 1 })?;
             self.last_part
                 .declared_symbols
-                .append(js_ast::DeclaredSymbol { ref_: p.module_ref, is_top_level: true })?;
+                .append(js_ast::DeclaredSymbol {
+                    ref_: p.module_ref,
+                    is_top_level: true,
+                })?;
         }
 
         if p.options.features.react_fast_refresh && p.react_refresh.register_used {
@@ -768,7 +831,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // (Zig set `entries.len = 0` after `appendList`).
             part.tag = bun_ast::PartTag::DeadDueToInlining;
             part.dependencies.clear_retaining_capacity();
-            part.dependencies.push(bun_ast::Dependency { part_index: u32::try_from(last_idx).expect("int cast"), source_index: p.source.index });
+            part.dependencies.push(bun_ast::Dependency {
+                part_index: u32::try_from(last_idx).expect("int cast"),
+                source_index: p.source.index,
+            });
         }
 
         self.last_part

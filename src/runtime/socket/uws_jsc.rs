@@ -4,11 +4,11 @@
 
 use core::ffi::CStr;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
 use bun_core::String as BunString;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
 use bun_uws::{
-    create_bun_socket_error_t, us_bun_verify_error_t, us_socket_stream_buffer_t, us_socket_t,
-    AnyWebSocket, RawWebSocket,
+    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_bun_verify_error_t,
+    us_socket_stream_buffer_t, us_socket_t,
 };
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
@@ -58,16 +58,25 @@ pub fn create_bun_socket_error_to_js(
             })
         }
         create_bun_socket_error_t::load_ca_file => global_object
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
+            .err(
+                bun_jsc::ErrorCode::BORINGSSL,
+                format_args!("Failed to load CA file"),
+            )
             .to_js(),
         create_bun_socket_error_t::invalid_ca_file => global_object
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA file"))
+            .err(
+                bun_jsc::ErrorCode::BORINGSSL,
+                format_args!("Invalid CA file"),
+            )
             .to_js(),
         create_bun_socket_error_t::invalid_ca => global_object
             .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA"))
             .to_js(),
         create_bun_socket_error_t::invalid_ciphers => global_object
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
+            .err(
+                bun_jsc::ErrorCode::BORINGSSL,
+                format_args!("Invalid ciphers"),
+            )
             .to_js(),
     }
 }
@@ -188,8 +197,7 @@ pub extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            let written: u32 =
-                u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
+            let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
                 stream_buffer.write(&data_slice[written as usize..]);

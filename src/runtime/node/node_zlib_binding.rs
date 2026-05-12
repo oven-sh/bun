@@ -5,15 +5,15 @@ use core::ptr::NonNull;
 
 use bun_ptr::ParentRef;
 
-use bun_io::KeepAlive;
+use bun_core::{String as BunString, ZigStringSlice};
 use bun_event_loop::Taskable;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
-use bun_core::{String as BunString, ZigStringSlice};
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
 
@@ -53,7 +53,11 @@ pub struct Error {
 }
 
 impl Error {
-    pub const OK: Error = Error { msg: core::ptr::null(), err: 0, code: core::ptr::null() };
+    pub const OK: Error = Error {
+        msg: core::ptr::null(),
+        err: 0,
+        code: core::ptr::null(),
+    };
 
     #[inline]
     pub const fn ok() -> Error {
@@ -187,7 +191,9 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             u32::try_from(slice_u8.len()).expect("int cast"),
         )
     };
-    Ok(JSValue::js_number(f64::from(u32::try_from(crc).expect("int cast"))))
+    Ok(JSValue::js_number(f64::from(
+        u32::try_from(crc).expect("int cast"),
+    )))
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -228,7 +234,9 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// `write_result: Cell<Option<NonNull<u32>>>` field so callers stay safe.
     #[inline]
     fn flush_write_result(&self) {
-        let Some(write_result) = self.write_result_ptr() else { return };
+        let Some(write_result) = self.write_result_ptr() else {
+            return;
+        };
         // SAFETY: `write_result` points at a 2-element `u32[]` owned by JS
         // (set in each impl's `init()`); both indices are in-bounds and the
         // backing buffer is kept alive by `this._writeState` /
@@ -304,13 +312,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         if arguments[0].is_undefined() {
             return Err(global_this
-                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("flush value is required"))
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("flush value is required"),
+                )
                 .throw());
         }
         flush = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
-                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("Invalid flush value"))
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("Invalid flush value"),
+                )
                 .throw());
         }
 
@@ -376,12 +390,17 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(&mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize]);
+        out = Some(
+            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        );
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
             return Err(global_this
-                .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!("Write already in progress"),
+                )
                 .throw());
         }
         if this.pending_close().get() {
@@ -399,7 +418,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         // Only create the strong handle when we have a pending write
         // And make sure to clear it when we are done.
-        this.this_value().with_mut(|v| v.set(global_this, this_value));
+        this.this_value()
+            .with_mut(|v| v.set(global_this, this_value));
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global_this.bun_vm();
@@ -450,8 +470,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
         // until `run_from_js_thread` runs and calls `deref()`.
         unsafe {
-            (*vm.event_loop())
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
     }
 
@@ -547,13 +566,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         if arguments[0].is_undefined() {
             return Err(global_this
-                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("flush value is required"))
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("flush value is required"),
+                )
                 .throw());
         }
         flush = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
-                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("Invalid flush value"))
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("Invalid flush value"),
+                )
                 .throw());
         }
 
@@ -619,12 +644,17 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(&mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize]);
+        out = Some(
+            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        );
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
             return Err(global_this
-                .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!("Write already in progress"),
+                )
                 .throw());
         }
         if this.pending_close().get() {
@@ -729,12 +759,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         false
     }
 
-    pub fn emit_error(
-        this: &T,
-        global_this: &JSGlobalObject,
-        this_value: JSValue,
-        err_: Error,
-    ) {
+    pub fn emit_error(this: &T, global_this: &JSGlobalObject, this_value: JSValue, err_: Error) {
         // R-2: `&T` over `Cell`/`JsCell`-backed fields — the onerror
         // `run_callback` below runs user JS which can re-enter via a fresh
         // `&T` from the wrapper's `m_ctx` (e.g. `write()` flips
@@ -770,7 +795,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         } else {
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let mut code_str = BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
+        let mut code_str =
+            BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
         let code_value = match code_str.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
@@ -835,7 +861,9 @@ macro_rules! __compression_stream_mixin_reexports {
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::write(this, global, frame)
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::write(
+                    this, global, frame,
+                )
             }
             #[inline]
             pub fn write_sync(
@@ -843,7 +871,9 @@ macro_rules! __compression_stream_mixin_reexports {
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::write_sync(this, global, frame)
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::write_sync(
+                    this, global, frame,
+                )
             }
             #[inline]
             pub fn reset(
@@ -851,7 +881,9 @@ macro_rules! __compression_stream_mixin_reexports {
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(this, global, frame)
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(
+                    this, global, frame,
+                )
             }
             #[inline]
             pub fn close(
@@ -859,7 +891,9 @@ macro_rules! __compression_stream_mixin_reexports {
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(this, global, frame)
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(
+                    this, global, frame,
+                )
             }
             #[inline]
             pub fn set_on_error(

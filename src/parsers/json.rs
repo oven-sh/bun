@@ -8,8 +8,8 @@ use bun_core::{self, StackCheck};
 use crate::json_lexer as js_lexer;
 use crate::json_lexer::T;
 use bun_ast as js_ast;
-use bun_ast::{E, G, Stmt, ExprNodeList};
 use bun_ast::Indentation;
+use bun_ast::{E, ExprNodeList, G, Stmt};
 use bun_collections::VecExt;
 
 use bun_ast::Expr;
@@ -304,16 +304,14 @@ where
                             // see struct note re: Stacked Borrows.
                             let source = self.lexer.source;
                             let key_text = str.string(self.bump)?;
-                            self.lexer
-                                .log_mut()
-                                .add_range_warning_fmt(
-                                    Some(source),
-                                    key_range,
-                                    format_args!(
-                                        "Duplicate key \"{}\" in object literal",
-                                        bstr::BStr::new(key_text)
-                                    ),
-                                )
+                            self.lexer.log_mut().add_range_warning_fmt(
+                                Some(source),
+                                key_range,
+                                format_args!(
+                                    "Duplicate key \"{}\" in object literal",
+                                    bstr::BStr::new(key_text)
+                                ),
+                            )
                         }
                     }
 
@@ -379,13 +377,11 @@ where
         if self.lexer.token == closer {
             if !self.opts.allow_trailing_commas {
                 let source = self.lexer.source;
-                self.lexer
-                    .log_mut()
-                    .add_range_error(
-                        Some(source),
-                        comma_range,
-                        b"JSON does not support trailing commas",
-                    );
+                self.lexer.log_mut().add_range_error(
+                    Some(source),
+                    comma_range,
+                    b"JSON does not support trailing commas",
+                );
             }
             return Ok(false);
         }
@@ -580,8 +576,7 @@ where
                                 if !self.has_found_name && key_s.data == b"name" {
                                     let len = val_s.data.len().min(self.found_name_buf.len());
 
-                                    self.found_name_buf[..len]
-                                        .copy_from_slice(&val_s.data[..len]);
+                                    self.found_name_buf[..len].copy_from_slice(&val_s.data[..len]);
                                     self.found_name_len = len;
                                     self.has_found_name = true;
                                     self.name_loc = value.loc;
@@ -623,13 +618,11 @@ where
 
         if self.lexer.token == closer {
             if !PKG_JSON_OPTS.allow_trailing_commas {
-                self.lexer
-                    .log_mut()
-                    .add_range_error(
-                        Some(self.source),
-                        comma_range,
-                        b"JSON does not support trailing commas",
-                    );
+                self.lexer.log_mut().add_range_error(
+                    Some(self.source),
+                    comma_range,
+                    b"JSON does not support trailing commas",
+                );
             }
             return Ok(false);
         }
@@ -728,7 +721,10 @@ impl<T: ToAst, const N: usize> ToAst for [T; N] {
 // Spec json.zig:557-565 — `Array.child == u8` → `E::String` (not `E::Array`).
 impl<const N: usize> ToAst for [u8; N] {
     fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr::init(E::String::init(self.as_slice()), bun_ast::Loc::EMPTY))
+        Ok(Expr::init(
+            E::String::init(self.as_slice()),
+            bun_ast::Loc::EMPTY,
+        ))
     }
 }
 
@@ -882,16 +878,28 @@ pub fn parse<const FORCE_UTF8: bool>(
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -916,16 +924,28 @@ pub fn parse_package_json_utf8(
     match len {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -944,7 +964,10 @@ pub struct JsonResult {
 
 impl Default for JsonResult {
     fn default() -> Self {
-        Self { root: Expr::default(), indentation: Indentation::default() }
+        Self {
+            root: Expr::default(),
+            indentation: Indentation::default(),
+        }
     }
 }
 
@@ -1001,7 +1024,10 @@ pub fn parse_package_json_utf8_with_opts_rt(
         // This is to be consisntent with how disabled JS files are handled
         0 => {
             return Ok(JsonResult {
-                root: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() },
+                root: Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                },
                 indentation: Indentation::default(),
             });
         }
@@ -1009,17 +1035,26 @@ pub fn parse_package_json_utf8_with_opts_rt(
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
                 return Ok(JsonResult {
-                    root: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() },
+                    root: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_string_data(),
+                    },
                     indentation: Indentation::default(),
                 });
             } else if &source.contents[0..1] == b"{}" {
                 return Ok(JsonResult {
-                    root: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() },
+                    root: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_object_data(),
+                    },
                     indentation: Indentation::default(),
                 });
             } else if &source.contents[0..1] == b"[]" {
                 return Ok(JsonResult {
-                    root: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() },
+                    root: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_array_data(),
+                    },
                     indentation: Indentation::default(),
                 });
             }
@@ -1068,16 +1103,28 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     match len {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -1106,16 +1153,28 @@ pub fn parse_for_macro(
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -1149,7 +1208,10 @@ pub fn parse_for_bundling(
         // This is to be consisntent with how disabled JS files are handled
         0 => {
             return Ok(JSONParseResult {
-                expr: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() },
+                expr: Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                },
                 tag: JSONParseResultTag::Empty,
             });
         }
@@ -1157,17 +1219,26 @@ pub fn parse_for_bundling(
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
                 return Ok(JSONParseResult {
-                    expr: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() },
+                    expr: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_string_data(),
+                    },
                     tag: JSONParseResultTag::Expr,
                 });
             } else if &source.contents[0..1] == b"{}" {
                 return Ok(JSONParseResult {
-                    expr: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() },
+                    expr: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_object_data(),
+                    },
                     tag: JSONParseResultTag::Expr,
                 });
             } else if &source.contents[0..1] == b"[]" {
                 return Ok(JSONParseResult {
-                    expr: Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() },
+                    expr: Expr {
+                        loc: bun_ast::Loc { start: 0 },
+                        data: empty_array_data(),
+                    },
                     tag: JSONParseResultTag::Expr,
                 });
             }
@@ -1200,16 +1271,28 @@ pub fn parse_env_json(
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -1257,16 +1340,28 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+            return Ok(Expr {
+                loc: bun_ast::Loc { start: 0 },
+                data: empty_object_data(),
+            });
         }
         // This is a fast pass I guess
         2 => {
             if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_string_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_string_data(),
+                });
             } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_object_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_object_data(),
+                });
             } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr { loc: bun_ast::Loc { start: 0 }, data: empty_array_data() });
+                return Ok(Expr {
+                    loc: bun_ast::Loc { start: 0 },
+                    data: empty_array_data(),
+                });
             }
         }
         _ => {}
@@ -1316,7 +1411,9 @@ mod tests {
             &mut writer,
             expr,
             &source,
-            js_printer::PrintJsonOptions { mangled_props: None },
+            js_printer::PrintJsonOptions {
+                mangled_props: None,
+            },
         )?;
         // TODO(port): Zig accessed writer.ctx.buffer.list.items.ptr[0..written+1].
         let buf = writer.ctx.buffer.as_slice();

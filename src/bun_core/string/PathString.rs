@@ -29,9 +29,17 @@ type PathStringBackingInt = u64;
 type PathStringBackingInt = u128;
 
 // Bit widths of the packed fields (Zig packed-struct order: ptr in low bits, len in high bits).
-const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ { 53 } else { usize::BITS };
+const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {
+    53
+} else {
+    usize::BITS
+};
 #[allow(dead_code)]
-const LEN_BITS: u32 = if USE_SMALL_PATH_STRING_ { PATH_INT_LEN_BITS } else { usize::BITS };
+const LEN_BITS: u32 = if USE_SMALL_PATH_STRING_ {
+    PATH_INT_LEN_BITS
+} else {
+    usize::BITS
+};
 
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
@@ -45,7 +53,9 @@ impl PathString {
     // Rust the packed accessors below replace them.
     pub const USE_SMALL_PATH_STRING: bool = USE_SMALL_PATH_STRING_;
 
-    const PTR_MASK: PathStringBackingInt = (1 as PathStringBackingInt).wrapping_shl(POINTER_BITS).wrapping_sub(1);
+    const PTR_MASK: PathStringBackingInt = (1 as PathStringBackingInt)
+        .wrapping_shl(POINTER_BITS)
+        .wrapping_sub(1);
 
     #[inline(always)]
     fn ptr(self) -> usize {
@@ -164,9 +174,15 @@ impl fmt::Display for PathString {
 #[cfg(not(target_arch = "wasm32"))]
 const _: () = {
     if USE_SMALL_PATH_STRING_ {
-        assert!(core::mem::size_of::<PathString>() * 8 == 64, "PathString must be 64 bits");
+        assert!(
+            core::mem::size_of::<PathString>() * 8 == 64,
+            "PathString must be 64 bits"
+        );
     } else {
-        assert!(core::mem::size_of::<PathString>() * 8 == 128, "PathString must be 128 bits");
+        assert!(
+            core::mem::size_of::<PathString>() * 8 == 128,
+            "PathString must be 128 bits"
+        );
     }
 };
 

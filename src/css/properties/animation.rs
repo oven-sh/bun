@@ -1,12 +1,12 @@
 use crate as css;
-use crate::{Parser, Printer, PrintErr, SmallList};
-use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
-use crate::css_values::ident::{CustomIdent, DashedIdent};
 use crate::CSSString;
+use crate::css_values::easing::EasingFunction;
+use crate::css_values::ident::{CustomIdent, DashedIdent};
+use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
-use crate::css_values::easing::EasingFunction;
+use crate::{Parser, PrintErr, Printer, SmallList};
 use bun_core::strings;
 
 /// A list of animations.
@@ -213,7 +213,9 @@ impl Animation {
 
         self.name.to_css(dest)?;
 
-        if !matches!(self.name, AnimationName::None) && self.timeline != AnimationTimeline::default() {
+        if !matches!(self.name, AnimationName::None)
+            && self.timeline != AnimationTimeline::default()
+        {
             dest.write_char(b' ')?;
             self.timeline.to_css(dest)?;
         }
@@ -283,14 +285,18 @@ impl AnimationName {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
         // then `<string>`, else `<custom-ident>`.
-        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"none"))
+            .is_ok()
+        {
             return Ok(AnimationName::None);
         }
         // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse (CSSString = &'static [u8]).
-        if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))) {
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
+        {
             return Ok(AnimationName::String(unsafe { &raw const *s }));
         }
         let ident = CustomIdent::parse(input)?;

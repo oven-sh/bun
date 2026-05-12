@@ -21,8 +21,8 @@ use crate::SmallList;
 pub use crate::{PrintErr, Printer};
 
 use crate::selector::parser::{
-    compute_specificity, BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent,
-    SelectorFlags, SpecificityAndFlags,
+    BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,
+    SpecificityAndFlags, compute_specificity,
 };
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
@@ -122,9 +122,15 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     ) -> BuildResult<Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
         let mut flags = SelectorFlags::empty();
-        if parsed_pseudo { flags |= SelectorFlags::HAS_PSEUDO; }
-        if parsed_slotted { flags |= SelectorFlags::HAS_SLOTTED; }
-        if parsed_part { flags |= SelectorFlags::HAS_PART; }
+        if parsed_pseudo {
+            flags |= SelectorFlags::HAS_PSEUDO;
+        }
+        if parsed_slotted {
+            flags |= SelectorFlags::HAS_SLOTTED;
+        }
+        if parsed_part {
+            flags |= SelectorFlags::HAS_PART;
+        }
         // `build_with_specificity_and_flags()` will
         // PORT NOTE: Zig had `defer this.deinit()` here to free SmallList capacity
         // after building. In Rust, `Drop` on `SelectorBuilder` handles this when the
@@ -151,8 +157,10 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         // before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 
-        let (rest, current) =
-            split_from_end::<GenericComponent<Impl>>(self.simple_selectors.slice(), self.current_len);
+        let (rest, current) = split_from_end::<GenericComponent<Impl>>(
+            self.simple_selectors.slice(),
+            self.current_len,
+        );
         let combinators = self.combinators.slice();
 
         let mut components: Vec<GenericComponent<Impl>> = Vec::new();
@@ -180,7 +188,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
                 current_simple_selectors_i += 1;
             } else {
                 if combinator_i >= 0 {
-                    let (combo, len) = combinators[usize::try_from(combinator_i).expect("int cast")];
+                    let (combo, len) =
+                        combinators[usize::try_from(combinator_i).expect("int cast")];
                     let (rest2, current2) =
                         split_from_end::<GenericComponent<Impl>>(rest_of_simple_selectors, len);
                     rest_of_simple_selectors = rest2;

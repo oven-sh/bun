@@ -3,33 +3,33 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, HashMap};
-use bun_core::{err, Error, Output};
-use bun_js_parser as js_parser;
-use bun_ast::{self as js_ast, Expr, ExprData, ExprNodeList, ToJSError, E, G, S};
 use bun_ast::DisableStoreReset;
+use bun_ast::{self as js_ast, E, Expr, ExprData, ExprNodeList, G, S, ToJSError};
 use bun_ast::{Log, Range, Source};
+use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
+use bun_collections::{ArrayHashMap, HashMap};
+use bun_core::strings;
+use bun_core::{Error, Output, err};
+use bun_dotenv::Loader as DotEnvLoader;
+use bun_js_parser as js_parser;
+use bun_resolver::Resolver;
 use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
-use bun_resolver::Resolver;
-use bun_dotenv::Loader as DotEnvLoader;
-use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
-use bun_core::strings;
 
 // PORT NOTE: Zig spec aliases `const js = bun.jsc.C;` (Macro.zig:642) — the
 // C-API surface is intentionally `#[deprecated]` upstream but is the spec'd
 // call path for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
-#[allow(deprecated)]
-use bun_jsc::{
-    self as jsc, c as js, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator,
-    JSValue, JsError, ModuleLoader, WebCore,
-};
+use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
-    runtime_hooks, InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine,
+    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
-use crate::expr_jsc::ExprJsc;
+#[allow(deprecated)]
+use bun_jsc::{
+    self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
+    JsError, ModuleLoader, WebCore, c as js,
+};
 use bun_jsc::{BuildMessage, ResolveMessage};
 
 use bun_resolver::Result as ResolveResult;
@@ -222,7 +222,9 @@ impl MacroContext {
             return Ok(caller);
         }
         // SAFETY: `Some` for every non-disabled Macro; see `Macro` PORT NOTE.
-        let vm = macro_vm.expect("Macro.vm accessed on disabled sentinel").as_ptr();
+        let vm = macro_vm
+            .expect("Macro.vm accessed on disabled sentinel")
+            .as_ptr();
         // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
@@ -317,7 +319,10 @@ pub fn __bun_macro_context_call(
     caller: Expr,
     function_name: &[u8],
 ) -> Result<Expr, Error> {
-    debug_assert!(!ctx.data.is_null(), "MacroContext.call reached without init");
+    debug_assert!(
+        !ctx.data.is_null(),
+        "MacroContext.call reached without init"
+    );
     // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
@@ -629,18 +634,17 @@ impl<'a> Run<'a> {
             _ => {
                 let name = value.get_class_info_name().unwrap_or(b"unknown");
 
-                self.log
-                    .add_error_fmt(
-                        Some(self.source),
-                        self.caller.loc,
-                        // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`);
-                        // Zig's `@tagName` ≈ `{:?}` here.
-                        format_args!(
-                            "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
-                            bstr::BStr::new(name),
-                            value.js_type(),
-                        ),
-                    );
+                self.log.add_error_fmt(
+                    Some(self.source),
+                    self.caller.loc,
+                    // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`);
+                    // Zig's `@tagName` ≈ `{:?}` here.
+                    format_args!(
+                        "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
+                        bstr::BStr::new(name),
+                        value.js_type(),
+                    ),
+                );
                 Err(MacroError::MacroFailed)
             }
         }
@@ -660,7 +664,8 @@ impl<'a> Run<'a> {
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ = unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ =
+                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -688,9 +693,7 @@ impl<'a> Run<'a> {
                     // established §Dispatch cycle-break) so the data shapes
                     // stay in the high tier.
                     let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-                    if let Some(body_blob) =
-                        (hooks.body_mixin_get_blob)(value, self.global)?
-                    {
+                    if let Some(body_blob) = (hooks.body_mixin_get_blob)(value, self.global)? {
                         return self.run(body_blob);
                     } else if let Some(resp) = value.as_::<WebCore::Blob>() {
                         blob_ = Some(resp);
@@ -708,9 +711,8 @@ impl<'a> Run<'a> {
                 if let Some(blob) = blob_ {
                     // SAFETY: `blob` (a JS cell) is pinned for the call; the
                     // shared-view/content-type slices borrow its store.
-                    let (bytes, ct) = unsafe {
-                        ((*blob).shared_view(), (*blob).content_type_slice())
-                    };
+                    let (bytes, ct) =
+                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
                     return expr_from_blob(
                         bytes,
                         self.bump,
@@ -806,8 +808,7 @@ impl<'a> Run<'a> {
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
                 // Build properties list
-                let mut properties =
-                    G::PropertyList::init_capacity(object_iter.len);
+                let mut properties = G::PropertyList::init_capacity(object_iter.len);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
                 while let Some(prop) = object_iter.next()? {
@@ -817,16 +818,15 @@ impl<'a> Run<'a> {
                     // (arena-owned per the Phase-A `Str` convention). Copy the
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
-                    let key_bytes: &[u8] =
-                        self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    VecExt::append(&mut properties, G::Property {
-                        key: Some(Expr::init(
-                            E::EString::init(key_bytes),
-                            self.caller.loc,
-                        )),
-                        value: Some(object_value),
-                        ..Default::default()
-                    });
+                    let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
+                    VecExt::append(
+                        &mut properties,
+                        G::Property {
+                            key: Some(Expr::init(E::EString::init(key_bytes), self.caller.loc)),
+                            value: Some(object_value),
+                            ..Default::default()
+                        },
+                    );
                 }
 
                 if let ExprData::EObject(mut e_object) = expr.data {
@@ -892,7 +892,10 @@ impl<'a> Run<'a> {
                 // the `MacroContext` bump arena — Zig used `this.allocator`
                 // (`default_allocator`, process-lifetime).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
-                return Ok(Expr::init(E::EString::init_utf16(arena_slice), self.caller.loc));
+                return Ok(Expr::init(
+                    E::EString::init_utf16(arena_slice),
+                    self.caller.loc,
+                ));
             }
             T::Promise => {
                 if let Some(cached) = self.visited.get(&value) {
@@ -922,8 +925,11 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut()
-                        .unhandled_rejection(self.global, promise_result, promise.as_value());
+                    vm.as_mut().unhandled_rejection(
+                        self.global,
+                        promise_result,
+                        promise.as_value(),
+                    );
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;
@@ -935,16 +941,15 @@ impl<'a> Run<'a> {
             _ => {}
         }
 
-        self.log
-            .add_error_fmt(
-                Some(self.source),
-                self.caller.loc,
-                // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`).
-                format_args!(
-                    "cannot coerce {:?} to Bun's AST. Please return a simpler type",
-                    value.js_type(),
-                ),
-            );
+        self.log.add_error_fmt(
+            Some(self.source),
+            self.caller.loc,
+            // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`).
+            format_args!(
+                "cannot coerce {:?} to Bun's AST. Please return a simpler type",
+                value.js_type(),
+            ),
+        );
         Err(MacroError::MacroFailed)
     }
 }
@@ -1009,7 +1014,8 @@ impl Runner {
                 let call_args: &[Expr] = call.args.slice();
                 js_args.args = vec![
                     JSValue::ZERO;
-                    call_args.len() + usize::from(javascript_object != JSValue::ZERO)
+                    call_args.len()
+                        + usize::from(javascript_object != JSValue::ZERO)
                 ];
                 js_args.processed_len = js_args.args.len();
 
@@ -1168,7 +1174,13 @@ fn expr_from_blob(
             &owned[..]
         };
         let data = Str::new(bump.alloc_slice_copy(unquoted));
-        return Ok(Expr::init(E::String { data, ..Default::default() }, loc));
+        return Ok(Expr::init(
+            E::String {
+                data,
+                ..Default::default()
+            },
+            loc,
+        ));
     }
 
     // Fallback: base64 data URL.
@@ -1186,7 +1198,13 @@ fn expr_from_blob(
     i += mid.len();
     let n = bun_base64::encode(&mut buf[i..], bytes);
     let data = Str::new(&buf[..i + n]);
-    Ok(Expr::init(E::String { data, ..Default::default() }, loc))
+    Ok(Expr::init(
+        E::String {
+            data,
+            ..Default::default()
+        },
+        loc,
+    ))
 }
 
 // ported from: src/js_parser_jsc/Macro.zig

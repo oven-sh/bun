@@ -5,18 +5,18 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::VecExt;
-use bun_collections::BoundedArray;
 use bun_ast::Log;
-use bun_lolhtml_sys::lol_html as lol;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_collections::BoundedArray;
+use bun_collections::VecExt;
 use bun_core::strings;
+use bun_lolhtml_sys::lol_html as lol;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
-use crate::linker_context_mod::{debug, GenerateChunkCtx, LinkerContext, PendingPartRange};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, PendingPartRange, debug};
 use crate::options::Loader;
 use crate::thread_pool::Worker;
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
 use crate::{BundleV2, Chunk, CompileResult, IndexInt};
 
 /// Rrewrite the HTML with the following transforms:
@@ -52,9 +52,8 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // through `&PendingPartRange` / `&GenerateChunkCtx` is a plain `Copy` of
     // the pointer value and preserves the mutable provenance they were
     // constructed with — no `addr_of!` provenance dance needed.
-    let part_range: &PendingPartRange = unsafe {
-        &*bun_core::from_field_ptr!(PendingPartRange, task, task)
-    };
+    let part_range: &PendingPartRange =
+        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
     let worker = Worker::get(ctx.bundle());
@@ -137,8 +136,9 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         let parse_graph = self.linker.parse_graph();
         let unique_key_for_additional_files: &[u8] = if import_record.source_index.is_valid() {
-            &parse_graph.input_files.items_unique_key_for_additional_file()
-                [import_record.source_index.get() as usize]
+            &parse_graph
+                .input_files
+                .items_unique_key_for_additional_file()[import_record.source_index.get() as usize]
         } else {
             b""
         };
@@ -152,7 +152,10 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             .flags
             .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
         {
-            debug!("Leaving external import: {}", BStr::new(import_record.path.text));
+            debug!(
+                "Leaving external import: {}",
+                BStr::new(import_record.path.text)
+            );
             return;
         }
 
@@ -161,7 +164,10 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 element
                     .set_attribute(url_attribute, unique_key_for_additional_files)
                     .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
-            } else if import_record.path.is_disabled || loader.is_javascript_like() || loader.is_css() {
+            } else if import_record.path.is_disabled
+                || loader.is_javascript_like()
+                || loader.is_css()
+            {
                 element.remove();
             } else {
                 element
@@ -260,7 +266,10 @@ impl<'a> HTMLLoader<'a> {
         // PERF(port): was stack-fallback (std.heap.stackFallback(256))
         // `self.chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
         // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
-        if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(unsafe { &mut *self.chunks }) {
+        if let Some(js_chunk) = self
+            .chunk
+            .get_js_chunk_for_html(unsafe { &mut *self.chunks })
+        {
             let mut script = Vec::new();
             write!(
                 &mut script,

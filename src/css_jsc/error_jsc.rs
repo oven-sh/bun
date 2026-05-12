@@ -3,8 +3,8 @@
 use core::fmt::Display;
 
 use bun_alloc::AllocError;
-use bun_jsc::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
+use bun_jsc::{JSGlobalObject, JSValue};
 
 /// `this` is `&css::Err<T>` for any `T`; only `.kind` is accessed.
 // Zig `!JSValue` (inferred set) — only fallible call is `create_format` (OOM), so AllocError.

@@ -134,8 +134,14 @@ pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 /// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
 /// reset (matches Zig's manual get/put), so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
-#[inline] pub fn get() -> PoolGuard<PathBuffer> { PathBufferPoolT::<PathBuffer>::get() }
-#[inline] pub fn put(buf: Box<PathBuffer>) { PathBufferPoolT::<PathBuffer>::put(buf) }
+#[inline]
+pub fn get() -> PoolGuard<PathBuffer> {
+    PathBufferPoolT::<PathBuffer>::get()
+}
+#[inline]
+pub fn put(buf: Box<PathBuffer>) {
+    PathBufferPoolT::<PathBuffer>::put(buf)
+}
 
 impl<T: PoolStorage> PoolGuard<T> {
     /// Extract the `Box` without returning it to the pool (for `ManuallyDrop`

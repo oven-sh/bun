@@ -35,7 +35,9 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::EBUSY as usize] = "resource busy or locked";
     arr[SystemErrno::ECANCELED as usize] = "operation canceled";
     #[cfg(windows)]
-    { arr[SystemErrno::ECHARSET as usize] = "invalid Unicode character"; }
+    {
+        arr[SystemErrno::ECHARSET as usize] = "invalid Unicode character";
+    }
     arr[SystemErrno::ECONNABORTED as usize] = "software caused connection abort";
     arr[SystemErrno::ECONNREFUSED as usize] = "connection refused";
     arr[SystemErrno::ECONNRESET as usize] = "connection reset by peer";
@@ -61,7 +63,9 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ENOENT as usize] = "no such file or directory";
     arr[SystemErrno::ENOMEM as usize] = "not enough memory";
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
-    { arr[SystemErrno::ENONET as usize] = "machine is not on the network"; }
+    {
+        arr[SystemErrno::ENONET as usize] = "machine is not on the network";
+    }
     arr[SystemErrno::ENOPROTOOPT as usize] = "protocol not available";
     arr[SystemErrno::ENOSPC as usize] = "no space left on device";
     arr[SystemErrno::ENOSYS as usize] = "function not implemented";
@@ -72,7 +76,9 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const);
     // Zig's `@hasField` skipped it there, so match that.
     #[cfg(not(target_os = "freebsd"))]
-    { arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket"; }
+    {
+        arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket";
+    }
     arr[SystemErrno::EOVERFLOW as usize] = "value too large for defined data type";
     arr[SystemErrno::EPERM as usize] = "operation not permitted";
     arr[SystemErrno::EPIPE as usize] = "broken pipe";
@@ -88,21 +94,31 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ETXTBSY as usize] = "text file is busy";
     arr[SystemErrno::EXDEV as usize] = "cross-device link not permitted";
     #[cfg(windows)]
-    { arr[SystemErrno::EOF as usize] = "end of file"; }
+    {
+        arr[SystemErrno::EOF as usize] = "end of file";
+    }
     arr[SystemErrno::ENXIO as usize] = "no such device or address";
     arr[SystemErrno::EMLINK as usize] = "too many links";
     arr[SystemErrno::EHOSTDOWN as usize] = "host is down";
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
-    { arr[SystemErrno::EREMOTEIO as usize] = "remote I/O error"; }
+    {
+        arr[SystemErrno::EREMOTEIO as usize] = "remote I/O error";
+    }
     arr[SystemErrno::ENOTTY as usize] = "inappropriate ioctl for device";
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    { arr[SystemErrno::EFTYPE as usize] = "inappropriate file type or format"; }
+    {
+        arr[SystemErrno::EFTYPE as usize] = "inappropriate file type or format";
+    }
     arr[SystemErrno::EILSEQ as usize] = "illegal byte sequence";
     arr[SystemErrno::ESOCKTNOSUPPORT as usize] = "socket type not supported";
     #[cfg(not(target_os = "freebsd"))]
-    { arr[SystemErrno::ENODATA as usize] = "no data available"; }
+    {
+        arr[SystemErrno::ENODATA as usize] = "no data available";
+    }
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
-    { arr[SystemErrno::EUNATCH as usize] = "protocol driver not attached"; }
+    {
+        arr[SystemErrno::EUNATCH as usize] = "protocol driver not attached";
+    }
 
     EnumMap::from_array(arr)
 }
@@ -111,8 +127,14 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
 #[test]
 fn enoent_label() {
     // Validates the `discriminant == enum_map index` invariant the const builder relies on.
-    assert_eq!(LIBUV_ERROR_MAP[SystemErrno::ENOENT], "no such file or directory");
-    assert_eq!(LIBUV_ERROR_MAP[SystemErrno::ETIMEDOUT], "connection timed out");
+    assert_eq!(
+        LIBUV_ERROR_MAP[SystemErrno::ENOENT],
+        "no such file or directory"
+    );
+    assert_eq!(
+        LIBUV_ERROR_MAP[SystemErrno::ETIMEDOUT],
+        "connection timed out"
+    );
 }
 
 // ported from: src/sys/libuv_error_map.zig

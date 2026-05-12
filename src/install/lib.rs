@@ -1,4 +1,9 @@
-#![allow(unused, nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![allow(
+    unused,
+    nonstandard_style,
+    ambiguous_glob_reexports,
+    incomplete_features
+)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
@@ -10,14 +15,14 @@
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
 use bun_collections::VecExt;
-extern crate self as bun_install;
 extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
+extern crate self as bun_install;
 // `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
 // live at `bun_core` crate root (#[macro_export]); alias the crate so the
 // `bun_output::` path resolves in un-gated install modules.
-extern crate bun_core as bun_output;
 extern crate bun_analytics as analytics;
+extern crate bun_core as bun_output;
 // `bun_simdutf` → real crate is `bun_simdutf_sys`.
 extern crate bun_simdutf_sys as bun_simdutf;
 
@@ -29,8 +34,8 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
+    pub use bun_ast::{Expr, ExprData, G::Property, e as E, expr::Query};
     pub use bun_parsers::json::*;
-    pub use bun_ast::{Expr, ExprData, e as E, expr::Query, G::Property};
 }
 
 /// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
@@ -58,8 +63,8 @@ pub(crate) mod bun_progress {
 /// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
 /// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
-    pub use bun_options_types::context as Arguments;
     pub use ::bun_bunfig::*;
+    pub use bun_options_types::context as Arguments;
 }
 
 use core::cell::Cell;
@@ -76,35 +81,44 @@ pub mod package_manifest_map;
 pub mod resolution;
 // Legacy alias kept while callers migrate from the stub/real split.
 pub use resolution as resolution_real;
-pub mod postinstall_optimizer;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
-pub mod integrity;
-pub mod dependency;
 pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
+pub mod dependency;
+#[path = "ExternalSlice.rs"]
+pub mod external_slice;
 pub mod hosted_git_info;
+pub mod integrity;
 pub mod padding_checker;
+pub mod postinstall_optimizer;
 pub mod versioned_url;
 
 pub mod extract_tarball;
-#[path = "NetworkTask.rs"] pub mod network_task;
-#[path = "TarballStream.rs"] pub mod tarball_stream;
-#[path = "PackageManager.rs"] pub mod package_manager_real;
-#[path = "PackageManagerTask.rs"] pub mod package_manager_task;
-#[path = "lockfile.rs"] pub mod lockfile_real;
-pub use lockfile_real::{default_trusted_dependencies, DEFAULT_TRUSTED_DEPENDENCIES_LIST};
-#[path = "bin.rs"] pub mod bin_real;
-pub mod lifecycle_script_runner;
-#[path = "PackageInstall.rs"] pub mod package_install;
-#[path = "PackageInstaller.rs"] pub mod package_installer;
-#[path = "repository.rs"] pub mod repository_real;
-pub mod isolated_install;
-pub mod patch_install;
+#[path = "lockfile.rs"]
+pub mod lockfile_real;
+#[path = "NetworkTask.rs"]
+pub mod network_task;
+#[path = "PackageManager.rs"]
+pub mod package_manager_real;
+#[path = "PackageManagerTask.rs"]
+pub mod package_manager_task;
+#[path = "TarballStream.rs"]
+pub mod tarball_stream;
+pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_dependencies};
+#[path = "bin.rs"]
+pub mod bin_real;
 pub mod hoisted_install;
+pub mod isolated_install;
+pub mod lifecycle_script_runner;
 pub mod migration;
+#[path = "PackageInstall.rs"]
+pub mod package_install;
+#[path = "PackageInstaller.rs"]
+pub mod package_installer;
+pub mod patch_install;
 pub mod pnpm;
+#[path = "repository.rs"]
+pub mod repository_real;
 pub mod yarn;
 
 /// `repository` — re-export of the file-backed `repository_real` module
@@ -129,29 +143,29 @@ pub use bin_real as bin;
 pub mod lockfile {
     pub use crate::lockfile_real::*;
     // Back-compat aliases for names the inline stub spelled differently.
+    pub use crate::Origin;
     pub use crate::lockfile_real::LockfileFormat as Format;
-    pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
     pub use crate::lockfile_real::Serializer::SerializerLoadResult;
+    pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
     /// Zig callers spell `.root` (a `Resolution.Tag` literal) when invoking
     /// `Scripts.createList` for the root package; alias the tag enum here so
     /// `lockfile::ScriptsListKind::Root` resolves.
     pub use crate::resolution::Tag as ScriptsListKind;
-    pub use crate::Origin;
     /// `MultiArrayList<Package>.append` row type — the real `PackageList`
     /// (`package::List<u64>`) takes a `Package` value, so alias the row type
     /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.
     pub type PackageListEntry = crate::lockfile_real::Package;
     pub mod package {
+        pub use crate::lockfile_real::package::meta::{HasInstallScript, Meta};
         pub use crate::lockfile_real::package::*;
-        pub use crate::lockfile_real::package::meta::{Meta, HasInstallScript};
         pub mod scripts {
             pub use crate::lockfile_real::package::scripts::*;
         }
     }
-    pub use package::{Meta, HasInstallScript};
+    pub use package::{HasInstallScript, Meta};
     pub mod tree {
-        pub use crate::lockfile_real::tree::*;
         pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
+        pub use crate::lockfile_real::tree::*;
     }
 }
 
@@ -166,9 +180,9 @@ pub use update_request::UpdateRequest;
 /// bodies; both live in the same crate, so unify by re-exporting and add the
 /// few accessor types the inline module owned outright.
 pub mod package_manager {
+    pub use crate::package_manager_real::package_manager_options::LogLevel;
     pub use crate::package_manager_real::*;
     pub use crate::update_request;
-    pub use crate::package_manager_real::package_manager_options::LogLevel;
 
     /// `PackageManager.Options` namespace alias — `LogLevel` plus the
     /// free-function helpers callers spell as `Options::open_global_dir`.
@@ -183,8 +197,8 @@ pub mod package_manager {
     /// Re-export the file-backed workspace package.json cache.
     pub use crate::package_manager_real::workspace_package_json_cache;
     pub use workspace_package_json_cache::{
-        WorkspacePackageJSONCache, MapEntry as WorkspacePackageJsonCacheEntry,
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
+        MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
 
     /// `populateManifestCache` `Packages` union
@@ -243,12 +257,12 @@ pub mod _bin_linking_shim;
 pub mod _bun_shim_impl;
 pub mod windows_shim {
     pub use crate::_bin_linking_shim as bin_linking_shim;
-    pub use bin_linking_shim::{
-        embedded_executable_data, loose_decode, BinLinkingShim, Decoded, Flags, Shebang,
-        EMBEDDED_EXECUTABLE_DATA,
-    };
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
+    pub use bin_linking_shim::{
+        BinLinkingShim, Decoded, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang,
+        embedded_executable_data, loose_decode,
+    };
 }
 
 #[path = "resolvers/folder_resolver.rs"]
@@ -273,57 +287,57 @@ pub use bun_install_types::NodeLinker::PnpmMatcher;
 pub use bun_collections::identity_context::ArrayIdentityContext;
 pub use bun_collections::identity_context::IdentityContext;
 
-pub use external_slice as external;
 pub use external::ExternalPackageNameHashList;
 pub use external::ExternalSlice;
 pub use external::ExternalStringList;
 pub use external::ExternalStringMap;
 pub use external::VersionSlice;
+pub use external_slice as external;
 
-pub use integrity::Integrity;
-pub use dependency::{Dependency, DependencyExt, VersionExt, TagExt, ValueExt};
 pub use dependency::Behavior;
+pub use dependency::{Dependency, DependencyExt, TagExt, ValueExt, VersionExt};
+pub use integrity::Integrity;
 
+pub use bin::Bin;
 pub use lockfile_real::bun_lock as TextLockfile;
 pub use patch_install as patch;
-pub use bin::Bin;
 
-pub use repository::{Repository, RepositoryExt};
-pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
-pub use package_manager::Options::LogLevel;
-pub use package_manager::{
-    WorkspaceFilter, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
-    WorkspacePackageJsonCacheEntry, GetJsonOptions, GetJsonResult,
-};
-pub use resolution::Tag as ResolutionTag;
 pub use dependency::Tag as DependencyVersionTag;
 pub use extract_tarball::ExtractTarball;
+pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
+pub use package_manager::Options::LogLevel;
+pub use package_manager::{
+    GetJsonOptions, GetJsonResult, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
+    WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+};
+pub use repository::{Repository, RepositoryExt};
+pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
-pub use package_manifest_map::PackageManifestMap;
-pub use postinstall_optimizer::PostinstallOptimizer;
-pub use package_manager_task::Task;
-pub use network_task::NetworkTask;
-pub use tarball_stream::TarballStream;
 pub use _folder_resolver::FolderResolution;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
+pub use network_task::NetworkTask;
 pub use package_install::PackageInstall;
+pub use package_manager_task::Task;
+pub use package_manifest_map::PackageManifestMap;
+pub use postinstall_optimizer::PostinstallOptimizer;
+pub use tarball_stream::TarballStream;
 // `FileCopier` was hoisted out of `PackageInstall.rs` into
 // `isolated_install/FileCopier.rs` (shared by both linkers); re-export from
 // the new home so `bun_install::FileCopier` keeps resolving.
 pub use isolated_install::FileCopier;
 pub use isolated_install::Store;
-pub use patch_install::PatchTask;
 pub use package_manager_real::security_scanner::SecurityScanSubprocess;
+pub use patch_install::PatchTask;
 
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::{
-    PackageManager, RootPackageId, Subcommand, CommandLineArguments,
-    AsyncNetworkTaskQueue, PatchTaskQueue,
-};
 pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
+pub use package_manager_real::{
+    AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
+    Subcommand,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Back-compat type aliases — `*Stub` names that other files still reference
@@ -721,8 +735,9 @@ impl RunCommand {
                 // `PathAlreadyExists` after a sibling re-created it. Swallow
                 // the error — the `CreateHardLinkW` retry below already
                 // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 =
-                    bun_core::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
+                let dir_slice_u8 = bun_core::immutable::to_utf8_alloc_with_type(
+                    &target_path_buffer[..dir_slice_len],
+                );
                 let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
                 let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
             }
@@ -735,18 +750,25 @@ impl RunCommand {
                 // Under Stacked Borrows a `*const` derived via `Deref::deref`
                 // is invalidated by the intervening `&mut` from `IndexMut`, so
                 // re-derive `as_ptr()` at each FFI call site instead of caching.
-                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0 {
+                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0
+                {
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {}
                         _ => {
                             target_path_buffer[dir_slice_len] = 0;
                             // SAFETY: `dir_slice_len` is in-bounds; the byte at
                             // `dir_slice_len` was just set to NUL.
-                            let dir_w = bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len,);
+                            let dir_w =
+                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
 
-                            if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0 {
+                            if win::CreateHardLinkW(
+                                target_path_buffer.as_ptr(),
+                                image_path.as_ptr(),
+                                None,
+                            ) == 0
+                            {
                                 return Ok(());
                             }
                         }
@@ -761,10 +783,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            strings::to_utf8_append_to_list(
-                path,
-                &target_path_buffer[prefix.len()..dir_slice_len],
-            );
+            strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())
@@ -867,7 +886,9 @@ impl RunCommand {
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = env_loader.map.put_default(b"npm_execpath", self_exe.as_bytes());
+                let _ = env_loader
+                    .map
+                    .put_default(b"npm_execpath", self_exe.as_bytes());
             }
         }
 
@@ -981,10 +1002,7 @@ pub fn initialize_mini_store() {
             // Zig threads `heap.arena()` into the AST allocator; in Rust
             // the Bump (`Arena`) is passed by reference.
             let memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
-            let mini_store = bun_core::heap::into_raw(Box::new(MiniStore {
-                heap,
-                memory_store,
-            }));
+            let mini_store = bun_core::heap::into_raw(Box::new(MiniStore { heap, memory_store }));
             // SAFETY: just allocated, non-null, thread-local exclusive access
             unsafe {
                 (*mini_store).memory_store.reset();
@@ -1009,7 +1027,9 @@ pub fn initialize_mini_store() {
             // once accumulated bytes exceed 8 MiB. `push()` re-publishes the
             // (possibly unchanged) `heap_ptr()` to `AST_HEAP`.
             let _ = &mini_store.heap;
-            mini_store.memory_store.reset_retain_with_limit(8 * 1024 * 1024);
+            mini_store
+                .memory_store
+                .reset_retain_with_limit(8 * 1024 * 1024);
             mini_store.memory_store.push();
         }
     });
@@ -1019,8 +1039,8 @@ pub fn initialize_mini_store() {
 // (single canonical definition shared with `bun_resolver`). Re-exported here so existing
 // `bun_install::PackageID` / `INVALID_PACKAGE_ID` / etc. paths continue to resolve.
 pub use bun_install_types::{
-    DependencyID, PackageID, PackageNameHash, TruncatedPackageNameHash, INVALID_DEPENDENCY_ID,
-    INVALID_PACKAGE_ID,
+    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+    TruncatedPackageNameHash,
 };
 // Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
 pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
@@ -1035,8 +1055,8 @@ impl Aligner {
     pub fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
-        let remainder: &[u8] =
-            &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
+        let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
+            [0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
         writer.write_all(remainder)?;
 
         Ok(to_write)
@@ -1052,8 +1072,8 @@ impl Aligner {
     ) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount_with_align(align, pos as usize);
 
-        let remainder: &[u8] =
-            &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
+        let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
+            [0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
         writer.write_all(remainder)?;
 
         Ok(to_write)

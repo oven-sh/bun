@@ -26,16 +26,24 @@ impl MarkedArgumentBuffer {
     /// heap-allocated owning form (the C++ type is non-movable); `new` is a
     /// scoped-borrow constructor like Zig's `MarkedArgumentBuffer.run`.
     pub fn new<R>(f: impl FnOnce(&mut MarkedArgumentBuffer) -> R) -> R {
-        struct Ctx<F, R> { f: Option<F>, r: Option<R> }
+        struct Ctx<F, R> {
+            f: Option<F>,
+            r: Option<R>,
+        }
         extern "C" fn run<F, R>(ctx: *mut Ctx<F, R>, args: *mut MarkedArgumentBuffer)
-        where F: FnOnce(&mut MarkedArgumentBuffer) -> R {
+        where
+            F: FnOnce(&mut MarkedArgumentBuffer) -> R,
+        {
             // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
             // live stack-allocated buffer C++ hands us.
             let ctx = unsafe { &mut *ctx };
             let f = ctx.f.take().unwrap();
             ctx.r = Some(f(unsafe { &mut *args }));
         }
-        let mut ctx = Ctx { f: Some(f), r: None };
+        let mut ctx = Ctx {
+            f: Some(f),
+            r: None,
+        };
         Self::run(&mut ctx, run::<_, R>);
         ctx.r.unwrap()
     }
@@ -44,10 +52,7 @@ impl MarkedArgumentBuffer {
         MarkedArgumentBuffer__append(self, value)
     }
 
-    pub fn run<T>(
-        ctx: &mut T,
-        func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer),
-    ) {
+    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
         // Mirrors Zig `@ptrCast` of both ctx and func — `MarkedArgumentBuffer__run`
         // round-trips `ctx` opaquely back to `func`, and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
@@ -93,10 +98,9 @@ macro_rules! marked_argument_buffer_wrap {
                 // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
                 // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
                 let this = unsafe { &mut *this };
-                this.result =
-                    $function(this.global_this, this.callframe, unsafe {
-                        &mut *marked_argument_buffer
-                    });
+                this.result = $function(this.global_this, this.callframe, unsafe {
+                    &mut *marked_argument_buffer
+                });
             }
 
             let mut ctx = Context {

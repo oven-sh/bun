@@ -4,7 +4,7 @@ use core::fmt;
 use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
-pub use bun_core::{fd, Fd, FdKind, FdNative, FdOptional as Optional, Stdio};
+pub use bun_core::{Fd, FdKind, FdNative, FdOptional as Optional, Stdio, fd};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
 /// for callers porting Zig's `std.posix.fd_t` / `bun.FD.native()`.
 pub type RawFd = FdNative;
@@ -60,13 +60,20 @@ pub trait FdExt: Copy + Sized {
     /// fd function will NOT CLOSE stdin/stdout/stderr.
     /// Use fd API to implement `node:fs` close.
     /// Prefer asserting that EBADF does not happen with `.close()`.
-    fn close_allowing_bad_file_descriptor(self, return_address: Option<usize>) -> Option<sys::Error>;
+    fn close_allowing_bad_file_descriptor(
+        self,
+        return_address: Option<usize>,
+    ) -> Option<sys::Error>;
     /// fd allows you to close standard io. It also returns the error.
     /// Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
-    fn make_lib_uv_owned_for_syscall(self, syscall_tag: sys::Tag, error_case: ErrorCase) -> sys::Result<Fd>;
+    fn make_lib_uv_owned_for_syscall(
+        self,
+        syscall_tag: sys::Tag,
+        error_case: ErrorCase,
+    ) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error>;
     fn as_socket_fd(self) -> sys::SocketT;
@@ -78,7 +85,10 @@ impl FdExt for Fd {
         debug_assert!(err.is_none()); // use after close!
     }
 
-    fn close_allowing_bad_file_descriptor(self, return_address: Option<usize>) -> Option<sys::Error> {
+    fn close_allowing_bad_file_descriptor(
+        self,
+        return_address: Option<usize>,
+    ) -> Option<sys::Error> {
         if self.stdio_tag().is_some() {
             log!("close({}) SKIPPED", self);
             return None;
@@ -147,7 +157,7 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{libuv as uv, Win32Error, Win32ErrorExt as _, NTSTATUS};
+                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
                 match self.decode_windows() {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -205,7 +215,11 @@ impl FdExt for Fd {
                     ));
                     bun_core::dump_current_stack_trace(
                         return_address,
-                        bun_core::DumpStackTraceOptions { frame_count: 4, stop_at_jsc_llint: true, ..Default::default() },
+                        bun_core::DumpStackTraceOptions {
+                            frame_count: 4,
+                            stop_at_jsc_llint: true,
+                            ..Default::default()
+                        },
                     );
                 } else {
                     log!("close({}) = {}", bstr::BStr::new(fd_fmt), err);
@@ -215,14 +229,18 @@ impl FdExt for Fd {
             }
         }
         #[cfg(not(debug_assertions))]
-        { let _ = return_address; }
+        {
+            let _ = return_address;
+        }
         result
     }
 
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError> {
         debug_assert!(self.is_valid());
         #[cfg(not(windows))]
-        { Ok(self) }
+        {
+            Ok(self)
+        }
         #[cfg(windows)]
         {
             match self.kind() {
@@ -277,9 +295,13 @@ impl FdExt for Fd {
     fn as_socket_fd(self) -> sys::SocketT {
         #[cfg(windows)]
         // SAFETY: HANDLE → SOCKET pointer reinterpretation; matches Zig @ptrCast.
-        { self.native() as sys::SocketT }
+        {
+            self.native() as sys::SocketT
+        }
         #[cfg(not(windows))]
-        { self.native() }
+        {
+            self.native()
+        }
     }
 }
 
@@ -290,7 +312,9 @@ pub trait FdOptionalExt {
 impl FdOptionalExt for Optional {
     #[inline]
     fn close(self) {
-        if let Some(fd) = self.unwrap() { fd.close(); }
+        if let Some(fd) = self.unwrap() {
+            fd.close();
+        }
     }
 }
 
@@ -326,12 +350,25 @@ impl HashMapContext {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         #[cfg(not(windows))]
-        { fd.0 as u32 as u64 } // @bitCast c_int → u32, then widen
+        {
+            fd.0 as u32 as u64
+        } // @bitCast c_int → u32, then widen
         #[cfg(windows)]
-        { fd.0 }
+        {
+            fd.0
+        }
     }
-    #[inline] pub fn eql(a: Fd, b: Fd) -> bool { a == b }
-    #[inline] pub fn pre(input: Fd) -> Prehashed { Prehashed { value: Self::hash(input), input } }
+    #[inline]
+    pub fn eql(a: Fd, b: Fd) -> bool {
+        a == b
+    }
+    #[inline]
+    pub fn pre(input: Fd) -> Prehashed {
+        Prehashed {
+            value: Self::hash(input),
+            input,
+        }
+    }
 }
 pub struct Prehashed {
     pub value: u64,
@@ -340,11 +377,16 @@ pub struct Prehashed {
 impl Prehashed {
     #[inline]
     pub fn hash(&self, fd: Fd) -> u64 {
-        if fd == self.input { return self.value; }
+        if fd == self.input {
+            return self.value;
+        }
         // Zig: `return fd;` — implicit coercion of FD (packed struct) to u64.
         HashMapContext::hash(fd)
     }
-    #[inline] pub fn eql(&self, a: Fd, b: Fd) -> bool { a == b }
+    #[inline]
+    pub fn eql(&self, a: Fd, b: Fd) -> bool {
+        a == b
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -357,48 +399,90 @@ impl Prehashed {
 // moved to libuv. On POSIX this is just a wrapper over Fd and does nothing.
 // ──────────────────────────────────────────────────────────────────────────
 pub struct MovableIfWindowsFd {
-    #[cfg(windows)] inner: Option<Fd>,
-    #[cfg(not(windows))] inner: Fd,
+    #[cfg(windows)]
+    inner: Option<Fd>,
+    #[cfg(not(windows))]
+    inner: Fd,
 }
 impl MovableIfWindowsFd {
     #[inline]
     pub fn init(fd: Fd) -> Self {
-        #[cfg(windows)] { Self { inner: Some(fd) } }
-        #[cfg(not(windows))] { Self { inner: fd } }
+        #[cfg(windows)]
+        {
+            Self { inner: Some(fd) }
+        }
+        #[cfg(not(windows))]
+        {
+            Self { inner: fd }
+        }
     }
     #[inline]
     pub fn get(&self) -> Option<Fd> {
-        #[cfg(windows)] { self.inner }
-        #[cfg(not(windows))] { Some(self.inner) }
+        #[cfg(windows)]
+        {
+            self.inner
+        }
+        #[cfg(not(windows))]
+        {
+            Some(self.inner)
+        }
     }
     #[cfg(not(windows))]
-    #[inline] pub fn get_posix(&self) -> Fd { self.inner }
+    #[inline]
+    pub fn get_posix(&self) -> Fd {
+        self.inner
+    }
     // Windows: `getPosix` is a `@compileError` — not provided.
 
     pub fn close(&mut self) {
         #[cfg(not(windows))]
-        { self.inner.close(); self.inner = Fd::INVALID; }
+        {
+            self.inner.close();
+            self.inner = Fd::INVALID;
+        }
         #[cfg(windows)]
-        { if let Some(fd) = self.inner { fd.close(); self.inner = None; } }
+        {
+            if let Some(fd) = self.inner {
+                fd.close();
+                self.inner = None;
+            }
+        }
     }
     #[inline]
     pub fn is_valid(&self) -> bool {
-        #[cfg(not(windows))] { self.inner.is_valid() }
-        #[cfg(windows)] { self.inner.is_some_and(|fd| fd.is_valid()) }
+        #[cfg(not(windows))]
+        {
+            self.inner.is_valid()
+        }
+        #[cfg(windows)]
+        {
+            self.inner.is_some_and(|fd| fd.is_valid())
+        }
     }
     #[inline]
     pub fn is_owned(&self) -> bool {
-        #[cfg(not(windows))] { true }
-        #[cfg(windows)] { self.inner.is_some() }
+        #[cfg(not(windows))]
+        {
+            true
+        }
+        #[cfg(windows)]
+        {
+            self.inner.is_some()
+        }
     }
     /// Takes the FD, leaving `self` in a "moved-from" state. Only on Windows.
     #[cfg(windows)]
-    pub fn take(&mut self) -> Option<Fd> { self.inner.take() }
+    pub fn take(&mut self) -> Option<Fd> {
+        self.inner.take()
+    }
     // POSIX: `take` is a `@compileError` — not provided.
 }
 impl fmt::Display for MovableIfWindowsFd {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(not(windows))] { write!(w, "{}", self.inner) }
+        #[cfg(not(windows))]
+        {
+            write!(w, "{}", self.inner)
+        }
         #[cfg(windows)]
         {
             match self.inner {
@@ -425,7 +509,9 @@ pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError>
     // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
     let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
     debug_assert!(out >= -1);
-    if out == -1 { return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded); }
+    if out == -1 {
+        return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);
+    }
     Ok(out)
 }
 

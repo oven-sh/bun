@@ -1,14 +1,20 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 #![warn(unreachable_pub)]
-pub mod AutoFlusher;
 pub mod AnyTask;
-pub mod ManagedTask;
-pub mod DeferredTaskQueue;
 pub mod AnyTaskWithExtraContext;
+pub mod AutoFlusher;
 pub mod ConcurrentTask;
+pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
+pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
@@ -27,10 +33,10 @@ pub mod MiniEventLoop;
 // Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
 // associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
 // module path, so the snake_case module name is internal.
-#[path = "AnyEventLoop.rs"]
-pub mod any_event_loop;
 #[path = "SpawnSyncEventLoop.rs"]
 pub mod SpawnSyncEventLoop;
+#[path = "AnyEventLoop.rs"]
+pub mod any_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
@@ -43,10 +49,8 @@ pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 pub use AutoFlusher as auto_flusher;
 pub use DeferredTaskQueue as deferred_task_queue;
 
-pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
-};
-pub use MiniEventLoop::{EventLoopKind, PipeReadBuffer, PlatformEventLoop, PIPE_READ_BUFFER_SIZE};
+pub use MiniEventLoop::{EventLoopKind, PIPE_READ_BUFFER_SIZE, PipeReadBuffer, PlatformEventLoop};
+pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
@@ -83,6 +87,11 @@ impl JsEventLoop {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
         // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
         // invariant for `Self::new` is upheld for every dispatch on this handle.
-        unsafe { Self::new(JsEventLoopKind::Jsc, any_event_loop::__bun_js_event_loop_current()) }
+        unsafe {
+            Self::new(
+                JsEventLoopKind::Jsc,
+                any_event_loop::__bun_js_event_loop_current(),
+            )
+        }
     }
 }

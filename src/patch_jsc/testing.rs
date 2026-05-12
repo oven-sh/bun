@@ -1,10 +1,10 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
+use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
 };
 use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
-use bun_core::{OwnedString, String as BunString};
 use bun_sys::{Fd, FdExt};
 
 pub struct TestingAPIs;
@@ -139,7 +139,11 @@ impl TestingAPIs {
             let bunstr = OwnedString::new(bunstr);
             let path = bunstr.to_owned_slice_z();
 
-            match bun_sys::open(path.as_zstr(), bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
+            match bun_sys::open(
+                path.as_zstr(),
+                bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
+                0,
+            ) {
                 Err(e) => {
                     let js_err = SysErrorJsc::to_js(&e.with_path(path.as_bytes()), global);
                     let _ = global.throw_value(js_err);

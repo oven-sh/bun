@@ -1,8 +1,8 @@
 use crate::jsc::{JSGlobalObject, JSValue};
+use bun_core::String;
 use bun_core::StringBuilder;
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
-use bun_core::String;
 
 use crate::postgres::error_jsc::create_postgres_error;
 use bun_sql::postgres::any_postgres_error::PostgresErrorOptions;
@@ -92,7 +92,11 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let _ = needs_newline;
 
     fn maybe_slice(s: &String) -> Option<&[u8]> {
-        if s.is_empty() { None } else { Some(s.byte_slice()) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.byte_slice())
+        }
     }
 
     let errno = maybe_slice(code);
@@ -122,7 +126,11 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     // PORT NOTE: reshaped for borrowck — `b.allocated_slice()` borrows `b`
     // mutably; capture `b.len` first.
     let len = b.len;
-    let error_message: &[u8] = if len > 0 { &b.allocated_slice()[..len] } else { b"" };
+    let error_message: &[u8] = if len > 0 {
+        &b.allocated_slice()[..len]
+    } else {
+        b""
+    };
 
     create_postgres_error(
         global_object,

@@ -142,12 +142,32 @@ where
 /// Usage: `match ExactSizeMatcher::<4>::r#match(s) { exact_case!(4, b"foo") => .., _ => .. }`
 #[macro_export]
 macro_rules! exact_case {
-    (1,  $s:expr) => {{ const _A: [u8;1]  = $crate::string::immutable::exact_size_matcher::__pad::<1>($s);  u8::from_le_bytes(_A) }};
-    (2,  $s:expr) => {{ const _A: [u8;2]  = $crate::string::immutable::exact_size_matcher::__pad::<2>($s);  u16::from_le_bytes(_A) }};
-    (4,  $s:expr) => {{ const _A: [u8;4]  = $crate::string::immutable::exact_size_matcher::__pad::<4>($s);  u32::from_le_bytes(_A) }};
-    (8,  $s:expr) => {{ const _A: [u8;8]  = $crate::string::immutable::exact_size_matcher::__pad::<8>($s);  u64::from_le_bytes(_A) }};
-    (12, $s:expr) => {{ const _A: [u8;16] = $crate::string::immutable::exact_size_matcher::__pad::<16>(&$crate::string::immutable::exact_size_matcher::__pad::<12>($s)); u128::from_le_bytes(_A) }};
-    (16, $s:expr) => {{ const _A: [u8;16] = $crate::string::immutable::exact_size_matcher::__pad::<16>($s); u128::from_le_bytes(_A) }};
+    (1,  $s:expr) => {{
+        const _A: [u8; 1] = $crate::string::immutable::exact_size_matcher::__pad::<1>($s);
+        u8::from_le_bytes(_A)
+    }};
+    (2,  $s:expr) => {{
+        const _A: [u8; 2] = $crate::string::immutable::exact_size_matcher::__pad::<2>($s);
+        u16::from_le_bytes(_A)
+    }};
+    (4,  $s:expr) => {{
+        const _A: [u8; 4] = $crate::string::immutable::exact_size_matcher::__pad::<4>($s);
+        u32::from_le_bytes(_A)
+    }};
+    (8,  $s:expr) => {{
+        const _A: [u8; 8] = $crate::string::immutable::exact_size_matcher::__pad::<8>($s);
+        u64::from_le_bytes(_A)
+    }};
+    (12, $s:expr) => {{
+        const _A: [u8; 16] = $crate::string::immutable::exact_size_matcher::__pad::<16>(
+            &$crate::string::immutable::exact_size_matcher::__pad::<12>($s),
+        );
+        u128::from_le_bytes(_A)
+    }};
+    (16, $s:expr) => {{
+        const _A: [u8; 16] = $crate::string::immutable::exact_size_matcher::__pad::<16>($s);
+        u128::from_le_bytes(_A)
+    }};
 }
 
 #[doc(hidden)]

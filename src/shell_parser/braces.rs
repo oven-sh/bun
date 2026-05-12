@@ -1,13 +1,13 @@
 use core::ptr;
 
-use bun_alloc::{AllocError, Arena as Bump};
 use bun_alloc::ArenaVecExt as _;
+use bun_alloc::{AllocError, Arena as Bump};
 // PORT NOTE: `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
-use smallvec::SmallVec;
 use self::StringEncoding as Encoding;
-use bun_core::SmolStr;
 use bun_alloc::ArenaVec as BumpVec;
+use bun_core::SmolStr;
+use smallvec::SmallVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Moved from `bun_shell` (src/shell/shell.zig):
@@ -16,9 +16,9 @@ use bun_alloc::ArenaVec as BumpVec;
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_core::strings;
 use bun_core::immutable::CodePoint; // i32
 use bun_core::immutable::{CodepointIterator, Cursor};
+use bun_core::strings;
 
 /// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -55,7 +55,10 @@ struct AsciiIndexValue {
 impl SrcAscii {
     #[inline]
     fn init(bytes: &[u8]) -> Self {
-        Self { bytes: std::ptr::from_ref::<[u8]>(bytes), i: 0 }
+        Self {
+            bytes: std::ptr::from_ref::<[u8]>(bytes),
+            i: 0,
+        }
     }
     #[inline]
     fn bytes(&self) -> &[u8] {
@@ -68,7 +71,10 @@ impl SrcAscii {
         if self.i >= b.len() {
             return None;
         }
-        Some(AsciiIndexValue { char: u32::from(b[self.i]), escaped: false })
+        Some(AsciiIndexValue {
+            char: u32::from(b[self.i]),
+            escaped: false,
+        })
     }
     #[inline]
     fn index_next(&self) -> Option<AsciiIndexValue> {
@@ -76,7 +82,10 @@ impl SrcAscii {
         if self.i + 1 >= b.len() {
             return None;
         }
-        Some(AsciiIndexValue { char: u32::from(b[self.i + 1]), escaped: false })
+        Some(AsciiIndexValue {
+            char: u32::from(b[self.i + 1]),
+            escaped: false,
+        })
     }
     #[inline]
     fn eat(&mut self, escaped: bool) {
@@ -117,14 +126,21 @@ impl SrcUnicode {
         Self::next_cursor(&iter, &mut cursor);
         let mut next_cursor = cursor;
         Self::next_cursor(&iter, &mut next_cursor);
-        Self { iter, cursor, next_cursor }
+        Self {
+            iter,
+            cursor,
+            next_cursor,
+        }
     }
     #[inline]
     fn index(&self) -> Option<UnicodeIndexValue> {
         if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
             return None;
         }
-        Some(UnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width })
+        Some(UnicodeIndexValue {
+            char: self.cursor.c as u32,
+            width: self.cursor.width,
+        })
     }
     #[inline]
     fn index_next(&self) -> Option<UnicodeIndexValue> {
@@ -194,7 +210,10 @@ pub trait CharIter: Sized {
 impl<const E: StringEncoding> ShellCharIter<E> {
     #[inline]
     pub fn is_whitespace(c: InputChar) -> bool {
-        matches!(c.char, 0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */)
+        matches!(
+            c.char,
+            0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */
+        )
     }
 }
 
@@ -209,7 +228,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         } else {
             ShellSrc::Unicode(SrcUnicode::init(bytes))
         };
-        Self { src, state: ShellCharIterState::Normal, prev: None, current: None }
+        Self {
+            src,
+            state: ShellCharIterState::Normal,
+            prev: None,
+            current: None,
+        }
     }
 
     fn src_bytes(&self) -> &[u8] {
@@ -276,7 +300,10 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
             }
         }
         if ch != u32::from(b'\\') || self.state == ShellCharIterState::Single {
-            return Some(InputChar { char: ch, escaped: false });
+            return Some(InputChar {
+                char: ch,
+                escaped: false,
+            });
         }
 
         // Handle backslash
@@ -304,7 +331,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
                     {
                         ch = peeked;
                     }
-                    _ => return Some(InputChar { char: ch, escaped: false }),
+                    _ => {
+                        return Some(InputChar {
+                            char: ch,
+                            escaped: false,
+                        });
+                    }
                 }
             }
             // We checked `self.state == .Single` above so this is impossible.
@@ -313,7 +345,10 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
             ShellCharIterState::Single => unreachable!(),
         }
 
-        Some(InputChar { char: ch, escaped: true })
+        Some(InputChar {
+            char: ch,
+            escaped: true,
+        })
     }
 }
 
@@ -639,8 +674,74 @@ unsafe fn expand_nested(
     // SAFETY: see fn doc comment — raw-pointer derefs mirror Zig pointer semantics;
     // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
     unsafe {
-    if let ast::GroupAtoms::Single(_) = (*root).atoms {
-        if start > 0 {
+        if let ast::GroupAtoms::Single(_) = (*root).atoms {
+            if start > 0 {
+                if !(*root).bubble_up.is_null() {
+                    let bubble_up = (*root).bubble_up;
+                    let next = (*root).bubble_up_next.unwrap();
+                    return expand_nested(
+                        bubble_up,
+                        out,
+                        out_key,
+                        out_key_counter,
+                        u32::from(next),
+                    );
+                }
+                return Ok(());
+            }
+
+            match &(*root).atoms {
+                ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
+                    out[usize::from(out_key)].extend_from_slice(txt.slice());
+                    if !(*root).bubble_up.is_null() {
+                        let bubble_up = (*root).bubble_up;
+                        let next = (*root).bubble_up_next.unwrap();
+                        return expand_nested(
+                            bubble_up,
+                            out,
+                            out_key,
+                            out_key_counter,
+                            u32::from(next),
+                        );
+                    }
+                    return Ok(());
+                }
+                ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
+                    let length = out[usize::from(out_key)].len();
+                    // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
+                    // out[out_key].items[0..length] each iteration (same bytes).
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
+                    let variants = expansion.variants;
+                    let variants_len = variants.len();
+                    for j in 0..variants_len {
+                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
+                        (*group).bubble_up = root;
+                        (*group).bubble_up_next = Some(1);
+                        let new_key = if j == 0 {
+                            out_key
+                        } else {
+                            let new_key = *out_key_counter;
+                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            *out_key_counter += 1;
+                            new_key
+                        };
+
+                        expand_nested(group, out, new_key, out_key_counter, 0)?;
+                    }
+                    return Ok(());
+                }
+                ast::GroupAtoms::Many(_) => unreachable!(),
+            }
+        }
+
+        let many: *mut [ast::Atom] = match &(*root).atoms {
+            ast::GroupAtoms::Many(m) => *m,
+            _ => unreachable!(),
+        };
+        let many_len = many.len();
+
+        if start as usize >= many_len {
             if !(*root).bubble_up.is_null() {
                 let bubble_up = (*root).bubble_up;
                 let next = (*root).bubble_up_next.unwrap();
@@ -649,101 +750,47 @@ unsafe fn expand_nested(
             return Ok(());
         }
 
-        match &(*root).atoms {
-            ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                out[usize::from(out_key)].extend_from_slice(txt.slice());
-                if !(*root).bubble_up.is_null() {
-                    let bubble_up = (*root).bubble_up;
-                    let next = (*root).bubble_up_next.unwrap();
-                    return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
+        for i_ in (start as usize)..many_len {
+            let i: u16 = u16::try_from(i_).expect("int cast");
+            let atom: &ast::Atom = &(*many)[i_];
+            match atom {
+                ast::Atom::Text(txt) => {
+                    out[usize::from(out_key)].extend_from_slice(txt.slice());
                 }
-                return Ok(());
-            }
-            ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
-                let length = out[usize::from(out_key)].len();
-                // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
-                // out[out_key].items[0..length] each iteration (same bytes).
-                // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
-                let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
-                let variants = expansion.variants;
-                let variants_len = variants.len();
-                for j in 0..variants_len {
-                    let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                    (*group).bubble_up = root;
-                    (*group).bubble_up_next = Some(1);
-                    let new_key = if j == 0 {
-                        out_key
-                    } else {
-                        let new_key = *out_key_counter;
-                        out[usize::from(new_key)].extend_from_slice(&prefix);
-                        *out_key_counter += 1;
-                        new_key
-                    };
+                ast::Atom::Expansion(expansion) => {
+                    let length = out[usize::from(out_key)].len();
+                    // PORT NOTE: reshaped for borrowck — see above.
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
+                    let variants = expansion.variants;
+                    let variants_len = variants.len();
+                    for j in 0..variants_len {
+                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
+                        (*group).bubble_up = root;
+                        (*group).bubble_up_next = Some(i + 1);
+                        let new_key = if j == 0 {
+                            out_key
+                        } else {
+                            let new_key = *out_key_counter;
+                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            *out_key_counter += 1;
+                            new_key
+                        };
 
-                    expand_nested(group, out, new_key, out_key_counter, 0)?;
+                        expand_nested(group, out, new_key, out_key_counter, 0)?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
-            ast::GroupAtoms::Many(_) => unreachable!(),
         }
-    }
 
-    let many: *mut [ast::Atom] = match &(*root).atoms {
-        ast::GroupAtoms::Many(m) => *m,
-        _ => unreachable!(),
-    };
-    let many_len = many.len();
-
-    if start as usize >= many_len {
+        // After execution we need to go up a level
         if !(*root).bubble_up.is_null() {
             let bubble_up = (*root).bubble_up;
             let next = (*root).bubble_up_next.unwrap();
             return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
         }
-        return Ok(());
-    }
-
-    for i_ in (start as usize)..many_len {
-        let i: u16 = u16::try_from(i_).expect("int cast");
-        let atom: &ast::Atom = &(*many)[i_];
-        match atom {
-            ast::Atom::Text(txt) => {
-                out[usize::from(out_key)].extend_from_slice(txt.slice());
-            }
-            ast::Atom::Expansion(expansion) => {
-                let length = out[usize::from(out_key)].len();
-                // PORT NOTE: reshaped for borrowck — see above.
-                // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
-                let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
-                let variants = expansion.variants;
-                let variants_len = variants.len();
-                for j in 0..variants_len {
-                    let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                    (*group).bubble_up = root;
-                    (*group).bubble_up_next = Some(i + 1);
-                    let new_key = if j == 0 {
-                        out_key
-                    } else {
-                        let new_key = *out_key_counter;
-                        out[usize::from(new_key)].extend_from_slice(&prefix);
-                        *out_key_counter += 1;
-                        new_key
-                    };
-
-                    expand_nested(group, out, new_key, out_key_counter, 0)?;
-                }
-                return Ok(());
-            }
-        }
-    }
-
-    // After execution we need to go up a level
-    if !(*root).bubble_up.is_null() {
-        let bubble_up = (*root).bubble_up;
-        let next = (*root).bubble_up_next.unwrap();
-        return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
-    }
-    Ok(())
+        Ok(())
     } // unsafe
 }
 
@@ -779,8 +826,8 @@ fn expand_flat(
                     debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
                 }
 
-                let variants =
-                    &expansion_table[usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
+                let variants = &expansion_table
+                    [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
                 let skip_over_idx = variants[variants.len() - 1].end();
 
                 let starting_len = out[usize::from(out_key)].len();
@@ -1057,7 +1104,10 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
     }
     impl Default for StackEntry {
         fn default() -> Self {
-            Self { segment_product: 1, accumulator: 0 }
+            Self {
+                segment_product: 1,
+                accumulator: 0,
+            }
         }
     }
     let mut nested_brace_stack: SmallVec<[StackEntry; MAX_NESTED_BRACES]> = SmallVec::new();
@@ -1275,7 +1325,11 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         if self.tokens.is_empty() {
             return Ok(());
         }
-        let mut brace_count: u32 = if matches!(self.tokens[0], Token::Open(_)) { 1 } else { 0 };
+        let mut brace_count: u32 = if matches!(self.tokens[0], Token::Open(_)) {
+            1
+        } else {
+            0
+        };
         let mut i: u32 = 0;
         let mut j: u32 = 1;
         while (i as usize) < self.tokens.len() && (j as usize) < self.tokens.len() {
@@ -1378,11 +1432,13 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         }
 
         if ENCODING == Encoding::Ascii {
-            self.tokens.push(Token::Text(SmolStr::from_slice(&[char as u8])?));
+            self.tokens
+                .push(Token::Text(SmolStr::from_slice(&[char as u8])?));
         } else {
             let mut buf = [0u8; 4];
             let len = bun_core::encode_wtf8_rune(&mut buf, char);
-            self.tokens.push(Token::Text(SmolStr::from_slice(&buf[..len])?));
+            self.tokens
+                .push(Token::Text(SmolStr::from_slice(&buf[..len])?));
         }
         Ok(())
     }
@@ -1407,7 +1463,11 @@ mod tests {
         let test_cases: Vec<TestCase> = vec![
             TestCase(
                 b"{}",
-                vec![Token::Open(ExpansionVariants::default()), Token::Close, Token::Eof],
+                vec![
+                    Token::Open(ExpansionVariants::default()),
+                    Token::Close,
+                    Token::Eof,
+                ],
             ),
             TestCase(
                 b"{foo}",

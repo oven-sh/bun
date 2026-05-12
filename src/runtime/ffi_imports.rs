@@ -17,16 +17,11 @@
 //! intentionally co-located with the vtable they fill (see `dispatch.rs` /
 //! `jsc_hooks.rs`). Do NOT move the codegen-emitted `js_${T}` extern blocks
 //! from `generated_classes.rs` — those are owned by the generator.
-#![allow(
-    non_snake_case,
-    dead_code,
-    improper_ctypes,
-    clippy::missing_safety_doc,
-)]
+#![allow(non_snake_case, dead_code, improper_ctypes, clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use bun_core::String as BunString;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use core::ffi::{c_char, c_int, c_void};
 
 // ─── ZigGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
 // (populated incrementally — see audit comment in generated_host_exports.rs)

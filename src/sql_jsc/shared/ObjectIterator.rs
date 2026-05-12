@@ -18,7 +18,8 @@ pub struct ObjectIterator<'a> {
 
 impl<'a> ObjectIterator<'a> {
     pub fn next(&mut self) -> JsResult<Option<JSValue>> {
-        if self.array.is_empty_or_undefined_or_null() || self.columns.is_empty_or_undefined_or_null()
+        if self.array.is_empty_or_undefined_or_null()
+            || self.columns.is_empty_or_undefined_or_null()
         {
             self.any_failed = true;
             return Ok(None);

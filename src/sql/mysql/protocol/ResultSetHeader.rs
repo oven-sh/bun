@@ -6,7 +6,10 @@ pub struct ResultSetHeader {
 }
 
 impl ResultSetHeader {
-    pub fn decode_internal<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
+    pub fn decode_internal<Context: ReaderContext>(
+        &mut self,
+        reader: NewReader<Context>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Field count (length encoded integer)
         self.field_count = reader.encoded_len_int()?;

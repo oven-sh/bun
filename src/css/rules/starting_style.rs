@@ -28,7 +28,10 @@ impl<R> StartingStyleRule<R> {
         R: crate::generics::DeepClone<'bump>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self { rules: self.rules.deep_clone(bump), loc: self.loc }
+        Self {
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

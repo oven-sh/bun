@@ -1,15 +1,15 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
-use bun_core::{self, err, Error};
-use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
-use bun_ast::{self as js_ast, Op};
-use crate::typescript;
-use bun_ast::op::Level;
-use crate::p::P;
 use crate::lexer::T;
-use bun_ast::ts::Metadata;
+use crate::p::P;
+use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
+use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_ast::op::Level;
+use bun_ast::ts::Metadata;
+use bun_ast::{self as js_ast, Op};
+use bun_core::{self, Error, err};
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -216,7 +216,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else {
             self.lexer.expect(T::TOpenParen)?;
             if GET_METADATA {
-                *result.expect("infallible: GET_METADATA implies Some") = self.skip_type_script_type_with_metadata(Level::Lowest)?;
+                *result.expect("infallible: GET_METADATA implies Some") =
+                    self.skip_type_script_type_with_metadata(Level::Lowest)?;
             } else {
                 self.skip_type_script_type(Level::Lowest)?;
             }
@@ -242,37 +243,49 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TNumericLiteral => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MNumber;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MNumber;
                     }
                 }
                 T::TBigIntegerLiteral => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MBigint;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MBigint;
                     }
                 }
                 T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MString;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MString;
                     }
                 }
                 T::TTrue | T::TFalse => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MBoolean;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MBoolean;
                     }
                 }
                 T::TNull => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MNull;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MNull;
                     }
                 }
                 T::TVoid => {
                     self.lexer.next()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MVoid;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MVoid;
                     }
                 }
                 T::TConst => {
@@ -299,7 +312,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
                     }
                 }
                 T::TMinus => {
@@ -310,12 +325,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if self.lexer.token == T::TBigIntegerLiteral {
                         self.lexer.next()?;
                         if GET_METADATA {
-                            **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MBigint;
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MBigint;
                         }
                     } else {
                         self.lexer.expect(T::TNumericLiteral)?;
                         if GET_METADATA {
-                            **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MNumber;
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MNumber;
                         }
                     }
                 }
@@ -368,28 +389,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(
-                        result.as_deref_mut(),
-                    )?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
                 }
                 T::TLessThan => {
                     // "<T>() => Foo<T>"
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(
-                        result.as_deref_mut(),
-                    )?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
                 }
                 T::TOpenParen => {
                     // "(number | string)"
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(
-                        result.as_deref_mut(),
-                    )?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
                 }
                 T::TIdentifier => {
-                    let kind = kind_for_identifier(self.lexer.identifier)
-                        .unwrap_or(TsIdentKind::Normal);
+                    let kind =
+                        kind_for_identifier(self.lexer.identifier).unwrap_or(TsIdentKind::Normal);
 
                     let mut check_type_parameters = true;
 
@@ -413,7 +428,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
 
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MObject;
                             }
 
                             break;
@@ -430,7 +448,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             // assume array or tuple literal
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MArray;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MArray;
                             }
 
                             break;
@@ -491,78 +512,109 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MAny;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MAny;
                             }
                         }
                         TsIdentKind::PrimitiveNever => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MNever;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MNever;
                             }
                         }
                         TsIdentKind::PrimitiveUnknown => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MUnknown;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MUnknown;
                             }
                         }
                         TsIdentKind::PrimitiveUndefined => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MUndefined;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MUndefined;
                             }
                         }
                         TsIdentKind::PrimitiveObject => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MObject;
                             }
                         }
                         TsIdentKind::PrimitiveNumber => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MNumber;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MNumber;
                             }
                         }
                         TsIdentKind::PrimitiveString => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MString;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MString;
                             }
                         }
                         TsIdentKind::PrimitiveBoolean => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MBoolean;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MBoolean;
                             }
                         }
                         TsIdentKind::PrimitiveBigint => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MBigint;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MBigint;
                             }
                         }
                         TsIdentKind::PrimitiveSymbol => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MSymbol;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
+                                    Metadata::MSymbol;
                             }
                         }
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result =
-                                    self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                **result.as_mut().expect("infallible: GET_METADATA implies Some") =
+                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                **result
+                                    .as_mut()
+                                    .expect("infallible: GET_METADATA implies Some") =
                                     Metadata::MIdentifier(find_result.r#ref);
                             }
 
@@ -594,7 +646,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     // always `Object`
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
                     }
 
                     if self.lexer.token == T::TImport {
@@ -631,7 +685,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MArray;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MArray;
                     }
 
                     while self.lexer.token != T::TCloseBracket {
@@ -660,7 +716,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TOpenBrace => {
                     self.skip_type_script_object_type()?;
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MObject;
                     }
                 }
                 T::TTemplateHead => {
@@ -676,7 +734,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     }
                     if GET_METADATA {
-                        **result.as_mut().expect("infallible: GET_METADATA implies Some") = Metadata::MString;
+                        **result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some") = Metadata::MString;
                     }
                 }
 
@@ -713,12 +773,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result.as_mut().expect("infallible: GET_METADATA implies Some")).clone();
+                        let mut left = (**result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some"))
+                        .clone();
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
                             // finish skipping the rest of the type without collecting type metadata.
-                            **result.as_mut().expect("infallible: GET_METADATA implies Some") = final_;
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") = final_;
                             self.skip_type_script_type_with_opts::<false>(
                                 Level::BitwiseOr,
                                 opts,
@@ -730,7 +795,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 opts,
                                 result.as_deref_mut(),
                             )?;
-                            Metadata::merge_union(result.as_deref_mut().expect("infallible: GET_METADATA implies Some"), left);
+                            Metadata::merge_union(
+                                result
+                                    .as_deref_mut()
+                                    .expect("infallible: GET_METADATA implies Some"),
+                                left,
+                            );
                         }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
@@ -748,12 +818,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result.as_mut().expect("infallible: GET_METADATA implies Some")).clone();
+                        let mut left = (**result
+                            .as_mut()
+                            .expect("infallible: GET_METADATA implies Some"))
+                        .clone();
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
                             // finish skipping the rest of the type without collecting type metadata.
-                            **result.as_mut().expect("infallible: GET_METADATA implies Some") = final_;
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") = final_;
                             self.skip_type_script_type_with_opts::<false>(
                                 Level::BitwiseAnd,
                                 opts,
@@ -765,7 +840,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 opts,
                                 result.as_deref_mut(),
                             )?;
-                            Metadata::merge_intersection(result.as_deref_mut().expect("infallible: GET_METADATA implies Some"), left);
+                            Metadata::merge_intersection(
+                                result
+                                    .as_deref_mut()
+                                    .expect("infallible: GET_METADATA implies Some"),
+                                left,
+                            );
                         }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
@@ -797,14 +877,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // PORT NOTE: reshaped for borrowck — `find_symbol` borrows `&mut self`;
                         // `result` is a disjoint fn parameter so the borrows do not conflict.
                         let ident = self.lexer.identifier;
-                        let r = result.as_deref_mut().expect("infallible: GET_METADATA implies Some");
+                        let r = result
+                            .as_deref_mut()
+                            .expect("infallible: GET_METADATA implies Some");
                         match r {
                             Metadata::MIdentifier(id_ref) => {
                                 let id_ref = *id_ref;
                                 let mut dot: Vec<Ref> = Vec::with_capacity(2);
                                 dot.push(id_ref);
-                                let find_result =
-                                    self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
                                 dot.push(find_result.r#ref);
                                 *r = Metadata::MDot(dot);
                             }
@@ -840,7 +921,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.lexer.expect(T::TCloseBracket)?;
 
                     if GET_METADATA {
-                        let r = result.as_deref_mut().expect("infallible: GET_METADATA implies Some");
+                        let r = result
+                            .as_deref_mut()
+                            .expect("infallible: GET_METADATA implies Some");
                         if matches!(*r, Metadata::MNone) {
                             *r = Metadata::MArray;
                         } else {
@@ -883,7 +966,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
-                            **result.as_mut().expect("infallible: GET_METADATA implies Some") = final_;
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") = final_;
                             self.skip_type_script_type(Level::Lowest)?;
                         } else {
                             self.skip_type_script_type_with_opts::<GET_METADATA>(
@@ -891,7 +976,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 SkipTypeOptionsBitset::empty(),
                                 result.as_deref_mut(),
                             )?;
-                            Metadata::merge_intersection(result.as_deref_mut().expect("infallible: GET_METADATA implies Some"), left);
+                            Metadata::merge_intersection(
+                                result
+                                    .as_deref_mut()
+                                    .expect("infallible: GET_METADATA implies Some"),
+                                left,
+                            );
                         }
                     } else {
                         self.lexer.expect(T::TQuestion)?;
@@ -980,9 +1070,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // Type parameters come right after the optional mark
-            let _ = self.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+            let _ =
+                self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
 
             match self.lexer.token {
                 T::TColon => {
@@ -1414,9 +1503,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
-        let result = self.skip_type_script_type_parameters(
-            TypeParameterFlag::ALLOW_CONST_MODIFIER,
-        )?;
+        let result =
+            self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         if self.lexer.token != T::TOpenParen {
             return Err(err!("Backtrack"));
         }

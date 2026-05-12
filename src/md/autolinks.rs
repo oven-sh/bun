@@ -88,10 +88,18 @@ pub fn scan_url_component(
     // Check start character
     if start_char != 0 {
         if pos >= content.len() || content[pos] != start_char {
-            return ScanResult { end: pos, ok: min_components == 0 };
+            return ScanResult {
+                end: pos,
+                ok: min_components == 0,
+            };
         }
-        if min_components > 0 && (pos + 1 >= content.len() || !helpers::is_alpha_num(content[pos + 1])) {
-            return ScanResult { end: pos, ok: min_components == 0 };
+        if min_components > 0
+            && (pos + 1 >= content.len() || !helpers::is_alpha_num(content[pos + 1]))
+        {
+            return ScanResult {
+                end: pos,
+                ok: min_components == 0,
+            };
         }
         pos += 1;
     }
@@ -128,7 +136,10 @@ pub fn scan_url_component(
     }
 
     if n_components < min_components {
-        return ScanResult { end: pos, ok: false };
+        return ScanResult {
+            end: pos,
+            ok: false,
+        };
     }
 
     ScanResult { end: pos, ok: true }
@@ -188,9 +199,18 @@ pub fn find_permissive_autolink(content: &[u8], pos: usize, allow_emph: bool) ->
     if c == b':' {
         // URL autolink: check for http://, https://, ftp://
         const SCHEMES: [Scheme; 3] = [
-            Scheme { name: b"http", suffix: b"//" },
-            Scheme { name: b"https", suffix: b"//" },
-            Scheme { name: b"ftp", suffix: b"//" },
+            Scheme {
+                name: b"http",
+                suffix: b"//",
+            },
+            Scheme {
+                name: b"https",
+                suffix: b"//",
+            },
+            Scheme {
+                name: b"ftp",
+                suffix: b"//",
+            },
         ];
 
         for scheme in &SCHEMES {

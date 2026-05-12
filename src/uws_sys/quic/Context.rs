@@ -2,7 +2,7 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({h3:true})`.
 
-use core::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
@@ -38,8 +38,14 @@ unsafe extern "C" {
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),
     );
-    safe fn us_quic_socket_context_on_goaway(ctx: &mut Context, cb: unsafe extern "C" fn(*mut Socket));
-    safe fn us_quic_socket_context_on_close(ctx: &mut Context, cb: unsafe extern "C" fn(*mut Socket));
+    safe fn us_quic_socket_context_on_goaway(
+        ctx: &mut Context,
+        cb: unsafe extern "C" fn(*mut Socket),
+    );
+    safe fn us_quic_socket_context_on_close(
+        ctx: &mut Context,
+        cb: unsafe extern "C" fn(*mut Socket),
+    );
     safe fn us_quic_socket_context_on_stream_open(
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream, c_int),
@@ -149,7 +155,10 @@ impl Context {
         us_quic_socket_context_on_stream_headers(self, cb)
     }
     #[inline]
-    pub fn on_stream_data(&mut self, cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int)) {
+    pub fn on_stream_data(
+        &mut self,
+        cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int),
+    ) {
         us_quic_socket_context_on_stream_data(self, cb)
     }
     #[inline]

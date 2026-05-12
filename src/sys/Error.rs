@@ -3,10 +3,10 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_core::String as BunString;
 use crate::SystemError;
+use bun_core::String as BunString;
 
-use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
+use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
 
 // Local helper replacing the `errno_to_err` forward-ref.
 #[inline]
@@ -75,19 +75,31 @@ pub trait IntoErrnoInt {
     fn into_errno_int(self) -> Int;
 }
 impl IntoErrnoInt for E {
-    #[inline] fn into_errno_int(self) -> Int { self as Int }
+    #[inline]
+    fn into_errno_int(self) -> Int {
+        self as Int
+    }
 }
 // On POSIX `E` is a `type` alias for `SystemErrno` (same type → duplicate impl);
 // on Windows they are distinct enums, so the second impl is required.
 #[cfg(windows)]
 impl IntoErrnoInt for SystemErrno {
-    #[inline] fn into_errno_int(self) -> Int { self as Int }
+    #[inline]
+    fn into_errno_int(self) -> Int {
+        self as Int
+    }
 }
 impl IntoErrnoInt for u16 {
-    #[inline] fn into_errno_int(self) -> Int { self }
+    #[inline]
+    fn into_errno_int(self) -> Int {
+        self
+    }
 }
 impl IntoErrnoInt for i32 {
-    #[inline] fn into_errno_int(self) -> Int { self.unsigned_abs() as Int }
+    #[inline]
+    fn into_errno_int(self) -> Int {
+        self.unsigned_abs() as Int
+    }
 }
 
 impl Error {
@@ -124,7 +136,10 @@ impl Error {
     /// default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(rc: crate::windows::libuv::ReturnCodeI64, syscall_tag: Tag) -> Option<Error> {
+    pub fn from_uv_rc64(
+        rc: crate::windows::libuv::ReturnCodeI64,
+        syscall_tag: Tag,
+    ) -> Option<Error> {
         rc.errno().map(|e| Error {
             errno: e,
             syscall: syscall_tag,
@@ -291,8 +306,7 @@ impl Error {
                 // `self.errno` is the positive `UV_E*` magnitude; negate back to the signed
                 // uv code, map to `E`, then to `SystemErrno` via the shared #[repr(u16)]
                 // discriminant table (Zig: `@enumFromInt(@intFromEnum(...))`).
-                let translated =
-                    crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
+                let translated = crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
                 return Some(SystemErrno::from_raw(translated as u16));
             }
             // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
@@ -395,8 +409,7 @@ impl Error {
     /// More complex formatting to precisely match the printing that Node.js emits.
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn to_system_error(&self) -> SystemError {
-        let (mut err, looked_up) =
-            self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
+        let (mut err, looked_up) = self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
 
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
@@ -406,22 +419,47 @@ impl Error {
             let mut cursor = std::io::Cursor::new(&mut message_buf[..]);
             'brk: {
                 if let Some((code, _)) = looked_up {
-                    if cursor.write_all(code.as_bytes()).is_err() { break 'brk; }
-                    if cursor.write_all(b": ").is_err() { break 'brk; }
+                    if cursor.write_all(code.as_bytes()).is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(b": ").is_err() {
+                        break 'brk;
+                    }
                 }
                 let label = looked_up.map(|(_, l)| l).unwrap_or("Unknown Error");
-                if cursor.write_all(label.as_bytes()).is_err() { break 'brk; }
-                if cursor.write_all(b", ").is_err() { break 'brk; }
-                if cursor.write_all(<&'static str>::from(self.syscall).as_bytes()).is_err() { break 'brk; }
+                if cursor.write_all(label.as_bytes()).is_err() {
+                    break 'brk;
+                }
+                if cursor.write_all(b", ").is_err() {
+                    break 'brk;
+                }
+                if cursor
+                    .write_all(<&'static str>::from(self.syscall).as_bytes())
+                    .is_err()
+                {
+                    break 'brk;
+                }
                 if !self.path.is_empty() {
-                    if cursor.write_all(b" '").is_err() { break 'brk; }
-                    if cursor.write_all(&self.path).is_err() { break 'brk; }
-                    if cursor.write_all(b"'").is_err() { break 'brk; }
+                    if cursor.write_all(b" '").is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(&self.path).is_err() {
+                        break 'brk;
+                    }
+                    if cursor.write_all(b"'").is_err() {
+                        break 'brk;
+                    }
 
                     if !self.dest.is_empty() {
-                        if cursor.write_all(b" -> '").is_err() { break 'brk; }
-                        if cursor.write_all(&self.dest).is_err() { break 'brk; }
-                        if cursor.write_all(b"'").is_err() { break 'brk; }
+                        if cursor.write_all(b" -> '").is_err() {
+                            break 'brk;
+                        }
+                        if cursor.write_all(&self.dest).is_err() {
+                            break 'brk;
+                        }
+                        if cursor.write_all(b"'").is_err() {
+                            break 'brk;
+                        }
                     }
                 }
             }
@@ -473,7 +511,9 @@ impl fmt::Display for Error {
 // implement the lower-tier trait for its own types.
 // ──────────────────────────────────────────────────────────────────────────
 impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] { Error::name(self) }
+    fn name(&self) -> &[u8] {
+        Error::name(self)
+    }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         Some(bun_core::output::SysErrInfo {
             tag_name: Error::name(self),
@@ -486,7 +526,9 @@ impl bun_core::output::ErrName for Error {
 // (`Output::err(&e, …); return Err(e.into())`), matching Zig's
 // `Output.err(err, …); return err` where `err` is Copy.
 impl bun_core::output::ErrName for &Error {
-    fn name(&self) -> &[u8] { Error::name(self) }
+    fn name(&self) -> &[u8] {
+        Error::name(self)
+    }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
     }
@@ -515,7 +557,9 @@ pub trait ReturnCodeExt: Sized {
     /// Alias for [`to_error`]; spelling used by call sites that mirror Zig's
     /// `Maybe(void).asErr()`.
     #[inline]
-    fn as_err(self, syscall_tag: Tag) -> Option<Error> { self.to_error(syscall_tag) }
+    fn as_err(self, syscall_tag: Tag) -> Option<Error> {
+        self.to_error(syscall_tag)
+    }
     /// Zig: `rc.errEnum()` — translate the negative libuv errno to `bun.sys.E`.
     /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
     /// (layering: it can't name `E`); this overlay is what call sites that
@@ -546,7 +590,9 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
         if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(self.int() as core::ffi::c_int))
+            Some(crate::windows::translate_uv_error_to_e(
+                self.int() as core::ffi::c_int
+            ))
         } else {
             None
         }

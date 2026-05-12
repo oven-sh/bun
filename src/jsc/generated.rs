@@ -169,7 +169,11 @@ fn adopt_string(ptr: RawWTFStringImpl) -> GenString {
 fn adopt_opt_string(ptr: RawWTFStringImpl) -> GenOpt<GenString> {
     // `BindgenOptional(BindgenString).ExternType` is `?WTFStringImpl` — single-word
     // nullable ptr (custom `OptionalExternType`), NOT an `ExternTaggedUnion`.
-    GenOpt(if ptr.is_null() { None } else { Some(adopt_string(ptr)) })
+    GenOpt(if ptr.is_null() {
+        None
+    } else {
+        Some(adopt_string(ptr))
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -825,12 +829,16 @@ pub trait IntoRawMut<T> {
 #[doc(hidden)]
 impl<T, U> IntoRawMut<T> for core::ptr::NonNull<U> {
     #[inline]
-    fn into_raw_mut(self) -> *mut T { self.as_ptr().cast() }
+    fn into_raw_mut(self) -> *mut T {
+        self.as_ptr().cast()
+    }
 }
 #[doc(hidden)]
 impl<T, U> IntoRawMut<T> for *mut U {
     #[inline]
-    fn into_raw_mut(self) -> *mut T { self.cast() }
+    fn into_raw_mut(self) -> *mut T {
+        self.cast()
+    }
 }
 
 /// `impl JsClass for $T` that boxes `self` into the GC-owned `m_ctx` slot and

@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use core::mem::{size_of, ManuallyDrop, MaybeUninit};
+use core::mem::{ManuallyDrop, MaybeUninit, size_of};
 use core::ptr::NonNull;
 
 use crate::bit_set::IntegerBitSet;
@@ -87,8 +87,16 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // `HiveArray` is at least pointer-aligned via `IntegerBitSet`'s
         // backing word, and in practice `align_of::<T>() >= 2` for every `T`
         // we pool; assert in debug so a future 1-byte `T` is caught.
-        debug_assert_eq!(owner & 1, 0, "HiveArray must be >=2-byte aligned for HiveSlot owner tag");
-        Some(HiveSlot { slot, owner, _marker: PhantomData })
+        debug_assert_eq!(
+            owner & 1,
+            0,
+            "HiveArray must be >=2-byte aligned for HiveSlot owner tag"
+        );
+        Some(HiveSlot {
+            slot,
+            owner,
+            _marker: PhantomData,
+        })
     }
 
     /// Recycle a slot **without** running `T::drop`. Safe: if `value` does not
@@ -449,7 +457,15 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
     pub unsafe fn init(value: T, pool: *mut Fallback<Self, CAPACITY>) -> *mut Self {
         // SAFETY: caller contract — `pool` is dereferenceable.
-        unsafe { (*pool).get_init(HiveRef { ref_count: 1, pool, value }).as_ptr() }
+        unsafe {
+            (*pool)
+                .get_init(HiveRef {
+                    ref_count: 1,
+                    pool,
+                    value,
+                })
+                .as_ptr()
+        }
     }
 
     pub fn ref_(&mut self) -> &mut Self {
@@ -534,7 +550,9 @@ mod tests {
         static DROPS: AtomicU32 = AtomicU32::new(0);
         struct D(#[allow(dead_code)] u64);
         impl Drop for D {
-            fn drop(&mut self) { DROPS.fetch_add(1, Ordering::Relaxed); }
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         let mut a = HiveArray::<D, 4>::init();

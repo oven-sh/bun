@@ -41,9 +41,7 @@ impl Hash for KeyframesName {
 impl PartialEq for KeyframesName {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                bun_core::eql(a.v(), b.v())
-            }
+            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => bun_core::eql(a.v(), b.v()),
             (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::eql(a, b),
             _ => false,
         }
@@ -55,7 +53,11 @@ impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;
         #[inline]
-        fn write_ident<'a>(dest: &mut Printer<'a>, v: &'a [u8], handle_css_module: bool) -> core::result::Result<(), PrintErr> {
+        fn write_ident<'a>(
+            dest: &mut Printer<'a>,
+            v: &'a [u8],
+            handle_css_module: bool,
+        ) -> core::result::Result<(), PrintErr> {
             dest.write_ident(v, handle_css_module)
         }
 
@@ -68,7 +70,11 @@ impl KeyframesName {
         match self {
             KeyframesName::Ident(ident) => {
                 // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-                write_ident(dest, unsafe { crate::arena_str(ident.v) }, css_module_animation_enabled)?;
+                write_ident(
+                    dest,
+                    unsafe { crate::arena_str(ident.v) },
+                    css_module_animation_enabled,
+                )?;
             }
             KeyframesName::Custom(s) => {
                 // todo_stuff.match_ignore_ascii_case
@@ -124,7 +130,9 @@ impl KeyframesName {
                 {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {
-                    Ok(KeyframesName::Ident(CustomIdent { v: std::ptr::from_ref::<[u8]>(s) }))
+                    Ok(KeyframesName::Ident(CustomIdent {
+                        v: std::ptr::from_ref::<[u8]>(s),
+                    }))
                 }
             }
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),
@@ -294,7 +302,13 @@ impl KeyframesRule {
 
                 dest.write_separated(
                     self.keyframes.iter(),
-                    |d| if d.minify { Ok(()) } else { d.write_char(b'\n') }, // no indent
+                    |d| {
+                        if d.minify {
+                            Ok(())
+                        } else {
+                            d.write_char(b'\n')
+                        }
+                    }, // no indent
                     |d, kf| {
                         d.newline()?;
                         kf.to_css(d)
@@ -310,8 +324,10 @@ impl KeyframesRule {
 }
 
 impl KeyframesRule {
-    
-    pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
+    pub fn get_fallbacks<T>(
+        &mut self,
+        _targets: &css::targets::Targets,
+    ) -> &[css::css_rules::CssRule<T>] {
         // PORT NOTE: Zig spec body is `@compileError(css.todo_stuff.depth)` — the fn is
         // declared but never instantiated; its sole call site in `rules.zig`
         // (`CssRuleList.minify` → `.keyframes` arm) is commented out and replaced with
@@ -354,17 +370,25 @@ pub struct KeyframesListParser;
 // arena threading.
 
 const _: () = {
-    use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
+    use css::css_parser::{
+        AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
+    };
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 
     impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
 
-        fn parse_value(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
             // SAFETY: `name` is a sub-slice of the parser input arena; see `src_str`.
-            Err(input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(unsafe {
-                css::css_parser::src_str(name)
-            }))))
+            Err(
+                input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(
+                    unsafe { css::css_parser::src_str(name) },
+                ))),
+            )
         }
     }
 
@@ -382,8 +406,16 @@ const _: () = {
         type Prelude = ();
         type AtRule = Keyframe;
 
-        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
+        fn parse_prelude(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Prelude> {
+            Err(
+                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
+                    [u8],
+                >(name))),
+            )
         }
 
         fn parse_block(
@@ -424,7 +456,10 @@ const _: () = {
                 Ok(vv) => vv,
                 Err(e) => return Err(e),
             };
-            Ok(Keyframe { selectors: prelude, declarations })
+            Ok(Keyframe {
+                selectors: prelude,
+                declarations,
+            })
         }
     }
 };

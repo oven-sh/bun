@@ -2,20 +2,20 @@ use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 
 use bun_core::Output;
+use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
-use bun_core::strings;
 
+use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
-use crate::{invalid_package_id, DependencyID, PackageID, PackageNameHash, Resolution};
+use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
 
-use super::options::LogLevel;
 use super::PackageManager;
+use super::options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free-function re-export surface — Zig declares these at file scope with an
@@ -61,7 +61,11 @@ pub fn resolve_from_disk_cache(
 }
 
 #[inline]
-pub fn assign_resolution(this: &mut PackageManager, dependency_id: DependencyID, package_id: PackageID) {
+pub fn assign_resolution(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+) {
     this.assign_resolution(dependency_id, package_id)
 }
 
@@ -238,8 +242,7 @@ impl PackageManager {
             // pdq sorts descending. Use the total-order helper with swapped args
             // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
             // closure is not antisymmetric and may panic since Rust 1.81.
-            installed_versions
-                .sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
+            installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
         }
         let npm_query = version.npm();
         for installed_version in installed_versions.iter().copied() {
@@ -249,17 +252,21 @@ impl PackageManager {
                 tags_buf.as_slice(),
             ) {
                 let mut buf = PathBuffer::uninit();
-                let npm_package_path =
-                    match super::path_for_cached_npm_path(self, &mut buf, package_name, installed_version) {
-                        Ok(p) => p,
-                        Err(err) => {
-                            Output::debug(format_args!(
-                                "error getting path for cached npm path: {}",
-                                bun_core::Error::from(err).name()
-                            ));
-                            return None;
-                        }
-                    };
+                let npm_package_path = match super::path_for_cached_npm_path(
+                    self,
+                    &mut buf,
+                    package_name,
+                    installed_version,
+                ) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        Output::debug(format_args!(
+                            "error getting path for cached npm path: {}",
+                            bun_core::Error::from(err).name()
+                        ));
+                        return None;
+                    }
+                };
                 let dep_version = dependency::Version {
                     tag: dependency::Tag::Npm,
                     literal: SemverString::default(),

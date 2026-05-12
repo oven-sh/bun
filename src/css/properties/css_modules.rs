@@ -1,7 +1,7 @@
 use crate as css;
+use crate::PrintErr;
 use crate::css_parser::Parser;
 use crate::printer::Printer;
-use crate::PrintErr;
 
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
@@ -55,7 +55,11 @@ impl Composes {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::ident::CustomIdentFns;
-        dest.write_separated(self.names.slice(), |d| d.write_char(b' '), |d, name| CustomIdentFns::to_css(name, d))?;
+        dest.write_separated(
+            self.names.slice(),
+            |d| d.write_char(b' '),
+            |d, name| CustomIdentFns::to_css(name, d),
+        )?;
 
         if let Some(from) = &self.from {
             dest.write_str(b" from ")?;
@@ -128,7 +132,9 @@ pub enum Specifier {
 // carried before this leaf un-gated.
 impl crate::generics::CssEql for Specifier {
     #[inline]
-    fn eql(&self, other: &Self) -> bool { Specifier::eql(self, other) }
+    fn eql(&self, other: &Self) -> bool {
+        Specifier::eql(self, other)
+    }
 }
 
 impl Specifier {
@@ -150,11 +156,8 @@ impl Specifier {
             // (same trick as `css_parser::src_str` — Token payloads are arena-static).
             Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
         }) {
-            let import_record_index = input.add_import_record(
-                file,
-                start_position,
-                bun_ast::ImportKind::Composes,
-            )?;
+            let import_record_index =
+                input.add_import_record(file, start_position, bun_ast::ImportKind::Composes)?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }
         input.expect_ident_matching(b"global")?;
@@ -171,8 +174,7 @@ impl Specifier {
                 // is reborrowable as the `WriteAll` sink.
                 let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
                 dest.serialize_string(url)
-            }
-            // .source_index => {},
+            } // .source_index => {},
         }
     }
 

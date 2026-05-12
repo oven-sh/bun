@@ -10,51 +10,55 @@
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
-use bun_bundler::mal_prelude::*;
-use bun_collections::{VecExt, ByteVecExt};
 use ::core::ffi::c_void;
 use ::core::mem::offset_of;
+use bun_bundler::mal_prelude::*;
+use bun_collections::{ByteVecExt, VecExt};
 use std::io::Write as _;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
-use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
-use bun_core::{self as core, Environment, Output};
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StringJsc as _,
-};
+use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
+use bun_collections::{
+    ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap,
+};
+use bun_core::{self as core, Environment, Output};
+use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
+use bun_jsc::StringJsc as _;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ast::Log;
-use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
-use bun_core::{self as str, strings, OwnedString, String as BunString, ZStr};
-use bun_jsc::StringJsc as _;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, Strong};
+use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_sys as sys;
+use bun_uws::{
+    self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext,
+};
 use bun_watcher::WatchItemColumns as _;
-use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext};
-use bun_wyhash::{hash, Wyhash};
+use bun_wyhash::{Wyhash, hash};
 
-use crate::bake;
-use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId, Route};
-use bun_bundler::{self as bundler, BundleV2, Transpiler};
-use bun_ast::Loader;
-use bun_http::{Method, MimeType};
-use bun_ast::{ImportKind, ImportRecord};
 use crate::api::server::StaticRoute;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
+use crate::bake;
+use crate::bake::framework_router::{
+    self as framework_router, FrameworkRouter, OpaqueFileId, Route,
+};
 use crate::server::html_bundle::HTMLBundleRoute;
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::webcore::{Blob, Request as WebRequest, Response};
+use bun_ast::Loader;
+use bun_ast::{ImportKind, ImportRecord};
+use bun_bundler::{self as bundler, BundleV2, Transpiler};
+use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
 use bun_sourcemap::SourceMap;
 use bun_watcher::Watcher;
 
-pub use crate::bake::dev_server::assets::Assets;
 pub use crate::bake::dev_server::DirectoryWatchStore;
-pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 pub use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
+pub use crate::bake::dev_server::assets::Assets;
+pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 
 // ── local extension shims for upstream-crate methods missing in Rust port ──
 /// Shim: Zig `JSPromise.Strong.deinit()` — explicit teardown (idempotent).
@@ -171,11 +175,11 @@ impl DevServer {
         unsafe { self.ssr_transpiler.assume_init_mut() }
     }
 }
+pub use crate::bake::dev_server::WatcherAtomics;
 pub use crate::bake::dev_server::packed_map::PackedMap;
 pub use crate::bake::dev_server::route_bundle::RouteBundle;
 pub use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub use crate::bake::dev_server::source_map_store::SourceMapStore;
-pub use crate::bake::dev_server::WatcherAtomics;
 
 bun_output::declare_scope!(DevServer, visible);
 bun_output::declare_scope!(IncrementalGraph, visible);
@@ -231,8 +235,11 @@ pub struct Options<'a> {
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 impl<'a> Options<'a> {
     /// Zig field default: `if (Environment.isDebug) ".bake-debug" else null`.
-    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> =
-        if cfg!(debug_assertions) { Some(b".bake-debug") } else { None };
+    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if cfg!(debug_assertions) {
+        Some(b".bake-debug")
+    } else {
+        None
+    };
 }
 
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
@@ -460,7 +467,8 @@ pub struct DevServer {
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.
     pub next_bundle: NextBundle,
-    pub deferred_request_pool: HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
+    pub deferred_request_pool:
+        HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
@@ -538,7 +546,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         match sys::Dir::cwd().make_open_path(dir) {
             Ok(d) => Some(d),
             Err(err) => {
-                Output::warn(format_args!("Could not open directory for dumping sources: {}", err));
+                Output::warn(format_args!(
+                    "Could not open directory for dumping sources: {}",
+                    err
+                ));
                 None
             }
         }
@@ -589,7 +600,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
-        w!(server_register_update_callback, jsc::StrongOptional::empty());
+        w!(
+            server_register_update_callback,
+            jsc::StrongOptional::empty()
+        );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
         w!(dump_dir, dump_dir);
@@ -604,9 +618,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(
             has_pre_crash_handler,
             cfg!(feature = "bake_debugging_features")
-                && options
-                    .dump_state_on_crash
-                    .unwrap_or_else(|| bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH.get().unwrap_or(false))
+                && options.dump_state_on_crash.unwrap_or_else(|| {
+                    bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH
+                        .get()
+                        .unwrap_or(false)
+                })
         );
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
@@ -702,9 +718,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
-            return Err(
-                global.throw_error(err, "while initializing file watcher for development server"),
-            )
+            return Err(global.throw_error(
+                err,
+                "while initializing file watcher for development server",
+            ));
         }
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
@@ -797,7 +814,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // is provided on `IncrementalGraph` via `offset_of!` so the invariant is
     // structural. Retain the field touches so the addresses are stable for
     // `container_of` consumers below.
-    let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
+    let _ = (
+        &dev.server_graph,
+        &dev.client_graph,
+        &dev.directory_watchers,
+    );
 
     let _unlock = dev.graph_safety_lock.guard();
 
@@ -837,10 +858,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         if dev.framework.is_built_in_react {
             bake::Framework::add_react_install_command_note(&mut dev.log);
         }
-        return Err(global.throw_value(
-            dev.log
-                .to_js_aggregate_error(global, BunString::static_("Framework is missing required files!"))?,
-        ));
+        return Err(global.throw_value(dev.log.to_js_aggregate_error(
+            global,
+            BunString::static_("Framework is missing required files!"),
+        )?));
     }
 
     // Spec DevServer.zig:425 — Zig stores `transpiler.options.framework` as a
@@ -871,7 +892,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
             // go through `Result` for the panic-on-error path.
             let stat = match ::core::result::Result::from(sys::stat(
-                bun_core::self_exe_path().unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
+                bun_core::self_exe_path()
+                    .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
             )) {
                 Ok(s) => s,
                 Err(e) => Output::panic(format_args!("unhandled {}", e)),
@@ -989,12 +1011,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             .enumerate()
         {
             let mut buf = paths::path_buffer_pool::get();
-            let joined_root =
-                paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                    &dev.root,
-                    &mut buf[..],
-                    &[&fsr.root],
-                );
+            let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                &dev.root,
+                &mut buf[..],
+                &[&fsr.root],
+            );
             // SAFETY: `server_transpiler` was fully initialized by `init_transpiler`
             // above; `.resolver` is disjoint from `framework`.
             let Some(entry) = unsafe { (*dev_ptr).server_transpiler.assume_init_mut() }
@@ -1005,8 +1026,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             };
 
             // SAFETY: `server_graph` is disjoint from `framework`.
-            let server_file = unsafe { &mut (*dev_ptr).server_graph }
-                .insert_stale_extra(&fsr.entry_server, false, true)?;
+            let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
+                &fsr.entry_server,
+                false,
+                true,
+            )?;
 
             types.push(framework_router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
@@ -1056,7 +1080,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     if dev.has_pre_crash_handler {
-        bun_crash_handler::append_pre_crash_handler::<DevServer>(&mut *dev, dump_state_due_to_crash)?;
+        bun_crash_handler::append_pre_crash_handler::<DevServer>(
+            &mut *dev,
+            dump_state_due_to_crash,
+        )?;
     }
 
     debug_assert!(dev.magic == Magic::Valid);
@@ -1082,11 +1109,8 @@ impl Drop for DevServer {
         {
             let count = self.active_websocket_connections.len();
             if count > 0 {
-                let sockets: Vec<*mut HmrSocket> = self
-                    .active_websocket_connections
-                    .keys()
-                    .copied()
-                    .collect();
+                let sockets: Vec<*mut HmrSocket> =
+                    self.active_websocket_connections.keys().copied().collect();
                 for s in sockets {
                     // SAFETY: s is a valid HmrSocket ptr owned by the connection map
                     if let Some(websocket) = unsafe { (*s).underlying } {
@@ -1164,7 +1188,10 @@ impl Drop for DevServer {
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
-            drop(std::mem::replace(&mut batch.entry_points, EntryPointList::empty()));
+            drop(std::mem::replace(
+                &mut batch.entry_points,
+                EntryPointList::empty(),
+            ));
         }
 
         debug_assert!(self.magic == Magic::Valid);
@@ -1215,7 +1242,9 @@ impl DevServer {
         };
 
         if !interface.is_object() {
-            panic!("Internal assertion failure: expected interface from HMR runtime to be an object");
+            panic!(
+                "Internal assertion failure: expected interface from HMR runtime to be an object"
+            );
         }
         let fetch_function = interface
             .get(global, "handleRequest")
@@ -1288,11 +1317,31 @@ impl DevServer {
             }};
         }
 
-        route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(), DevHandlerId::JsRequest);
-        route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(), DevHandlerId::AssetRequest);
-        route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(), DevHandlerId::SrcRequest);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(), DevHandlerId::ReportError);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(), DevHandlerId::UnrefSourceMap);
+        route!(
+            get,
+            const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(),
+            DevHandlerId::JsRequest
+        );
+        route!(
+            get,
+            const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(),
+            DevHandlerId::AssetRequest
+        );
+        route!(
+            get,
+            const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(),
+            DevHandlerId::SrcRequest
+        );
+        route!(
+            post,
+            const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(),
+            DevHandlerId::ReportError
+        );
+        route!(
+            post,
+            const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(),
+            DevHandlerId::UnrefSourceMap
+        );
         route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         app.ws(
@@ -1304,10 +1353,16 @@ impl DevServer {
 
         #[cfg(feature = "bake_debugging_features")]
         {
-            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes(),
-                DevHandlerId::IncrementalVisualizer);
-            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes(),
-                DevHandlerId::MemoryVisualizer);
+            route!(
+                get,
+                const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes(),
+                DevHandlerId::IncrementalVisualizer
+            );
+            route!(
+                get,
+                const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes(),
+                DevHandlerId::MemoryVisualizer
+            );
         }
 
         // Only attach a catch-all handler if the framework has filesystem
@@ -1374,8 +1429,12 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r)),
-        AnyResponse::TCP(r) => ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r)),
+        AnyResponse::SSL(r) => {
+            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
+        }
+        AnyResponse::TCP(r) => {
+            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
+        }
         AnyResponse::H3(_) => not_found(resp),
     }
 }
@@ -1383,8 +1442,12 @@ fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResp
 fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r)),
-        AnyResponse::TCP(r) => UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r)),
+        AnyResponse::SSL(r) => {
+            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
+        }
+        AnyResponse::TCP(r) => {
+            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
+        }
         AnyResponse::H3(_) => not_found(resp),
     }
 }
@@ -1417,7 +1480,12 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         HmrSocket::on_open(unsafe { &mut *this }, ws)
     }
     #[inline]
-    unsafe fn on_message(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: bun_uws_sys::Opcode) {
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: bun_uws_sys::AnyWebSocket,
+        message: &[u8],
+        opcode: bun_uws_sys::Opcode,
+    ) {
         // SAFETY: see `on_open`.
         HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
     }
@@ -1554,17 +1622,22 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         // `dev.source_maps.entries[_]`. The entry is read-only (`&self`) and
         // `render_json` does not touch `source_maps.entries`, so erase the
         // entry borrow to a raw pointer and reborrow `dev` for the call.
-        let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
+        let Some(entry) = dev
+            .source_maps
+            .entries
+            .get_mut(&source_map_store::Key::init(id))
+        else {
             return not_found(resp);
         };
         let entry_ptr: *const source_map_store::Entry = &raw const *entry;
         // PERF(port): was ArenaAllocator scratch
         // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
         // which is not reallocated by `render_json`.
-        let json_bytes = match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
-            Ok(b) => b,
-            Err(e) => bun_core::handle_oom(Err(e)),
-        };
+        let json_bytes =
+            match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
+                Ok(b) => b,
+                Err(e) => bun_core::handle_oom(Err(e)),
+            };
         let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
@@ -1580,7 +1653,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return;
     }
 
-    let route_bundle_index = route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).expect("int cast"));
+    let route_bundle_index =
+        route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).expect("int cast"));
     let generation: u32 = u32::try_from(id >> 32).expect("int cast");
 
     if route_bundle_index.get() as usize >= dev.route_bundles.len() {
@@ -1692,7 +1766,8 @@ fn on_incremental_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyRespon
 }
 
 fn on_incremental_visualizer_corked(resp: AnyResponse) {
-    let code = bun_core::runtime_embed_file!(SrcEager, "runtime/bake/incremental_visualizer.html").as_bytes();
+    let code = bun_core::runtime_embed_file!(SrcEager, "runtime/bake/incremental_visualizer.html")
+        .as_bytes();
     resp.end(code, false);
 }
 
@@ -1701,7 +1776,8 @@ fn on_memory_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
 }
 
 fn on_memory_visualizer_corked(resp: AnyResponse) {
-    let code = bun_core::runtime_embed_file!(SrcEager, "runtime/bake/memory_visualizer.html").as_bytes();
+    let code =
+        bun_core::runtime_embed_file!(SrcEager, "runtime/bake/memory_visualizer.html").as_bytes();
     resp.end(code, false);
 }
 
@@ -1733,12 +1809,23 @@ impl RequestEnsureRouteBundledCtx {
         let resp = self.resp;
         let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List = match bundle_field {
-            BundleQueueType::CurrentBundle => &raw mut dev.current_bundle.as_mut().expect("infallible: bundle active").requests,
+            BundleQueueType::CurrentBundle => {
+                &raw mut dev
+                    .current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active")
+                    .requests
+            }
             BundleQueueType::NextBundle => &raw mut dev.next_bundle.requests,
         };
         // SAFETY: requests_array points into self.dev which is still valid
-        self.dev_mut()
-            .defer_request(unsafe { &mut *requests_array }, route_bundle_index, kind, req, resp)?;
+        self.dev_mut().defer_request(
+            unsafe { &mut *requests_array },
+            route_bundle_index,
+            kind,
+            req,
+            resp,
+        )?;
         Ok(())
     }
 
@@ -1755,7 +1842,8 @@ impl RequestEnsureRouteBundledCtx {
                     ReqOrSaved::Saved(s) => SavedRequestUnion::Saved(s),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
-                self.dev_mut().on_framework_request_with_bundle(route_bundle_index, req, resp)
+                self.dev_mut()
+                    .on_framework_request_with_bundle(route_bundle_index, req, resp)
             }
             deferred_request::HandlerKind::BundledHtmlPage => {
                 let route_bundle_index = self.route_bundle_index;
@@ -1773,20 +1861,25 @@ impl RequestEnsureRouteBundledCtx {
         // (route_bundle slot + send_serialized_failures). Reborrow via raw
         // pointer so the failure slice and the `&mut DevServer` don't alias.
         let route_bundle_index = self.route_bundle_index;
-        let failure = std::ptr::from_ref::<SerializedFailure>(self
-            .dev_mut()
-            .route_bundle_ptr(route_bundle_index)
-            .data
-            .framework()
-            .evaluate_failure
-            .as_ref()
-            .unwrap());
+        let failure = std::ptr::from_ref::<SerializedFailure>(
+            self.dev_mut()
+                .route_bundle_ptr(route_bundle_index)
+                .data
+                .framework()
+                .evaluate_failure
+                .as_ref()
+                .unwrap(),
+        );
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
         let failures = ::core::slice::from_ref(unsafe { &*failure });
         let resp = self.resp;
-        self.dev_mut()
-            .send_serialized_failures(DevResponse::Http(resp), failures, ErrorPageKind::Evaluation, None)?;
+        self.dev_mut().send_serialized_failures(
+            DevResponse::Http(resp),
+            failures,
+            ErrorPageKind::Evaluation,
+            None,
+        )?;
         Ok(())
     }
 
@@ -1801,13 +1894,27 @@ impl RequestEnsureRouteBundledCtx {
 }
 
 impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
-    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> { Self::on_defer(self, b) }
-    fn on_loaded(&mut self) -> JsResult<()> { Self::on_loaded(self) }
-    fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
-    fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
-    fn to_dev_response(&mut self) -> DevResponse<'_> { Self::to_dev_response(self) }
-    fn dev(&mut self) -> &mut DevServer { self.dev_mut() }
-    fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
+    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> {
+        Self::on_defer(self, b)
+    }
+    fn on_loaded(&mut self) -> JsResult<()> {
+        Self::on_loaded(self)
+    }
+    fn on_failure(&mut self) -> JsResult<()> {
+        Self::on_failure(self)
+    }
+    fn on_plugin_error(&mut self) -> JsResult<()> {
+        Self::on_plugin_error(self)
+    }
+    fn to_dev_response(&mut self) -> DevResponse<'_> {
+        Self::to_dev_response(self)
+    }
+    fn dev(&mut self) -> &mut DevServer {
+        self.dev_mut()
+    }
+    fn route_bundle_index(&self) -> route_bundle::Index {
+        self.route_bundle_index
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -1874,8 +1981,11 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 };
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult =
-                                    dev.server.as_ref().expect("infallible: server bound").get_or_load_plugins(
+                                let load_result: crate::server::GetOrStartLoadResult = dev
+                                    .server
+                                    .as_ref()
+                                    .expect("infallible: server bound")
+                                    .get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
@@ -1938,7 +2048,8 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
 
                 dev.next_bundle.route_queue.put(route_bundle_index, ())?;
                 ctx.on_defer(BundleQueueType::NextBundle)?;
-                dev.route_bundle_ptr(route_bundle_index).server_state = route_bundle::State::Bundling;
+                dev.route_bundle_ptr(route_bundle_index).server_state =
+                    route_bundle::State::Bundling;
 
                 dev.start_async_bundle(
                     entry_points,
@@ -1949,7 +2060,12 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 return Ok(());
             }
             route_bundle::State::DeferredToNextBundle => {
-                debug_assert!(dev.next_bundle.route_queue.get(&route_bundle_index).is_some());
+                debug_assert!(
+                    dev.next_bundle
+                        .route_queue
+                        .get(&route_bundle_index)
+                        .is_some()
+                );
                 ctx.on_defer(BundleQueueType::NextBundle)?;
                 return Ok(());
             }
@@ -1998,7 +2114,9 @@ impl ReqOrSaved {
     pub fn method(&self) -> Method {
         match self {
             // SAFETY: req is valid for the duration of the handler callback
-            ReqOrSaved::Req(req) => Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST),
+            ReqOrSaved::Req(req) => {
+                Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
+            }
             ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
             ReqOrSaved::Aborted => unreachable!(),
         }
@@ -2046,7 +2164,10 @@ impl DevServer {
                         },
                         deferred_data_ptr,
                     );
-                    break 'brk Handler::BundledHtmlPage(ResponseAndMethod { response: resp, method });
+                    break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
+                        response: resp,
+                        method,
+                    });
                 }
                 deferred_request::HandlerKind::ServerHandler => 'brk: {
                     let server_handler: SavedRequest = match req {
@@ -2062,8 +2183,7 @@ impl DevServer {
                                     resp,
                                     global,
                                     Some(method),
-                                )?
-                            {
+                                )? {
                                 Some(saved) => saved,
                                 // Zig: `catch return` — abort the deferral on failure.
                                 None => {
@@ -2090,11 +2210,7 @@ impl DevServer {
                                 cb
                             },
                             // SAFETY: deferred.data is a live field of a HiveArray-owned node
-                            data: unsafe {
-                                ::core::ptr::NonNull::new_unchecked(
-                                    deferred_data_ptr,
-                                )
-                            },
+                            data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
                             deref_fn: {
                                 fn deref_fn(ptr: *mut c_void) {
                                     // SAFETY: ptr is &mut DeferredRequest from above
@@ -2148,7 +2264,11 @@ fn check_route_failures(
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
     // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
     // overlapping `&mut self`.
-    dev.trace_all_route_imports(unsafe { &*route_bundle }, &mut gts, TraceImportGoal::FindErrors)?;
+    dev.trace_all_route_imports(
+        unsafe { &*route_bundle },
+        &mut gts,
+        TraceImportGoal::FindErrors,
+    )?;
     if !dev.incremental_result.failures_added.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
@@ -2197,7 +2317,8 @@ impl DevServer {
             route_bundle::Data::Framework(bundle) => {
                 let mut route = self.router.route_ptr(bundle.route_index);
                 let router_type = self.router.type_ptr_const(route.r#type);
-                let (rt_server_file, rt_client_file) = (router_type.server_file, router_type.client_file);
+                let (rt_server_file, rt_client_file) =
+                    (router_type.server_file, router_type.client_file);
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
                     server_file_names,
                     entry_points,
@@ -2294,8 +2415,12 @@ impl DevServer {
         // `route_bundles` are disjoint fields; each reborrow is scoped to its
         // expression so no two `&mut` overlap. `framework_bundle` lives in
         // `route_bundles[_].data`, disjoint from every other field touched here.
-        let route_type_idx =
-            unsafe { (*this).router.route_ptr(framework_bundle.route_index).r#type };
+        let route_type_idx = unsafe {
+            (*this)
+                .router
+                .route_ptr(framework_bundle.route_index)
+                .r#type
+        };
         // Held raw; deref per-access. `router.types` is a `Box<[Type]>` — never
         // reallocated for the lifetime of `DevServer`.
         let router_type: *mut framework_router::Type =
@@ -2315,8 +2440,11 @@ impl DevServer {
                     let name = unsafe {
                         &(*this).server_graph.bundled_files.keys()[from_opaque_file_id::<
                             { bake::Side::Server },
-                        >((*router_type).server_file)
-                        .get() as usize]
+                        >(
+                            (*router_type).server_file
+                        )
+                        .get()
+                            as usize]
                     };
                     let mut buf = paths::path_buffer_pool::get();
                     let s = bun_jsc::bun_string_jsc::create_utf8_for_js(
@@ -2372,11 +2500,14 @@ impl DevServer {
                                 (*this).relative_path(
                                     &mut *buf,
                                     &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
-                                        .get()
-                                        as usize],
+                                        .get() as usize],
                                 )
                             });
-                            arr.put_index(global, u32::try_from(n).expect("int cast"), layout_name.transfer_to_js(global)?)?;
+                            arr.put_index(
+                                global,
+                                u32::try_from(n).expect("int cast"),
+                                layout_name.transfer_to_js(global)?,
+                            )?;
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
@@ -2404,7 +2535,8 @@ impl DevServer {
                         "{CLIENT_PREFIX}/route-{hex_str}.js",
                     )));
                     let js = s.to_js(global)?;
-                    framework_bundle.cached_client_bundle_url = jsc::StrongOptional::create(js, global);
+                    framework_bundle.cached_client_bundle_url =
+                        jsc::StrongOptional::create(js, global);
                     break 'str js;
                 }
             },
@@ -2423,7 +2555,8 @@ impl DevServer {
                             &(&(*this).route_bundles)[route_bundle_index.get() as usize],
                         )
                     }?;
-                    framework_bundle.cached_css_file_array = jsc::StrongOptional::create(js, global);
+                    framework_bundle.cached_css_file_array =
+                        jsc::StrongOptional::create(js, global);
                     break 'arr js;
                 }
             },
@@ -2459,7 +2592,10 @@ impl DevServer {
         // `&self` accesses (vm/router/callback) don't trip borrowck — Zig freely
         // aliased `dev` across this scope.
         let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
-        debug_assert!(matches!(unsafe { &(*route_bundle).data }, route_bundle::Data::Framework(_)));
+        debug_assert!(matches!(
+            unsafe { &(*route_bundle).data },
+            route_bundle::Data::Framework(_)
+        ));
 
         // SAFETY: `route_bundle` points into `self.route_bundles`, which is not
         // resized or dropped for the duration of this fn.
@@ -2512,21 +2648,24 @@ impl DevServer {
             )
         }?;
 
-        self.server.as_ref().expect("infallible: server bound").on_saved_request(
-            req,
-            resp,
-            server_request_callback,
-            [
-                args.router_type_main,
-                args.route_modules,
-                args.client_id,
-                args.styles,
-                args.params,
-                args.set_async_local_storage,
-                args.bundle_new_route,
-                args.new_route_params,
-            ],
-        );
+        self.server
+            .as_ref()
+            .expect("infallible: server bound")
+            .on_saved_request(
+                req,
+                resp,
+                server_request_callback,
+                [
+                    args.router_type_main,
+                    args.route_modules,
+                    args.client_id,
+                    args.styles,
+                    args.params,
+                    args.set_async_local_storage,
+                    args.bundle_new_route,
+                    args.new_route_params,
+                ],
+            );
         Ok(())
     }
 
@@ -2544,7 +2683,10 @@ impl DevServer {
         // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
         let route_bundle: *mut RouteBundle =
             &raw mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
-        debug_assert!(matches!(unsafe { &(*route_bundle).data }, route_bundle::Data::Html(_)));
+        debug_assert!(matches!(
+            unsafe { &(*route_bundle).data },
+            route_bundle::Data::Html(_)
+        ));
 
         let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
             Some(b) => b.as_ptr(),
@@ -2565,8 +2707,10 @@ impl DevServer {
                     },
                 );
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
-                unsafe { (*route_bundle).data.html_mut().cached_response =
-                    ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from) };
+                unsafe {
+                    (*route_bundle).data.html_mut().cached_response =
+                        ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from)
+                };
                 break 'generate route_ptr;
             }
         };
@@ -2603,7 +2747,9 @@ impl DevServer {
         let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-        debug_assert!(unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index));
+        debug_assert!(
+            unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index)
+        );
         debug_assert!(html.cached_response.is_none());
         let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
         let bundled_html = html.bundled_html_text.as_ref().unwrap();
@@ -2636,9 +2782,12 @@ impl DevServer {
         let css_ids: &[u64] = &self.client_graph.current_css_files;
 
         let payload_size = bundled_html.len()
-            + ("<link rel=\"stylesheet\" href=\"".len() + ASSET_PREFIX.len() + "/0000000000000000.css\">".len())
+            + ("<link rel=\"stylesheet\" href=\"".len()
+                + ASSET_PREFIX.len()
+                + "/0000000000000000.css\">".len())
                 * css_ids.len()
-            + "<script type=\"module\" crossorigin src=\"\" data-bun-dev-server-script></script>".len()
+            + "<script type=\"module\" crossorigin src=\"\" data-bun-dev-server-script></script>"
+                .len()
             + CLIENT_PREFIX.len()
             + "/".len()
             + display_name.len()
@@ -2665,9 +2814,15 @@ impl DevServer {
         array.extend_from_slice(b"/");
         array.extend_from_slice(display_name);
         array.extend_from_slice(b"-");
-        let n = bun_core::fmt::bytes_to_hex_lower(&(route_bundle_index.get() as u32).to_ne_bytes(), &mut hex_buf);
+        let n = bun_core::fmt::bytes_to_hex_lower(
+            &(route_bundle_index.get() as u32).to_ne_bytes(),
+            &mut hex_buf,
+        );
         array.extend_from_slice(&hex_buf[..n]);
-        let n = bun_core::fmt::bytes_to_hex_lower(&route_bundle.client_script_generation.to_ne_bytes(), &mut hex_buf);
+        let n = bun_core::fmt::bytes_to_hex_lower(
+            &route_bundle.client_script_generation.to_ne_bytes(),
+            &mut hex_buf,
+        );
         array.extend_from_slice(&hex_buf[..n]);
         array.extend_from_slice(b".js\" data-bun-dev-server-script></script>");
         array.extend_from_slice(SCRIPT_UNREF_PAYLOAD.as_bytes());
@@ -2715,7 +2870,10 @@ impl DevServer {
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
-            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(&import.path.pretty, w)?;
+            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                &import.path.pretty,
+                w,
+            )?;
             w.extend_from_slice(b", 0,\n");
         }
         if any {
@@ -2754,12 +2912,15 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                route_bundle.client_bundle = ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from);
+                route_bundle.client_bundle =
+                    ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from);
                 break 'generate route_ptr;
             }
         };
         // SAFETY: `source_maps` is disjoint from `route_bundles`.
-        unsafe { &mut *self_ptr }.source_maps.add_weak_ref(route_bundle.source_map_id());
+        unsafe { &mut *self_ptr }
+            .source_maps
+            .add_weak_ref(route_bundle.source_map_id());
         // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
         unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
     }
@@ -2874,7 +3035,10 @@ impl DeferredRequest {
     }
 
     fn on_abort_impl(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) onAbort", std::ptr::from_ref(self) as usize);
+        deferred_request::debug_log_dr!(
+            "DeferredRequest(0x{:x}) onAbort",
+            std::ptr::from_ref(self) as usize
+        );
         self.abort();
         debug_assert!(matches!(self.handler, Handler::Aborted));
     }
@@ -2896,7 +3060,10 @@ impl DeferredRequest {
 
     /// *WARNING*: Do not call this directly, instead call `.deref_()`
     fn __deinit(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", std::ptr::from_ref(self) as usize);
+        deferred_request::debug_log_dr!(
+            "DeferredRequest(0x{:x}) deinitImpl",
+            std::ptr::from_ref(self) as usize
+        );
         // PORT NOTE: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
         // so the `Handler` payload must be torn down explicitly here. Swap to
         // `Aborted` (zero-payload) and let the moved-out value drop — for
@@ -2914,7 +3081,10 @@ impl DeferredRequest {
 
     /// Deinitializes state by aborting the connection.
     fn abort(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) abort", std::ptr::from_ref(self) as usize);
+        deferred_request::debug_log_dr!(
+            "DeferredRequest(0x{:x}) abort",
+            std::ptr::from_ref(self) as usize
+        );
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
             Handler::ServerHandler(saved) => {
@@ -2923,7 +3093,9 @@ impl DeferredRequest {
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
                     bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
                 );
-                saved.ctx.set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
+                saved
+                    .ctx
+                    .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
                 // PORT NOTE: saved.js_request (jsc::Strong) drops at end of arm
                 drop(saved);
             }
@@ -3065,7 +3237,8 @@ impl DevServer {
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
                 bun_core::handle_oom(
-                    bt.set.put(k, bundler::bake_types::EntryPointFlags(v.bits())),
+                    bt.set
+                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
                 );
             }
             bt
@@ -3090,9 +3263,17 @@ impl DevServer {
     pub fn prepare_and_log_resolution_failures(&mut self) -> Result<(), bun_core::Error> {
         // Since resolution failures can be asynchronous, their logs are not inserted
         // until the very end.
-        let resolution_failures = &self.current_bundle.as_ref().expect("infallible: bundle active").resolution_failure_entries;
+        let resolution_failures = &self
+            .current_bundle
+            .as_ref()
+            .expect("infallible: bundle active")
+            .resolution_failure_entries;
         if !resolution_failures.is_empty() {
-            for (owner, log) in resolution_failures.keys().iter().zip(resolution_failures.values()) {
+            for (owner, log) in resolution_failures
+                .keys()
+                .iter()
+                .zip(resolution_failures.values())
+            {
                 if log.has_errors() {
                     // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
                     let index = owner.file();
@@ -3134,7 +3315,8 @@ impl DevServer {
                 total_len += fail.data.len();
             }
 
-            total_len += self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>();
+            total_len +=
+                self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>();
 
             let mut gts = self.init_graph_trace_state(0)?;
 
@@ -3160,12 +3342,22 @@ impl DevServer {
                     serialized_failure::Owner::None | serialized_failure::Owner::Route(_) => {
                         unreachable!()
                     }
-                    serialized_failure::Owner::Server(index) => self
-                        .server_graph
-                        .trace_dependencies(index, &mut gts, incremental_graph::TraceDependencyGoal::NoStop, index)?,
-                    serialized_failure::Owner::Client(index) => self
-                        .client_graph
-                        .trace_dependencies(index, &mut gts, incremental_graph::TraceDependencyGoal::NoStop, index)?,
+                    serialized_failure::Owner::Server(index) => {
+                        self.server_graph.trace_dependencies(
+                            index,
+                            &mut gts,
+                            incremental_graph::TraceDependencyGoal::NoStop,
+                            index,
+                        )?
+                    }
+                    serialized_failure::Owner::Client(index) => {
+                        self.client_graph.trace_dependencies(
+                            index,
+                            &mut gts,
+                            incremental_graph::TraceDependencyGoal::NoStop,
+                            index,
+                        )?
+                    }
                 }
             }
 
@@ -3200,7 +3392,8 @@ impl DevServer {
             let mut payload: Vec<u8> = Vec::with_capacity(
                 ::core::mem::size_of::<MessageId>()
                     + ::core::mem::size_of::<u32>()
-                    + self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>(),
+                    + self.incremental_result.failures_removed.len()
+                        * ::core::mem::size_of::<u32>(),
             );
             payload.push(MessageId::Errors.char());
 
@@ -3224,7 +3417,10 @@ impl DevServer {
 
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
-    fn generate_client_bundle(&mut self, route_bundle: &mut RouteBundle) -> Result<Vec<u8>, bun_core::Error> {
+    fn generate_client_bundle(
+        &mut self,
+        route_bundle: &mut RouteBundle,
+    ) -> Result<Vec<u8>, bun_core::Error> {
         debug_assert!(route_bundle.client_bundle.is_none());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
@@ -3255,9 +3451,16 @@ impl DevServer {
                 let Some(rfr_index) = self.client_graph.get_file_index(&rfr.import_source) else {
                     break 'brk;
                 };
-                if !self.client_graph.stale_files.is_set(rfr_index.get() as usize) {
-                    self.client_graph
-                        .trace_imports(rfr_index, &mut gts, TraceImportGoal::FindClientModules)?;
+                if !self
+                    .client_graph
+                    .stale_files
+                    .is_set(rfr_index.get() as usize)
+                {
+                    self.client_graph.trace_imports(
+                        rfr_index,
+                        &mut gts,
+                        TraceImportGoal::FindClientModules,
+                    )?;
                     react_fast_refresh_id = &rfr.import_source;
                 }
             }
@@ -3281,7 +3484,9 @@ impl DevServer {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
                 // errdefer: unref on early-`?`; disarmed via `into_inner` on success.
-                let guard = scopeguard::guard(script_id, move |id| unsafe { (*self_ptr).source_maps.unref(id) });
+                let guard = scopeguard::guard(script_id, move |id| unsafe {
+                    (*self_ptr).source_maps.unref(id)
+                });
                 gts.clear_and_free();
                 // PERF(port): was ArenaAllocator scratch — `take_source_map`
                 // allocates internally with the global allocator in the port.
@@ -3302,20 +3507,23 @@ impl DevServer {
         } else {
             Vec::new()
         };
-        let client_bundle = self.client_graph.take_js_bundle(
-            &incremental_graph::TakeJSBundleOptionsClient {
-                kind: crate::bake::dev_server::ChunkKind::InitialResponse,
-                initial_response_entry_point: &initial_entry,
-                react_refresh_entry_point: react_fast_refresh_id,
-                script_id,
-                console_log: self.should_receive_console_log_from_browser(),
-            },
-        )?;
+        let client_bundle =
+            self.client_graph
+                .take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
+                    kind: crate::bake::dev_server::ChunkKind::InitialResponse,
+                    initial_response_entry_point: &initial_entry,
+                    react_refresh_entry_point: react_fast_refresh_id,
+                    script_id,
+                    console_log: self.should_receive_console_log_from_browser(),
+                })?;
         Ok(client_bundle)
     }
 
     fn generate_css_js_array(&mut self, route_bundle: &RouteBundle) -> JsResult<JSValue> {
-        debug_assert!(matches!(route_bundle.data, route_bundle::Data::Framework(_)));
+        debug_assert!(matches!(
+            route_bundle.data,
+            route_bundle::Data::Framework(_)
+        ));
         if cfg!(debug_assertions) {
             debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
         }
@@ -3335,7 +3543,8 @@ impl DevServer {
         let global = self.vm().global();
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {
-            let mut buf = [0u8; ASSET_PREFIX.len() + ::core::mem::size_of::<u64>() * 2 + "/.css".len()];
+            let mut buf =
+                [0u8; ASSET_PREFIX.len() + ::core::mem::size_of::<u64>() * 2 + "/.css".len()];
             let buf_len = buf.len();
             let path = {
                 let mut cursor = &mut buf[..];
@@ -3343,14 +3552,20 @@ impl DevServer {
                     cursor,
                     "{}/{}.css",
                     ASSET_PREFIX,
-                    bstr::BStr::new(bun_core::fmt::bytes_to_hex_lower_string(&item.to_ne_bytes()).as_bytes()),
+                    bstr::BStr::new(
+                        bun_core::fmt::bytes_to_hex_lower_string(&item.to_ne_bytes()).as_bytes()
+                    ),
                 )
                 .expect("unreachable");
                 let written = buf_len - cursor.len();
                 &buf[..written]
             };
             let s = OwnedString::new(BunString::clone_utf8(path));
-            arr.put_index(global, u32::try_from(i).expect("int cast"), s.to_js(global)?)?;
+            arr.put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                s.to_js(global)?,
+            )?;
         }
         Ok(arr)
     }
@@ -3388,8 +3603,11 @@ impl DevServer {
 
                 // The route file is considered
                 if let Some(id) = route.file_page {
-                    self.server_graph
-                        .trace_imports(from_opaque_file_id::<{ bake::Side::Server }>(id), gts, goal)?;
+                    self.server_graph.trace_imports(
+                        from_opaque_file_id::<{ bake::Side::Server }>(id),
+                        gts,
+                        goal,
+                    )?;
                 }
 
                 // For all parents, the layout is considered
@@ -3406,7 +3624,8 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                self.client_graph.trace_imports(html.bundled_file, gts, goal)?;
+                self.client_graph
+                    .trace_imports(html.bundled_file, gts, goal)?;
             }
         }
         Ok(())
@@ -3424,8 +3643,14 @@ impl DevServer {
         let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
-            let s = OwnedString::new(BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize])));
-            arr.put_index(global, u32::try_from(i).expect("int cast"), s.to_js(global)?)?;
+            let s = OwnedString::new(BunString::clone_utf8(
+                self.relative_path(&mut *buf, &names[item.get() as usize]),
+            ));
+            arr.put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                s.to_js(global)?,
+            )?;
         }
         Ok(arr)
     }
@@ -3459,14 +3684,25 @@ pub struct HotUpdateContext<'a> {
 pub struct CachedFileIndex(pub u32);
 impl CachedFileIndex {
     pub const NONE: Self = Self(u32::MAX);
-    #[inline] pub const fn raw(self) -> u32 { self.0 }
-    #[inline] pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
-        if self.0 == u32::MAX { None } else { Some(incremental_graph::FileIndex::<SIDE>::init(self.0)) }
+    #[inline]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
+        if self.0 == u32::MAX {
+            None
+        } else {
+            Some(incremental_graph::FileIndex::<SIDE>::init(self.0))
+        }
     }
 }
 impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> for CachedFileIndex {
     fn from(v: Option<incremental_graph::FileIndex<SIDE>>) -> Self {
-        match v { Some(i) => Self(i.get()), None => Self::NONE }
+        match v {
+            Some(i) => Self(i.get()),
+            None => Self::NONE,
+        }
     }
 }
 
@@ -3557,7 +3793,10 @@ pub fn finalize_bundle(
     // PORT NOTE: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
     // `current_bundle!()` macro (Zig freely re-aliased `dev.current_bundle.?`).
-    let current_bundle_ptr: *mut CurrentBundle = dev.current_bundle.as_mut().expect("infallible: bundle active");
+    let current_bundle_ptr: *mut CurrentBundle = dev
+        .current_bundle
+        .as_mut()
+        .expect("infallible: bundle active");
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
@@ -3629,10 +3868,7 @@ pub fn finalize_bundle(
         }
     }
 
-    let mut resolved_index_cache = vec![
-        CachedFileIndex::NONE;
-        input_file_sources.len() * 2
-    ];
+    let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
     // PORT NOTE: ctx fields `server_seen_bit_set`/`gts` were `undefined` in Zig then
     // assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
@@ -3671,8 +3907,17 @@ pub fn finalize_bundle(
             Some(c) => c.clone(),
             None => 'brk: {
                 // The source map is `null` if empty
-                debug_assert!(matches!(compile_result, bundler::CompileResult::Javascript { result: bun_js_printer::PrintResult::Result(_), .. }));
-                debug_assert!(dev.server_transpiler().options.source_map != bundler::options::SourceMapOption::None);
+                debug_assert!(matches!(
+                    compile_result,
+                    bundler::CompileResult::Javascript {
+                        result: bun_js_printer::PrintResult::Result(_),
+                        ..
+                    }
+                ));
+                debug_assert!(
+                    dev.server_transpiler().options.source_map
+                        != bundler::options::SourceMapOption::None
+                );
                 debug_assert!(!part_range.source_index.is_runtime());
                 break 'brk bun_sourcemap::Chunk::init_empty();
             }
@@ -3741,7 +3986,9 @@ pub fn finalize_bundle(
         };
 
         // Create an entry for this file.
-        let key = ctx.sources[index.get() as usize].path.key_for_incremental_graph();
+        let key = ctx.sources[index.get() as usize]
+            .path
+            .key_for_incremental_graph();
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
         // Track css files that look like tailwind files.
@@ -3760,7 +4007,9 @@ pub fn finalize_bundle(
         )?;
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk.entry_point.set_entry_point_id(asset_index.get() as u32);
+        chunk
+            .entry_point
+            .set_entry_point_id(asset_index.get() as u32);
 
         if let Some(map) = &mut dev.has_tailwind_plugin_hack {
             if looks_like_tailwind {
@@ -3772,21 +4021,31 @@ pub fn finalize_bundle(
             }
         }
 
-        dev.client_graph
-            .receive_chunk(&mut ctx, index, incremental_graph::ReceiveChunkContent::Css(h), false)?;
+        dev.client_graph.receive_chunk(
+            &mut ctx,
+            index,
+            incremental_graph::ReceiveChunkContent::Css(h),
+            false,
+        )?;
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached.
         if metadata.imported_on_server {
-            dev.server_graph.insert_css_file_on_server(&mut ctx, index, key)?;
+            dev.server_graph
+                .insert_css_file_on_server(&mut ctx, index, key)?;
         }
     }
 
     for chunk in html_chunks_mut.iter_mut() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        let bundler::CompileResult::Html { code: compile_result_code, script_injection_offset: compile_result_offset, .. } =
-            &chunk.compile_results_for_chunk[0]
-        else { unreachable!() };
+        let bundler::CompileResult::Html {
+            code: compile_result_code,
+            script_injection_offset: compile_result_offset,
+            ..
+        } = &chunk.compile_results_for_chunk[0]
+        else {
+            unreachable!()
+        };
         let generated_js = dev.generate_javascript_code_for_html_file(
             index,
             import_records,
@@ -3811,11 +4070,16 @@ pub fn finalize_bundle(
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // PORT NOTE: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
-        if route_bundle.data.html_mut().cached_response.take().is_some() {
+        if route_bundle
+            .data
+            .html_mut()
+            .cached_response
+            .take()
+            .is_some()
+        {
             // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
             // is a disjoint field reborrowed through the raw `dev_ptr`.
-            route_bundle
-                .invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
+            route_bundle.invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
@@ -3825,17 +4089,20 @@ pub fn finalize_bundle(
             // freed by Drop
         }
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
-        html.script_injection_offset =
-            Some(route_bundle::ByteOffset::init(*compile_result_offset));
+        html.script_injection_offset = Some(route_bundle::ByteOffset::init(*compile_result_offset));
 
-        chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
+        chunk
+            .entry_point
+            .set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
     }
 
     // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
     // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
-    *ctx.gts = dev.init_graph_trace_state(
-        if n_css > 0 { input_file_sources.len() } else { 0 },
-    )?;
+    *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
+        input_file_sources.len()
+    } else {
+        0
+    })?;
     ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
 
     dev.incremental_result.had_adjusted_edges = false;
@@ -3861,13 +4128,19 @@ pub fn finalize_bundle(
     }
     for chunk in html_chunks_mut.iter() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph
-            .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
+        dev.client_graph.process_chunk_dependencies(
+            &mut ctx,
+            incremental_graph::ProcessMode::Normal,
+            index,
+        )?;
     }
     for chunk in css_chunks_mut.iter() {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph
-            .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Css, entry_index)?;
+        dev.client_graph.process_chunk_dependencies(
+            &mut ctx,
+            incremental_graph::ProcessMode::Css,
+            entry_index,
+        )?;
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -3918,11 +4191,8 @@ pub fn finalize_bundle(
                     }
                 };
 
-                let json_data = source_map_entry.render_json(
-                    dev,
-                    ChunkKind::HmrChunk,
-                    bake::Side::Server,
-                )?;
+                let json_data =
+                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
                 break 'json Some(json_data);
             }
         } else {
@@ -3930,10 +4200,12 @@ pub fn finalize_bundle(
         };
         // _ = source_map_json freed by Drop
 
-        let server_bundle = dev.server_graph.take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
-            kind: ChunkKind::HmrChunk,
-            script_id: server_script_id,
-        })?;
+        let server_bundle = dev.server_graph.take_js_bundle_server(
+            &incremental_graph::TakeJSBundleOptionsServer {
+                kind: ChunkKind::HmrChunk,
+                script_id: server_script_id,
+            },
+        )?;
         // freed by Drop
 
         let global = dev.global();
@@ -3989,23 +4261,20 @@ pub fn finalize_bundle(
                 ir.client_components_removed.as_slice(),
             )
         };
-        let errors = match dev
-            .server_register_update_callback
-            .get()
-            .unwrap()
-            .call(
-                global,
-                global.to_js_value(),
-                &[
-                    server_modules,
-                    dev.make_array_for_server_components_patch(global, added)?,
-                    dev.make_array_for_server_components_patch(global, removed)?,
-                ],
-            ) {
+        let errors = match dev.server_register_update_callback.get().unwrap().call(
+            global,
+            global.to_js_value(),
+            &[
+                server_modules,
+                dev.make_array_for_server_components_patch(global, added)?,
+                dev.make_array_for_server_components_patch(global, removed)?,
+            ],
+        ) {
             Ok(v) => v,
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                dev.vm_mut().print_error_like_object_to_console(global.take_exception(err));
+                dev.vm_mut()
+                    .print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
                 );
@@ -4024,8 +4293,16 @@ pub fn finalize_bundle(
     hot_update_payload.push(MessageId::HotUpdate.char());
 
     // The writer used for the hot_update payload
-    macro_rules! w_int { ($t:ty, $v:expr) => { hot_update_payload.extend_from_slice(&<$t>::to_le_bytes($v)) }; }
-    macro_rules! w_all { ($s:expr) => { hot_update_payload.extend_from_slice($s) }; }
+    macro_rules! w_int {
+        ($t:ty, $v:expr) => {
+            hot_update_payload.extend_from_slice(&<$t>::to_le_bytes($v))
+        };
+    }
+    macro_rules! w_all {
+        ($s:expr) => {
+            hot_update_payload.extend_from_slice($s)
+        };
+    }
 
     // It was discovered that if a tree falls with nobody around it, it does not
     // make any sound. Let's avoid writing into `w` if no sockets are open.
@@ -4079,8 +4356,12 @@ pub fn finalize_bundle(
         ctx.gts.clear();
 
         for index in &dev.incremental_result.client_components_affected {
-            dev.server_graph
-                .trace_dependencies(*index, ctx.gts, incremental_graph::TraceDependencyGoal::NoStop, *index)?;
+            dev.server_graph.trace_dependencies(
+                *index,
+                ctx.gts,
+                incremental_graph::TraceDependencyGoal::NoStop,
+                *index,
+            )?;
         }
 
         for request in &dev.incremental_result.framework_routes_affected {
@@ -4101,23 +4382,20 @@ pub fn finalize_bundle(
         // Free old bundles
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            dev.route_bundles[bundled_route_index]
-                .invalidate_client_bundle(&mut dev.source_maps);
+            dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
         }
     } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
         // Free old bundles
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            dev.route_bundles[bundled_route_index]
-                .invalidate_client_bundle(&mut dev.source_maps);
+            dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
         }
     }
 
     // Softly affected HTML routes only need the bundle invalidated.
     if !dev.incremental_result.html_routes_soft_affected.is_empty() {
         for index in &dev.incremental_result.html_routes_soft_affected {
-            dev.route_bundles[index.get() as usize]
-                .invalidate_client_bundle(&mut dev.source_maps);
+            dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);
             route_bits.set(index.get() as usize);
         }
         has_route_bits_set = true;
@@ -4134,8 +4412,9 @@ pub fn finalize_bundle(
             // PORT NOTE: erase to raw ptr — `trace_all_route_imports` below needs
             // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
             // is still live; the two do not actually alias.
-            let route_bundle: *mut RouteBundle =
-                dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).expect("int cast")));
+            let route_bundle: *mut RouteBundle = dev.route_bundle_ptr(route_bundle::Index::init(
+                u32::try_from(i).expect("int cast"),
+            ));
             // SAFETY: `route_bundle` points into `dev.route_bundles`, which is not
             // resized inside this loop; `trace_all_route_imports` does not mutate
             // `route_bundles`.
@@ -4195,12 +4474,11 @@ pub fn finalize_bundle(
                 let n = bun_core::fmt::bytes_to_hex_lower(&hash(key).to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
                 // SAFETY: `asset_values[i]` is `*mut StaticRoute` owned by `dev.assets`.
-                let css_data = &unsafe {
-                    &*asset_values[chunk.entry_point.entry_point_id() as usize]
-                }
-                .blob
-                .internal_blob()
-                .bytes;
+                let css_data =
+                    &unsafe { &*asset_values[chunk.entry_point.entry_point_id() as usize] }
+                        .blob
+                        .internal_blob()
+                        .bytes;
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }
@@ -4237,7 +4515,10 @@ pub fn finalize_bundle(
                     }
                 }
                 map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
-                let entry = match dev.source_maps.put_or_increment_ref_count(script_id, sockets)? {
+                let entry = match dev
+                    .source_maps
+                    .put_or_increment_ref_count(script_id, sockets)?
+                {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
                         // PORT NOTE: reborrow `client_graph` via `dev_ptr` so the
                         // `&mut Entry` borrow inside `source_maps` does not alias.
@@ -4341,7 +4622,11 @@ pub fn finalize_bundle(
         if let Some(agent_ptr) = inspector_agent_ptr {
             let mut buf: Vec<u8> = Vec::new();
             // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-            dev.encode_serialized_failures(dev.bundling_failures.values(), &mut buf, Some(unsafe { &mut *agent_ptr }))?;
+            dev.encode_serialized_failures(
+                dev.bundling_failures.values(),
+                &mut buf,
+                Some(unsafe { &mut *agent_ptr }),
+            )?;
         }
 
         return Ok(());
@@ -4350,7 +4635,9 @@ pub fn finalize_bundle(
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                && !dev.vm().env_loader()
+                && !dev
+                    .vm()
+                    .env_loader()
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
                 Output::disable_buffering();
@@ -4362,7 +4649,10 @@ pub fn finalize_bundle(
 
             dev.bundles_since_last_error += 1;
             if dev.bundles_since_last_error > 1 {
-                Output::pretty_error(format_args!("<cyan>[x{}]<r> ", dev.bundles_since_last_error));
+                Output::pretty_error(format_args!(
+                    "<cyan>[x{}]<r> ",
+                    dev.bundles_since_last_error
+                ));
             }
         } else {
             dev.bundles_since_last_error = 0;
@@ -4373,7 +4663,11 @@ pub fn finalize_bundle(
 
         Output::pretty_error(format_args!(
             "<green>{} in {}ms<r>",
-            if current_bundle!().had_reload_event { "Reloaded" } else { "Bundled page" },
+            if current_bundle!().had_reload_event {
+                "Reloaded"
+            } else {
+                "Bundled page"
+            },
             ms_elapsed,
         ));
 
@@ -4402,9 +4696,11 @@ pub fn finalize_bundle(
                         if !first.is_null() {
                             // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
                             // SAFETY: `data` was initialized by `defer_request`.
-                            break 'rbi unsafe { (*first).data.assume_init_ref() }.route_bundle_index;
+                            break 'rbi unsafe { (*first).data.assume_init_ref() }
+                                .route_bundle_index;
                         }
-                        let route_bundle_indices = current_bundle!().promise.route_bundle_indices.keys();
+                        let route_bundle_indices =
+                            current_bundle!().promise.route_bundle_indices.keys();
                         if route_bundle_indices.is_empty() {
                             break 'brk None;
                         }
@@ -4415,7 +4711,10 @@ pub fn finalize_bundle(
                     // / `dev.router` / `dev.server_graph` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(&mut *buf, &unsafe { &*html.html_bundle }.bundle.path))
+                            Some(dev.relative_path(
+                                &mut *buf,
+                                &unsafe { &*html.html_bundle }.bundle.path,
+                            ))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
@@ -4423,7 +4722,8 @@ pub fn finalize_bundle(
                                 Some(id) => id,
                                 None => break 'file_name None,
                             };
-                            let server_index = from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
+                            let server_index =
+                                from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
                             let abs_path =
                                 &dev.server_graph.bundled_files.keys()[server_index.get() as usize];
                             break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
@@ -4474,10 +4774,15 @@ pub fn finalize_bundle(
         // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
         let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
         scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.deinit_idempotently() } };
-        current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
+        current_bundle!()
+            .promise
+            .set_route_bundle_state(dev, route_bundle::State::Loaded);
         let vm = dev.vm();
         let _exit = vm.enter_event_loop_scope();
-        current_bundle!().promise.strong.resolve(vm.global(), JSValue::TRUE)?;
+        current_bundle!()
+            .promise
+            .strong
+            .resolve(vm.global(), JSValue::TRUE)?;
     }
 
     while let Some(node) = current_bundle!().requests.pop_first() {
@@ -4553,10 +4858,9 @@ impl DevServer {
                         // `self.watcher_atomics.events[_]`, disjoint from the
                         // graph/watcher fields `process_file_list` mutates.
                         current.process_file_list(unsafe { &mut *self_ptr }, &mut entry_points);
-                        let Some(next) = self
-                            .watcher_atomics
-                            .recycle_event_from_dev_server(std::ptr::from_mut::<HotReloadEvent>(current))
-                        else {
+                        let Some(next) = self.watcher_atomics.recycle_event_from_dev_server(
+                            std::ptr::from_mut::<HotReloadEvent>(current),
+                        ) else {
                             break;
                         };
                         // SAFETY: `recycle_event_from_dev_server` returns a slot
@@ -4584,7 +4888,8 @@ impl DevServer {
             }
 
             if !entry_points.set.is_empty() {
-                self.start_async_bundle(entry_points, is_reload, timer).expect("oom");
+                self.start_async_bundle(entry_points, is_reload, timer)
+                    .expect("oom");
             }
 
             self.next_bundle.route_queue.clear_retaining_capacity();
@@ -4620,15 +4925,21 @@ impl DevServer {
             }
         } else {
             match graph {
-                bake::Graph::Server => self
-                    .server_graph
-                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, false)?,
-                bake::Graph::Ssr => self
-                    .server_graph
-                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, true)?,
-                bake::Graph::Client => self
-                    .client_graph
-                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, false)?,
+                bake::Graph::Server => self.server_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    false,
+                )?,
+                bake::Graph::Ssr => self.server_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    true,
+                )?,
+                bake::Graph::Client => self.client_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    false,
+                )?,
             }
         }
         Ok(())
@@ -4649,11 +4960,18 @@ impl DevServer {
             let idx = self.client_graph.insert_stale(abs_path, false)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
-            let idx = self.server_graph.insert_stale(abs_path, graph == bake::Graph::Ssr)?;
+            let idx = self
+                .server_graph
+                .insert_stale(abs_path, graph == bake::Graph::Ssr)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
-        let current_bundle = self.current_bundle.as_mut().expect("infallible: bundle active");
-        let gop = current_bundle.resolution_failure_entries.get_or_put(owner)?;
+        let current_bundle = self
+            .current_bundle
+            .as_mut()
+            .expect("infallible: bundle active");
+        let gop = current_bundle
+            .resolution_failure_entries
+            .get_or_put(owner)?;
         if !gop.found_existing {
             *gop.value_ptr = Log::init();
         }
@@ -4722,8 +5040,14 @@ impl DevServer {
 
         let file_index = from_opaque_file_id::<SIDE>(file);
         let stale = match SIDE {
-            bake::Side::Server => self.server_graph.stale_files.is_set(file_index.get() as usize),
-            bake::Side::Client => self.client_graph.stale_files.is_set(file_index.get() as usize),
+            bake::Side::Server => self
+                .server_graph
+                .stale_files
+                .is_set(file_index.get() as usize),
+            bake::Side::Client => self
+                .client_graph
+                .stale_files
+                .is_set(file_index.get() as usize),
         };
         if stale {
             entry_points.append_js(&file_names[file_index.get() as usize], SIDE.graph())?;
@@ -4742,10 +5066,14 @@ pub enum OpaqueFileIdOrOptional {
     Optional(framework_router::OpaqueFileIdOptional),
 }
 impl From<OpaqueFileId> for OpaqueFileIdOrOptional {
-    fn from(v: OpaqueFileId) -> Self { Self::Id(v) }
+    fn from(v: OpaqueFileId) -> Self {
+        Self::Id(v)
+    }
 }
 impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
-    fn from(v: framework_router::OpaqueFileIdOptional) -> Self { Self::Optional(v) }
+    fn from(v: framework_router::OpaqueFileIdOptional) -> Self {
+        Self::Optional(v)
+    }
 }
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
@@ -4764,15 +5092,26 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
-                dev.vm().global().report_active_exception_as_unhandled(e),
+            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                dev.vm().global().report_active_exception_as_unhandled(e)
+            }
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
         }
         return;
     }
 
-    if dev.server.as_ref().expect("infallible: server bound").config().on_request.is_some() {
-        dev.server.as_mut().expect("infallible: server bound").on_request(req, resp);
+    if dev
+        .server
+        .as_ref()
+        .expect("infallible: server bound")
+        .config()
+        .on_request
+        .is_some()
+    {
+        dev.server
+            .as_mut()
+            .expect("infallible: server bound")
+            .on_request(req, resp);
         return;
     }
 
@@ -4836,8 +5175,9 @@ impl DevServer {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
-                self.vm().global().report_active_exception_as_unhandled(e),
+            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                self.vm().global().report_active_exception_as_unhandled(e)
+            }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())
@@ -4867,7 +5207,8 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        let bundle_index = route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
+        let bundle_index =
+            route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
 
         self.route_bundles.reserve(1);
         // PERF(port): was assume_capacity
@@ -4887,11 +5228,11 @@ impl DevServer {
                     // R-2: shared deref — only `bundle.path` is read; mutation of
                     // `dev_server_id` goes through the `Cell` `index_location` above.
                     let html_ref = unsafe { &*html };
-                    let incremental_graph_index = self
-                        .client_graph
-                        .insert_stale_extra(&html_ref.bundle.path, false, true)?;
-                    let file =
-                        &mut self.client_graph.bundled_files.values_mut()[incremental_graph_index.get() as usize];
+                    let incremental_graph_index =
+                        self.client_graph
+                            .insert_stale_extra(&html_ref.bundle.path, false, true)?;
+                    let file = &mut self.client_graph.bundled_files.values_mut()
+                        [incremental_graph_index.get() as usize];
                     // PORT NOTE: Zig packs/unpacks; the un-gated `incremental_graph::File`
                     // is unpacked already.
                     file.html_route_bundle_index = Some(bundle_index);
@@ -4922,7 +5263,8 @@ impl DevServer {
         &mut self,
         html: *mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
-        let _bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
+        let _bundle_index =
+            self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
         self.html_router.fallback = Some(html);
         // TODO(port): Zig set `.fallback = bundle_index.toOptional()` but field type is
         // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv — likely the LIFETIMES row is
@@ -5062,7 +5404,9 @@ impl DevServer {
                         headers: Some(headers_ref),
                         ..Default::default()
                     },
-                    crate::webcore::Body::new(crate::webcore::body::Value::Blob(any_blob.to_blob(global))),
+                    crate::webcore::Body::new(crate::webcore::body::Value::Blob(
+                        any_blob.to_blob(global),
+                    )),
                     BunString::empty(),
                     false,
                 );
@@ -5089,7 +5433,10 @@ impl DevServer {
         Output::pretty_errorln(format_args!(
             "<d>DevServer tracked {}, process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
-            bun_core::fmt::size(sys::self_process_memory_usage().unwrap_or(0), Default::default()),
+            bun_core::fmt::size(
+                sys::self_process_memory_usage().unwrap_or(0),
+                Default::default()
+            ),
         ));
     }
 }
@@ -5121,7 +5468,10 @@ impl DevServer {
         let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len())?;
         let client_bits =
             DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits)?;
-        Ok(GraphTraceState { server_bits, client_bits })
+        Ok(GraphTraceState {
+            server_bits,
+            client_bits,
+        })
     }
 }
 
@@ -5245,9 +5595,14 @@ impl DevServer {
     }
 
     #[inline]
-    fn timer_heap(&self) -> &mut crate::timer::All { crate::jsc_hooks::timer_all_mut() }
+    fn timer_heap(&self) -> &mut crate::timer::All {
+        crate::jsc_hooks::timer_all_mut()
+    }
 
-    pub fn emit_memory_visualizer_message_timer(timer: &mut EventLoopTimer, _: &bun_core::Timespec) {
+    pub fn emit_memory_visualizer_message_timer(
+        timer: &mut EventLoopTimer,
+        _: &bun_core::Timespec,
+    ) {
         if !cfg!(feature = "bake_debugging_features") {
             return;
         }
@@ -5282,7 +5637,10 @@ impl DevServer {
         self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
     }
 
-    pub fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {
+    pub fn write_memory_visualizer_message(
+        &self,
+        payload: &mut Vec<u8>,
+    ) -> Result<(), bun_core::Error> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
         // Wire format: 10 contiguous native-endian u32s — the Zig side declared
@@ -5297,7 +5655,8 @@ impl DevServer {
             /* other */ cost.other as u32,
             // PORT NOTE: Zig populated this from a debug allocation-scope
             // tracker; Rust ownership has no equivalent runtime counter.
-            /* devserver_tracked */ 0,
+            /* devserver_tracked */
+            0,
             /* process_used */ sys::self_process_memory_usage().unwrap_or(0) as u32,
             /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
             /* system_total */ system_total as u32,
@@ -5338,23 +5697,43 @@ impl DevServer {
         macro_rules! emit_files {
             ($side:expr, $g:expr) => {{
                 let g = $g;
-                payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).expect("int cast").to_le_bytes());
-                for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
+                payload.extend_from_slice(
+                    &u32::try_from(g.bundled_files.len())
+                        .expect("int cast")
+                        .to_le_bytes(),
+                );
+                for (i, (k, v)) in g
+                    .bundled_files
+                    .keys()
+                    .iter()
+                    .zip(g.bundled_files.values())
+                    .enumerate()
+                {
                     // PORT NOTE: un-gated `incremental_graph::File` is unpacked already.
                     let file = v;
                     let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);
-                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).expect("int cast").to_le_bytes());
-                    if k.is_empty() { continue; }
+                    payload.extend_from_slice(
+                        &u32::try_from(normalized_key.len())
+                            .expect("int cast")
+                            .to_le_bytes(),
+                    );
+                    if k.is_empty() {
+                        continue;
+                    }
                     payload.extend_from_slice(normalized_key);
-                    payload.push((g.stale_files.is_set_allow_out_of_bound(i, true) || file.failed) as u8);
+                    payload.push(
+                        (g.stale_files.is_set_allow_out_of_bound(i, true) || file.failed) as u8,
+                    );
                     payload.push(($side == bake::Side::Server && file.is_rsc) as u8);
                     payload.push(($side == bake::Side::Server && file.is_ssr) as u8);
                     payload.push(match $side {
                         bake::Side::Server => file.is_route,
                         bake::Side::Client => file.html_route_bundle_index.is_some(),
                     } as u8);
-                    payload.push(($side == bake::Side::Client && file.is_special_framework_file) as u8);
+                    payload.push(
+                        ($side == bake::Side::Client && file.is_special_framework_file) as u8,
+                    );
                     payload.push(match $side {
                         bake::Side::Server => file.is_client_component_boundary,
                         bake::Side::Client => file.is_hmr_root,
@@ -5406,7 +5785,9 @@ impl DevServer {
 
         let dw: Box<HmrSocket> = HmrSocket::new(self, res);
         let dw_ptr: *mut HmrSocket = bun_core::heap::into_raw(dw);
-        self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
+        self.active_websocket_connections
+            .put_no_clobber(dw_ptr, ())
+            .expect("oom");
         res.upgrade::<*mut HmrSocket>(
             dw_ptr,
             req.header(b"sec-websocket-key").unwrap_or(b""),
@@ -5419,7 +5800,7 @@ impl DevServer {
 
 // PORT NOTE: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined
 // once in `crate::bake::dev_server` and re-exported here.
-pub use crate::bake::dev_server::{MessageId, IncomingMessageId, ConsoleLogKind, HmrTopic};
+pub use crate::bake::dev_server::{ConsoleLogKind, HmrTopic, IncomingMessageId, MessageId};
 
 bitflags::bitflags! {
     // TODO(port): Zig generated `Bits` via @Type from HmrTopic enum fields.
@@ -5460,10 +5841,16 @@ mod c {
     // BakeSourceProvider.cpp
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, module: JSValue) -> JSValue;
+        pub safe fn BakeGetDefaultExportFromModule(
+            global: &JSGlobalObject,
+            module: JSValue,
+        ) -> JSValue;
     }
 
-    pub fn bake_load_server_hmr_patch(global: &JSGlobalObject, code: BunString) -> JsResult<JSValue> {
+    pub fn bake_load_server_hmr_patch(
+        global: &JSGlobalObject,
+        code: BunString,
+    ) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn BakeLoadServerHmrPatch(global: &JSGlobalObject, code: BunString) -> JSValue;
         }
@@ -5493,7 +5880,12 @@ mod c {
         // the sole caller's `ManuallyDrop<Vec<u8>>` (valid for `len`, ownership
         // ceded to C++) — discharges the ptr+len precondition above.
         jsc::from_js_host_call(global, || unsafe {
-            BakeLoadServerHmrPatchWithSourceMap(global, code, source_map_json_ptr, source_map_json_len)
+            BakeLoadServerHmrPatchWithSourceMap(
+                global,
+                code,
+                source_map_json_ptr,
+                source_map_json_len,
+            )
         })
     }
 
@@ -5509,7 +5901,9 @@ mod c {
                 separate_ssr_graph: bool,
             ) -> JSValue;
         }
-        jsc::from_js_host_call(global, || BakeLoadInitialServerCode(global, code, separate_ssr_graph))
+        jsc::from_js_host_call(global, || {
+            BakeLoadInitialServerCode(global, code, separate_ssr_graph)
+        })
     }
 }
 
@@ -5585,8 +5979,7 @@ impl DevServer {
         // the use sites — the columns never alias (per `MultiArrayElement` layout).
         let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
         // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
-        let counts: *mut [u32] =
-            unsafe { slice.items_mut::<"count", u32>() };
+        let counts: *mut [u32] = unsafe { slice.items_mut::<"count", u32>() };
         let kinds: *const [bun_watcher::Kind] = slice.items_kind();
         // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
         // by `watchlist`, which outlives this fn; reborrow as slices for indexing.
@@ -5637,8 +6030,12 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher
-                            .remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        self.bun_watcher.remove_at_index(
+                            bun_watcher::Kind::File,
+                            event.index,
+                            0,
+                            &[],
+                        );
                     }
 
                     ev.append_file(file_path);
@@ -5708,7 +6105,11 @@ impl SafeFileId {
         SafeFileId((side as u32) | (index << 1))
     }
     fn side(self) -> bake::Side {
-        if (self.0 & 1) == 0 { bake::Side::Client } else { bake::Side::Server }
+        if (self.0 & 1) == 0 {
+            bake::Side::Client
+        } else {
+            bake::Side::Server
+        }
     }
     fn index(self) -> u32 {
         (self.0 >> 1) & 0x3FFF_FFFF
@@ -5723,7 +6124,9 @@ impl DevServer {
         associated_route: framework_router::RouteIndex,
         file_kind: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_core::Error> {
-        let index = self.server_graph.insert_stale_extra(abs_path, false, true)
+        let index = self
+            .server_graph
+            .insert_stale_extra(abs_path, false, true)
             .map_err(bun_core::Error::from)?;
         self.route_lookup.put(
             index,
@@ -5810,7 +6213,9 @@ fn to_opaque_file_id<const SIDE: bake::Side>(
     OpaqueFileId::init(index.get())
 }
 
-fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_graph::FileIndex<SIDE> {
+fn from_opaque_file_id<const SIDE: bake::Side>(
+    id: OpaqueFileId,
+) -> incremental_graph::FileIndex<SIDE> {
     if cfg!(debug_assertions) {
         let safe = SafeFileId(id.get());
         debug_assert!(SIDE == safe.side());
@@ -5822,7 +6227,11 @@ fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_
 impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
-    pub fn relative_path<'a>(&self, relative_path_buf: &'a mut PathBuffer, path: &'a [u8]) -> &'a [u8] {
+    pub fn relative_path<'a>(
+        &self,
+        relative_path_buf: &'a mut PathBuffer,
+        path: &'a [u8],
+    ) -> &'a [u8] {
         debug_assert!(self.root[self.root.len() - 1] != b'/');
 
         if !paths::is_absolute(path) {
@@ -5864,7 +6273,11 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     debug_assert!(cfg!(feature = "bake_debugging_features"));
 
     // being conservative about how much stuff is put on the stack.
-    let mut filepath_buf = [0u8; if 4096 < MAX_PATH_BYTES { 4096 } else { MAX_PATH_BYTES }];
+    let mut filepath_buf = [0u8; if 4096 < MAX_PATH_BYTES {
+        4096
+    } else {
+        MAX_PATH_BYTES
+    }];
     let filepath = {
         let mut cursor = &mut filepath_buf[..];
         let _ = write!(
@@ -5921,7 +6334,10 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
-    pub fn new(route_index: framework_router::RouteIndex, should_recurse_when_visiting: bool) -> Self {
+    pub fn new(
+        route_index: framework_router::RouteIndex,
+        should_recurse_when_visiting: bool,
+    ) -> Self {
         RouteIndexAndRecurseFlag(
             (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
         )
@@ -5957,7 +6373,9 @@ pub mod entry_point_list {
 }
 
 impl EntryPointList {
-    pub fn empty() -> EntryPointList { EntryPointList::default() }
+    pub fn empty() -> EntryPointList {
+        EntryPointList::default()
+    }
 
     pub fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> Result<(), bun_core::Error> {
         self.append(
@@ -5971,11 +6389,18 @@ impl EntryPointList {
     }
 
     pub fn append_css(&mut self, abs_path: &[u8]) -> Result<(), bun_core::Error> {
-        self.append(abs_path, entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS)
+        self.append(
+            abs_path,
+            entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
+        )
     }
 
     /// Deduplictes requests to bundle the same file twice.
-    pub fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> Result<(), bun_core::Error> {
+    pub fn append(
+        &mut self,
+        abs_path: &[u8],
+        flags: entry_point_list::Flags,
+    ) -> Result<(), bun_core::Error> {
         let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
@@ -5999,18 +6424,17 @@ pub struct HTMLRouter {
 
 impl HTMLRouter {
     pub fn empty() -> HTMLRouter {
-        HTMLRouter { map: StringHashMap::new(), fallback: None }
+        HTMLRouter {
+            map: StringHashMap::new(),
+            fallback: None,
+        }
     }
 
     pub fn get(&self, path: &[u8]) -> Option<*mut HTMLBundleRoute> {
         self.map.get(path).copied().or(self.fallback)
     }
 
-    pub fn put(
-        &mut self,
-        path: &[u8],
-        route: *mut HTMLBundleRoute,
-    ) -> Result<(), bun_core::Error> {
+    pub fn put(&mut self, path: &[u8], route: *mut HTMLBundleRoute) -> Result<(), bun_core::Error> {
         if path == b"/*" {
             self.fallback = Some(route);
         } else {
@@ -6082,7 +6506,11 @@ struct UnrefSourceMapRequest {
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+    unsafe fn on_body(
+        this: *mut Self,
+        body: &[u8],
+        resp: AnyResponse,
+    ) -> Result<(), bun_core::Error> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { Self::run_with_body(this, body, resp) }
@@ -6099,7 +6527,10 @@ impl UnrefSourceMapRequest {
     where
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
-        dev.server.as_mut().expect("server bound").on_pending_request();
+        dev.server
+            .as_mut()
+            .expect("server bound")
+            .on_pending_request();
         let ctx = Box::new(UnrefSourceMapRequest {
             dev: std::ptr::from_mut::<DevServer>(dev),
             body: uws::BodyReaderMixin::init(),
@@ -6115,7 +6546,13 @@ impl UnrefSourceMapRequest {
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
         // SAFETY: dev outlives the request
-        unsafe { (*ctx.dev).server.as_mut().unwrap().on_static_request_complete() };
+        unsafe {
+            (*ctx.dev)
+                .server
+                .as_mut()
+                .unwrap()
+                .on_static_request_complete()
+        };
         drop(ctx);
     }
 
@@ -6138,7 +6575,10 @@ impl UnrefSourceMapRequest {
         // SAFETY: ctx is live (caller contract); dev outlives the request.
         let _ = unsafe { &mut *(*ctx).dev }
             .source_maps
-            .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
+            .remove_or_upgrade_weak_ref(
+                source_map_key,
+                source_map_store::RemoveOrUpgradeMode::Remove,
+            );
         r.write_status(b"204 No Content");
         r.end(b"", false);
         // SAFETY: ctx is the original heap-allocated pointer; the only borrow
@@ -6173,14 +6613,20 @@ pub struct TestingBatch {
 }
 
 impl TestingBatch {
-    pub fn empty() -> TestingBatch { TestingBatch { entry_points: EntryPointList::empty() } }
+    pub fn empty() -> TestingBatch {
+        TestingBatch {
+            entry_points: EntryPointList::empty(),
+        }
+    }
 
-    pub fn append(
-        &mut self,
-        entry_points: &EntryPointList,
-    ) -> Result<(), bun_core::Error> {
+    pub fn append(&mut self, entry_points: &EntryPointList) -> Result<(), bun_core::Error> {
         debug_assert!(!entry_points.set.is_empty());
-        for (k, v) in entry_points.set.keys().iter().zip(entry_points.set.values()) {
+        for (k, v) in entry_points
+            .set
+            .keys()
+            .iter()
+            .zip(entry_points.set.values())
+        {
             self.entry_points.append(k, *v)?;
         }
         Ok(())
@@ -6247,7 +6693,11 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         let route_bundle_index = self.route_bundle_index;
         match bundle_field {
             BundleQueueType::CurrentBundle => {
-                let cb = self.dev_mut().current_bundle.as_mut().expect("infallible: bundle active");
+                let cb = self
+                    .dev_mut()
+                    .current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active");
                 if cb.promise.strong.has_value() {
                     cb.promise
                         .route_bundle_indices
@@ -6257,7 +6707,11 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
-                let cb = self.dev_mut().current_bundle.as_mut().expect("infallible: bundle active");
+                let cb = self
+                    .dev_mut()
+                    .current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active");
                 cb.promise
                     .route_bundle_indices
                     .put(route_bundle_index, ())
@@ -6307,14 +6761,15 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // PORT NOTE: split the route-bundle borrow off via raw pointer so the
         // failure slice doesn't conflict with the `&mut DevServer` below.
         let route_bundle_index = self.route_bundle_index;
-        let failure = std::ptr::from_ref::<SerializedFailure>(self
-            .dev_mut()
-            .route_bundle_ptr(route_bundle_index)
-            .data
-            .framework()
-            .evaluate_failure
-            .as_ref()
-            .unwrap());
+        let failure = std::ptr::from_ref::<SerializedFailure>(
+            self.dev_mut()
+                .route_bundle_ptr(route_bundle_index)
+                .data
+                .framework()
+                .evaluate_failure
+                .as_ref()
+                .unwrap(),
+        );
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
         let failures = ::core::slice::from_ref(unsafe { &*failure });
@@ -6361,7 +6816,9 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     fn to_dev_response(&mut self) -> DevResponse<'_> {
         PromiseEnsureRouteBundledCtx::to_dev_response(self)
     }
-    fn dev(&mut self) -> &mut DevServer { self.dev_mut() }
+    fn dev(&mut self) -> &mut DevServer {
+        self.dev_mut()
+    }
     fn route_bundle_index(&self) -> route_bundle::Index {
         self.route_bundle_index
     }
@@ -6389,7 +6846,9 @@ fn bundle_new_route_js_function_impl(
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
     let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
     let Some(dev) = request.request_context.dev_server() else {
-        return Err(global.throw(format_args!("Request context does not belong to dev server")));
+        return Err(global.throw(format_args!(
+            "Request context does not belong to dev server"
+        )));
     };
     // Extract pathname from URL (remove protocol, host, query, hash)
     let pathname = extract_pathname_from_url(url.slice());
@@ -6413,7 +6872,9 @@ fn bundle_new_route_js_function_impl(
 
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw(format_args!("Request context does not belong to dev server")));
+        return Err(global.throw(format_args!(
+            "Request context does not belong to dev server"
+        )));
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
@@ -6494,10 +6955,9 @@ pub fn bake_get_new_route_params_js_function_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
-    jsc::to_js_host_call(
-        global,
-        || new_route_params_for_bundle_promise_for_js(global, callframe),
-    )
+    jsc::to_js_host_call(global, || {
+        new_route_params_for_bundle_promise_for_js(global, callframe)
+    })
 }
 
 fn new_route_params_for_bundle_promise_for_js(
@@ -6528,14 +6988,17 @@ fn new_route_params_for_bundle_promise_for_js(
     // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
     let request: &mut WebRequest = unsafe { &mut *request_ptr };
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw(format_args!("Request context does not belong to dev server")));
+        return Err(global.throw(format_args!(
+            "Request context does not belong to dev server"
+        )));
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
     let dev: &mut DevServer = unsafe { &mut *dev_ptr };
 
-    let route_bundle_index =
-        route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"));
+    let route_bundle_index = route_bundle::Index::init(
+        u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"),
+    );
 
     let url = OwnedString::new(url_js.to_bun_string(global)?);
     let url_utf8 = url.to_utf8();
@@ -6555,9 +7018,9 @@ fn new_route_params_for_bundle_promise(
     // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
     let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
     let framework_bundle = match &mut route_bundle.data {
-            route_bundle::Data::Framework(f) => f,
-            _ => unreachable!(),
-        };
+        route_bundle::Data::Framework(f) => f,
+        _ => unreachable!(),
+    };
 
     let pathname = extract_pathname_from_url(url);
 
@@ -6627,10 +7090,10 @@ fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
 }
 
 // Type aliases referenced throughout (Phase B will resolve to real paths)
+use crate::bake::dev_server::incremental_graph;
 use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;
-use crate::bake::dev_server::incremental_graph;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
 

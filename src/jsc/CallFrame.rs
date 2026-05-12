@@ -71,7 +71,9 @@ impl CallFrame {
 
     /// Return a basic iterator.
     pub fn iterate(&self) -> Iterator<'_> {
-        Iterator { rest: self.arguments() }
+        Iterator {
+            rest: self.arguments(),
+        }
     }
 
     /// From JavaScriptCore/interpreter/CallFrame.h
@@ -145,7 +147,10 @@ impl CallFrame {
         // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile in Phase B
         let count = slice.len().min(MAX);
         if count == 0 {
-            Arguments { ptr: [JSValue::ZERO; MAX], len: 0 }
+            Arguments {
+                ptr: [JSValue::ZERO; MAX],
+                len: 0,
+            }
         } else {
             Arguments::<MAX>::init(count.min(MAX), slice.as_ptr())
         }
@@ -159,7 +164,10 @@ impl CallFrame {
         // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile in Phase B
         let count = slice.len().min(MAX);
         if count == 0 {
-            Arguments { ptr: [JSValue::UNDEFINED; MAX], len: 0 }
+            Arguments {
+                ptr: [JSValue::UNDEFINED; MAX],
+                len: 0,
+            }
         } else {
             Arguments::<MAX>::init_undef(count.min(MAX), slice.as_ptr())
         }
@@ -202,7 +210,7 @@ union Register {
     code_block: *mut c_void, // CodeBlock*
     /// EncodedValueDescriptor defined in JavaScriptCore/runtime/JSCJSValue.h
     encoded_value: EncodedValueDescriptor,
-    number: f64, // double
+    number: f64,  // double
     integer: i64, // integer
 }
 

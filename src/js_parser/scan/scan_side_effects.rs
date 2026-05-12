@@ -1,12 +1,12 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
-use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use crate::p::P;
-use bun_ast::e::CallUnwrap;
-use bun_ast::symbol;
 use crate::parser::JsxT;
 use bun_alloc::Arena as Bump;
+use bun_ast::e::CallUnwrap;
+use bun_ast::symbol;
+use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
+use bun_collections::VecExt;
 
 // PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
 // take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
@@ -29,7 +29,11 @@ pub struct Result {
 
 impl Default for Result {
     fn default() -> Self {
-        Self { side_effects: SideEffects::CouldHaveSideEffects, ok: false, value: false }
+        Self {
+            side_effects: SideEffects::CouldHaveSideEffects,
+            ok: false,
+            value: false,
+        }
     }
 }
 
@@ -81,7 +85,10 @@ impl SideEffects {
                 ExprData::EBinary(e) => match e.op {
                     Op::Code::BinLogicalAnd => {
                         let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok && effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                        if effects.ok
+                            && effects.value
+                            && effects.side_effects == SideEffects::NoSideEffects
+                        {
                             // "if (anything && truthyNoSideEffects)" => "if (anything)"
                             *expr = e.left;
                             continue;
@@ -89,7 +96,10 @@ impl SideEffects {
                     }
                     Op::Code::BinLogicalOr => {
                         let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok && !effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                        if effects.ok
+                            && !effects.value
+                            && effects.side_effects == SideEffects::NoSideEffects
+                        {
                             // "if (anything || falsyNoSideEffects)" => "if (anything)"
                             *expr = e.left;
                             continue;
@@ -217,7 +227,9 @@ impl SideEffects {
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
                         if matches!(un.value.data, ExprData::EIdentifier(_))
-                            && un.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                            && un
+                                .flags
+                                .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                         {
                             return None;
                         }
@@ -236,7 +248,9 @@ impl SideEffects {
                     if call.args.len_u32() > 0 {
                         let joined = Self::join_all_simplified(p, &call.args);
                         if let Some(j) = &joined {
-                            if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
+                            if call.can_be_unwrapped_if_unused
+                                == CallUnwrap::IfUnusedAndToStringSafe
+                            {
                                 // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
@@ -257,7 +271,9 @@ impl SideEffects {
                     if call.args.len_u32() > 0 {
                         let joined = Self::join_all_simplified(p, &call.args);
                         if let Some(j) = &joined {
-                            if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
+                            if call.can_be_unwrapped_if_unused
+                                == CallUnwrap::IfUnusedAndToStringSafe
+                            {
                                 // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
@@ -327,9 +343,12 @@ impl SideEffects {
                         }
                     }
 
-                    Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing => {
+                    Op::Code::BinLogicalAnd
+                    | Op::Code::BinLogicalOr
+                    | Op::Code::BinNullishCoalescing => {
                         let right = bin.right;
-                        bin.right = Self::simplify_unused_expr(p, right).unwrap_or_else(|| right.to_empty());
+                        bin.right = Self::simplify_unused_expr(p, right)
+                            .unwrap_or_else(|| right.to_empty());
                         // Preserve short-circuit behavior: the left expression is only unused if
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
@@ -388,7 +407,10 @@ impl SideEffects {
                     return Some(expr);
                 }
 
-                let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: expr.loc };
+                let mut result = Expr {
+                    data: ExprData::EMissing(E::Missing {}),
+                    loc: expr.loc,
+                };
 
                 // Otherwise, the object can be completely removed. We only need to keep any
                 // object properties with side effects. Apply this simplification recursively.
@@ -401,7 +423,11 @@ impl SideEffects {
                         let key_expr = key.unwrap();
                         let right = p.new_expr(E::String::default(), key_expr.loc);
                         let bin = p.new_expr(
-                            E::Binary { op: Op::Code::BinAdd, left: key_expr, right },
+                            E::Binary {
+                                op: Op::Code::BinAdd,
+                                left: key_expr,
+                                right,
+                            },
                             key_expr.loc,
                         );
                         result = Expr::join_with_comma(result, bin);
@@ -467,16 +493,25 @@ impl SideEffects {
         if len == 0 {
             return None;
         }
-        let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: items[0].loc };
+        let mut result = Expr {
+            data: ExprData::EMissing(E::Missing {}),
+            loc: items[0].loc,
+        };
         for i in 0..len {
             // Copy the Expr out of the arena slice before recursing so the borrow
             // of `items` is released across the `&mut P` call.
             let item: Expr = items[i];
-            let simplified = Self::simplify_unused_expr(p, item)
-                .unwrap_or(Expr { data: ExprData::EMissing(E::Missing {}), loc: item.loc });
+            let simplified = Self::simplify_unused_expr(p, item).unwrap_or(Expr {
+                data: ExprData::EMissing(E::Missing {}),
+                loc: item.loc,
+            });
             result = Expr::join_with_comma(result, simplified);
         }
-        if result.is_missing() { None } else { Some(result) }
+        if result.is_missing() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
     ///
@@ -526,13 +561,20 @@ impl SideEffects {
             result = Expr::join_with_comma(result, visited_right);
         }
 
-        if result.is_missing() { None } else { Some(result) }
+        if result.is_missing() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
     fn find_identifiers(binding: Binding, decls: &mut Vec<G::Decl>) {
         match binding.data {
             bun_ast::binding::Data::BIdentifier(_) => {
-                decls.push(G::Decl { binding, value: None });
+                decls.push(G::Decl {
+                    binding,
+                    value: None,
+                });
             }
             bun_ast::binding::Data::BArray(array) => {
                 for item in array.items.slice() {
@@ -598,7 +640,10 @@ impl SideEffects {
                     )
                 {
                     let prev_binding = local.decls.at(0).binding;
-                    *local.decls.mut_(0) = G::Decl { binding: prev_binding, value: None };
+                    *local.decls.mut_(0) = G::Decl {
+                        binding: prev_binding,
+                        value: None,
+                    };
                     return true;
                 }
 
@@ -745,22 +790,37 @@ impl SideEffects {
     ) -> Result {
         if !p.options.features.dead_code_elimination {
             // value should not be read if ok is false, all existing calls already adhere to this
-            return Result { ok: false, value: false, side_effects: SideEffects::CouldHaveSideEffects };
+            return Result {
+                ok: false,
+                value: false,
+                side_effects: SideEffects::CouldHaveSideEffects,
+            };
         }
         match exp {
             // Never null or undefined
-            ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) | ExprData::ENumber(_)
-            | ExprData::EString(_) | ExprData::ERegExp(_) | ExprData::EFunction(_)
-            | ExprData::EArrow(_) | ExprData::EBigInt(_) => {
-                Result { value: false, side_effects: SideEffects::NoSideEffects, ok: true }
-            }
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => {
-                Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
-            }
+            ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EString(_)
+            | ExprData::ERegExp(_)
+            | ExprData::EFunction(_)
+            | ExprData::EArrow(_)
+            | ExprData::EBigInt(_) => Result {
+                value: false,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+                value: false,
+                side_effects: SideEffects::CouldHaveSideEffects,
+                ok: true,
+            },
             // Always null or undefined
-            ExprData::ENull(_) | ExprData::EUndefined(_) => {
-                Result { value: true, side_effects: SideEffects::NoSideEffects, ok: true }
-            }
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+                value: true,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
             ExprData::EUnary(e) => match e.op {
                 // Always number or bigint
                 Op::Code::UnPos | Op::Code::UnNeg | Op::Code::UnCpl
@@ -819,12 +879,16 @@ impl SideEffects {
             return Result::default();
         }
         match exp {
-            ExprData::ENull(_) | ExprData::EUndefined(_) => {
-                Result { value: false, side_effects: SideEffects::NoSideEffects, ok: true }
-            }
-            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
-                Result { value: e.value, side_effects: SideEffects::NoSideEffects, ok: true }
-            }
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+                value: false,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
+            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => Result {
+                value: e.value,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
             ExprData::ENumber(e) => Result {
                 value: e.value != 0.0 && !e.value.is_nan(),
                 side_effects: SideEffects::NoSideEffects,
@@ -845,24 +909,38 @@ impl SideEffects {
                 side_effects: SideEffects::NoSideEffects,
                 ok: true,
             },
-            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => {
-                Result { value: true, side_effects: SideEffects::NoSideEffects, ok: true }
-            }
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => {
-                Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
-            }
+            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Result {
+                value: true,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+                value: true,
+                side_effects: SideEffects::CouldHaveSideEffects,
+                ok: true,
+            },
             ExprData::EUnary(e) => match e.op {
-                Op::Code::UnVoid => {
-                    Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
-                }
+                Op::Code::UnVoid => Result {
+                    value: false,
+                    side_effects: SideEffects::CouldHaveSideEffects,
+                    ok: true,
+                },
                 Op::Code::UnTypeof => {
                     // Never an empty string
-                    Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    Result {
+                        value: true,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                        ok: true,
+                    }
                 }
                 Op::Code::UnNot => {
                     let res = Self::to_boolean(p, &e.value.data);
                     if res.ok {
-                        Result { value: !res.value, side_effects: res.side_effects, ok: true }
+                        Result {
+                            value: !res.value,
+                            side_effects: res.side_effects,
+                            ok: true,
+                        }
                     } else {
                         Result::default()
                     }
@@ -873,7 +951,11 @@ impl SideEffects {
                 Op::Code::BinLogicalOr => {
                     let res = Self::to_boolean(p, &e.right.data);
                     if res.ok && res.value {
-                        Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                        Result {
+                            value: true,
+                            side_effects: SideEffects::CouldHaveSideEffects,
+                            ok: true,
+                        }
                     } else {
                         Result::default()
                     }
@@ -881,7 +963,11 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd => {
                     let res = Self::to_boolean(p, &e.right.data);
                     if res.ok && !res.value {
-                        Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                        Result {
+                            value: false,
+                            side_effects: SideEffects::CouldHaveSideEffects,
+                            ok: true,
+                        }
                     } else {
                         Result::default()
                     }
@@ -889,7 +975,11 @@ impl SideEffects {
                 Op::Code::BinComma => {
                     let res = Self::to_boolean(p, &e.right.data);
                     if res.ok {
-                        Result { value: res.value, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                        Result {
+                            value: res.value,
+                            side_effects: SideEffects::CouldHaveSideEffects,
+                            ok: true,
+                        }
                     } else {
                         Result::default()
                     }
@@ -897,7 +987,11 @@ impl SideEffects {
                 Op::Code::BinGt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result { ok: true, value: left_num > right_num, side_effects: SideEffects::NoSideEffects };
+                            return Result {
+                                ok: true,
+                                value: left_num > right_num,
+                                side_effects: SideEffects::NoSideEffects,
+                            };
                         }
                     }
                     Result::default()
@@ -905,7 +999,11 @@ impl SideEffects {
                 Op::Code::BinLt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result { ok: true, value: left_num < right_num, side_effects: SideEffects::NoSideEffects };
+                            return Result {
+                                ok: true,
+                                value: left_num < right_num,
+                                side_effects: SideEffects::NoSideEffects,
+                            };
                         }
                     }
                     Result::default()
@@ -913,7 +1011,11 @@ impl SideEffects {
                 Op::Code::BinLe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result { ok: true, value: left_num <= right_num, side_effects: SideEffects::NoSideEffects };
+                            return Result {
+                                ok: true,
+                                value: left_num <= right_num,
+                                side_effects: SideEffects::NoSideEffects,
+                            };
                         }
                     }
                     Result::default()
@@ -921,7 +1023,11 @@ impl SideEffects {
                 Op::Code::BinGe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result { ok: true, value: left_num >= right_num, side_effects: SideEffects::NoSideEffects };
+                            return Result {
+                                ok: true,
+                                value: left_num >= right_num,
+                                side_effects: SideEffects::NoSideEffects,
+                            };
                         }
                     }
                     Result::default()
@@ -933,14 +1039,18 @@ impl SideEffects {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
                 | E::Special::HotData => Result::default(),
-                E::Special::HotAccept
-                | E::Special::HotAcceptVisited
-                | E::Special::HotEnabled => {
-                    Result { ok: true, value: true, side_effects: SideEffects::NoSideEffects }
+                E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
+                    Result {
+                        ok: true,
+                        value: true,
+                        side_effects: SideEffects::NoSideEffects,
+                    }
                 }
-                E::Special::HotDisabled => {
-                    Result { ok: true, value: false, side_effects: SideEffects::NoSideEffects }
-                }
+                E::Special::HotDisabled => Result {
+                    ok: true,
+                    value: false,
+                    side_effects: SideEffects::NoSideEffects,
+                },
             },
             _ => Result::default(),
         }

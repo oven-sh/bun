@@ -2,28 +2,28 @@ use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
 
+use crate::bun_json as JSON;
+use crate::bun_schema::api;
 use bun_alloc::AllocError;
 use bun_collections::{HashMap, StringSet};
-use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
+use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClient};
-use crate::bun_json as JSON;
+use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
 use bun_picohttp as picohttp;
-use crate::bun_schema::api;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_core::{strings, MutableString};
 use bun_sys::{self, CloseOnDrop, Fd, File};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
-use crate::{
-    initialize_mini_store as initialize_store, Aligner, ExternalSlice, IdentityContext,
-    ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash, VersionSlice,
-};
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
+use crate::{
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, IdentityContext, PackageManager,
+    PackageNameHash, VersionSlice, initialize_mini_store as initialize_store,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -69,7 +69,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.count("accept", "*/*");
         headers.count("accept-encoding", "gzip,deflate");
 
-        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).expect("infallible: in-memory write");
+        write!(
+            &mut print_buf,
+            "Bearer {}",
+            bstr::BStr::new(&registry.token)
+        )
+        .expect("infallible: in-memory write");
         headers.count("authorization", &print_buf);
         print_buf.clear();
 
@@ -102,7 +107,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.append("accept", "*/*");
         headers.append("accept-encoding", "gzip/deflate");
 
-        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).expect("infallible: in-memory write");
+        write!(
+            &mut print_buf,
+            "Bearer {}",
+            bstr::BStr::new(&registry.token)
+        )
+        .expect("infallible: in-memory write");
         headers.append("authorization", &print_buf);
         print_buf.clear();
 
@@ -174,7 +184,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
     }
 
-    if let Some(notice) = res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
+    if let Some(notice) = res
+        .headers
+        .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+    {
         Output::print_error("\n");
         Output::note(format_args!("{}", bstr::BStr::new(notice)));
         Output::flush();
@@ -187,7 +200,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
-            Output::err(e, "failed to parse '/-/whoami' response body as JSON", format_args!(""));
+            Output::err(
+                e,
+                "failed to parse '/-/whoami' response body as JSON",
+                format_args!(""),
+            );
             Global::crash();
         }
     };
@@ -270,7 +287,9 @@ pub mod registry {
     pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
     pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
         std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
-    pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
+    pub fn default_url_hash() -> u64 {
+        *DEFAULT_URL_HASH
+    }
 
     // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
     // `MutableString: ObjectPoolType` (init = init2048) is provided in
@@ -452,9 +471,13 @@ pub mod registry {
                     registry.username = env.get_auto(&registry.username).into();
                     registry.password = env.get_auto(&registry.password).into();
 
-                    if !registry.username.is_empty() && !registry.password.is_empty() && auth.is_empty() {
+                    if !registry.username.is_empty()
+                        && !registry.password.is_empty()
+                        && auth.is_empty()
+                    {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
-                        let total = combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
+                        let total =
+                            combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
                         output_buf_owned = vec![0u8; total].into_boxed_slice();
                         let (user_slice, output_buf) = output_buf_owned.split_at_mut(combo_len);
                         user_slice[..registry.username.len()].copy_from_slice(&registry.username);
@@ -787,10 +810,7 @@ const _: () = {
         offset_of!(NpmPackage, _padding_after_max_age)
             == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
     );
-    assert!(
-        offset_of!(NpmPackage, name)
-            == offset_of!(NpmPackage, _padding_after_max_age) + 4
-    );
+    assert!(offset_of!(NpmPackage, name) == offset_of!(NpmPackage, _padding_after_max_age) + 4);
     // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
     assert!(
         offset_of!(NpmPackage, _padding_tail)
@@ -822,7 +842,7 @@ impl PackageManifest {
     }
 
     // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
-    
+
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
@@ -847,7 +867,8 @@ pub mod package_manifest {
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
         pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
-        const HEADER_BYTES: &'static str = concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+        const HEADER_BYTES: &'static str =
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
         // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
         // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
@@ -877,10 +898,7 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             // SAFETY: T is Copy POD; sliceAsBytes equivalent
             let bytes = unsafe {
-                bun_core::ffi::slice(
-                    array.as_ptr().cast::<u8>(),
-                    core::mem::size_of_val(array),
-                )
+                bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
             };
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
@@ -932,7 +950,9 @@ pub mod package_manifest {
             pos += Self::HEADER_BYTES.len() as u64;
 
             writer.write_int_le::<u64>(scope.url_hash)?;
-            writer.write_int_le::<u64>(strings::without_trailing_slash(scope.url.href()).len() as u64)?;
+            writer.write_int_le::<u64>(
+                strings::without_trailing_slash(scope.url.href()).len() as u64
+            )?;
 
             pos += 128 / 8;
 
@@ -993,14 +1013,14 @@ pub mod package_manifest {
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
             #[cfg(windows)]
-            let tmpdir_stub =
-                unsafe { (*crate::package_manager::get()).get_temporary_directory() };
+            let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
-            let path_to_use_for_opening_file = bun_paths::resolve_path::join_abs_string_buf_z::<
-                bun_paths::platform::Auto,
-            >(
-                &tmpdir_stub.path, &mut realpath_buf[..], &[tmp_path.as_bytes()]
-            );
+            let path_to_use_for_opening_file =
+                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                    &tmpdir_stub.path,
+                    &mut realpath_buf[..],
+                    &[tmp_path.as_bytes()],
+                );
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
@@ -1021,7 +1041,12 @@ pub mod package_manifest {
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
                 #[cfg(target_os = "linux")]
                 {
-                    match File::openat(cache_dir, bun_core::zstr!("."), flags | bun_sys::O::TMPFILE, mask) {
+                    match File::openat(
+                        cache_dir,
+                        bun_core::zstr!("."),
+                        flags | bun_sys::O::TMPFILE,
+                        mask,
+                    ) {
                         bun_sys::Result::Err(_) => {
                             static DID_WARN: core::sync::atomic::AtomicBool =
                                 core::sync::atomic::AtomicBool::new(false);
@@ -1070,18 +1095,24 @@ pub mod package_manifest {
                 let guard = CloseOnDrop::file(&file);
 
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
-                let cache_path_abs = bun_paths::resolve_path::join_abs_string_buf_z::<
-                    bun_paths::platform::Auto,
-                >(
-                    cache_dir_abs, &mut realpath2_buf[..], &[cache_dir_abs, outpath.as_bytes()]
-                );
+                let cache_path_abs =
+                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                        cache_dir_abs,
+                        &mut realpath2_buf[..],
+                        &[cache_dir_abs, outpath.as_bytes()],
+                    );
                 let _ = guard.into_inner();
                 // Zig spec discards the close error too — the renameat
                 // immediately below surfaces a usable error if the temp
                 // file is in a bad state, and on POSIX the close cannot
                 // fail for a regular-file fd we just wrote.
                 let _ = file.close();
-                bun_sys::renameat(Fd::cwd(), path_to_use_for_opening_file, Fd::cwd(), cache_path_abs)?;
+                bun_sys::renameat(
+                    Fd::cwd(),
+                    path_to_use_for_opening_file,
+                    Fd::cwd(),
+                    cache_path_abs,
+                )?;
                 return Ok(());
             }
 
@@ -1133,7 +1164,10 @@ pub mod package_manifest {
                                 tmp_path,
                                 cache_dir,
                                 outpath,
-                                bun_sys::Renameat2Flags { exchange: true, ..Default::default() },
+                                bun_sys::Renameat2Flags {
+                                    exchange: true,
+                                    ..Default::default()
+                                },
                             )?;
 
                             // Success.
@@ -1161,7 +1195,9 @@ pub mod package_manifest {
             tmpdir: Fd,
             cache_dir: Fd,
         ) {
-            use bun_threading::thread_pool::{Task as PoolTask, Batch as PoolBatch, Node as PoolNode};
+            use bun_threading::thread_pool::{
+                Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
+            };
 
             pub struct SaveTask<'a> {
                 manifest: PackageManifest,
@@ -1220,7 +1256,10 @@ pub mod package_manifest {
                 scope,
                 tmpdir,
                 cache_dir,
-                task: PoolTask { node: PoolNode::default(), callback: SaveTask::run },
+                task: PoolTask {
+                    node: PoolNode::default(),
+                    callback: SaveTask::run,
+                },
             }));
 
             // SAFETY: task is a valid Box-allocated SaveTask
@@ -1260,12 +1299,18 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut dest_path_buf = [0u8; 512 + 64];
-            let mut out_path_buf = [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
+            let mut out_path_buf =
+                [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
             let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let hex_timestamp: usize = usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
+            let hex_timestamp: usize =
+                usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
             let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
-            write!(dest_path_stream, "{}.npm-{}", file_id_hex_fmt, hex_timestamp_fmt)?;
+            write!(
+                dest_path_stream,
+                "{}.npm-{}",
+                file_id_hex_fmt, hex_timestamp_fmt
+            )?;
             dest_path_stream.write_byte(0)?;
             let pos = dest_path_stream.pos;
             let tmp_path = bun_core::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
@@ -1323,7 +1368,10 @@ pub mod package_manifest {
             Ok(Some(manifest))
         }
 
-        fn read_all(bytes: &[u8], scope: &registry::Scope) -> Result<Option<PackageManifest>, Error> {
+        fn read_all(
+            bytes: &[u8],
+            scope: &registry::Scope,
+        ) -> Result<Option<PackageManifest>, Error> {
             if &bytes[..Self::HEADER_BYTES.len()] != Self::HEADER_BYTES.as_bytes() {
                 return Ok(None);
             }
@@ -1345,18 +1393,24 @@ pub mod package_manifest {
             // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand
             {
                 // std.mem.alignForward(usize, pos, alignOf(NpmPackage))
-                pkg_stream.pos = pkg_stream.pos.next_multiple_of(core::mem::align_of::<NpmPackage>());
+                pkg_stream.pos = pkg_stream
+                    .pos
+                    .next_multiple_of(core::mem::align_of::<NpmPackage>());
                 package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
             }
             package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
-            package_manifest.versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?.into();
-            package_manifest.external_strings = Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
+            package_manifest.versions =
+                Self::read_array::<Semver::Version>(&mut pkg_stream)?.into();
+            package_manifest.external_strings =
+                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.external_strings_for_versions =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions = Self::read_array::<PackageVersion>(&mut pkg_stream)?.into();
+            package_manifest.package_versions =
+                Self::read_array::<PackageVersion>(&mut pkg_stream)?.into();
             package_manifest.extern_strings_bin_entries =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.bundled_deps_buf = Self::read_array::<PackageNameHash>(&mut pkg_stream)?.into();
+            package_manifest.bundled_deps_buf =
+                Self::read_array::<PackageNameHash>(&mut pkg_stream)?.into();
 
             Ok(Some(package_manifest))
         }
@@ -1405,7 +1459,11 @@ pub struct FindResult<'a> {
 
 impl PackageManifest {
     pub fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
-        let list = if !version.tag.has_pre() { self.pkg.releases } else { self.pkg.prereleases };
+        let list = if !version.tag.has_pre() {
+            self.pkg.releases
+        } else {
+            self.pkg.prereleases
+        };
         let values = list.values.get(&self.package_versions);
         let keys = list.keys.get(&self.versions);
         let index = list.find_key_index(&self.versions, version)?;
@@ -1419,7 +1477,14 @@ impl PackageManifest {
 
     pub fn find_by_dist_tag(&self, tag: &[u8]) -> Option<FindResult<'_>> {
         let versions = self.pkg.dist_tags.versions.get(&self.versions);
-        for (i, tag_str) in self.pkg.dist_tags.tags.get(&self.external_strings).iter().enumerate() {
+        for (i, tag_str) in self
+            .pkg
+            .dist_tags
+            .tags
+            .get(&self.external_strings)
+            .iter()
+            .enumerate()
+        {
             if tag_str.slice(&self.string_buf) == tag {
                 return self.find_by_version(versions[i]);
             }
@@ -1444,7 +1509,8 @@ impl PackageManifest {
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
+        let current_timestamp_ms: f64 =
+            (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms
     }
 
@@ -1460,7 +1526,8 @@ impl PackageManifest {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
         let mut best_version: Option<FindResult<'a>> = None;
 
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
+        let current_timestamp_ms: f64 =
+            (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms: f64 = minimum_release_age_ms.min(seven_days_ms);
 
@@ -1479,15 +1546,18 @@ impl PackageManifest {
                 // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
                 else if let Some(prev_package) = prev_package_blocked_from_age {
                     // only try to go backwards for a max of 7 days on top of existing minimum age
-                    if package.publish_timestamp_ms < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms) {
+                    if package.publish_timestamp_ms
+                        < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms)
+                    {
                         if best_version.is_none() {
                             best_version = Some(FindResult { version, package });
                         }
                         break;
                     }
 
-                    let is_stable =
-                        prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                    let is_stable = prev_package.publish_timestamp_ms
+                        - package.publish_timestamp_ms
+                        >= stability_window_ms;
                     if is_stable {
                         best_version = Some(FindResult { version, package });
                         break;
@@ -1545,7 +1615,9 @@ impl<'a> FindVersionResult<'a> {
 
     pub fn latest_is_filtered(&self) -> bool {
         match self {
-            FindVersionResult::FoundWithFilter { newest_filtered, .. } => newest_filtered.is_some(),
+            FindVersionResult::FoundWithFilter {
+                newest_filtered, ..
+            } => newest_filtered.is_some(),
             FindVersionResult::Err(err) => *err == FindVersionError::AllVersionsTooRecent,
             // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
             _ => false,
@@ -1564,13 +1636,16 @@ impl PackageManifest {
             return FindVersionResult::Err(FindVersionError::NotFound);
         };
         let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => Some(min_age_ms),
+            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+                Some(min_age_ms)
+            }
             _ => None,
         };
         let Some(min_age_ms) = min_age_gate_ms else {
             return FindVersionResult::Found(dist_result);
         };
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
+        let current_timestamp_ms: f64 =
+            (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms = min_age_ms.min(seven_days_ms);
 
@@ -1594,7 +1669,11 @@ impl PackageManifest {
             }
         });
 
-        let list = if is_prerelease { self.pkg.prereleases } else { self.pkg.releases };
+        let list = if is_prerelease {
+            self.pkg.prereleases
+        } else {
+            self.pkg.releases
+        };
         let versions = list.keys.get(&self.versions);
         let packages = list.values.get(&self.package_versions);
 
@@ -1608,7 +1687,9 @@ impl PackageManifest {
             let version = versions[idx];
             let package = &packages[idx];
 
-            if version.order(latest_version, &self.string_buf, &self.string_buf) == core::cmp::Ordering::Greater {
+            if version.order(latest_version, &self.string_buf, &self.string_buf)
+                == core::cmp::Ordering::Greater
+            {
                 continue;
             }
             if let Some(expected_tag) = latest_version_tag_before_dot {
@@ -1632,15 +1713,17 @@ impl PackageManifest {
             // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
             if let Some(prev_package) = prev_package_blocked_from_age {
                 // only try to go backwards for a max of 7 days on top of existing minimum age
-                if package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms) {
+                if package.publish_timestamp_ms
+                    < current_timestamp_ms - (min_age_ms + seven_days_ms)
+                {
                     return FindVersionResult::FoundWithFilter {
                         result: best_version.unwrap_or(FindResult { version, package }),
                         newest_filtered: Some(dist_result.version),
                     };
                 }
 
-                let is_stable =
-                    prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                let is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms
+                    >= stability_window_ms;
                 if is_stable {
                     return FindVersionResult::FoundWithFilter {
                         result: FindResult { version, package },
@@ -1677,7 +1760,9 @@ impl PackageManifest {
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
         let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => Some(min_age_ms),
+            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+                Some(min_age_ms)
+            }
             _ => None,
         };
         let Some(min_age_ms) = min_age_gate_ms else {
@@ -1710,7 +1795,9 @@ impl PackageManifest {
                 }
                 if newest_filtered.is_none() {
                     if group.flags.is_set(Semver::query::Flags::PRE) {
-                        if left.version.order(result.version, group_buf, &self.string_buf)
+                        if left
+                            .version
+                            .order(result.version, group_buf, &self.string_buf)
                             == core::cmp::Ordering::Equal
                         {
                             return FindVersionResult::Found(result);
@@ -1753,7 +1840,11 @@ impl PackageManifest {
         FindVersionResult::Err(FindVersionError::NotFound)
     }
 
-    pub fn find_best_version(&self, group: &Semver::query::Group, group_buf: &[u8]) -> Option<FindResult<'_>> {
+    pub fn find_best_version(
+        &self,
+        group: &Semver::query::Group,
+        group_buf: &[u8],
+    ) -> Option<FindResult<'_>> {
         let left = group.head.head.range.left;
         // Fast path: exact version
         if left.op == Semver::range::Op::Eql {
@@ -1763,7 +1854,9 @@ impl PackageManifest {
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if group.satisfies(result.version, group_buf, &self.string_buf) {
                 if group.flags.is_set(Semver::query::Flags::PRE) {
-                    if left.version.order(result.version, group_buf, &self.string_buf)
+                    if left
+                        .version
+                        .order(result.version, group_buf, &self.string_buf)
                         == core::cmp::Ordering::Equal
                     {
                         // if prerelease, use latest if semver+tag match range exactly
@@ -1865,7 +1958,11 @@ impl PackageManifest {
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {
-                log.add_error_fmt(Some(&source), bun_ast::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)));
+                log.add_error_fmt(
+                    Some(&source),
+                    bun_ast::Loc::EMPTY,
+                    format_args!("npm error: {}", bstr::BStr::new(err)),
+                );
                 return Ok(None);
             }
         }
@@ -1932,7 +2029,12 @@ impl PackageManifest {
 
             let versions = versions_obj.properties.slice();
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
+                let Some(version_name) = prop
+                    .key
+                    .as_ref()
+                    .expect("infallible: prop has key")
+                    .as_string(&bump)
+                else {
                     continue;
                 };
                 let sliced_version = SlicedString::init(version_name, version_name);
@@ -1945,7 +2047,10 @@ impl PackageManifest {
                     log.add_error_fmt(
                         Some(&source),
                         prop.value.as_ref().expect("infallible: prop has value").loc,
-                        format_args!("Failed to parse dependency {}", bstr::BStr::new(version_name)),
+                        format_args!(
+                            "Failed to parse dependency {}",
+                            bstr::BStr::new(version_name)
+                        ),
                     );
                     continue;
                 }
@@ -1954,13 +2059,19 @@ impl PackageManifest {
                     pre_versions_len += 1;
                     extern_string_count += 1;
                 } else {
-                    extern_string_count += (strings::index_of_char(version_name, b'+').is_some()) as usize;
+                    extern_string_count +=
+                        (strings::index_of_char(version_name, b'+').is_some()) as usize;
                     release_versions_len += 1;
                 }
 
                 string_builder.count(version_name);
 
-                if let Some(dist_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"dist") {
+                if let Some(dist_q) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"dist")
+                {
                     if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
                         if let JSON::ExprData::EString(s) = &tarball_prop.data {
                             let tarball = s.data.slice();
@@ -1971,7 +2082,12 @@ impl PackageManifest {
                 }
 
                 'bin: {
-                    if let Some(bin) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"bin") {
+                    if let Some(bin) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(b"bin")
+                    {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
@@ -1983,11 +2099,21 @@ impl PackageManifest {
                                 }
 
                                 for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
+                                    let Some(k) = bin_prop
+                                        .key
+                                        .as_ref()
+                                        .expect("infallible: prop has key")
+                                        .as_string(&bump)
+                                    else {
                                         break 'bin;
                                     };
                                     string_builder.count(k);
-                                    let Some(v) = bin_prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
+                                    let Some(v) = bin_prop
+                                        .value
+                                        .as_ref()
+                                        .expect("infallible: prop has value")
+                                        .as_string(&bump)
+                                    else {
                                         break 'bin;
                                     };
                                     string_builder.count(v);
@@ -2003,7 +2129,12 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"directories") {
+                    if let Some(dirs) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(b"directories")
+                    {
                         if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                             if let Some(str_) = bin_prop.expr.as_string(&bump) {
                                 string_builder.count(str_);
@@ -2020,7 +2151,12 @@ impl PackageManifest {
                     .as_ref()
                     .unwrap()
                     .get(b"bundleDependencies")
-                    .or_else(|| prop.value.as_ref().expect("infallible: prop has value").get(b"bundledDependencies"))
+                    .or_else(|| {
+                        prop.value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .get(b"bundledDependencies")
+                    })
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2028,7 +2164,9 @@ impl PackageManifest {
                         }
                         JSON::ExprData::EArray(arr) => {
                             for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else { continue };
+                                let Some(s) = bundled_dep.as_string(&bump) else {
+                                    continue;
+                                };
                                 bundled_deps_set.insert(s)?;
                             }
                         }
@@ -2038,12 +2176,22 @@ impl PackageManifest {
 
                 for pair in &DEPENDENCY_GROUPS {
                     // PERF(port): was comptime monomorphization — profile in Phase B
-                    if let Some(versioned_deps) = prop.value.as_ref().expect("infallible: prop has value").as_property(pair.prop) {
+                    if let Some(versioned_deps) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(pair.prop)
+                    {
                         if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
                             dependency_sum += obj.properties.slice().len();
                             let properties = obj.properties.slice();
                             for property in properties {
-                                if let Some(key) = property.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
+                                if let Some(key) = property
+                                    .key
+                                    .as_ref()
+                                    .expect("infallible: prop has key")
+                                    .as_string(&bump)
+                                {
                                     if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
                                         // swap remove the dependency name because it could exist in
                                         // multiple behavior groups.
@@ -2051,7 +2199,12 @@ impl PackageManifest {
                                     }
                                     string_builder.count(key);
                                     string_builder.count(
-                                        property.value.as_ref().expect("infallible: prop has value").as_string(&bump).unwrap_or(b""),
+                                        property
+                                            .value
+                                            .as_ref()
+                                            .expect("infallible: prop has value")
+                                            .as_string(&bump)
+                                            .unwrap_or(b""),
                                     );
                                 }
                             }
@@ -2063,17 +2216,34 @@ impl PackageManifest {
                 // entries that appear in `peerDependenciesMeta` but not in
                 // `peerDependencies`. Reserve space for them; the build
                 // pass below appends them after the declared peer deps.
-                if let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") {
+                if let Some(meta) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"peerDependenciesMeta")
+                {
                     if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                         for meta_prop in obj.properties.slice() {
-                            let Some(optional) = meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional") else {
+                            let Some(optional) = meta_prop
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_property(b"optional")
+                            else {
                                 continue;
                             };
-                            let JSON::ExprData::EBoolean(b) = &optional.expr.data else { continue };
+                            let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
+                                continue;
+                            };
                             if !b.value {
                                 continue;
                             }
-                            let Some(key) = meta_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
+                            let Some(key) = meta_prop
+                                .key
+                                .as_ref()
+                                .expect("infallible: prop has key")
+                                .as_string(&bump)
+                            else {
                                 continue;
                             };
                             dependency_sum += 1;
@@ -2092,11 +2262,22 @@ impl PackageManifest {
             if let JSON::ExprData::EObject(obj) = &dist.expr.data {
                 let tags = obj.properties.slice();
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
+                    if let Some(key) = tag
+                        .key
+                        .as_ref()
+                        .expect("infallible: prop has key")
+                        .as_string(&bump)
+                    {
                         string_builder.count(key);
                         extern_string_count += 2;
 
-                        string_builder.count(tag.value.as_ref().expect("infallible: prop has value").as_string(&bump).unwrap_or(b""));
+                        string_builder.count(
+                            tag.value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_string(&bump)
+                                .unwrap_or(b""),
+                        );
                         dist_tags_count += 1;
                     }
                 }
@@ -2112,12 +2293,17 @@ impl PackageManifest {
         }
 
         let mut versioned_packages: Box<[PackageVersion]> =
-            vec![PackageVersion::default(); release_versions_len + pre_versions_len].into_boxed_slice();
-        let mut all_semver_versions: Box<[Semver::Version]> =
-            vec![Semver::Version::default(); release_versions_len + pre_versions_len + dist_tags_count]
+            vec![PackageVersion::default(); release_versions_len + pre_versions_len]
                 .into_boxed_slice();
+        let mut all_semver_versions: Box<[Semver::Version]> =
+            vec![
+                Semver::Version::default();
+                release_versions_len + pre_versions_len + dist_tags_count
+            ]
+            .into_boxed_slice();
         let mut all_extern_strings: Box<[ExternalString]> =
-            vec![ExternalString::default(); extern_string_count + tarball_urls_count].into_boxed_slice();
+            vec![ExternalString::default(); extern_string_count + tarball_urls_count]
+                .into_boxed_slice();
         let mut version_extern_strings: Box<[ExternalString]> =
             vec![ExternalString::default(); dependency_sum].into_boxed_slice();
         let mut all_extern_strings_bin_entries: Box<[ExternalString]> =
@@ -2136,11 +2322,13 @@ impl PackageManifest {
         let mut versioned_package_releases_start: usize = 0;
         let all_versioned_package_releases_range = 0..release_versions_len;
         let mut versioned_package_prereleases_start: usize = release_versions_len;
-        let all_versioned_package_prereleases_range = release_versions_len..release_versions_len + pre_versions_len;
+        let all_versioned_package_prereleases_range =
+            release_versions_len..release_versions_len + pre_versions_len;
 
         // all_semver_versions layout: [releases | prereleases | dist_tags]
         let all_release_versions_range = 0..release_versions_len;
-        let all_prerelease_versions_range = release_versions_len..release_versions_len + pre_versions_len;
+        let all_prerelease_versions_range =
+            release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
         // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
         // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
@@ -2198,7 +2386,12 @@ impl PackageManifest {
             // TODO(port): bun.serializable() on empty_version
 
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
+                let Some(version_name) = prop
+                    .key
+                    .as_ref()
+                    .expect("infallible: prop has key")
+                    .as_string(&bump)
+                else {
                     continue;
                 };
                 let mut sliced_version = SlicedString::init(version_name, version_name);
@@ -2215,7 +2408,8 @@ impl PackageManifest {
                     if cfg!(debug_assertions) {
                         debug_assert!(parsed_version.valid);
                         debug_assert!(
-                            parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre()
+                            parsed_version.version.tag.has_build()
+                                || parsed_version.version.tag.has_pre()
                         );
                     }
                 }
@@ -2230,7 +2424,12 @@ impl PackageManifest {
                     .as_ref()
                     .unwrap()
                     .get(b"bundleDependencies")
-                    .or_else(|| prop.value.as_ref().expect("infallible: prop has value").get(b"bundledDependencies"))
+                    .or_else(|| {
+                        prop.value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .get(b"bundledDependencies")
+                    })
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2238,7 +2437,9 @@ impl PackageManifest {
                         }
                         JSON::ExprData::EArray(arr) => {
                             for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else { continue };
+                                let Some(s) = bundled_dep.as_string(&bump) else {
+                                    continue;
+                                };
                                 bundled_deps_set.insert(s)?;
                             }
                         }
@@ -2248,19 +2449,39 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                if let Some(cpu_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"cpu") {
+                if let Some(cpu_q) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"cpu")
+                {
                     package_version.cpu = negatable_from_json::<Architecture>(&cpu_q.expr)?;
                 }
 
-                if let Some(os_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"os") {
+                if let Some(os_q) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"os")
+                {
                     package_version.os = negatable_from_json::<OperatingSystem>(&os_q.expr)?;
                 }
 
-                if let Some(libc) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"libc") {
+                if let Some(libc) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"libc")
+                {
                     package_version.libc = negatable_from_json::<Libc>(&libc.expr)?;
                 }
 
-                if let Some(has_install_script) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"hasInstallScript") {
+                if let Some(has_install_script) = prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .as_property(b"hasInstallScript")
+                {
                     if let JSON::ExprData::EBoolean(val) = &has_install_script.expr.data {
                         package_version.has_install_script = val.value;
                     }
@@ -2269,19 +2490,30 @@ impl PackageManifest {
                 'bin: {
                     // bins are extremely repetitive
                     // We try to avoid storing copies the string
-                    if let Some(bin) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"bin") {
+                    if let Some(bin) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(b"bin")
+                    {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
                                     0 => {}
                                     1 => {
-                                        let Some(bin_name) =
-                                            obj.properties.slice()[0].key.as_ref().unwrap().as_string(&bump)
+                                        let Some(bin_name) = obj.properties.slice()[0]
+                                            .key
+                                            .as_ref()
+                                            .unwrap()
+                                            .as_string(&bump)
                                         else {
                                             break 'bin;
                                         };
-                                        let Some(value) =
-                                            obj.properties.slice()[0].value.as_ref().unwrap().as_string(&bump)
+                                        let Some(value) = obj.properties.slice()[0]
+                                            .value
+                                            .as_ref()
+                                            .unwrap()
+                                            .as_string(&bump)
                                         else {
                                             break 'bin;
                                         };
@@ -2313,18 +2545,27 @@ impl PackageManifest {
                                         // equivalent — no `from_raw_parts`/`.add()` needed, and
                                         // the `prev` read at a disjoint index needs no split.
                                         for bin_prop in obj.properties.slice() {
-                                            let Some(k) = bin_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
+                                            let Some(k) = bin_prop
+                                                .key
+                                                .as_ref()
+                                                .expect("infallible: prop has key")
+                                                .as_string(&bump)
+                                            else {
                                                 break 'bin;
                                             };
                                             let cur = string_builder.append::<ExternalString>(k);
-                                            all_extern_strings_bin_entries[group_start + group_i as usize] = cur;
+                                            all_extern_strings_bin_entries
+                                                [group_start + group_i as usize] = cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                let prev_item = all_extern_strings_bin_entries[prev.start + group_i as usize];
+                                                let prev_item = all_extern_strings_bin_entries
+                                                    [prev.start + group_i as usize];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
-                                                    let first = cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item.slice(string_builder.allocated_slice());
+                                                    let first =
+                                                        cur.slice(string_builder.allocated_slice());
+                                                    let second = prev_item
+                                                        .slice(string_builder.allocated_slice());
                                                     if !strings::eql_long(first, second, true) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
@@ -2336,18 +2577,27 @@ impl PackageManifest {
                                             }
                                             group_i += 1;
 
-                                            let Some(v) = bin_prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
+                                            let Some(v) = bin_prop
+                                                .value
+                                                .as_ref()
+                                                .expect("infallible: prop has value")
+                                                .as_string(&bump)
+                                            else {
                                                 break 'bin;
                                             };
                                             let cur = string_builder.append::<ExternalString>(v);
-                                            all_extern_strings_bin_entries[group_start + group_i as usize] = cur;
+                                            all_extern_strings_bin_entries
+                                                [group_start + group_i as usize] = cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                let prev_item = all_extern_strings_bin_entries[prev.start + group_i as usize];
+                                                let prev_item = all_extern_strings_bin_entries
+                                                    [prev.start + group_i as usize];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
-                                                    let first = cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item.slice(string_builder.allocated_slice());
+                                                    let first =
+                                                        cur.slice(string_builder.allocated_slice());
+                                                    let second = prev_item
+                                                        .slice(string_builder.allocated_slice());
                                                     if !strings::eql_long(first, second, true) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
@@ -2398,7 +2648,12 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"directories") {
+                    if let Some(dirs) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(b"directories")
+                    {
                         // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
                         // Because of the way the bin directive works,
                         // specifying both a bin path and setting
@@ -2424,7 +2679,12 @@ impl PackageManifest {
                 }
 
                 'integrity: {
-                    if let Some(dist) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"dist") {
+                    if let Some(dist) = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(b"dist")
+                    {
                         if let JSON::ExprData::EObject(_) = &dist.expr.data {
                             if let Some(tarball_q) = dist.expr.as_property(b"tarball") {
                                 if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
@@ -2486,7 +2746,11 @@ impl PackageManifest {
                     // `dependencies` iteration just produced.
                     // PORT NOTE: hoist `versioned_deps` so the borrowed
                     // `obj.properties.slice()` outlives the labelled block.
-                    let versioned_deps = prop.value.as_ref().expect("infallible: prop has value").as_property(pair.prop);
+                    let versioned_deps = prop
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .as_property(pair.prop);
                     let items: &[JSON::Property] = 'items: {
                         if let Some(versioned_deps) = &versioned_deps {
                             if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
@@ -2495,15 +2759,21 @@ impl PackageManifest {
                         }
                         &[]
                     };
-                    let has_meta_only_peers = is_peer && 'blk: {
-                        let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") else {
-                            break 'blk false;
+                    let has_meta_only_peers = is_peer
+                        && 'blk: {
+                            let Some(meta) = prop
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_property(b"peerDependenciesMeta")
+                            else {
+                                break 'blk false;
+                            };
+                            match &meta.expr.data {
+                                JSON::ExprData::EObject(obj) => obj.properties.slice().len() > 0,
+                                _ => false,
+                            }
                         };
-                        match &meta.expr.data {
-                            JSON::ExprData::EObject(obj) => obj.properties.slice().len() > 0,
-                            _ => false,
-                        }
-                    };
                     if items.len() > 0 || has_meta_only_peers {
                         let mut count = items.len();
 
@@ -2517,16 +2787,25 @@ impl PackageManifest {
                         if is_peer {
                             optional_peer_dep_names.clear();
 
-                            if let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") {
+                            if let Some(meta) = prop
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_property(b"peerDependenciesMeta")
+                            {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     let meta_props = obj.properties.slice();
                                     optional_peer_dep_names.reserve(meta_props.len());
                                     // PERF(port): was assume_capacity
                                     for meta_prop in meta_props {
-                                        if let Some(optional) =
-                                            meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional")
+                                        if let Some(optional) = meta_prop
+                                            .value
+                                            .as_ref()
+                                            .expect("infallible: prop has value")
+                                            .as_property(b"optional")
                                         {
-                                            let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
+                                            let JSON::ExprData::EBoolean(b) = &optional.expr.data
+                                            else {
                                                 continue;
                                             };
                                             if !b.value {
@@ -2539,8 +2818,11 @@ impl PackageManifest {
                                                 .unwrap()
                                                 .as_string(&bump)
                                                 .expect("unreachable");
-                                            optional_peer_dep_names
-                                                .push(Semver::semver_string::Builder::string_hash(meta_key));
+                                            optional_peer_dep_names.push(
+                                                Semver::semver_string::Builder::string_hash(
+                                                    meta_key,
+                                                ),
+                                            );
 
                                             // Reserve a slot for a meta-only synthesised peer.
                                             // The slot is unused if `meta_key` also appears in
@@ -2557,7 +2839,12 @@ impl PackageManifest {
                         let mut i: usize = 0;
 
                         for item in items {
-                            let name_str = match item.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
+                            let name_str = match item
+                                .key
+                                .as_ref()
+                                .expect("infallible: prop has key")
+                                .as_string(&bump)
+                            {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2567,7 +2854,12 @@ impl PackageManifest {
                                     }
                                 }
                             };
-                            let version_str = match item.value.as_ref().expect("infallible: prop has value").as_string(&bump) {
+                            let version_str = match item
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_string(&bump)
+                            {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2601,8 +2893,10 @@ impl PackageManifest {
                                     // To make that work, we have to move optional peer dependencies to the front of the array
                                     //
                                     if non_optional_peer_dependency_offset != i {
-                                        all_extern_strings
-                                            .swap(names_base + i, names_base + non_optional_peer_dependency_offset);
+                                        all_extern_strings.swap(
+                                            names_base + i,
+                                            names_base + non_optional_peer_dependency_offset,
+                                        );
                                         version_extern_strings.swap(
                                             values_base + i,
                                             values_base + non_optional_peer_dependency_offset,
@@ -2621,7 +2915,8 @@ impl PackageManifest {
                                     version_hasher.update(&versions_hash_bytes);
                                 }
                             } else {
-                                let names_hash_bytes = all_extern_strings[names_base + i].hash.to_ne_bytes();
+                                let names_hash_bytes =
+                                    all_extern_strings[names_base + i].hash.to_ne_bytes();
                                 name_hasher.update(&names_hash_bytes);
                                 let versions_hash_bytes =
                                     version_extern_strings[values_base + i].hash.to_ne_bytes();
@@ -2637,28 +2932,42 @@ impl PackageManifest {
                             // `peerDependencies`) as `"*"` versions.
                             // pnpm/yarn do this; webpack relies on it
                             // to make `webpack-cli` reachable.
-                            if let Some(meta) =
-                                prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta")
+                            if let Some(meta) = prop
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .as_property(b"peerDependenciesMeta")
                             {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     'outer: for meta_prop in obj.properties.slice() {
-                                        let Some(optional) =
-                                            meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional")
+                                        let Some(optional) = meta_prop
+                                            .value
+                                            .as_ref()
+                                            .expect("infallible: prop has value")
+                                            .as_property(b"optional")
                                         else {
                                             continue;
                                         };
-                                        let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
+                                        let JSON::ExprData::EBoolean(b) = &optional.expr.data
+                                        else {
                                             continue;
                                         };
                                         if !b.value {
                                             continue;
                                         }
-                                        let Some(meta_key) = meta_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump)
+                                        let Some(meta_key) = meta_prop
+                                            .key
+                                            .as_ref()
+                                            .expect("infallible: prop has key")
+                                            .as_string(&bump)
                                         else {
                                             continue;
                                         };
-                                        let meta_hash = Semver::semver_string::Builder::string_hash(meta_key);
-                                        for existing in &all_extern_strings[names_base..names_base + i] {
+                                        let meta_hash =
+                                            Semver::semver_string::Builder::string_hash(meta_key);
+                                        for existing in
+                                            &all_extern_strings[names_base..names_base + i]
+                                        {
                                             if existing.hash == meta_hash {
                                                 continue 'outer;
                                             }
@@ -2694,7 +3003,8 @@ impl PackageManifest {
                         // to what was actually written before the
                         // ExternalStringList offsets are computed.
                         let this_names = &all_extern_strings[names_base..names_base + count];
-                        let this_versions = &version_extern_strings[values_base..values_base + count];
+                        let this_versions =
+                            &version_extern_strings[values_base..values_base + count];
 
                         // Bundled deps are matched against the
                         // `dependencies`/`optionalDependencies` groups
@@ -2706,17 +3016,21 @@ impl PackageManifest {
                         // pass already produced with an empty slice.
                         if !is_peer {
                             if bundle_all_deps {
-                                package_version.bundled_dependencies = ExternalPackageNameHashList::INVALID;
+                                package_version.bundled_dependencies =
+                                    ExternalPackageNameHashList::INVALID;
                             } else {
-                                package_version.bundled_dependencies = ExternalPackageNameHashList::init(
-                                    &bundled_deps_buf,
-                                    &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                );
+                                package_version.bundled_dependencies =
+                                    ExternalPackageNameHashList::init(
+                                        &bundled_deps_buf,
+                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                    );
                             }
                         }
 
-                        let mut name_list = ExternalStringList::init(&all_extern_strings, this_names);
-                        let mut version_list = ExternalStringList::init(&version_extern_strings, this_versions);
+                        let mut name_list =
+                            ExternalStringList::init(&all_extern_strings, this_names);
+                        let mut version_list =
+                            ExternalStringList::init(&version_extern_strings, this_versions);
 
                         if is_peer {
                             package_version.non_optional_peer_dependencies_start =
@@ -2727,7 +3041,8 @@ impl PackageManifest {
                             let name_map_hash = name_hasher.final_();
                             let version_map_hash = version_hasher.final_();
 
-                            let name_entry = all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
+                            let name_entry =
+                                all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
                             if name_entry.found_existing {
                                 name_list = *name_entry.value_ptr;
                                 // this_names = name_list.mut(all_extern_strings) — only used in debug asserts below
@@ -2751,7 +3066,10 @@ impl PackageManifest {
                             dependency_values_cursor += count;
                         }
 
-                        let map = ExternalStringMap { name: name_list, value: version_list };
+                        let map = ExternalStringMap {
+                            name: name_list,
+                            value: version_list,
+                        };
                         match group_idx {
                             0 => package_version.dependencies = map,
                             1 => package_version.optional_dependencies = map,
@@ -2779,7 +3097,8 @@ impl PackageManifest {
                 if !parsed_version.version.tag.has_pre() {
                     // SAFETY: cursor < release_versions_len by counting pass
                     unsafe {
-                        *all_semver_versions_ptr.add(release_versions_cursor) = parsed_version.version.min();
+                        *all_semver_versions_ptr.add(release_versions_cursor) =
+                            parsed_version.version.min();
                     }
                     versioned_packages[versioned_package_releases_start] = package_version;
                     release_versions_cursor += 1;
@@ -2787,7 +3106,8 @@ impl PackageManifest {
                 } else {
                     // SAFETY: cursor in prerelease range
                     unsafe {
-                        *all_semver_versions_ptr.add(prerelease_versions_cursor) = parsed_version.version.min();
+                        *all_semver_versions_ptr.add(prerelease_versions_cursor) =
+                            parsed_version.version.min();
                     }
                     versioned_packages[versioned_package_prereleases_start] = package_version;
                     prerelease_versions_cursor += 1;
@@ -2812,17 +3132,30 @@ impl PackageManifest {
                 let mut dist_tag_i: usize = 0;
 
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
+                    if let Some(key) = tag
+                        .key
+                        .as_ref()
+                        .expect("infallible: prop has key")
+                        .as_string(&bump)
+                    {
                         all_extern_strings[extern_strings_slice_start + dist_tag_i] =
                             string_builder.append::<ExternalString>(key);
 
-                        let Some(version_name) = tag.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
+                        let Some(version_name) = tag
+                            .value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .as_string(&bump)
+                        else {
                             continue;
                         };
 
-                        let dist_tag_value_literal = string_builder.append::<ExternalString>(version_name);
+                        let dist_tag_value_literal =
+                            string_builder.append::<ExternalString>(version_name);
 
-                        let sliced_string = dist_tag_value_literal.value.sliced(string_builder.allocated_slice());
+                        let sliced_string = dist_tag_value_literal
+                            .value
+                            .sliced(string_builder.allocated_slice());
 
                         // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
                         unsafe {
@@ -2836,11 +3169,13 @@ impl PackageManifest {
                 result.pkg.dist_tags = DistTagMap {
                     tags: ExternalStringList::init(
                         &all_extern_strings,
-                        &all_extern_strings[extern_strings_slice_start..extern_strings_slice_start + dist_tag_i],
+                        &all_extern_strings
+                            [extern_strings_slice_start..extern_strings_slice_start + dist_tag_i],
                     ),
                     versions: VersionSlice::init(
                         &all_semver_versions,
-                        &all_semver_versions[dist_tag_versions_start..dist_tag_versions_start + dist_tag_i],
+                        &all_semver_versions
+                            [dist_tag_versions_start..dist_tag_versions_start + dist_tag_i],
                     ),
                 };
 
@@ -2867,21 +3202,27 @@ impl PackageManifest {
             result.pkg.modified = string_builder.append::<SemverString>(field);
         }
 
-        result.pkg.releases.keys =
-            VersionSlice::init(&all_semver_versions, &all_semver_versions[all_release_versions_range.clone()]);
+        result.pkg.releases.keys = VersionSlice::init(
+            &all_semver_versions,
+            &all_semver_versions[all_release_versions_range.clone()],
+        );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
             &versioned_packages[all_versioned_package_releases_range.clone()],
         );
 
-        result.pkg.prereleases.keys =
-            VersionSlice::init(&all_semver_versions, &all_semver_versions[all_prerelease_versions_range.clone()]);
+        result.pkg.prereleases.keys = VersionSlice::init(
+            &all_semver_versions,
+            &all_semver_versions[all_prerelease_versions_range.clone()],
+        );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
             &versioned_packages[all_versioned_package_prereleases_range.clone()],
         );
 
-        let max_versions_count = all_release_versions_range.len().max(all_prerelease_versions_range.len());
+        let max_versions_count = all_release_versions_range
+            .len()
+            .max(all_prerelease_versions_range.len());
 
         // Sort the list of packages in a deterministic order
         // Usually, npm will do this for us.

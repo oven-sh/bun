@@ -17,19 +17,22 @@
 //! before any data); socketpair gives us a proper socket for the read path
 //! and the write path can share it.
 
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::{self, env_var, getenv_z, zstr, ZBox, ZStr};
-use bun_which::which;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_core::strings;
+use bun_core::{self, ZBox, ZStr, env_var, getenv_z, zstr};
 use bun_jsc::JSGlobalObject;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
-use bun_spawn::{self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
-use bun_core::strings;
+use bun_spawn::{
+    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
+    SpawnResultExt as _, Status, Stdio,
+};
 use bun_sys::{self, Fd, FdExt as _, O};
+use bun_which::which;
 
 declare_scope!(Chrome, hidden);
 
@@ -56,7 +59,10 @@ static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
 pub extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
-        if let Some(i) = INSTANCE.load(core::sync::atomic::Ordering::Relaxed).as_mut() {
+        if let Some(i) = INSTANCE
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .as_mut()
+        {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
             let _ = i.process.as_mut().kill(9);
@@ -79,8 +85,8 @@ pub extern "C" fn Bun__Chrome__kill() {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
-    user_data_dir: *const c_char, // ?[*:0]const u8
-    path: *const c_char,          // ?[*:0]const u8
+    user_data_dir: *const c_char,     // ?[*:0]const u8
+    path: *const c_char,              // ?[*:0]const u8
     extra_argv: *const *const c_char, // ?[*]const [*:0]const u8
     extra_argv_len: u32,
     stdout_inherit: bool,
@@ -88,12 +94,23 @@ pub extern "C" fn Bun__Chrome__ensure(
 ) -> i32 {
     #[cfg(windows)]
     {
-        let _ = (global, user_data_dir, path, extra_argv, extra_argv_len, stdout_inherit, stderr_inherit);
+        let _ = (
+            global,
+            user_data_dir,
+            path,
+            extra_argv,
+            extra_argv_len,
+            stdout_inherit,
+            stderr_inherit,
+        );
         return -1;
     }
     #[cfg(not(windows))]
     {
-        if !INSTANCE.load(core::sync::atomic::Ordering::Relaxed).is_null() {
+        if !INSTANCE
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .is_null()
+        {
             return -1; // C++ already holds the fd
         }
 
@@ -105,10 +122,25 @@ pub extern "C" fn Bun__Chrome__ensure(
         };
         let vm = global.bun_vm_ptr();
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
-        let user_data_dir = if user_data_dir.is_null() { None } else { Some(unsafe { bun_core::ffi::cstr(user_data_dir) }) };
+        let user_data_dir = if user_data_dir.is_null() {
+            None
+        } else {
+            Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
+        };
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
-        let path = if path.is_null() { None } else { Some(unsafe { bun_core::ffi::cstr(path) }) };
-        let fd = match spawn(vm, user_data_dir, path, extra, stdout_inherit, stderr_inherit) {
+        let path = if path.is_null() {
+            None
+        } else {
+            Some(unsafe { bun_core::ffi::cstr(path) })
+        };
+        let fd = match spawn(
+            vm,
+            user_data_dir,
+            path,
+            extra,
+            stdout_inherit,
+            stderr_inherit,
+        ) {
             Ok(fd) => fd,
             Err(err) => {
                 scoped_log!(Chrome, "spawn failed: {}", err.name());
@@ -202,7 +234,8 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
             }
             if !home.is_empty() {
                 let user_parts: [&[u8]; 3] = [home, b"Applications", b];
-                let user = resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &user_parts);
+                let user =
+                    resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &user_parts);
                 if bun_sys::is_executable_file_path(user) {
                     return Some(ZBox::from_bytes(&user[..]));
                 }
@@ -298,8 +331,16 @@ fn find_playwright_shell() -> Option<ZBox> {
     // Build the binary path. Two possible subdir layouts:
     //   cft:     chrome-headless-shell-<plat>-<arch>/chrome-headless-shell
     //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
-    let arch: &str = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
-    let plat: &str = if cfg!(target_os = "macos") { "mac" } else { "linux" };
+    let arch: &str = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x64"
+    };
+    let plat: &str = if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "linux"
+    };
     let mut subdir_cft: Vec<u8> = Vec::new();
     write!(
         &mut subdir_cft,
@@ -342,7 +383,14 @@ fn spawn(
 ) -> Result<Fd, bun_core::Error> {
     #[cfg(windows)]
     {
-        let _ = (vm, user_data_dir, explicit_path, extra_argv, stdout_inherit, stderr_inherit);
+        let _ = (
+            vm,
+            user_data_dir,
+            explicit_path,
+            extra_argv,
+            stdout_inherit,
+            stderr_inherit,
+        );
         return Err(bun_core::err!("Unsupported"));
     }
     #[cfg(not(windows))]
@@ -350,7 +398,11 @@ fn spawn(
         // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
 
         let chrome = find_chrome(explicit_path).ok_or(bun_core::err!("ChromeNotFound"))?;
-        scoped_log!(Chrome, "using chrome: {}", bstr::BStr::new(chrome.as_bytes()));
+        scoped_log!(
+            Chrome,
+            "using chrome: {}",
+            bstr::BStr::new(chrome.as_bytes())
+        );
 
         // One socketpair. Parent keeps fds[0], child gets fds[1] dup'd to BOTH
         // fd 3 and fd 4. Chrome read(3)'s commands and write(4)'s replies —
@@ -396,7 +448,8 @@ fn spawn(
             // SAFETY: getpid is always safe.
             let pid: u32 = unsafe { libc::getpid() } as u32;
             let mut v = Vec::new();
-            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid).expect("infallible: in-memory write");
+            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid)
+                .expect("infallible: in-memory write");
             ZBox::from_vec(v)
         };
 
@@ -442,8 +495,16 @@ fn spawn(
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
-            stdout: if stdout_inherit { Stdio::Inherit } else { Stdio::Ignore },
-            stderr: if stderr_inherit { Stdio::Inherit } else { Stdio::Ignore },
+            stdout: if stdout_inherit {
+                Stdio::Inherit
+            } else {
+                Stdio::Ignore
+            },
+            stderr: if stderr_inherit {
+                Stdio::Inherit
+            } else {
+                Stdio::Ignore
+            },
             // fd 3 AND fd 4 both point at fds[1]. spawnProcess dup2's each
             // .pipe entry to 3+index; passing the same fd twice gives Chrome
             // the same socket at both positions.
@@ -453,11 +514,7 @@ fn spawn(
         };
 
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
-        let spawned = bun_spawn::spawn_process(
-            &opts,
-            argv.as_ptr(),
-            env.as_ptr().cast(),
-        )??;
+        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast())??;
 
         // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);
@@ -472,8 +529,8 @@ fn spawn(
 
         // SAFETY: vm is valid for the call.
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
-        let process = NonNull::new(spawned.to_process(event_loop, false))
-            .expect("toProcess returned null");
+        let process =
+            NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
@@ -581,7 +638,8 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 
     let mut path_buf = path_buffer_pool::get();
     for rel in candidates {
-        let path = resolve_path::join_abs_string_buf_z::<platform::Auto>(root, &mut path_buf[..], &[rel]);
+        let path =
+            resolve_path::join_abs_string_buf_z::<platform::Auto>(root, &mut path_buf[..], &[rel]);
         let contents: Vec<u8> = match bun_sys::File::read_from(Fd::cwd(), path) {
             Err(_) => continue, // ENOENT or EACCES — try next
             Ok(c) => c,

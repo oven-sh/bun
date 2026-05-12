@@ -1,12 +1,17 @@
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    clippy::missing_safety_doc
+)]
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
 
-#[cfg(not(windows))]
-use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 #[cfg(windows)]
 use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+#[cfg(not(windows))]
+use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 
 pub type ares_socklen_t = socklen_t;
 pub type ares_ssize_t = isize;
@@ -359,7 +364,13 @@ impl struct_hostent {
         let mut naddrttls: i32 = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
-            ares_parse_a_reply(buffer, buffer_length, &raw mut start, addrttls.as_mut_ptr(), &raw mut naddrttls)
+            ares_parse_a_reply(
+                buffer,
+                buffer_length,
+                &raw mut start,
+                addrttls.as_mut_ptr(),
+                &raw mut naddrttls,
+            )
         };
         if result != ARES_SUCCESS {
             this.on_hostent(Error::get(result), timeouts, ptr::null_mut());
@@ -407,7 +418,14 @@ impl struct_hostent {
         let mut start: *mut struct_hostent = ptr::null_mut();
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
-            ares_parse_ptr_reply(buffer, buffer_length, ptr::null(), 0, AF::INET, &raw mut start)
+            ares_parse_ptr_reply(
+                buffer,
+                buffer_length,
+                ptr::null(),
+                0,
+                AF::INET,
+                &raw mut start,
+            )
         };
         if result != ARES_SUCCESS {
             this.on_hostent(Error::get(result), timeouts, ptr::null_mut());
@@ -429,7 +447,10 @@ pub struct hostent_with_ttls {
 
 impl Default for hostent_with_ttls {
     fn default() -> Self {
-        Self { hostent: ptr::null_mut(), ttls: [-1; 256] }
+        Self {
+            hostent: ptr::null_mut(),
+            ttls: [-1; 256],
+        }
     }
 }
 
@@ -493,33 +514,54 @@ impl hostent_with_ttls {
         let mut naddrttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
-            ares_parse_a_reply(buffer, buffer_length, &raw mut start, addrttls.as_mut_ptr(), &raw mut naddrttls)
+            ares_parse_a_reply(
+                buffer,
+                buffer_length,
+                &raw mut start,
+                addrttls.as_mut_ptr(),
+                &raw mut naddrttls,
+            )
         };
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
         let mut with_ttls = Box::new(hostent_with_ttls::default());
         with_ttls.hostent = start;
-        for (i, ttl) in addrttls[..usize::try_from(naddrttls).expect("int cast")].iter().enumerate() {
+        for (i, ttl) in addrttls[..usize::try_from(naddrttls).expect("int cast")]
+            .iter()
+            .enumerate()
+        {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)
     }
 
-    pub fn parse_aaaa(buffer: *mut u8, buffer_length: c_int) -> Result<Box<hostent_with_ttls>, Error> {
+    pub fn parse_aaaa(
+        buffer: *mut u8,
+        buffer_length: c_int,
+    ) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
         let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
         let mut naddr6ttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
-            ares_parse_aaaa_reply(buffer, buffer_length, &raw mut start, addr6ttls.as_mut_ptr(), &raw mut naddr6ttls)
+            ares_parse_aaaa_reply(
+                buffer,
+                buffer_length,
+                &raw mut start,
+                addr6ttls.as_mut_ptr(),
+                &raw mut naddr6ttls,
+            )
         };
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
         let mut with_ttls = Box::new(hostent_with_ttls::default());
         with_ttls.hostent = start;
-        for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).expect("int cast")].iter().enumerate() {
+        for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).expect("int cast")]
+            .iter()
+            .enumerate()
+        {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)
@@ -780,7 +822,9 @@ impl Channel {
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
-        if let Some(err) = Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) }) {
+        if let Some(err) =
+            Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) })
+        {
             // SAFETY: init failed before any channel was registered; we hold the
             // library_init reference taken above and no other thread is in c-ares.
             unsafe { ares_library_cleanup() };
@@ -818,8 +862,11 @@ impl Channel {
         for (i, hint) in hints[..hints.len().min(2)].iter().enumerate() {
             hints_buf[i] = *hint;
         }
-        let hints_: *const AddrInfo_hints =
-            if !hints.is_empty() { hints_buf.as_ptr() } else { ptr::null() };
+        let hints_: *const AddrInfo_hints = if !hints.is_empty() {
+            hints_buf.as_ptr()
+        } else {
+            ptr::null()
+        };
         // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx outlives the channel.
         unsafe {
             ares_getaddrinfo(
@@ -835,11 +882,18 @@ impl Channel {
 
     pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
         if name.len() >= 1023
-            || (name.is_empty()
-                && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
+            || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
-            unsafe { T::raw_callback(std::ptr::from_mut::<T>(ctx).cast::<c_void>(), ARES_EBADNAME, 0, ptr::null_mut(), 0) };
+            unsafe {
+                T::raw_callback(
+                    std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
+                    ARES_EBADNAME,
+                    0,
+                    ptr::null_mut(),
+                    0,
+                )
+            };
             return;
         }
 
@@ -877,7 +931,8 @@ impl Channel {
         let mut addr = [0u8; 16];
         if !addr_ptr.is_null() {
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0 {
+            if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0
+            {
                 // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
@@ -891,7 +946,10 @@ impl Channel {
                 }
                 return;
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            } else if unsafe { ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0 {
+            } else if unsafe {
+                ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr().cast::<c_void>())
+            } > 0
+            {
                 // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
@@ -966,8 +1024,7 @@ fn library_init() {
     }}
 }
 
-pub type ares_callback =
-    Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
+pub type ares_callback = Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
 pub type ares_host_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut struct_hostent)>;
 pub type ares_nameinfo_callback =
@@ -976,8 +1033,7 @@ pub type ares_sock_create_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
 pub type ares_sock_config_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
-pub type ares_addrinfo_callback =
-    unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
+pub type ares_addrinfo_callback = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
 
 unsafe extern "C" {
     pub fn ares_library_init(flags: c_int) -> c_int;
@@ -994,8 +1050,16 @@ unsafe extern "C" {
     pub fn ares_library_cleanup();
     pub fn ares_version(version: *mut c_int) -> *const u8;
     pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
-    pub fn ares_init_options(channelptr: *mut *mut Channel, options: *mut Options, optmask: c_int) -> c_int;
-    pub fn ares_save_options(channel: *mut Channel, options: *mut Options, optmask: *mut c_int) -> c_int;
+    pub fn ares_init_options(
+        channelptr: *mut *mut Channel,
+        options: *mut Options,
+        optmask: c_int,
+    ) -> c_int;
+    pub fn ares_save_options(
+        channel: *mut Channel,
+        options: *mut Options,
+        optmask: *mut c_int,
+    ) -> c_int;
     pub fn ares_destroy_options(options: *mut Options);
     pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
@@ -1010,8 +1074,16 @@ unsafe extern "C" {
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
     pub fn ares_set_local_dev(channel: *mut Channel, local_dev_name: *const u8);
-    pub fn ares_set_socket_callback(channel: *mut Channel, callback: ares_sock_create_callback, user_data: *mut c_void);
-    pub fn ares_set_socket_configure_callback(channel: *mut Channel, callback: ares_sock_config_callback, user_data: *mut c_void);
+    pub fn ares_set_socket_callback(
+        channel: *mut Channel,
+        callback: ares_sock_create_callback,
+        user_data: *mut c_void,
+    );
+    pub fn ares_set_socket_configure_callback(
+        channel: *mut Channel,
+        callback: ares_sock_config_callback,
+        user_data: *mut c_void,
+    );
     pub fn ares_set_sortlist(channel: *mut Channel, sortstr: *const u8) -> c_int;
     pub fn ares_getaddrinfo(
         channel: *mut Channel,
@@ -1028,30 +1100,131 @@ unsafe extern "C" {
 pub struct ares_socket_functions {
     pub socket: Option<unsafe extern "C" fn(c_int, c_int, c_int, *mut c_void) -> ares_socket_t>,
     pub close: Option<unsafe extern "C" fn(ares_socket_t, *mut c_void) -> c_int>,
-    pub connect: Option<unsafe extern "C" fn(ares_socket_t, *const sockaddr, ares_socklen_t, *mut c_void) -> c_int>,
-    pub recvfrom: Option<unsafe extern "C" fn(ares_socket_t, *mut c_void, usize, c_int, *mut sockaddr, *mut ares_socklen_t, *mut c_void) -> ares_ssize_t>,
-    pub sendv: Option<unsafe extern "C" fn(ares_socket_t, *const iovec, c_int, *mut c_void) -> ares_ssize_t>,
+    pub connect: Option<
+        unsafe extern "C" fn(ares_socket_t, *const sockaddr, ares_socklen_t, *mut c_void) -> c_int,
+    >,
+    pub recvfrom: Option<
+        unsafe extern "C" fn(
+            ares_socket_t,
+            *mut c_void,
+            usize,
+            c_int,
+            *mut sockaddr,
+            *mut ares_socklen_t,
+            *mut c_void,
+        ) -> ares_ssize_t,
+    >,
+    pub sendv: Option<
+        unsafe extern "C" fn(ares_socket_t, *const iovec, c_int, *mut c_void) -> ares_ssize_t,
+    >,
 }
 
 unsafe extern "C" {
-    pub fn ares_set_socket_functions(channel: *mut Channel, funcs: *const ares_socket_functions, user_data: *mut c_void);
-    pub fn ares_send(channel: *mut Channel, qbuf: *const u8, qlen: c_int, callback: ares_callback, arg: *mut c_void);
-    pub fn ares_query(channel: *mut Channel, name: *const c_char, dnsclass: NSClass, type_: NSType, callback: ares_callback, arg: *mut c_void);
-    pub fn ares_search(channel: *mut Channel, name: *const c_char, dnsclass: c_int, type_: c_int, callback: ares_callback, arg: *mut c_void);
-    pub fn ares_gethostbyname(channel: *mut Channel, name: *const c_char, family: c_int, callback: ares_host_callback, arg: *mut c_void);
-    pub fn ares_gethostbyname_file(channel: *mut Channel, name: *const c_char, family: c_int, host: *mut *mut struct_hostent) -> c_int;
-    pub fn ares_gethostbyaddr(channel: *mut Channel, addr: *const c_void, addrlen: c_int, family: c_int, callback: ares_host_callback, arg: *mut c_void);
-    pub fn ares_getnameinfo(channel: *mut Channel, sa: *const sockaddr, salen: ares_socklen_t, flags: c_int, callback: ares_nameinfo_callback, arg: *mut c_void);
+    pub fn ares_set_socket_functions(
+        channel: *mut Channel,
+        funcs: *const ares_socket_functions,
+        user_data: *mut c_void,
+    );
+    pub fn ares_send(
+        channel: *mut Channel,
+        qbuf: *const u8,
+        qlen: c_int,
+        callback: ares_callback,
+        arg: *mut c_void,
+    );
+    pub fn ares_query(
+        channel: *mut Channel,
+        name: *const c_char,
+        dnsclass: NSClass,
+        type_: NSType,
+        callback: ares_callback,
+        arg: *mut c_void,
+    );
+    pub fn ares_search(
+        channel: *mut Channel,
+        name: *const c_char,
+        dnsclass: c_int,
+        type_: c_int,
+        callback: ares_callback,
+        arg: *mut c_void,
+    );
+    pub fn ares_gethostbyname(
+        channel: *mut Channel,
+        name: *const c_char,
+        family: c_int,
+        callback: ares_host_callback,
+        arg: *mut c_void,
+    );
+    pub fn ares_gethostbyname_file(
+        channel: *mut Channel,
+        name: *const c_char,
+        family: c_int,
+        host: *mut *mut struct_hostent,
+    ) -> c_int;
+    pub fn ares_gethostbyaddr(
+        channel: *mut Channel,
+        addr: *const c_void,
+        addrlen: c_int,
+        family: c_int,
+        callback: ares_host_callback,
+        arg: *mut c_void,
+    );
+    pub fn ares_getnameinfo(
+        channel: *mut Channel,
+        sa: *const sockaddr,
+        salen: ares_socklen_t,
+        flags: c_int,
+        callback: ares_nameinfo_callback,
+        arg: *mut c_void,
+    );
     // pub fn ares_fds(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set) -> c_int;
-    pub fn ares_getsock(channel: *mut Channel, socks: *mut ares_socket_t, numsocks: c_int) -> c_int;
-    pub fn ares_timeout(channel: *mut Channel, maxtv: *mut struct_timeval, tv: *mut struct_timeval) -> *mut struct_timeval;
+    pub fn ares_getsock(channel: *mut Channel, socks: *mut ares_socket_t, numsocks: c_int)
+    -> c_int;
+    pub fn ares_timeout(
+        channel: *mut Channel,
+        maxtv: *mut struct_timeval,
+        tv: *mut struct_timeval,
+    ) -> *mut struct_timeval;
     // pub fn ares_process(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set);
     // Opaque handle by exclusive reference + scalars only.
-    pub safe fn ares_process_fd(channel: &mut Channel, read_fd: ares_socket_t, write_fd: ares_socket_t);
-    pub fn ares_create_query(name: *const c_char, dnsclass: c_int, type_: c_int, id: c_ushort, rd: c_int, buf: *mut *mut u8, buflen: *mut c_int, max_udp_size: c_int) -> c_int;
-    pub fn ares_mkquery(name: *const c_char, dnsclass: c_int, type_: c_int, id: c_ushort, rd: c_int, buf: *mut *mut u8, buflen: *mut c_int) -> c_int;
-    pub fn ares_expand_name(encoded: *const u8, abuf: *const u8, alen: c_int, s: *mut *mut u8, enclen: *mut c_long) -> c_int;
-    pub fn ares_expand_string(encoded: *const u8, abuf: *const u8, alen: c_int, s: *mut *mut u8, enclen: *mut c_long) -> c_int;
+    pub safe fn ares_process_fd(
+        channel: &mut Channel,
+        read_fd: ares_socket_t,
+        write_fd: ares_socket_t,
+    );
+    pub fn ares_create_query(
+        name: *const c_char,
+        dnsclass: c_int,
+        type_: c_int,
+        id: c_ushort,
+        rd: c_int,
+        buf: *mut *mut u8,
+        buflen: *mut c_int,
+        max_udp_size: c_int,
+    ) -> c_int;
+    pub fn ares_mkquery(
+        name: *const c_char,
+        dnsclass: c_int,
+        type_: c_int,
+        id: c_ushort,
+        rd: c_int,
+        buf: *mut *mut u8,
+        buflen: *mut c_int,
+    ) -> c_int;
+    pub fn ares_expand_name(
+        encoded: *const u8,
+        abuf: *const u8,
+        alen: c_int,
+        s: *mut *mut u8,
+        enclen: *mut c_long,
+    ) -> c_int;
+    pub fn ares_expand_string(
+        encoded: *const u8,
+        abuf: *const u8,
+        alen: c_int,
+        s: *mut *mut u8,
+        enclen: *mut c_long,
+    ) -> c_int;
     // Pure read of opaque `!Sync` handle.
     pub safe fn ares_queue_active_queries(channel: &Channel) -> usize;
 }
@@ -1331,7 +1504,12 @@ impl Default for struct_any_reply {
 }
 
 pub trait AnyHandler: Sized {
-    fn on_any(&mut self, status: Option<Error>, timeouts: i32, results: Option<Box<struct_any_reply>>);
+    fn on_any(
+        &mut self,
+        status: Option<Error>,
+        timeouts: i32,
+        results: Option<Box<struct_any_reply>>,
+    );
 }
 
 impl struct_any_reply {
@@ -1380,7 +1558,8 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let mut result = unsafe { ares_parse_mx_reply(buffer, buffer_length, &raw mut reply.mx_reply) };
+        let mut result =
+            unsafe { ares_parse_mx_reply(buffer, buffer_length, &raw mut reply.mx_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1413,7 +1592,14 @@ impl struct_any_reply {
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result = unsafe {
-            ares_parse_ptr_reply(buffer, buffer_length, ptr::null(), 0, AF::INET, &raw mut reply.ptr_reply)
+            ares_parse_ptr_reply(
+                buffer,
+                buffer_length,
+                ptr::null(),
+                0,
+                AF::INET,
+                &raw mut reply.ptr_reply,
+            )
         };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1422,7 +1608,8 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_naptr_reply(buffer, buffer_length, &raw mut reply.naptr_reply) };
+        result =
+            unsafe { ares_parse_naptr_reply(buffer, buffer_length, &raw mut reply.naptr_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1459,31 +1646,102 @@ impl Drop for struct_any_reply {
         // inner hostent via ares_free_hostent.
         // SAFETY: each field is either null or a c-ares allocation matching its free fn.
         unsafe {
-            if !self.mx_reply.is_null() { ares_free_data(self.mx_reply.cast::<c_void>()); }
-            if !self.ns_reply.is_null() { ares_free_hostent(self.ns_reply); }
-            if !self.txt_reply.is_null() { ares_free_data(self.txt_reply.cast::<c_void>()); }
-            if !self.srv_reply.is_null() { ares_free_data(self.srv_reply.cast::<c_void>()); }
-            if !self.ptr_reply.is_null() { ares_free_hostent(self.ptr_reply); }
-            if !self.naptr_reply.is_null() { ares_free_data(self.naptr_reply.cast::<c_void>()); }
-            if !self.soa_reply.is_null() { ares_free_data(self.soa_reply.cast::<c_void>()); }
-            if !self.caa_reply.is_null() { ares_free_data(self.caa_reply.cast::<c_void>()); }
+            if !self.mx_reply.is_null() {
+                ares_free_data(self.mx_reply.cast::<c_void>());
+            }
+            if !self.ns_reply.is_null() {
+                ares_free_hostent(self.ns_reply);
+            }
+            if !self.txt_reply.is_null() {
+                ares_free_data(self.txt_reply.cast::<c_void>());
+            }
+            if !self.srv_reply.is_null() {
+                ares_free_data(self.srv_reply.cast::<c_void>());
+            }
+            if !self.ptr_reply.is_null() {
+                ares_free_hostent(self.ptr_reply);
+            }
+            if !self.naptr_reply.is_null() {
+                ares_free_data(self.naptr_reply.cast::<c_void>());
+            }
+            if !self.soa_reply.is_null() {
+                ares_free_data(self.soa_reply.cast::<c_void>());
+            }
+            if !self.caa_reply.is_null() {
+                ares_free_data(self.caa_reply.cast::<c_void>());
+            }
         }
     }
 }
 
 unsafe extern "C" {
-    pub fn ares_parse_a_reply(abuf: *const u8, alen: c_int, host: *mut *mut struct_hostent, addrttls: *mut struct_ares_addrttl, naddrttls: *mut c_int) -> c_int;
-    pub fn ares_parse_aaaa_reply(abuf: *const u8, alen: c_int, host: *mut *mut struct_hostent, addrttls: *mut struct_ares_addr6ttl, naddrttls: *mut c_int) -> c_int;
-    pub fn ares_parse_caa_reply(abuf: *const u8, alen: c_int, caa_out: *mut *mut struct_ares_caa_reply) -> c_int;
-    pub fn ares_parse_ptr_reply(abuf: *const u8, alen: c_int, addr: *const c_void, addrlen: c_int, family: c_int, host: *mut *mut struct_hostent) -> c_int;
-    pub fn ares_parse_ns_reply(abuf: *const u8, alen: c_int, host: *mut *mut struct_hostent) -> c_int;
-    pub fn ares_parse_srv_reply(abuf: *const u8, alen: c_int, srv_out: *mut *mut struct_ares_srv_reply) -> c_int;
-    pub fn ares_parse_mx_reply(abuf: *const u8, alen: c_int, mx_out: *mut *mut struct_ares_mx_reply) -> c_int;
-    pub fn ares_parse_txt_reply(abuf: *const u8, alen: c_int, txt_out: *mut *mut struct_ares_txt_reply) -> c_int;
-    pub fn ares_parse_txt_reply_ext(abuf: *const u8, alen: c_int, txt_out: *mut *mut struct_ares_txt_ext) -> c_int;
-    pub fn ares_parse_naptr_reply(abuf: *const u8, alen: c_int, naptr_out: *mut *mut struct_ares_naptr_reply) -> c_int;
-    pub fn ares_parse_soa_reply(abuf: *const u8, alen: c_int, soa_out: *mut *mut struct_ares_soa_reply) -> c_int;
-    pub fn ares_parse_uri_reply(abuf: *const u8, alen: c_int, uri_out: *mut *mut struct_ares_uri_reply) -> c_int;
+    pub fn ares_parse_a_reply(
+        abuf: *const u8,
+        alen: c_int,
+        host: *mut *mut struct_hostent,
+        addrttls: *mut struct_ares_addrttl,
+        naddrttls: *mut c_int,
+    ) -> c_int;
+    pub fn ares_parse_aaaa_reply(
+        abuf: *const u8,
+        alen: c_int,
+        host: *mut *mut struct_hostent,
+        addrttls: *mut struct_ares_addr6ttl,
+        naddrttls: *mut c_int,
+    ) -> c_int;
+    pub fn ares_parse_caa_reply(
+        abuf: *const u8,
+        alen: c_int,
+        caa_out: *mut *mut struct_ares_caa_reply,
+    ) -> c_int;
+    pub fn ares_parse_ptr_reply(
+        abuf: *const u8,
+        alen: c_int,
+        addr: *const c_void,
+        addrlen: c_int,
+        family: c_int,
+        host: *mut *mut struct_hostent,
+    ) -> c_int;
+    pub fn ares_parse_ns_reply(
+        abuf: *const u8,
+        alen: c_int,
+        host: *mut *mut struct_hostent,
+    ) -> c_int;
+    pub fn ares_parse_srv_reply(
+        abuf: *const u8,
+        alen: c_int,
+        srv_out: *mut *mut struct_ares_srv_reply,
+    ) -> c_int;
+    pub fn ares_parse_mx_reply(
+        abuf: *const u8,
+        alen: c_int,
+        mx_out: *mut *mut struct_ares_mx_reply,
+    ) -> c_int;
+    pub fn ares_parse_txt_reply(
+        abuf: *const u8,
+        alen: c_int,
+        txt_out: *mut *mut struct_ares_txt_reply,
+    ) -> c_int;
+    pub fn ares_parse_txt_reply_ext(
+        abuf: *const u8,
+        alen: c_int,
+        txt_out: *mut *mut struct_ares_txt_ext,
+    ) -> c_int;
+    pub fn ares_parse_naptr_reply(
+        abuf: *const u8,
+        alen: c_int,
+        naptr_out: *mut *mut struct_ares_naptr_reply,
+    ) -> c_int;
+    pub fn ares_parse_soa_reply(
+        abuf: *const u8,
+        alen: c_int,
+        soa_out: *mut *mut struct_ares_soa_reply,
+    ) -> c_int;
+    pub fn ares_parse_uri_reply(
+        abuf: *const u8,
+        alen: c_int,
+        uri_out: *mut *mut struct_ares_uri_reply,
+    ) -> c_int;
     pub fn ares_free_string(str_: *mut c_void);
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
@@ -1541,13 +1799,27 @@ impl struct_ares_addr_port_node {
 
 unsafe extern "C" {
     pub fn ares_set_servers(channel: *mut Channel, servers: *mut struct_ares_addr_node) -> c_int;
-    pub fn ares_set_servers_ports(channel: *mut Channel, servers: *mut struct_ares_addr_port_node) -> c_int;
+    pub fn ares_set_servers_ports(
+        channel: *mut Channel,
+        servers: *mut struct_ares_addr_port_node,
+    ) -> c_int;
     pub fn ares_set_servers_csv(channel: *mut Channel, servers: *const u8) -> c_int;
     pub fn ares_set_servers_ports_csv(channel: *mut Channel, servers: *const u8) -> c_int;
-    pub fn ares_get_servers(channel: *mut Channel, servers: *mut *mut struct_ares_addr_port_node) -> c_int;
-    pub fn ares_get_servers_ports(channel: *mut Channel, servers: *mut *mut struct_ares_addr_port_node) -> c_int;
+    pub fn ares_get_servers(
+        channel: *mut Channel,
+        servers: *mut *mut struct_ares_addr_port_node,
+    ) -> c_int;
+    pub fn ares_get_servers_ports(
+        channel: *mut Channel,
+        servers: *mut *mut struct_ares_addr_port_node,
+    ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html
-    pub fn ares_inet_ntop(af: c_int, src: *const c_void, dst: *mut u8, size: ares_socklen_t) -> *const c_char;
+    pub fn ares_inet_ntop(
+        af: c_int,
+        src: *const c_void,
+        dst: *mut u8,
+        size: ares_socklen_t,
+    ) -> *const c_char;
     /// https://c-ares.org/docs/ares_inet_pton.html
     ///
     /// ## Returns
@@ -1835,8 +2107,7 @@ pub const ARES_AI_IDN: c_int = 1 << 10;
 pub const ARES_AI_IDN_ALLOW_UNASSIGNED: c_int = 1 << 11;
 pub const ARES_AI_IDN_USE_STD3_ASCII_RULES: c_int = 1 << 12;
 pub const ARES_AI_CANONIDN: c_int = 1 << 13;
-pub const ARES_AI_MASK: c_int = (((((ARES_AI_CANONNAME | ARES_AI_NUMERICHOST)
-    | ARES_AI_PASSIVE)
+pub const ARES_AI_MASK: c_int = (((((ARES_AI_CANONNAME | ARES_AI_NUMERICHOST) | ARES_AI_PASSIVE)
     | ARES_AI_NUMERICSERV)
     | ARES_AI_V4MAPPED)
     | ARES_AI_ALL)
@@ -1903,8 +2174,11 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
 
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
-        let in_: &mut sockaddr_in = unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
-        if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) } == 1 {
+        let in_: &mut sockaddr_in =
+            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
+            == 1
+        {
             in_.sin_family = AF::INET as _;
             in_.sin_port = port.to_be();
             return 0;
@@ -1912,8 +2186,16 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     }
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
-        let in6: &mut sockaddr_in6 = unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
-        if unsafe { ares_inet_pton(AF::INET6, addr_ptr, (&raw mut in6.sin6_addr).cast::<c_void>()) } == 1 {
+        let in6: &mut sockaddr_in6 =
+            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        if unsafe {
+            ares_inet_pton(
+                AF::INET6,
+                addr_ptr,
+                (&raw mut in6.sin6_addr).cast::<c_void>(),
+            )
+        } == 1
+        {
             in6.sin6_family = AF::INET6 as _;
             in6.sin6_port = port.to_be();
             return 0;

@@ -7,24 +7,24 @@
 //! each use site.
 
 use crate::mal_prelude::*;
-use core::mem::{offset_of, MaybeUninit};
+use core::mem::{MaybeUninit, offset_of};
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt, HashMap};
 use bun_ast::Loc;
+use bun_collections::{ArrayHashMap, HashMap, VecExt};
 use bun_core::strings;
 
 use crate::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{
-    self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, Expr, Part,
-    PartSymbolUseMap, Ref, Stmt, E, G, S,
+    self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
+    PartSymbolUseMap, Ref, S, Stmt,
 };
 
 use crate::options::Format;
 use crate::ungate_support::perf;
-use crate::{js_meta, BundleV2, Index, LinkerContext, RefImportData, ResolvedExports};
+use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, js_meta};
 
 pub use crate::ThreadPool;
 
@@ -128,12 +128,11 @@ impl LinkerContext<'_> {
                 // Re-exporting multiple symbols with the same name causes an ambiguous
                 // export. These names cannot be used and should not end up in generated code.
                 if export_.potentially_ambiguous_export_star_refs.len() > 0 {
-                    let main_data = match imports_to_bind[this_id as usize]
-                        .get(&export_.data.import_ref)
-                    {
-                        Some(b) => b.data,
-                        None => export_.data,
-                    };
+                    let main_data =
+                        match imports_to_bind[this_id as usize].get(&export_.data.import_ref) {
+                            Some(b) => b.data,
+                            None => export_.data,
+                        };
                     for ambig in export_.potentially_ambiguous_export_star_refs.slice() {
                         let _id = ambig.data.source_index.get();
                         let ambig_ref = if let Some(bound) =
@@ -153,9 +152,7 @@ impl LinkerContext<'_> {
                 // Ignore re-exported imports in TypeScript files that failed to be
                 // resolved. These are probably just type-only imports so the best thing to
                 // do is to silently omit them from the export list.
-                if probably_typescript_type[this_id as usize]
-                    .contains(&export_.data.import_ref)
-                {
+                if probably_typescript_type[this_id as usize].contains(&export_.data.import_ref) {
                     continue;
                 }
                 re_exports_count += inner_count;
@@ -205,8 +202,7 @@ impl LinkerContext<'_> {
         // hold overlapping `&mut [T]`.
         let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).slice_mut();
         let named_imports: *mut crate::bundled_ast::NamedImports =
-            (ast.named_imports as *mut crate::bundled_ast::NamedImports)
-                .wrapping_add(id as usize);
+            (ast.named_imports as *mut crate::bundled_ast::NamedImports).wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).
@@ -340,7 +336,7 @@ impl LinkerContext<'_> {
             if false {
                 break 'outer;
             } // this `if` is here to preserve the unused
-              //                          block label from the above commented code.
+            //                          block label from the above commented code.
 
             // Now that we know this, we can determine cross-part dependencies
             // PERF(port): iterate the keys slice directly (the index-based
@@ -370,7 +366,9 @@ impl LinkerContext<'_> {
                 };
 
                 for &other_part_index in other_parts {
-                    let local = local_dependencies.get_or_put(other_part_index).expect("unreachable");
+                    let local = local_dependencies
+                        .get_or_put(other_part_index)
+                        .expect("unreachable");
                     if !local.found_existing || *local.value_ptr != part_index_u32 {
                         *local.value_ptr = part_index_u32;
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
@@ -466,8 +464,7 @@ impl LinkerContext<'_> {
         }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
-        let mut ns_export_dependencies =
-            Vec::<Dependency>::init_capacity(re_exports_count);
+        let mut ns_export_dependencies = Vec::<Dependency>::init_capacity(re_exports_count);
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
@@ -481,8 +478,7 @@ impl LinkerContext<'_> {
             {
                 exp_data.import_ref = import_data.data.import_ref;
                 exp_data.source_index = import_data.data.source_index;
-                ns_export_dependencies
-                    .append_slice(import_data.re_exports.slice());
+                ns_export_dependencies.append_slice(import_data.re_exports.slice());
             }
 
             // Exports of imports need EImportIdentifier in case they need to be re-
@@ -511,11 +507,7 @@ impl LinkerContext<'_> {
             };
 
             let fn_body = G::FnBody {
-                stmts: stmts_eat1!(Stmt::allocate(
-                    arena,
-                    S::Return { value: Some(value) },
-                    loc,
-                )),
+                stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
             properties.push(G::Property {
@@ -540,15 +532,13 @@ impl LinkerContext<'_> {
                 ..Default::default()
             });
             // PERF(port): was appendAssumeCapacity
-            ns_export_symbol_uses.put_assume_capacity(
-                exp_data.import_ref,
-                SymbolUse { count_estimate: 1 },
-            );
+            ns_export_symbol_uses
+                .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 
             // Make sure the part that declares the export is included
-            let parts = self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
-            ns_export_dependencies
-                .ensure_unused_capacity(parts.len());
+            let parts =
+                self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
+            ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_id in parts {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
@@ -593,7 +583,10 @@ impl LinkerContext<'_> {
                 loc,
             ));
             declared_symbols
-                .append(DeclaredSymbol { ref_: exports_ref, is_top_level: true })
+                .append(DeclaredSymbol {
+                    ref_: exports_ref,
+                    is_top_level: true,
+                })
                 .expect("unreachable");
         }
 
@@ -634,8 +627,7 @@ impl LinkerContext<'_> {
             ));
             // Make sure this file depends on the "__export" symbol
             let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
-            ns_export_dependencies
-                .ensure_unused_capacity(parts.len());
+            ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
                     source_index: bun_ast::Index::RUNTIME,

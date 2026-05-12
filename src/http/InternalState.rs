@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
-use bun_core::{Error, Output};
 use bun_core::MutableString;
+use bun_core::{Error, Output};
 
 use crate::{
     CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
@@ -241,20 +241,17 @@ impl<'a> InternalState<'a> {
             // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
             // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
             // bun_uws::SocketHandler method bodies).
-            
+
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
-                    && !self
-                        .flags
-                        .is_libdeflate_fast_path_disabled
+                    && !self.flags.is_libdeflate_fast_path_disabled
                     && self.encoding.can_use_lib_deflate()
                     && self.is_done())
                 {
                     break 'libdeflate;
                 }
-                self.flags
-                    .is_libdeflate_fast_path_disabled = true;
+                self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
                 let deflater = crate::http_thread().deflater();
@@ -269,15 +266,17 @@ impl<'a> InternalState<'a> {
                     && buffer.len() < 1024 * 1024 * 1024
                 {
                     let estimated_size: u32 = u32::from_ne_bytes(
-                        buffer[buffer.len() - 4..][..4].try_into().expect("infallible: size matches"),
+                        buffer[buffer.len() - 4..][..4]
+                            .try_into()
+                            .expect("infallible: size matches"),
                     );
                     // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
                     {
-                        body_out_str
-                            .list
-                            .reserve_exact((estimated_size as usize).saturating_sub(body_out_str.list.len()));
+                        body_out_str.list.reserve_exact(
+                            (estimated_size as usize).saturating_sub(body_out_str.list.len()),
+                        );
                         body_out_str.list.clear();
                         let result = deflater.decompressor_mut().decompress_to_vec(
                             buffer,
@@ -320,7 +319,9 @@ impl<'a> InternalState<'a> {
         if still_needs_to_decompress {
             log!("Decompressing {} bytes\n", buffer.len());
             if body_out_str.list.capacity() == 0 {
-                let min = ((buffer.len() as f64) * 1.5).ceil().min(1024.0 * 1024.0 * 2.0);
+                let min = ((buffer.len() as f64) * 1.5)
+                    .ceil()
+                    .min(1024.0 * 1024.0 * 2.0);
                 if let Err(err) = body_out_str.grow_by((min as usize).max(32)) {
                     self.compressed_body.reset();
                     return Err(err.into());
@@ -330,7 +331,7 @@ impl<'a> InternalState<'a> {
             // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
             // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
             // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
-            
+
             if let Err(err) = self
                 .decompressor
                 .update_buffers(self.encoding, buffer, body_out_str)

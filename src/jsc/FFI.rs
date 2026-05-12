@@ -56,7 +56,9 @@ impl union_EncodedJSValue {
 // (the union contains `*mut c_void`).
 #[unsafe(no_mangle)]
 pub static ValueUndefined: bun_core::RacyCell<EncodedJSValue> =
-    bun_core::RacyCell::new(EncodedJSValue { as_int64: (2 | 8) as i64 });
+    bun_core::RacyCell::new(EncodedJSValue {
+        as_int64: (2 | 8) as i64,
+    });
 
 pub const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 

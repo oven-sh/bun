@@ -79,7 +79,10 @@ impl PostinstallOptimizer {
         Ok(true)
     }
 
-    pub fn from_package_json(list: &mut List, expr: &js_ast::Expr) -> Result<(), bun_alloc::AllocError> {
+    pub fn from_package_json(
+        list: &mut List,
+        expr: &js_ast::Expr,
+    ) -> Result<(), bun_alloc::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
                 list,

@@ -97,7 +97,10 @@ impl Mutex {
     #[must_use = "the mutex unlocks immediately if the guard is dropped"]
     pub fn lock_guard(&self) -> MutexGuard {
         self.lock();
-        MutexGuard { mutex: bun_ptr::BackRef::new(self), _not_send: core::marker::PhantomData }
+        MutexGuard {
+            mutex: bun_ptr::BackRef::new(self),
+            _not_send: core::marker::PhantomData,
+        }
     }
 }
 
@@ -160,7 +163,10 @@ pub struct DebugImpl {
 
 impl DebugImpl {
     pub const fn new() -> Self {
-        Self { locking_thread: AtomicU64::new(0), impl_: ReleaseImpl::new() }
+        Self {
+            locking_thread: AtomicU64::new(0),
+            impl_: ReleaseImpl::new(),
+        }
     }
 
     #[inline]
@@ -218,13 +224,17 @@ unsafe impl Send for WindowsImpl {}
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
     // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
-    safe fn TryAcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>) -> u8;
+    safe fn TryAcquireSRWLockExclusive(
+        lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
+    ) -> u8;
 }
 
 #[cfg(windows)]
 impl WindowsImpl {
     pub const fn new() -> Self {
-        Self { srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT) }
+        Self {
+            srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
+        }
     }
 
     fn try_lock(&self) -> bool {
@@ -277,7 +287,9 @@ unsafe extern "C" {
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
     pub const fn new() -> Self {
-        Self { oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }) }
+        Self {
+            oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
+        }
     }
 
     fn try_lock(&self) -> bool {
@@ -300,7 +312,9 @@ pub struct FutexImpl {
 
 impl FutexImpl {
     pub const fn new() -> Self {
-        Self { state: AtomicU32::new(0) }
+        Self {
+            state: AtomicU32::new(0),
+        }
     }
 
     const UNLOCKED: u32 = 0b00;

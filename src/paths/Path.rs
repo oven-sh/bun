@@ -9,12 +9,12 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-use bun_core::Environment;
 use crate::{
-    resolve_path as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE, SEP, SEP_POSIX,
-    SEP_WINDOWS,
+    MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
+    resolve_path as path,
 };
-use bun_core::{strings, Fd, WStr, ZStr};
+use bun_core::Environment;
+use bun_core::{Fd, WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Options
@@ -75,7 +75,11 @@ pub mod options {
         pub const ANY: u8 = 2;
         #[inline(always)]
         pub const fn from_u8(v: u8) -> Self {
-            match v { 0 => Self::Abs, 1 => Self::Rel, _ => Self::Any }
+            match v {
+                0 => Self::Abs,
+                1 => Self::Rel,
+                _ => Self::Any,
+            }
         }
     }
     impl PathSeparators {
@@ -85,7 +89,12 @@ pub mod options {
         pub const WINDOWS: u8 = 3;
         #[inline(always)]
         pub const fn from_u8(v: u8) -> Self {
-            match v { 1 => Self::Auto, 2 => Self::Posix, 3 => Self::Windows, _ => Self::Any }
+            match v {
+                1 => Self::Auto,
+                2 => Self::Posix,
+                3 => Self::Windows,
+                _ => Self::Any,
+            }
         }
     }
     impl CheckLength {
@@ -93,7 +102,11 @@ pub mod options {
         pub const CHECK: u8 = 1;
         #[inline(always)]
         pub const fn from_u8(v: u8) -> Self {
-            if v == 0 { Self::AssumeAlwaysLessThanMaxPath } else { Self::CheckForGreaterThanMaxPath }
+            if v == 0 {
+                Self::AssumeAlwaysLessThanMaxPath
+            } else {
+                Self::CheckForGreaterThanMaxPath
+            }
         }
     }
 
@@ -242,23 +255,35 @@ pub trait PathUnit: crate::PathChar {
     // const-folded out, and in the live arm the cast is a safe
     // `fn(&[u8]) -> &[u8]` in the monomorphized code.
     #[inline(always)]
-    fn id_u8(_: &[Self]) -> &[u8] { unreachable!("PathUnit::id_u8 on non-u8") }
+    fn id_u8(_: &[Self]) -> &[u8] {
+        unreachable!("PathUnit::id_u8 on non-u8")
+    }
     #[inline(always)]
-    fn id_u8_mut(_: &mut [Self]) -> &mut [u8] { unreachable!("PathUnit::id_u8_mut on non-u8") }
+    fn id_u8_mut(_: &mut [Self]) -> &mut [u8] {
+        unreachable!("PathUnit::id_u8_mut on non-u8")
+    }
     #[inline(always)]
     fn id_u8_slices<'a, 'b>(_: &'a [&'b [Self]]) -> &'a [&'b [u8]] {
         unreachable!("PathUnit::id_u8_slices on non-u8")
     }
     #[inline(always)]
-    fn id_u16(_: &[Self]) -> &[u16] { unreachable!("PathUnit::id_u16 on non-u16") }
+    fn id_u16(_: &[Self]) -> &[u16] {
+        unreachable!("PathUnit::id_u16 on non-u16")
+    }
     #[inline(always)]
-    fn id_u16_mut(_: &mut [Self]) -> &mut [u16] { unreachable!("PathUnit::id_u16_mut on non-u16") }
+    fn id_u16_mut(_: &mut [Self]) -> &mut [u16] {
+        unreachable!("PathUnit::id_u16_mut on non-u16")
+    }
     // Inverse direction (concrete → Self). Same trait-dispatch trick: the
     // matching impl overrides with the identity, the other hits `unreachable!`.
     #[inline(always)]
-    fn id_from_u8(_: &[u8]) -> &[Self] { unreachable!("PathUnit::id_from_u8 on non-u8") }
+    fn id_from_u8(_: &[u8]) -> &[Self] {
+        unreachable!("PathUnit::id_from_u8 on non-u8")
+    }
     #[inline(always)]
-    fn id_from_u16(_: &[u16]) -> &[Self] { unreachable!("PathUnit::id_from_u16 on non-u16") }
+    fn id_from_u16(_: &[u16]) -> &[Self] {
+        unreachable!("PathUnit::id_from_u16 on non-u16")
+    }
 
     /// `convert_into_buffer` — write `src` (the *other* width) into `dest`
     /// transcoding UTF-8↔UTF-16. Returns units written.
@@ -291,13 +316,21 @@ impl PathUnit for u8 {
         &buf[..]
     }
     #[inline(always)]
-    fn id_u8(s: &[u8]) -> &[u8] { s }
+    fn id_u8(s: &[u8]) -> &[u8] {
+        s
+    }
     #[inline(always)]
-    fn id_u8_mut(s: &mut [u8]) -> &mut [u8] { s }
+    fn id_u8_mut(s: &mut [u8]) -> &mut [u8] {
+        s
+    }
     #[inline(always)]
-    fn id_u8_slices<'a, 'b>(s: &'a [&'b [u8]]) -> &'a [&'b [u8]] { s }
+    fn id_u8_slices<'a, 'b>(s: &'a [&'b [u8]]) -> &'a [&'b [u8]] {
+        s
+    }
     #[inline(always)]
-    fn id_from_u8(s: &[u8]) -> &[u8] { s }
+    fn id_from_u8(s: &[u8]) -> &[u8] {
+        s
+    }
     #[inline]
     fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
         strings::convert_utf16_to_utf8_in_buffer(dest, src)
@@ -332,11 +365,17 @@ impl PathUnit for u16 {
         &buf[..]
     }
     #[inline(always)]
-    fn id_u16(s: &[u16]) -> &[u16] { s }
+    fn id_u16(s: &[u16]) -> &[u16] {
+        s
+    }
     #[inline(always)]
-    fn id_u16_mut(s: &mut [u16]) -> &mut [u16] { s }
+    fn id_u16_mut(s: &mut [u16]) -> &mut [u16] {
+        s
+    }
     #[inline(always)]
-    fn id_from_u16(s: &[u16]) -> &[u16] { s }
+    fn id_from_u16(s: &[u16]) -> &[u16] {
+        s
+    }
     #[inline]
     fn convert_from_other(dest: &mut [u16], src: &[u8]) -> usize {
         strings::convert_utf8_to_utf16_in_buffer(dest, src).len()
@@ -437,7 +476,11 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
 /// the `X:` drive designator at index 1.
 #[inline]
 fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
-    if cfg!(windows) { bun_core::strings::basename_windows(path) } else { bun_core::strings::basename_posix(path) }
+    if cfg!(windows) {
+        bun_core::strings::basename_windows(path)
+    } else {
+        bun_core::strings::basename_posix(path)
+    }
 }
 
 /// Width-generic `bun.Dirname.dirname` (Zig: `src/bun.zig:2520`).
@@ -486,8 +529,8 @@ fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.len() == root_len {
         return None;
     }
-    let have_root_slash = path.len() > root_len
-        && (path[root_len].eq_ascii(b'/') || path[root_len].eq_ascii(b'\\'));
+    let have_root_slash =
+        path.len() > root_len && (path[root_len].eq_ascii(b'/') || path[root_len].eq_ascii(b'\\'));
 
     let mut end_index = path.len() - 1;
     while path[end_index].eq_ascii(b'/') || path[end_index].eq_ascii(b'\\') {
@@ -955,7 +998,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     let last = self.slice()[self.len() - 1];
                     !(last.eq_ascii(b'/') || last.eq_ascii(b'\\'))
                 }
-                _ => !self.slice()[self.len() - 1].eq_ascii(PathSeparators::from_u8(SEP_OPT).char()),
+                _ => {
+                    !self.slice()[self.len() - 1].eq_ascii(PathSeparators::from_u8(SEP_OPT).char())
+                }
             };
 
         match Kind::from_u8(KIND) {
@@ -1133,8 +1178,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
                 cwd_path.copy_from_slice(current_slice);
 
-                let pooled: &mut [u8] =
-                    U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+                let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
                 let part_u8: &[u8] = C::id_u8(part);
                 let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
 
@@ -1145,7 +1189,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // part: &[u8], unit: u16 → transcode then recurse
                 let mut path_buf = crate::w_path_buffer_pool::get();
                 let part_u8: &[u8] = C::id_u8(part);
-                let converted = strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
+                let converted =
+                    strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
                 // Zig recurses on `appendJoin(converted)`.
                 return self.append_join::<u16>(converted);
             }
@@ -1159,8 +1204,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 let pooled: &mut [u16] =
                     U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
                 let part_u16: &[u16] = C::id_u16(part);
-                let joined =
-                    sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
+                let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
             }
@@ -1194,8 +1238,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let pooled: &mut [u8] =
-                U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
+            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
             let from_u8: &[u8] = U::id_u8(self.slice());
             let to_u8: &[u8] = U::id_u8(to.slice());
             let rel = path::relative_buf_z(pooled, from_u8, to_u8);
@@ -1222,8 +1265,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
 
-            let pooled: &mut [u16] =
-                U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
+            let pooled: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
             let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
             output._buf.len = converted.len();
         }
@@ -1294,14 +1336,16 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             if TypeId::of::<U>() == TypeId::of::<u8>() {
                 self._buf.append(U::id_from_u8(bytes), add_separator);
             } else {
-                self._buf.append_other(<U::Other>::id_from_u8(bytes), add_separator);
+                self._buf
+                    .append_other(<U::Other>::id_from_u8(bytes), add_separator);
             }
         } else {
             let words = C::id_u16(characters);
             if TypeId::of::<U>() == TypeId::of::<u16>() {
                 self._buf.append(U::id_from_u16(words), add_separator);
             } else {
-                self._buf.append_other(<U::Other>::id_from_u16(words), add_separator);
+                self._buf
+                    .append_other(<U::Other>::id_from_u16(words), add_separator);
             }
         }
     }
@@ -1325,13 +1369,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
 // ResetScope
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ResetScope<
-    'a,
-    U: PathUnit,
-    const KIND: u8,
-    const SEP_OPT: u8,
-    const CHECK: u8,
-> {
+pub struct ResetScope<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> {
     // LIFETIMES.tsv: BORROW_PARAM → &'a mut Path
     path: &'a mut Path<U, KIND, SEP_OPT, CHECK>,
     saved_len: usize,

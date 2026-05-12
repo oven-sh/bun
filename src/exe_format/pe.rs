@@ -91,25 +91,25 @@ pub struct PEFile {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct DOSHeader {
-    pub e_magic: u16,    // Magic number
-    pub e_cblp: u16,     // Bytes on last page of file
-    pub e_cp: u16,       // Pages in file
-    pub e_crlc: u16,     // Relocations
-    pub e_cparhdr: u16,  // Size of header in paragraphs
-    pub e_minalloc: u16, // Minimum extra paragraphs needed
-    pub e_maxalloc: u16, // Maximum extra paragraphs needed
-    pub e_ss: u16,       // Initial relative SS value
-    pub e_sp: u16,       // Initial SP value
-    pub e_csum: u16,     // Checksum
-    pub e_ip: u16,       // Initial IP value
-    pub e_cs: u16,       // Initial relative CS value
-    pub e_lfarlc: u16,   // Address of relocation table
-    pub e_ovno: u16,     // Overlay number
-    pub e_res: [u16; 4], // Reserved words
-    pub e_oemid: u16,    // OEM identifier (for e_oeminfo)
-    pub e_oeminfo: u16,  // OEM information; e_oemid specific
+    pub e_magic: u16,      // Magic number
+    pub e_cblp: u16,       // Bytes on last page of file
+    pub e_cp: u16,         // Pages in file
+    pub e_crlc: u16,       // Relocations
+    pub e_cparhdr: u16,    // Size of header in paragraphs
+    pub e_minalloc: u16,   // Minimum extra paragraphs needed
+    pub e_maxalloc: u16,   // Maximum extra paragraphs needed
+    pub e_ss: u16,         // Initial relative SS value
+    pub e_sp: u16,         // Initial SP value
+    pub e_csum: u16,       // Checksum
+    pub e_ip: u16,         // Initial IP value
+    pub e_cs: u16,         // Initial relative CS value
+    pub e_lfarlc: u16,     // Address of relocation table
+    pub e_ovno: u16,       // Overlay number
+    pub e_res: [u16; 4],   // Reserved words
+    pub e_oemid: u16,      // OEM identifier (for e_oeminfo)
+    pub e_oeminfo: u16,    // OEM information; e_oemid specific
     pub e_res2: [u16; 10], // Reserved words
-    pub e_lfanew: u32,   // File address of new exe header
+    pub e_lfanew: u32,     // File address of new exe header
 }
 
 #[repr(C)]
@@ -128,35 +128,35 @@ pub struct PEHeader {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct OptionalHeader64 {
-    pub magic: u16,                          // Magic number
-    pub major_linker_version: u8,            // Major linker version
-    pub minor_linker_version: u8,            // Minor linker version
-    pub size_of_code: u32,                   // Size of code
-    pub size_of_initialized_data: u32,       // Size of initialized data
-    pub size_of_uninitialized_data: u32,     // Size of uninitialized data
-    pub address_of_entry_point: u32,         // Address of entry point
-    pub base_of_code: u32,                   // Base of code
-    pub image_base: u64,                     // Image base
-    pub section_alignment: u32,              // Section alignment
-    pub file_alignment: u32,                 // File alignment
-    pub major_operating_system_version: u16, // Major OS version
-    pub minor_operating_system_version: u16, // Minor OS version
-    pub major_image_version: u16,            // Major image version
-    pub minor_image_version: u16,            // Minor image version
-    pub major_subsystem_version: u16,        // Major subsystem version
-    pub minor_subsystem_version: u16,        // Minor subsystem version
-    pub win32_version_value: u32,            // Win32 version value
-    pub size_of_image: u32,                  // Size of image
-    pub size_of_headers: u32,                // Size of headers
-    pub checksum: u32,                       // Checksum
-    pub subsystem: u16,                      // Subsystem
-    pub dll_characteristics: u16,            // DLL characteristics
-    pub size_of_stack_reserve: u64,          // Size of stack reserve
-    pub size_of_stack_commit: u64,           // Size of stack commit
-    pub size_of_heap_reserve: u64,           // Size of heap reserve
-    pub size_of_heap_commit: u64,            // Size of heap commit
-    pub loader_flags: u32,                   // Loader flags
-    pub number_of_rva_and_sizes: u32,        // Number of RVA and sizes
+    pub magic: u16,                            // Magic number
+    pub major_linker_version: u8,              // Major linker version
+    pub minor_linker_version: u8,              // Minor linker version
+    pub size_of_code: u32,                     // Size of code
+    pub size_of_initialized_data: u32,         // Size of initialized data
+    pub size_of_uninitialized_data: u32,       // Size of uninitialized data
+    pub address_of_entry_point: u32,           // Address of entry point
+    pub base_of_code: u32,                     // Base of code
+    pub image_base: u64,                       // Image base
+    pub section_alignment: u32,                // Section alignment
+    pub file_alignment: u32,                   // File alignment
+    pub major_operating_system_version: u16,   // Major OS version
+    pub minor_operating_system_version: u16,   // Minor OS version
+    pub major_image_version: u16,              // Major image version
+    pub minor_image_version: u16,              // Minor image version
+    pub major_subsystem_version: u16,          // Major subsystem version
+    pub minor_subsystem_version: u16,          // Minor subsystem version
+    pub win32_version_value: u32,              // Win32 version value
+    pub size_of_image: u32,                    // Size of image
+    pub size_of_headers: u32,                  // Size of headers
+    pub checksum: u32,                         // Checksum
+    pub subsystem: u16,                        // Subsystem
+    pub dll_characteristics: u16,              // DLL characteristics
+    pub size_of_stack_reserve: u64,            // Size of stack reserve
+    pub size_of_stack_commit: u64,             // Size of stack commit
+    pub size_of_heap_reserve: u64,             // Size of heap reserve
+    pub size_of_heap_commit: u64,              // Size of heap commit
+    pub loader_flags: u32,                     // Loader flags
+    pub number_of_rva_and_sizes: u32,          // Number of RVA and sizes
     pub data_directories: [DataDirectory; 16], // Data directories
 }
 
@@ -170,16 +170,16 @@ pub struct DataDirectory {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SectionHeader {
-    pub name: [u8; 8],               // Section name
-    pub virtual_size: u32,           // Virtual size
-    pub virtual_address: u32,        // Virtual address
-    pub size_of_raw_data: u32,       // Size of raw data
-    pub pointer_to_raw_data: u32,    // Pointer to raw data
-    pub pointer_to_relocations: u32, // Pointer to relocations
+    pub name: [u8; 8],                // Section name
+    pub virtual_size: u32,            // Virtual size
+    pub virtual_address: u32,         // Virtual address
+    pub size_of_raw_data: u32,        // Size of raw data
+    pub pointer_to_raw_data: u32,     // Pointer to raw data
+    pub pointer_to_relocations: u32,  // Pointer to relocations
     pub pointer_to_line_numbers: u32, // Pointer to line numbers
-    pub number_of_relocations: u16,  // Number of relocations
-    pub number_of_line_numbers: u16, // Number of line numbers
-    pub characteristics: u32,        // Characteristics
+    pub number_of_relocations: u16,   // Number of relocations
+    pub number_of_line_numbers: u16,  // Number of line numbers
+    pub characteristics: u32,         // Characteristics
 }
 
 const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
@@ -388,8 +388,11 @@ impl PEFile {
 
         if num_sections > 0 {
             // SAFETY: bounds-checked above
-            let sections_ptr =
-                unsafe { data.as_ptr().add(section_headers_offset).cast::<SectionHeader>() };
+            let sections_ptr = unsafe {
+                data.as_ptr()
+                    .add(section_headers_offset)
+                    .cast::<SectionHeader>()
+            };
             let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
 
             for section in sections {
@@ -595,10 +598,12 @@ impl PEFile {
         }
 
         // 4. Compute header slack requirement
-        let new_headers_end =
-            self.section_headers_offset + size_of::<SectionHeader>() * (self.num_sections as usize + 1);
-        let new_size_of_headers =
-            align_up_u32(u32::try_from(new_headers_end).expect("int cast"), file_alignment)?;
+        let new_headers_end = self.section_headers_offset
+            + size_of::<SectionHeader>() * (self.num_sections as usize + 1);
+        let new_size_of_headers = align_up_u32(
+            u32::try_from(new_headers_end).expect("int cast"),
+            file_alignment,
+        )?;
 
         // Determine first_raw (min PointerToRawData among sections with raw data, else data.len)
         let mut first_raw: u32 = u32::try_from(self.data.len()).expect("int cast");
@@ -668,10 +673,7 @@ impl PEFile {
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD
         let sh_bytes = unsafe {
-            slice::from_raw_parts(
-                (&raw const sh).cast::<u8>(),
-                size_of::<SectionHeader>(),
-            )
+            slice::from_raw_parts((&raw const sh).cast::<u8>(), size_of::<SectionHeader>())
         };
         self.data[new_sh_off..new_sh_off + size_of::<SectionHeader>()].copy_from_slice(sh_bytes);
 
@@ -740,7 +742,11 @@ impl PEFile {
 
                 let section_data = &self.data[section.pointer_to_raw_data as usize..]
                     [..section.size_of_raw_data as usize];
-                let data_size = u64::from_le_bytes(section_data[0..8].try_into().expect("infallible: size matches"));
+                let data_size = u64::from_le_bytes(
+                    section_data[0..8]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
 
                 if data_size + size_of::<u64>() as u64 > section.size_of_raw_data as u64 {
                     return Err(Error::InvalidBunSection);
@@ -770,7 +776,11 @@ impl PEFile {
                 }
 
                 let section_data = &self.data[section.pointer_to_raw_data as usize..];
-                return Ok(u64::from_le_bytes(section_data[0..8].try_into().expect("infallible: size matches")));
+                return Ok(u64::from_le_bytes(
+                    section_data[0..8]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                ));
             }
         }
         Err(Error::BunSectionNotFound)

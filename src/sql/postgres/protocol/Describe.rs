@@ -22,7 +22,10 @@ impl<'a> Describe<'a> {
     }
 
     // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
-    pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+    pub fn write<Context: super::new_writer::WriterContext>(
+        &self,
+        writer: NewWriter<Context>,
+    ) -> Result<(), bun_core::Error> {
         self.write_internal(writer)
     }
 }

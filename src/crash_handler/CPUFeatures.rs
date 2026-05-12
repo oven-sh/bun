@@ -107,7 +107,6 @@ impl CPUFeatures {
         debug_assert!(!flags.contains(Flags::NONE) && (raw & !Flags::all().bits()) == 0);
 
         #[cfg(target_arch = "x86_64")]
-        
         {
             // Zig: bun.analytics.Features.no_avx / no_avx2 are global mutable
             // counters (`+= usize`). Rust port stores them as `AtomicUsize`.

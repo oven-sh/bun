@@ -20,9 +20,7 @@
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
-use core::sync::atomic::{
-    AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering,
-};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AtomicCell<T>
@@ -72,7 +70,10 @@ impl<T: Copy> AtomicCell<T> {
     /// initializers.
     #[inline]
     pub const fn new(value: T) -> Self {
-        Self { _align: [], inner: UnsafeCell::new(value) }
+        Self {
+            _align: [],
+            inner: UnsafeCell::new(value),
+        }
     }
 
     /// Consume and return the inner value (no atomic op; we own it).
@@ -218,7 +219,12 @@ const unsafe fn xmute<A, B>(a: A) -> B {
         b: ManuallyDrop<B>,
     }
     // SAFETY: caller contract.
-    ManuallyDrop::into_inner(unsafe { U::<A, B> { a: ManuallyDrop::new(a) }.b })
+    ManuallyDrop::into_inner(unsafe {
+        U::<A, B> {
+            a: ManuallyDrop::new(a),
+        }
+        .b
+    })
 }
 
 /// Implement [`Atom`] for a non-pointer `Copy` type by routing to the
@@ -282,10 +288,30 @@ macro_rules! unsafe_impl_atom {
 macro_rules! size_dispatch {
     ($T:ty, $p:expr, |$a:ident: $A:ident, $I:ident| $body:expr) => {
         match ::core::mem::size_of::<$T>() {
-            1 => { type $A = AtomicU8;  type $I = u8;  let $a = unsafe { &*($p as *const $A) }; $body }
-            2 => { type $A = AtomicU16; type $I = u16; let $a = unsafe { &*($p as *const $A) }; $body }
-            4 => { type $A = AtomicU32; type $I = u32; let $a = unsafe { &*($p as *const $A) }; $body }
-            8 => { type $A = AtomicU64; type $I = u64; let $a = unsafe { &*($p as *const $A) }; $body }
+            1 => {
+                type $A = AtomicU8;
+                type $I = u8;
+                let $a = unsafe { &*($p as *const $A) };
+                $body
+            }
+            2 => {
+                type $A = AtomicU16;
+                type $I = u16;
+                let $a = unsafe { &*($p as *const $A) };
+                $body
+            }
+            4 => {
+                type $A = AtomicU32;
+                type $I = u32;
+                let $a = unsafe { &*($p as *const $A) };
+                $body
+            }
+            8 => {
+                type $A = AtomicU64;
+                type $I = u64;
+                let $a = unsafe { &*($p as *const $A) };
+                $body
+            }
             // SAFETY: `unsafe_impl_atom!`'s `const _` assert rejected every
             // other width at compile time.
             _ => unsafe { ::core::hint::unreachable_unchecked() },
@@ -335,10 +361,7 @@ pub unsafe fn _dispatch_cas<T: Copy>(
 // ── Built-in Atom impls ────────────────────────────────────────────────────
 
 unsafe_impl_atom!(
-    bool, char,
-    u8, u16, u32, u64, usize,
-    i8, i16, i32, i64, isize,
-    f32, f64,
+    bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
 );
 
 // Pointer specializations: route through `AtomicPtr` so provenance survives
@@ -360,7 +383,13 @@ unsafe impl<U> Atom for *mut U {
         unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
     }
     #[inline]
-    unsafe fn _atomic_cas(p: *mut Self, cur: Self, new: Self, s: Ordering, f: Ordering) -> Result<Self, Self> {
+    unsafe fn _atomic_cas(
+        p: *mut Self,
+        cur: Self,
+        new: Self,
+        s: Ordering,
+        f: Ordering,
+    ) -> Result<Self, Self> {
         unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
     }
 }
@@ -380,9 +409,16 @@ unsafe impl<U> Atom for *const U {
         unsafe { (*(p as *const AtomicPtr<U>)).swap(v as *mut U, ord) as *const U }
     }
     #[inline]
-    unsafe fn _atomic_cas(p: *mut Self, cur: Self, new: Self, s: Ordering, f: Ordering) -> Result<Self, Self> {
+    unsafe fn _atomic_cas(
+        p: *mut Self,
+        cur: Self,
+        new: Self,
+        s: Ordering,
+        f: Ordering,
+    ) -> Result<Self, Self> {
         unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(cur as *mut U, new as *mut U, s, f) {
+            match (*(p as *const AtomicPtr<U>)).compare_exchange(cur as *mut U, new as *mut U, s, f)
+            {
                 Ok(x) => Ok(x as *const U),
                 Err(x) => Err(x as *const U),
             }
@@ -412,9 +448,20 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
     }
     #[inline]
-    unsafe fn _atomic_cas(p: *mut Self, cur: Self, new: Self, s: Ordering, f: Ordering) -> Result<Self, Self> {
+    unsafe fn _atomic_cas(
+        p: *mut Self,
+        cur: Self,
+        new: Self,
+        s: Ordering,
+        f: Ordering,
+    ) -> Result<Self, Self> {
         unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(nn_to_raw(cur), nn_to_raw(new), s, f) {
+            match (*(p as *const AtomicPtr<U>)).compare_exchange(
+                nn_to_raw(cur),
+                nn_to_raw(new),
+                s,
+                f,
+            ) {
                 Ok(x) => Ok(NonNull::new(x)),
                 Err(x) => Err(NonNull::new(x)),
             }
@@ -480,12 +527,15 @@ impl<T: ?Sized> ThreadCell<T> {
         #[cfg(debug_assertions)]
         {
             let me = crate::util::debug_thread_id();
-            match self.owner.compare_exchange(UNCLAIMED, me, Ordering::AcqRel, Ordering::Acquire) {
+            match self
+                .owner
+                .compare_exchange(UNCLAIMED, me, Ordering::AcqRel, Ordering::Acquire)
+            {
                 Ok(_) => {}
                 Err(prev) if prev == me => {}
-                Err(prev) => panic!(
-                    "ThreadCell: thread {me} tried to claim, already owned by thread {prev}"
-                ),
+                Err(prev) => {
+                    panic!("ThreadCell: thread {me} tried to claim, already owned by thread {prev}")
+                }
             }
         }
     }

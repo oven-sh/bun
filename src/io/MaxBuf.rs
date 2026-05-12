@@ -39,10 +39,7 @@ impl MaxBuf {
         unsafe { this.as_ref() }
     }
 
-    pub fn create_for_subprocess(
-        ptr: &mut Option<NonNull<MaxBuf>>,
-        initial: Option<i64>,
-    ) {
+    pub fn create_for_subprocess(ptr: &mut Option<NonNull<MaxBuf>>, initial: Option<i64>) {
         let Some(initial) = initial else {
             *ptr = None;
             return;

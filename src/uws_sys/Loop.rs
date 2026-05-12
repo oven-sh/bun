@@ -166,7 +166,9 @@ impl PosixLoop {
     pub fn unref_count(&mut self, count: i32) {
         bun_core::scoped_log!(Loop, "unref x {}", count);
         self.num_polls -= count;
-        self.active = self.active.saturating_sub(u32::try_from(count).expect("int cast"));
+        self.active = self
+            .active
+            .saturating_sub(u32::try_from(count).expect("int cast"));
     }
 
     pub fn get() -> *mut Loop {
@@ -187,7 +189,9 @@ impl PosixLoop {
 
     pub fn create<H: LoopHandler>() -> *mut Loop {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe { c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0) };
+        let p = unsafe {
+            c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
+        };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
         // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
@@ -452,7 +456,9 @@ impl WindowsLoop {
 
     pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe { c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0) };
+        let p = unsafe {
+            c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
+        };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
         // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)

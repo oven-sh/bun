@@ -35,7 +35,7 @@
 // the macro definitions into a sibling `env_var_impl.rs` and `#[macro_use]` it to restore Zig
 // declaration order in this file.
 
-use core::sync::atomic::{AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
@@ -344,14 +344,18 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&'static [u8]>) -> Option<ValueType> {
+            pub(crate) fn deser_and_invalidate(
+                &self,
+                raw_env: Option<&'static [u8]>,
+            ) -> Option<ValueType> {
                 // The implementation is racy and allows two threads to both set the value at
                 // the same time, as long as the value they are setting is the same. This is
                 // difficult to write an assertion for since it requires the DEV path take a
                 // .swap() path rather than a plain .store().
 
                 if let Some(ev) = raw_env {
-                    self.ptr_value.store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
+                    self.ptr_value
+                        .store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
                     self.len_value.store(ev.len(), Ordering::Release);
                 } else {
                     self.ptr_value.store(NOT_SET_PTR, Ordering::Relaxed);
@@ -411,7 +415,9 @@ pub(crate) mod kind {
 
         impl Cache {
             pub(crate) const fn new() -> Self {
-                Self { value: AtomicU8::new(StoredType::Unknown as u8) }
+                Self {
+                    value: AtomicU8::new(StoredType::Unknown as u8),
+                }
             }
 
             #[inline]
@@ -437,13 +443,18 @@ pub(crate) mod kind {
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
                 let Some(raw_env) = raw_env else {
-                    self.value.store(StoredType::NotSet as u8, Ordering::Relaxed);
+                    self.value
+                        .store(StoredType::NotSet as u8, Ordering::Relaxed);
                     return None;
                 };
 
                 let string_is_truthy = string_is_truthy(raw_env);
                 self.value.store(
-                    if string_is_truthy { StoredType::Yes as u8 } else { StoredType::No as u8 },
+                    if string_is_truthy {
+                        StoredType::Yes as u8
+                    } else {
+                        StoredType::No as u8
+                    },
                     Ordering::Relaxed,
                 );
                 Some(string_is_truthy)
@@ -464,7 +475,10 @@ pub(crate) mod kind {
             pub deser: DeserOpts,
         }
         impl CtorOptions {
-            pub(crate) const DEFAULT: Self = Self { default: None, deser: DeserOpts::DEFAULT };
+            pub(crate) const DEFAULT: Self = Self {
+                default: None,
+                deser: DeserOpts::DEFAULT,
+            };
         }
         impl Default for CtorOptions {
             fn default() -> Self {
@@ -540,7 +554,10 @@ pub(crate) mod kind {
 
         impl Cache {
             pub(crate) const fn new(ip: Input) -> Self {
-                Self { value: AtomicU64::new(UNKNOWN_SENTINEL), ip }
+                Self {
+                    value: AtomicU64::new(UNKNOWN_SENTINEL),
+                    ip,
+                }
             }
 
             #[inline]
@@ -887,7 +904,9 @@ pub(crate) use platform_specific_new;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __key_opt {
-    (None) => { None };
+    (None) => {
+        None
+    };
     ($lit:literal) => {
         // TODO(port): need a `zstr!` const constructor for &'static ZStr from a string literal.
         Some($crate::zstr!($lit))
@@ -925,7 +944,9 @@ pub(crate) use __make_cache;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __unsigned_opts {
-    ({ }) => { $crate::env_var::kind::unsigned::CtorOptions::DEFAULT };
+    ({ }) => {
+        $crate::env_var::kind::unsigned::CtorOptions::DEFAULT
+    };
     ({ default: $d:expr }) => {
         $crate::env_var::kind::unsigned::CtorOptions {
             default: Some($d),
@@ -956,13 +977,27 @@ pub(crate) use __unsigned_opts;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __default_opt {
-    (string, { }) => { None };
-    (string, { default: $d:expr }) => { Some($d as &'static [u8]) };
-    (boolean, { }) => { None };
-    (boolean, { default: $d:expr }) => { Some($d) };
-    (unsigned, { }) => { None };
-    (unsigned, { default: $d:expr }) => { Some($d) };
-    (unsigned, { deser: { $($rest:tt)* } }) => { None };
+    (string, { }) => {
+        None
+    };
+    (string, { default: $d:expr }) => {
+        Some($d as &'static [u8])
+    };
+    (boolean, { }) => {
+        None
+    };
+    (boolean, { default: $d:expr }) => {
+        Some($d)
+    };
+    (unsigned, { }) => {
+        None
+    };
+    (unsigned, { default: $d:expr }) => {
+        Some($d)
+    };
+    (unsigned, { deser: { $($rest:tt)* } }) => {
+        None
+    };
 }
 pub(crate) use __default_opt;
 
@@ -998,7 +1033,9 @@ pub(crate) struct FeatureFlagOpts {
 }
 impl Default for FeatureFlagOpts {
     fn default() -> Self {
-        Self { default: Some(false) }
+        Self {
+            default: Some(false),
+        }
     }
 }
 

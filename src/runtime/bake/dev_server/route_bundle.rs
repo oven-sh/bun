@@ -5,7 +5,7 @@ use super::jsc;
 use super::serialized_failure::SerializedFailure;
 use super::source_map_store;
 use crate::bake::framework_router;
-use crate::server::{html_bundle::HTMLBundleRoute, StaticRoute};
+use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
 pub enum RouteBundleMarker {}
@@ -96,10 +96,7 @@ impl RouteBundle {
     /// the Zig body only touches `dev.source_maps`, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
-    pub fn invalidate_client_bundle(
-        &mut self,
-        source_maps: &mut source_map_store::SourceMapStore,
-    ) {
+    pub fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
         if let Some(bundle) = self.client_bundle.take() {
             source_maps.unref(self.source_map_id());
             // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`

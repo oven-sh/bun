@@ -1,5 +1,5 @@
 use crate::Command;
-use bun_core::{err, Global, Output};
+use bun_core::{Global, Output, err};
 use bun_install::lockfile::LoadResult;
 use bun_install::package_manager::{self, security_scanner};
 use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
@@ -10,7 +10,8 @@ impl ScanCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Scan)?;
 
-        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan) {
+        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan)
+        {
             Ok(v) => v,
             Err(e) => {
                 if e == err!("MissingPackageJSON") {
@@ -90,13 +91,11 @@ impl ScanCommand {
         }
 
         let security_scan_results =
-            match security_scanner::perform_security_scan_for_all(manager, &mut *ctx, original_cwd) {
+            match security_scanner::perform_security_scan_for_all(manager, &mut *ctx, original_cwd)
+            {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::err_generic(
-                        "Could not perform security scan (<d>{s}<r>)",
-                        (e.name(),),
-                    );
+                    Output::err_generic("Could not perform security scan (<d>{s}<r>)", (e.name(),));
                     Global::exit(1);
                 }
             };

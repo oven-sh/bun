@@ -1,9 +1,7 @@
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::CustomIdent;
-use crate::media_query::{
-    self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss,
-};
+use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
 use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
@@ -23,7 +21,9 @@ impl ContainerName {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk — `CustomIdent`
         // identity-copy (arena-owned slice pointer).
-        Self { v: self.v.deep_clone(bump) }
+        Self {
+            v: self.v.deep_clone(bump),
+        }
     }
 }
 
@@ -100,7 +100,11 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 }
 
 impl ContainerSizeFeatureId {
-    pub fn to_css_with_prefix(&self, prefix: &[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css_with_prefix(
+        &self,
+        prefix: &[u8],
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         dest.write_str(prefix)?;
         self.to_css(dest)
     }
@@ -135,13 +139,29 @@ impl QueryCondition for StyleQuery {
     type Feature = Property;
 
     fn as_feature(&self) -> Option<&Property> {
-        if let Self::Feature(f) = self { Some(f) } else { None }
+        if let Self::Feature(f) = self {
+            Some(f)
+        } else {
+            None
+        }
     }
     fn as_not(&self) -> Option<&Self> {
-        if let Self::Not(c) = self { Some(c) } else { None }
+        if let Self::Not(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
     fn as_operation(&self) -> Option<(Operator, &[Self])> {
-        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+        if let Self::Operation {
+            operator,
+            conditions,
+        } = self
+        {
+            Some((*operator, conditions))
+        } else {
+            None
+        }
     }
     fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest, false)
@@ -162,7 +182,10 @@ impl QueryCondition for StyleQuery {
         StyleQuery::Not(condition)
     }
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
-        StyleQuery::Operation { operator, conditions }
+        StyleQuery::Operation {
+            operator,
+            conditions,
+        }
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
         // Zig: `return .{ .err = input.newErrorForNextToken() }`
@@ -185,7 +208,10 @@ impl StyleQuery {
         match self {
             Self::Feature(p) => Self::Feature(super::dc::property(p, bump)),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::Operation { operator, conditions } => Self::Operation {
+            Self::Operation {
+                operator,
+                conditions,
+            } => Self::Operation {
                 operator: *operator,
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
@@ -221,19 +247,40 @@ impl QueryCondition for ContainerCondition {
     type Feature = ContainerSizeFeature;
 
     fn as_feature(&self) -> Option<&ContainerSizeFeature> {
-        if let Self::Feature(f) = self { Some(f) } else { None }
+        if let Self::Feature(f) = self {
+            Some(f)
+        } else {
+            None
+        }
     }
     fn as_not(&self) -> Option<&Self> {
-        if let Self::Not(c) = self { Some(c) } else { None }
+        if let Self::Not(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
     fn as_operation(&self) -> Option<(Operator, &[Self])> {
-        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+        if let Self::Operation {
+            operator,
+            conditions,
+        } = self
+        {
+            Some((*operator, conditions))
+        } else {
+            None
+        }
     }
-    fn feature_to_css(f: &ContainerSizeFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn feature_to_css(
+        f: &ContainerSizeFeature,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Style(query) = self else { unreachable!() };
+        let Self::Style(query) = self else {
+            unreachable!()
+        };
         dest.write_str("style(")?;
         query.to_css(dest)?;
         dest.write_char(b')')
@@ -247,7 +294,10 @@ impl QueryCondition for ContainerCondition {
         ContainerCondition::Not(condition)
     }
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
-        ContainerCondition::Operation { operator, conditions }
+        ContainerCondition::Operation {
+            operator,
+            conditions,
+        }
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
         use crate::media_query::QueryConditionFlags;
@@ -279,7 +329,10 @@ impl ContainerCondition {
         match self {
             Self::Feature(f) => Self::Feature(super::dc::query_feature(f, bump)),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::Operation { operator, conditions } => Self::Operation {
+            Self::Operation {
+                operator,
+                conditions,
+            } => Self::Operation {
                 operator: *operator,
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },

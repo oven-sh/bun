@@ -26,79 +26,91 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
-use bun_event_loop::{task_tag, Task, TaskTag};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
+use bun_event_loop::{Task, TaskTag, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
 // where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
-use bun_io::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
+use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
 };
 
-use bun_jsc::event_loop::{EventLoop, JsTerminated};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
+use bun_jsc::event_loop::{EventLoop, JsTerminated};
 use bun_jsc::task::report_error_or_terminate;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
-use crate::api::archive::{BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
-    FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask, AsyncTask as ArchiveAsyncTask};
+use crate::api::archive::{
+    AsyncTask as ArchiveAsyncTask, BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
+    FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask,
+};
 
-use crate::shell::builtins::{cp::ShellCpTask, ls::ShellLsTask, mkdir::ShellMkdirTask,
-    mv::{ShellMvBatchedTask, ShellMvCheckTargetTask}, rm::ShellRmTask, touch::ShellTouchTask};
-use crate::shell::interpreter::ShellTask;
-use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::io_writer::{IOWriter as ShellIOWriter, Poll as ShellBufferedWriterPoll};
+use crate::shell::builtins::{
+    cp::ShellCpTask,
+    ls::ShellLsTask,
+    mkdir::ShellMkdirTask,
+    mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
+    rm::ShellRmTask,
+    touch::ShellTouchTask,
+};
 use crate::shell::dispatch_tasks::{
     AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
+use crate::shell::interpreter::ShellTask;
+use crate::shell::io_writer::{IOWriter as ShellIOWriter, Poll as ShellBufferedWriterPoll};
+use crate::shell::states::r#async::Async as ShellAsync;
 
-use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::s3::simple_request::S3HttpSimpleTask;
-use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
 use crate::webcore::blob::read_file::ReadFileTask;
 use crate::webcore::blob::write_file::WriteFileTask;
-use crate::webcore::file_sink::{FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll};
+use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::file_sink::{
+    FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll,
+};
+use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
-use crate::api::glob::AsyncGlobWalkTask;
-use crate::image::AsyncImageTask;
 use crate::api::JSTranspiler::AsyncTransformTask;
-use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-use crate::api::cron::CronJob;
-use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::bun_subprocess::Subprocess;
+use crate::api::bun_terminal_body::Poll as TerminalPoll;
+use crate::api::cron::CronJob;
+use crate::api::glob::AsyncGlobWalkTask;
+use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+use crate::image::AsyncImageTask;
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
+use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
-use bun_jsc::cpp_task::CppTask;
-use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
+use bun_jsc::cpp_task::CppTask;
 use bun_jsc::hot_reloader;
+use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
+use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
-use crate::bake::dev_server::DevServer;
 
 use crate::node::fs::async_ as fs_async;
-use crate::node::node_fs_watcher::FSWatchTask;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
-use crate::node::zlib::{native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd};
+use crate::node::node_fs_watcher::FSWatchTask;
 use crate::node::node_zlib_binding;
+use crate::node::zlib::{
+    native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
+};
 
 #[allow(unused_imports)]
-use crate::dns_jsc::{get_addr_info_request, GetAddrInfoRequest, Resolver as DNSResolver};
+use crate::dns_jsc::{GetAddrInfoRequest, Resolver as DNSResolver, get_addr_info_request};
 use crate::server::ServerAllConnectionsClosedTask;
 
 use crate::api::bun_process::Process;
@@ -112,8 +124,8 @@ use crate::socket::upgraded_duplex::UpgradedDuplex;
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-use bun_sql_jsc::postgres::PostgresSQLConnection;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
+use bun_sql_jsc::postgres::PostgresSQLConnection;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
@@ -166,7 +178,9 @@ pub fn run_task(
     }
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
-        ($ty:ty) => { task.ptr.cast::<$ty>() };
+        ($ty:ty) => {
+            task.ptr.cast::<$ty>()
+        };
     }
 
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
@@ -409,25 +423,25 @@ pub fn run_task(
         task_tag::NativeZlib => {
             // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
             unsafe {
-                node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(
-                    cast_ptr!(NativeZlib),
-                )
+                node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(cast_ptr!(
+                    NativeZlib
+                ))
             };
         }
         task_tag::NativeBrotli => {
             // SAFETY: see NativeZlib above.
             unsafe {
-                node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(
-                    cast_ptr!(NativeBrotli),
-                )
+                node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(cast_ptr!(
+                    NativeBrotli
+                ))
             };
         }
         task_tag::NativeZstd => {
             // SAFETY: see NativeZlib above.
             unsafe {
-                node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(
-                    cast_ptr!(NativeZstd),
-                )
+                node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(cast_ptr!(
+                    NativeZstd
+                ))
             };
         }
 
@@ -436,7 +450,8 @@ pub fn run_task(
             #[cfg(not(windows))]
             {
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
-                let t = unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
+                let t =
+                    unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
                 t.run_from_js_thread();
             }
             #[cfg(windows)]
@@ -518,7 +533,9 @@ pub fn run_task(
 fn run_task_cold(task: Task) {
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
-        ($ty:ty) => { task.ptr.cast::<$ty>() };
+        ($ty:ty) => {
+            task.ptr.cast::<$ty>()
+        };
     }
     /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
     /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
@@ -1099,7 +1116,12 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
             // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
-            let now_core = unsafe { bun_core::Timespec { sec: (*now).sec, nsec: (*now).nsec } };
+            let now_core = unsafe {
+                bun_core::Timespec {
+                    sec: (*now).sec,
+                    nsec: (*now).nsec,
+                }
+            };
             BunTest::bun_test_timeout_callback(strong, &now_core, VirtualMachine::get());
         }
         EventLoopTimerTag::CronJob => {
@@ -1118,7 +1140,10 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_js_timer_epoch(_tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
+pub unsafe fn __bun_js_timer_epoch(
+    _tag: EventLoopTimerTag,
+    t: *const EventLoopTimer,
+) -> Option<u32> {
     // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
     // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
     // (same address the caller loaded it from — folds under LTO).

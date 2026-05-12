@@ -9,12 +9,20 @@
 
 #[inline(always)]
 fn fetch32(b: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(b[offset..offset + 4].try_into().expect("infallible: size matches"))
+    u32::from_le_bytes(
+        b[offset..offset + 4]
+            .try_into()
+            .expect("infallible: size matches"),
+    )
 }
 
 #[inline(always)]
 fn fetch64(b: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(b[offset..offset + 8].try_into().expect("infallible: size matches"))
+    u64::from_le_bytes(
+        b[offset..offset + 8]
+            .try_into()
+            .expect("infallible: size matches"),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -58,7 +66,9 @@ impl CityHash32 {
         let mut c: u32 = 9;
         for &v in str {
             // Zig: @bitCast(@intCast(@bitCast(v) as i8) as i32) — i.e. sign-extend the byte.
-            b = b.wrapping_mul(Self::C1).wrapping_add((v as i8 as i32) as u32);
+            b = b
+                .wrapping_mul(Self::C1)
+                .wrapping_add((v as i8 as i32) as u32);
             c ^= b;
         }
         Self::fmix(Self::mur(b, Self::mur(len, c)))
@@ -86,7 +96,13 @@ impl CityHash32 {
         let e = fetch32(str, 0);
         let f = fetch32(str, str.len() - 4);
 
-        Self::fmix(Self::mur(f, Self::mur(e, Self::mur(d, Self::mur(c, Self::mur(b, Self::mur(a, len)))))))
+        Self::fmix(Self::mur(
+            f,
+            Self::mur(
+                e,
+                Self::mur(d, Self::mur(c, Self::mur(b, Self::mur(a, len)))),
+            ),
+        ))
     }
 
     pub fn hash(str: &[u8]) -> u32 {
@@ -104,11 +120,16 @@ impl CityHash32 {
         let mut g: u32 = Self::C1.wrapping_mul(len);
         let mut f: u32 = g;
 
-        let a0 = Self::rotr32(fetch32(str, str.len() - 4).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
-        let a1 = Self::rotr32(fetch32(str, str.len() - 8).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
-        let a2 = Self::rotr32(fetch32(str, str.len() - 16).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
-        let a3 = Self::rotr32(fetch32(str, str.len() - 12).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
-        let a4 = Self::rotr32(fetch32(str, str.len() - 20).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
+        let a0 = Self::rotr32(fetch32(str, str.len() - 4).wrapping_mul(Self::C1), 17)
+            .wrapping_mul(Self::C2);
+        let a1 = Self::rotr32(fetch32(str, str.len() - 8).wrapping_mul(Self::C1), 17)
+            .wrapping_mul(Self::C2);
+        let a2 = Self::rotr32(fetch32(str, str.len() - 16).wrapping_mul(Self::C1), 17)
+            .wrapping_mul(Self::C2);
+        let a3 = Self::rotr32(fetch32(str, str.len() - 12).wrapping_mul(Self::C1), 17)
+            .wrapping_mul(Self::C2);
+        let a4 = Self::rotr32(fetch32(str, str.len() - 20).wrapping_mul(Self::C1), 17)
+            .wrapping_mul(Self::C2);
 
         h ^= a0;
         h = Self::rotr32(h, 19);
@@ -129,10 +150,13 @@ impl CityHash32 {
         let mut iters = (str.len() - 1) / 20;
         let mut off: usize = 0;
         while iters != 0 {
-            let b0 = Self::rotr32(fetch32(str, off).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
+            let b0 =
+                Self::rotr32(fetch32(str, off).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
             let b1 = fetch32(str, off + 4);
-            let b2 = Self::rotr32(fetch32(str, off + 8).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
-            let b3 = Self::rotr32(fetch32(str, off + 12).wrapping_mul(Self::C1), 17).wrapping_mul(Self::C2);
+            let b2 = Self::rotr32(fetch32(str, off + 8).wrapping_mul(Self::C1), 17)
+                .wrapping_mul(Self::C2);
+            let b3 = Self::rotr32(fetch32(str, off + 12).wrapping_mul(Self::C1), 17)
+                .wrapping_mul(Self::C2);
             let b4 = fetch32(str, off + 16);
 
             h ^= b0;
@@ -234,7 +258,11 @@ impl CityHash64 {
         if len >= 4 {
             let mul = Self::K2.wrapping_add(len.wrapping_mul(2));
             let a = fetch32(str, 0) as u64;
-            return Self::hash_len16_mul(len.wrapping_add(a << 3), fetch32(str, str.len() - 4) as u64, mul);
+            return Self::hash_len16_mul(
+                len.wrapping_add(a << 3),
+                fetch32(str, str.len() - 4) as u64,
+                mul,
+            );
         }
         if len > 0 {
             let a = str[0];
@@ -242,7 +270,10 @@ impl CityHash64 {
             let c = str[str.len() - 1];
             let y: u32 = (a as u32).wrapping_add((b as u32) << 8);
             let z: u32 = (str.len() as u32).wrapping_add((c as u32) << 2);
-            return Self::shiftmix((y as u64).wrapping_mul(Self::K2) ^ (z as u64).wrapping_mul(Self::K0)).wrapping_mul(Self::K2);
+            return Self::shiftmix(
+                (y as u64).wrapping_mul(Self::K2) ^ (z as u64).wrapping_mul(Self::K0),
+            )
+            .wrapping_mul(Self::K2);
         }
         Self::K2
     }
@@ -256,8 +287,11 @@ impl CityHash64 {
         let d = fetch64(str, str.len() - 16).wrapping_mul(Self::K2);
 
         Self::hash_len16_mul(
-            Self::rotr64(a.wrapping_add(b), 43).wrapping_add(Self::rotr64(c, 30)).wrapping_add(d),
-            a.wrapping_add(Self::rotr64(b.wrapping_add(Self::K2), 18)).wrapping_add(c),
+            Self::rotr64(a.wrapping_add(b), 43)
+                .wrapping_add(Self::rotr64(c, 30))
+                .wrapping_add(d),
+            a.wrapping_add(Self::rotr64(b.wrapping_add(Self::K2), 18))
+                .wrapping_add(c),
             mul,
         )
     }
@@ -277,17 +311,37 @@ impl CityHash64 {
         let u = Self::rotr64(a.wrapping_add(g), 43)
             .wrapping_add(Self::rotr64(b, 30).wrapping_add(c).wrapping_mul(9));
         let v = (a.wrapping_add(g) ^ d).wrapping_add(f).wrapping_add(1);
-        let w = (u.wrapping_add(v).wrapping_mul(mul)).swap_bytes().wrapping_add(h);
+        let w = (u.wrapping_add(v).wrapping_mul(mul))
+            .swap_bytes()
+            .wrapping_add(h);
         let x = Self::rotr64(e.wrapping_add(f), 42).wrapping_add(c);
-        let y = (v.wrapping_add(w).wrapping_mul(mul)).swap_bytes().wrapping_add(g).wrapping_mul(mul);
+        let y = (v.wrapping_add(w).wrapping_mul(mul))
+            .swap_bytes()
+            .wrapping_add(g)
+            .wrapping_mul(mul);
         let z = e.wrapping_add(f).wrapping_add(c);
-        let a1 = (x.wrapping_add(z).wrapping_mul(mul).wrapping_add(y)).swap_bytes().wrapping_add(b);
-        let b1 = Self::shiftmix(z.wrapping_add(a1).wrapping_mul(mul).wrapping_add(d).wrapping_add(h)).wrapping_mul(mul);
+        let a1 = (x.wrapping_add(z).wrapping_mul(mul).wrapping_add(y))
+            .swap_bytes()
+            .wrapping_add(b);
+        let b1 = Self::shiftmix(
+            z.wrapping_add(a1)
+                .wrapping_mul(mul)
+                .wrapping_add(d)
+                .wrapping_add(h),
+        )
+        .wrapping_mul(mul);
         b1.wrapping_add(x)
     }
 
     #[inline(always)]
-    fn weak_hash_len32_with_seeds_helper(w: u64, x: u64, y: u64, z: u64, a: u64, b: u64) -> WeakPair {
+    fn weak_hash_len32_with_seeds_helper(
+        w: u64,
+        x: u64,
+        y: u64,
+        z: u64,
+        a: u64,
+        b: u64,
+    ) -> WeakPair {
         let mut a1 = a;
         let mut b1 = b;
         a1 = a1.wrapping_add(w);
@@ -296,7 +350,10 @@ impl CityHash64 {
         a1 = a1.wrapping_add(x);
         a1 = a1.wrapping_add(y);
         b1 = b1.wrapping_add(Self::rotr64(a1, 44));
-        WeakPair { first: a1.wrapping_add(z), second: b1.wrapping_add(c) }
+        WeakPair {
+            first: a1.wrapping_add(z),
+            second: b1.wrapping_add(c),
+        }
     }
 
     #[inline(always)]
@@ -325,22 +382,47 @@ impl CityHash64 {
 
         let mut x = fetch64(str, str.len() - 40);
         let mut y = fetch64(str, str.len() - 16).wrapping_add(fetch64(str, str.len() - 56));
-        let mut z = Self::hash_len16(fetch64(str, str.len() - 48).wrapping_add(len), fetch64(str, str.len() - 24));
+        let mut z = Self::hash_len16(
+            fetch64(str, str.len() - 48).wrapping_add(len),
+            fetch64(str, str.len() - 24),
+        );
         let mut v = Self::weak_hash_len32_with_seeds(str, str.len() - 64, len, z);
-        let mut w = Self::weak_hash_len32_with_seeds(str, str.len() - 32, y.wrapping_add(Self::K1), x);
+        let mut w =
+            Self::weak_hash_len32_with_seeds(str, str.len() - 32, y.wrapping_add(Self::K1), x);
 
         x = x.wrapping_mul(Self::K1).wrapping_add(fetch64(str, 0));
         len = (len - 1) & !63u64;
 
         let mut off: usize = 0;
         loop {
-            x = Self::rotr64(x.wrapping_add(y).wrapping_add(v.first).wrapping_add(fetch64(str, off + 8)), 37).wrapping_mul(Self::K1);
-            y = Self::rotr64(y.wrapping_add(v.second).wrapping_add(fetch64(str, off + 48)), 42).wrapping_mul(Self::K1);
+            x = Self::rotr64(
+                x.wrapping_add(y)
+                    .wrapping_add(v.first)
+                    .wrapping_add(fetch64(str, off + 8)),
+                37,
+            )
+            .wrapping_mul(Self::K1);
+            y = Self::rotr64(
+                y.wrapping_add(v.second)
+                    .wrapping_add(fetch64(str, off + 48)),
+                42,
+            )
+            .wrapping_mul(Self::K1);
             x ^= w.second;
             y = y.wrapping_add(v.first).wrapping_add(fetch64(str, off + 40));
             z = Self::rotr64(z.wrapping_add(w.first), 33).wrapping_mul(Self::K1);
-            v = Self::weak_hash_len32_with_seeds(str, off, v.second.wrapping_mul(Self::K1), x.wrapping_add(w.first));
-            w = Self::weak_hash_len32_with_seeds(str, off + 32, z.wrapping_add(w.second), y.wrapping_add(fetch64(str, off + 16)));
+            v = Self::weak_hash_len32_with_seeds(
+                str,
+                off,
+                v.second.wrapping_mul(Self::K1),
+                x.wrapping_add(w.first),
+            );
+            w = Self::weak_hash_len32_with_seeds(
+                str,
+                off + 32,
+                z.wrapping_add(w.second),
+                y.wrapping_add(fetch64(str, off + 16)),
+            );
             core::mem::swap(&mut z, &mut x);
 
             off += 64;
@@ -351,7 +433,9 @@ impl CityHash64 {
         }
 
         Self::hash_len16(
-            Self::hash_len16(v.first, w.first).wrapping_add(Self::shiftmix(y).wrapping_mul(Self::K1)).wrapping_add(z),
+            Self::hash_len16(v.first, w.first)
+                .wrapping_add(Self::shiftmix(y).wrapping_mul(Self::K1))
+                .wrapping_add(z),
             Self::hash_len16(v.second, w.second).wrapping_add(x),
         )
     }

@@ -3,13 +3,13 @@
 use core::mem::offset_of;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{fmt as bun_fmt, scoped_log, Output};
+use bun_core::{Output, fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 
 use super::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list};
-use super::{DevServer, FileKind, Magic, ASSET_PREFIX};
-use crate::server::static_route::InitFromBytesOptions;
+use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
 use crate::server::StaticRoute;
+use crate::server::static_route::InitFromBytesOptions;
 use crate::webcore::AnyBlob;
 
 /// `bun.GenericIndex(u30, Assets)`.
@@ -42,7 +42,9 @@ bun_core::impl_field_parent! { Assets => DevServer.assets; pub(super) fn owner; 
 impl Assets {
     pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
         debug_assert!(self.owner().magic == Magic::Valid);
-        self.path_map.get(path).map(|idx| self.files.keys()[idx.get_usize()])
+        self.path_map
+            .get(path)
+            .map(|idx| self.files.keys()[idx.get_usize()])
     }
 
     /// When an asset is overwritten, it receives a new URL to get around
@@ -86,7 +88,11 @@ impl Assets {
         let gop = self.path_map.get_or_put(abs_path)?;
         let path_index = gop.index;
         let found_existing = gop.found_existing;
-        let existing_entry = if found_existing { Some(*gop.value_ptr) } else { None };
+        let existing_entry = if found_existing {
+            Some(*gop.value_ptr)
+        } else {
+            None
+        };
 
         if !found_existing {
             // Locate a stable pointer for the file path.
@@ -98,7 +104,8 @@ impl Assets {
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
-            let _ = unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
+            let _ =
+                unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
@@ -113,7 +120,11 @@ impl Assets {
                 self.files.keys_mut()[entry_index.get_usize()] = content_hash;
                 self.files.values_mut()[entry_index.get_usize()] = StaticRoute::init_from_any_blob(
                     contents,
-                    InitFromBytesOptions { mime_type: Some(mime_type), server, ..Default::default() },
+                    InitFromBytesOptions {
+                        mime_type: Some(mime_type),
+                        server,
+                        ..Default::default()
+                    },
                 );
                 // Zig: `comptime assert(@TypeOf(slice.items(.hash)[0]) == void);`
                 // PORT NOTE: AutoArrayHashMap<u64, _> stores hashes as `void` (key IS the hash).
@@ -133,7 +144,11 @@ impl Assets {
         if !file_index_gop.found_existing {
             *file_index_gop.value_ptr = StaticRoute::init_from_any_blob(
                 contents,
-                InitFromBytesOptions { mime_type: Some(mime_type), server, ..Default::default() },
+                InitFromBytesOptions {
+                    mime_type: Some(mime_type),
+                    server,
+                    ..Default::default()
+                },
             );
             self.refs.push(1);
         } else {
@@ -167,14 +182,24 @@ impl Assets {
             self.refs[index] += ref_count;
         }
         debug_assert_eq!(self.files.count(), self.refs.len());
-        Ok(if found { None } else { Some(&mut self.files.values_mut()[index]) })
+        Ok(if found {
+            None
+        } else {
+            Some(&mut self.files.values_mut()[index])
+        })
     }
 
     pub fn unref_by_hash(&mut self, content_hash: u64, dec_count: u32) {
         let index = self.files.get_index(&content_hash).unwrap_or_else(|| {
-            Output::panic(format_args!("Asset double unref: {:x?}", content_hash.to_ne_bytes()))
+            Output::panic(format_args!(
+                "Asset double unref: {:x?}",
+                content_hash.to_ne_bytes()
+            ))
         });
-        self.unref_by_index(EntryIndex::init(u32::try_from(index).expect("int cast")), dec_count);
+        self.unref_by_index(
+            EntryIndex::init(u32::try_from(index).expect("int cast")),
+            dec_count,
+        );
     }
 
     pub fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {

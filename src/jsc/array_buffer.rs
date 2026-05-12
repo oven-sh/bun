@@ -2,11 +2,11 @@ use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 use crate as jsc;
-use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
-use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
 use crate::SysErrorJsc;
-use bun_sys::{self, Fd, FdExt};
+use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
+use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_alloc::mimalloc;
+use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
 
@@ -74,11 +74,32 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle;
     // `&mut *mut u8` is ABI-identical to a non-null `void**` out-param the
     // callee fills on success.
-    safe fn Bun__allocUint8ArrayForCopy(global: &JSGlobalObject, len: usize, out: &mut *mut u8) -> JSValue;
-    safe fn Bun__allocArrayBufferForCopy(global: &JSGlobalObject, len: usize, out: &mut *mut u8) -> JSValue;
-    fn Bun__createUint8ArrayForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize, buffer: bool) -> JSValue;
-    fn Bun__createArrayBufferForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize) -> JSValue;
-    fn JSArrayBuffer__fromDefaultAllocator(global: *const JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
+    safe fn Bun__allocUint8ArrayForCopy(
+        global: &JSGlobalObject,
+        len: usize,
+        out: &mut *mut u8,
+    ) -> JSValue;
+    safe fn Bun__allocArrayBufferForCopy(
+        global: &JSGlobalObject,
+        len: usize,
+        out: &mut *mut u8,
+    ) -> JSValue;
+    fn Bun__createUint8ArrayForCopy(
+        global: *const JSGlobalObject,
+        ptr: *const c_void,
+        len: usize,
+        buffer: bool,
+    ) -> JSValue;
+    fn Bun__createArrayBufferForCopy(
+        global: *const JSGlobalObject,
+        ptr: *const c_void,
+        len: usize,
+    ) -> JSValue;
+    fn JSArrayBuffer__fromDefaultAllocator(
+        global: *const JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+    ) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ptr`/`len`/`ctx` are opaque
     // round-trip pointers C++ stores into the new `ArrayBufferContents` and
@@ -132,7 +153,6 @@ impl ArrayBuffer {
             _ => None,
         }
     }
-
 }
 
 impl ArrayBuffer {
@@ -217,7 +237,8 @@ impl ArrayBuffer {
         // So we clone it when it's small.
         // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
         if (size as i64) < Self::MMAP_THRESHOLD as i64 {
-            let result = Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
+            let result =
+                Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
             fd.close();
             return Ok(result);
         }
@@ -229,14 +250,7 @@ impl ArrayBuffer {
         #[cfg(not(unix))]
         let (prot, map_flags) = (0i32, 0i32);
         let map_len = usize::try_from(size.max(0)).expect("int cast");
-        let result = bun_sys::mmap(
-            ptr::null_mut(),
-            map_len,
-            prot,
-            map_flags,
-            fd,
-            0,
-        );
+        let result = bun_sys::mmap(ptr::null_mut(), map_len, prot, map_flags, fd, 0);
         fd.close();
 
         match result {
@@ -273,7 +287,8 @@ impl ArrayBuffer {
             return std::io::Cursor::new(&mut [][..]);
         }
         // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
-        let slice = unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
+        let slice =
+            unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
 
@@ -333,7 +348,10 @@ impl ArrayBuffer {
         })
     }
 
-    pub fn alloc<const KIND: JSType>(global: &JSGlobalObject, len: u32) -> JsResult<(JSValue, &mut [u8])> {
+    pub fn alloc<const KIND: JSType>(
+        global: &JSGlobalObject,
+        len: u32,
+    ) -> JsResult<(JSValue, &mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
         let buf = match KIND {
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || {
@@ -359,7 +377,11 @@ impl ArrayBuffer {
         unsafe { JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len()) }
     }
 
-    pub fn from_default_allocator(global: &JSGlobalObject, typed_array_type: JSType, bytes: &mut [u8]) -> JSValue {
+    pub fn from_default_allocator(
+        global: &JSGlobalObject,
+        typed_array_type: JSType,
+        bytes: &mut [u8],
+    ) -> JSValue {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
@@ -623,7 +645,10 @@ pub struct ArrayBufferStrong {
 
 impl Default for ArrayBufferStrong {
     fn default() -> Self {
-        Self { array_buffer: ArrayBuffer::default(), held: crate::StrongOptional::empty() }
+        Self {
+            array_buffer: ArrayBuffer::default(),
+            held: crate::StrongOptional::empty(),
+        }
     }
 }
 
@@ -755,7 +780,9 @@ impl BinaryType {
     pub fn to_js(self, bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             BinaryType::Buffer => ArrayBuffer::create_buffer(global, bytes),
-            BinaryType::ArrayBuffer => ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes),
+            BinaryType::ArrayBuffer => {
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)
+            }
             BinaryType::Uint8Array => ArrayBuffer::create::<{ JSType::Uint8Array }>(global, bytes),
 
             // These aren't documented, but they are supported
@@ -859,7 +886,10 @@ pub struct MarkedArrayBuffer {
 
 impl Default for MarkedArrayBuffer {
     fn default() -> Self {
-        Self { buffer: ArrayBuffer::default(), owns_buffer: false }
+        Self {
+            buffer: ArrayBuffer::default(),
+            owns_buffer: false,
+        }
     }
 }
 
@@ -902,7 +932,10 @@ impl MarkedArrayBuffer {
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
         let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer { buffer: array_buffer, owns_buffer: false })
+        Some(MarkedArrayBuffer {
+            buffer: array_buffer,
+            owns_buffer: false,
+        })
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
@@ -1012,7 +1045,14 @@ pub fn make_typed_array_with_bytes_no_copy(
 ) -> JsResult<JSValue> {
     // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
     crate::host_fn::from_js_host_call(global, || {
-        Bun__makeTypedArrayWithBytesNoCopy(global, array_type, ptr, len, deallocator, deallocator_context)
+        Bun__makeTypedArrayWithBytesNoCopy(
+            global,
+            array_type,
+            ptr,
+            len,
+            deallocator,
+            deallocator_context,
+        )
     })
 }
 

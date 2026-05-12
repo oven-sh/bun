@@ -3,11 +3,11 @@
 //! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
 use crate::jsc::{
-    bun_string_jsc, js_error_to_mysql, IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _,
-    JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _,
+    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
+    MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
 };
-use bun_core::{OwnedString, String as BunString};
 use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::{OwnedString, String as BunString};
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
@@ -74,8 +74,9 @@ pub fn field_type_from_js(
 
         // It's something internal
         if !tag.is_indexable() {
-            return Err(global_object
-                .throw_invalid_arguments(format_args!("Cannot bind this type to query parameter")));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Cannot bind this type to query parameter"
+            )));
         }
 
         // We will JSON.stringify anything else.
@@ -238,15 +239,27 @@ impl Value {
                 // return a `Temporary` aliasing the same bytes. `to_data` callers
                 // must keep `self` alive until the returned `Data` is consumed.
                 let s = data.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
+                return Ok(if s.is_empty() {
+                    Data::Empty
+                } else {
+                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                });
             }
             Value::String(slice) => {
                 let s = slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
+                return Ok(if s.is_empty() {
+                    Data::Empty
+                } else {
+                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                });
             }
             Value::Bytes(b) => {
                 let s = b.slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
+                return Ok(if s.is_empty() {
+                    Data::Empty
+                } else {
+                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                });
             }
         }
 
@@ -422,10 +435,9 @@ impl Value {
 
                 if let Some(blob) = value.as_class_ref::<Blob>() {
                     if blob.needs_to_read_file() {
-                        return Err(js_error_to_mysql(
-                            global_object
-                                .throw_invalid_arguments(format_args!("File blobs are not supported")),
-                        ));
+                        return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                            format_args!("File blobs are not supported"),
+                        )));
                     }
                     // Blob byte stores are immutable from JS (no detach),
                     // but user JS running for a later parameter could drop
@@ -445,10 +457,9 @@ impl Value {
                     return Ok(Value::String(str.to_utf8()));
                 }
 
-                Err(js_error_to_mysql(
-                    global_object
-                        .throw_invalid_arguments(format_args!("Expected a string, blob, or array buffer")),
-                ))
+                Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                    format_args!("Expected a string, blob, or array buffer"),
+                )))
             }
 
             FieldType::MYSQL_TYPE_JSON => {
@@ -496,7 +507,9 @@ impl DateTime {
                 // Byte 3: [month]        (8-bit unsigned integer, 1-12)
                 // Byte 4: [day]          (8-bit unsigned integer, 1-31)
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                    year: u16::from_le_bytes(
+                        val[0..2].try_into().expect("infallible: size matches"),
+                    ),
                     month: val[2],
                     day: val[3],
                     ..Default::default()
@@ -511,7 +524,9 @@ impl DateTime {
                 // Byte 6: [minute]       (8-bit unsigned integer, 0-59)
                 // Byte 7: [second]       (8-bit unsigned integer, 0-59)
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                    year: u16::from_le_bytes(
+                        val[0..2].try_into().expect("infallible: size matches"),
+                    ),
                     month: val[2],
                     day: val[3],
                     hour: val[4],
@@ -530,13 +545,17 @@ impl DateTime {
                 // Byte 7:    [second]        (8-bit unsigned integer, 0-59)
                 // Byte 8-11: [microseconds]  (32-bit little-endian unsigned integer
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                    year: u16::from_le_bytes(
+                        val[0..2].try_into().expect("infallible: size matches"),
+                    ),
                     month: val[2],
                     day: val[3],
                     hour: val[4],
                     minute: val[5],
                     second: val[6],
-                    microsecond: u32::from_le_bytes(val[7..11].try_into().expect("infallible: size matches")),
+                    microsecond: u32::from_le_bytes(
+                        val[7..11].try_into().expect("infallible: size matches"),
+                    ),
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
@@ -585,7 +604,11 @@ impl DateTime {
             i32::from(self.hour),
             i32::from(self.minute),
             i32::from(self.second),
-            if self.microsecond > 0 { (self.microsecond / 1000) as i32 } else { 0 },
+            if self.microsecond > 0 {
+                (self.microsecond / 1000) as i32
+            } else {
+                0
+            },
         )
     }
 
@@ -620,7 +643,10 @@ impl DateTime {
         )
     }
 
-    pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> Result<DateTime, any_mysql_error::Error> {
+    pub fn from_js(
+        value: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> Result<DateTime, any_mysql_error::Error> {
         // TODO(port): narrow error set
         if value.is_date() {
             // this is actually ms not seconds
@@ -637,9 +663,9 @@ impl DateTime {
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
-        Err(js_error_to_mysql(
-            global_object.throw_invalid_arguments(format_args!("Expected a date or number")),
-        ))
+        Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+            format_args!("Expected a date or number"),
+        )))
     }
 }
 
@@ -654,7 +680,10 @@ pub struct Time {
 }
 
 impl Time {
-    pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> Result<Time, any_mysql_error::Error> {
+    pub fn from_js(
+        value: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> Result<Time, any_mysql_error::Error> {
         // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
@@ -667,9 +696,9 @@ impl Time {
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
-            Err(js_error_to_mysql(
-                global_object.throw_invalid_arguments(format_args!("Expected a date or number")),
-            ))
+            Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                format_args!("Expected a date or number"),
+            )))
         }
     }
 
@@ -717,7 +746,8 @@ impl Time {
         }
 
         if val.len() > 8 {
-            time.microseconds = u32::from_le_bytes(val[8..12].try_into().expect("infallible: size matches"));
+            time.microseconds =
+                u32::from_le_bytes(val[8..12].try_into().expect("infallible: size matches"));
         }
 
         time

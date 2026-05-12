@@ -147,9 +147,17 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     // return matched != negated;
     if negated {
         // FIXME(@DonIsaac): This looks backwards to me
-        if matched { MatchResult::NegateNoMatch } else { MatchResult::NegateMatch }
+        if matched {
+            MatchResult::NegateNoMatch
+        } else {
+            MatchResult::NegateMatch
+        }
     } else {
-        if matched { MatchResult::Match } else { MatchResult::NoMatch }
+        if matched {
+            MatchResult::Match
+        } else {
+            MatchResult::NoMatch
+        }
     }
 }
 
@@ -210,8 +218,7 @@ fn glob_match_impl(
                                 // if we start at index 6 (start of **/b pattern), we don't want to index into the pattern before it
                                 if (state.glob_index.saturating_sub(glob_start) < 3
                                     || glob[state.glob_index as usize - 3] == b'/')
-                                    && (!is_end_invalid
-                                        || glob[state.glob_index as usize] == b'/')
+                                    && (!is_end_invalid || glob[state.glob_index as usize] == b'/')
                                 {
                                     if is_end_invalid {
                                         state.glob_index += 1;
@@ -238,11 +245,10 @@ fn glob_match_impl(
                             if (state.path_index as usize) < path.len() {
                                 if !is_separator(path[state.path_index as usize]) {
                                     state.glob_index += 1;
-                                    state.path_index += u32::from(
-                                        strings::wtf8_byte_sequence_length(
+                                    state.path_index +=
+                                        u32::from(strings::wtf8_byte_sequence_length(
                                             path[state.path_index as usize],
-                                        ),
-                                    );
+                                        ));
                                     continue 'main_loop;
                                 }
                                 break 'fallthrough;

@@ -1,5 +1,5 @@
 use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
+use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
 
 use crate::StrictModeKind;
 use crate::base::Ref;
@@ -101,7 +101,10 @@ impl Scope {
         bun_collections::string_hash_map::hash(name)
     }
     pub fn get_member_with_hash(&self, name: &[u8], hash_value: u64) -> Option<Member> {
-        let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
+        let hashed = bun_collections::string_hash_map::Prehashed {
+            value: hash_value,
+            input: name,
+        };
         self.members.get_adapted(name, &hashed).copied()
     }
     pub fn get_or_put_member_with_hash(

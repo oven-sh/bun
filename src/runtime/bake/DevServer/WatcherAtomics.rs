@@ -166,10 +166,8 @@ impl WatcherAtomics {
         // There are files to be processed.
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
-        let ev_index: u8 = u8::try_from(unsafe {
-            ev.offset_from(self.events.as_ptr().cast_mut())
-        })
-        .unwrap();
+        let ev_index: u8 =
+            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
         match old_next {
             NextEvent::DONE => {
@@ -178,7 +176,8 @@ impl WatcherAtomics {
                 self.pending_event = None;
                 // Relaxed because the dev server is not running events right now.
                 // (could technically be made non-atomic)
-                self.next_event.store(NextEvent::WAITING.0, Ordering::Relaxed);
+                self.next_event
+                    .store(NextEvent::WAITING.0, Ordering::Relaxed);
                 #[cfg(debug_assertions)]
                 {
                     debug_assert!(

@@ -4,13 +4,13 @@
 
 use core::fmt;
 
-use bun_core::{Environment, feature_flags as FeatureFlags};
+use bun_ast as js_ast;
+use bun_ast::lexer_tables as tables;
 use bun_ast::{Loc, Log, Range, Source};
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
-use bun_ast as js_ast;
+use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
-use bun_ast::lexer_tables as tables;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use bun_ast::{Indentation, IndentationCharacter};
 // TODO(port): arena threading — js_parser is an AST crate; many `arena.*` calls below
@@ -27,10 +27,10 @@ pub type CodePoint = i32;
 type JavascriptString<'s> = &'s [u16];
 
 pub use tables::{
-    PropertyModifierKeyword, T, TypescriptStmtKeyword,
-    is_strict_mode_reserved_word, is_type_script_accessibility_modifier, keyword,
-    KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
-    TOKEN_TO_STRING as tokenToString,
+    KEYWORDS as Keywords, PropertyModifierKeyword,
+    STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords, T, TOKEN_TO_STRING as tokenToString,
+    TypescriptStmtKeyword, is_strict_mode_reserved_word, is_type_script_accessibility_modifier,
+    keyword,
 };
 
 #[inline]
@@ -52,16 +52,32 @@ pub struct JSXPragma {
 impl JSXPragma {
     // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
     pub fn jsx(&self) -> Option<js_ast::Span> {
-        if self._jsx.text.len() > 0 { Some(self._jsx) } else { None }
+        if self._jsx.text.len() > 0 {
+            Some(self._jsx)
+        } else {
+            None
+        }
     }
     pub fn jsx_frag(&self) -> Option<js_ast::Span> {
-        if self._jsx_frag.text.len() > 0 { Some(self._jsx_frag) } else { None }
+        if self._jsx_frag.text.len() > 0 {
+            Some(self._jsx_frag)
+        } else {
+            None
+        }
     }
     pub fn jsx_runtime(&self) -> Option<js_ast::Span> {
-        if self._jsx_runtime.text.len() > 0 { Some(self._jsx_runtime) } else { None }
+        if self._jsx_runtime.text.len() > 0 {
+            Some(self._jsx_runtime)
+        } else {
+            None
+        }
     }
     pub fn jsx_import_source(&self) -> Option<js_ast::Span> {
-        if self._jsx_import_source.text.len() > 0 { Some(self._jsx_import_source) } else { None }
+        if self._jsx_import_source.text.len() > 0 {
+            Some(self._jsx_import_source)
+        } else {
+            None
+        }
     }
 }
 
@@ -4016,7 +4032,6 @@ fn float64(num: i32) -> f64 {
     num as f64
 }
 
-
 // PERF: force-inline — sole call site is the identifier arm of `next()`, the
 // hottest token by frequency. Without `always`, LLVM kept this as a separate
 // symbol (call + ret per identifier) once `next()` was `#[inline(never)]`.
@@ -4131,9 +4146,7 @@ impl PragmaArg {
         }
 
         let mut i: usize = 0;
-        while !is_whitespace(cursor.c)
-            && (!allow_newline || !Self::is_newline(cursor.c))
-        {
+        while !is_whitespace(cursor.c) && (!allow_newline || !Self::is_newline(cursor.c)) {
             i += cursor.width as usize;
             if i >= text.len() {
                 break;
@@ -4186,10 +4199,7 @@ fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u3
     Some(off as u32)
 }
 
-fn index_of_interesting_character_in_string_literal(
-    text_: &[u8],
-    quote: u8,
-) -> Option<usize> {
+fn index_of_interesting_character_in_string_literal(text_: &[u8], quote: u8) -> Option<usize> {
     bun_highway::index_of_interesting_character_in_string_literal(text_, quote)
 }
 
@@ -4200,16 +4210,10 @@ struct InvalidEscapeSequenceFormatter {
 impl fmt::Display for InvalidEscapeSequenceFormatter {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.code_point {
-            0x22 => {
-                writer.write_str("Unexpected escaped double quote '\"'")
-            }
-            0x27 => {
-                writer.write_str("Unexpected escaped single quote \"'\"")
-            }
+            0x22 => writer.write_str("Unexpected escaped double quote '\"'"),
+            0x27 => writer.write_str("Unexpected escaped single quote \"'\""),
             0x60 => writer.write_str("Unexpected escaped backtick '`'"),
-            0x5C => {
-                writer.write_str("Unexpected escaped backslash '\\'")
-            }
+            0x5C => writer.write_str("Unexpected escaped backslash '\\'"),
             _ => writer.write_str("Unexpected escape sequence"),
         }
     }

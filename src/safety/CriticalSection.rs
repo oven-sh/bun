@@ -34,7 +34,9 @@ use bun_core::StoredTrace;
 // TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
 // `src/safety/thread_id.zig` port + Zig's `std.Thread`. Phase B: confirm the concrete integer
 // width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
-use super::thread_id::{ThreadId, AtomicThreadId, current as current_thread_id, INVALID as INVALID_THREAD_ID};
+use super::thread_id::{
+    AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,
+};
 
 // TODO(port): `bun.Environment.ci_assert` — map to the correct cfg gate in Phase B.
 #[cfg(feature = "ci_assert")]
@@ -80,7 +82,6 @@ struct State {
     #[cfg(debug_assertions)]
     owner_trace: StoredTrace,
     // When traces are disabled, this is a zero-sized type (Zig: `void`).
-
     /// Number of nested calls to `lockShared`/`lockExclusive` performed on the owner thread.
     /// Only accessed on the owner thread.
     owned_count: u32,
@@ -227,9 +228,9 @@ impl State {
                 // The Relaxed `fetch_sub` above is okay because we don't need to synchronize-with
                 // other threads (this type is not meant to provide its own synchronization).
                 0 => panic!("called `CriticalSection.end` too many times"),
-                Self::EXCLUSIVE => panic!(
-                    "count should not be `exclusive` if multiple threads hold the lock",
-                ),
+                Self::EXCLUSIVE => {
+                    panic!("count should not be `exclusive` if multiple threads hold the lock",)
+                }
                 _ => {}
             }
         }

@@ -2,20 +2,20 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_core::{self, err};
-use bun_jsc::{event_loop::EventLoop, JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SignalHandler;
-use crate::api::bun_spawn::stdio::Stdio;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
-use super::{js, Flags, StaticPipeWriter, StdioResult, Subprocess};
+use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
 pub enum Writable<'a> {
     // PORT NOTE: Zig uses intrusive-refcounted `*FileSink` (manual ref/deref).
@@ -84,7 +84,9 @@ impl<'a> Writable<'a> {
     /// and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn buffer_writer_mut<'b>(buffer: &'b RefPtr<StaticPipeWriter<'a>>) -> &'b mut StaticPipeWriter<'a> {
+    pub(in crate::api) fn buffer_writer_mut<'b>(
+        buffer: &'b RefPtr<StaticPipeWriter<'a>>,
+    ) -> &'b mut StaticPipeWriter<'a> {
         // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
         unsafe { &mut *buffer.as_ptr() }
     }
@@ -189,7 +191,9 @@ impl<'a> Writable<'a> {
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop).cast_mut().cast::<()>(),
+            std::ptr::from_ref::<EventLoop>(event_loop)
+                .cast_mut()
+                .cast::<()>(),
         );
 
         #[cfg(windows)]
@@ -229,7 +233,9 @@ impl<'a> Writable<'a> {
                             let assign_result = pipe.assign_to_stream(rs, global);
                             if let Some(err_val) = assign_result.to_error() {
                                 subprocess.weak_file_sink_stdin_ptr.set(None);
-                                subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
+                                subprocess.update_flags(|f| {
+                                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
+                                });
                                 Self::pipe_release(pipe_nn);
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
@@ -350,8 +356,7 @@ impl<'a> Writable<'a> {
                 // `Stdio` has a Drop impl (would `blob.detach()`), so we can't
                 // move the payload out by match — take ownership via
                 // ManuallyDrop + ptr::read to transfer without detaching.
-                let owned =
-                    core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
                 let blob = match &*owned {
                     // SAFETY: `owned` is ManuallyDrop and discarded after this
                     // read; the Blob payload is moved out exactly once.
@@ -377,9 +382,10 @@ impl<'a> Writable<'a> {
                 // take it out via ManuallyDrop (same pattern as the Blob arm)
                 // to keep the caller's `stdio[0]` drop from double-closing the
                 // fd that Writable now owns.
-                let owned =
-                    core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let Stdio::Memfd(fd) = &*owned else { unreachable!() };
+                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+                let Stdio::Memfd(fd) = &*owned else {
+                    unreachable!()
+                };
                 debug_assert!(*fd != Fd::INVALID);
                 Ok(Writable::Memfd(*fd))
             }
@@ -418,7 +424,10 @@ impl<'a> Writable<'a> {
                 // from `*subprocess` so the borrows are disjoint.
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
                 if subprocess.has_exited()
-                    && !subprocess.flags.get().contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
+                    && !subprocess
+                        .flags
+                        .get()
+                        .contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
                     // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
@@ -433,7 +442,11 @@ impl<'a> Writable<'a> {
                 } else {
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
-                    if !subprocess.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED) {
+                    if !subprocess
+                        .flags
+                        .get()
+                        .contains(Flags::DEREF_ON_STDIN_DESTROYED)
+                    {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.

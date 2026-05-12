@@ -1,8 +1,10 @@
 use core::mem::size_of;
 
-use crate::bake::dev_server::{deferred_request, packed_map, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents};
-use bun_collections::ArrayHashMap;
 use crate::api::server::html_bundle::HTMLBundleRoute;
+use crate::bake::dev_server::{
+    DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
+};
+use bun_collections::ArrayHashMap;
 
 #[derive(Clone, Copy, Default)]
 pub struct MemoryCost {
@@ -148,8 +150,8 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
     // .html_router
     // std does not provide a way to measure exact allocation size of HashMapUnmanaged
-    other_bytes += dev.html_router.map.capacity()
-        * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
+    other_bytes +=
+        dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
     // .bundling_failures
     // PORT NOTE: Zig keys the set by `SerializedFailure` directly; the Rust port

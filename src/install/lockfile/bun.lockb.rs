@@ -9,22 +9,20 @@ use bun_io::Write as _;
 // PORT NOTE: `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
+use super::PatchedDep;
 use super::{
-    buffers, package, package_index as PackageIndex, FormatVersion, Lockfile, Scratch, Stream,
-    StringPool,
+    FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
+    package_index as PackageIndex,
 };
+use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use crate::config_version::ConfigVersion;
 use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
-use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
-use super::PatchedDep;
-use bun_install::{
-    PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
-};
 use bun_ast::Log;
-use bun_semver::{self as semver, String as SemverString};
 use bun_core::strings;
+use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
+use bun_semver::{self as semver, String as SemverString};
 
 // TODO(port): z_allocator is a zeroing allocator (bun.z_allocator). In Rust,
 // the equivalent is a wrapper that zeroes allocations. Phase B: provide
@@ -169,32 +167,31 @@ pub fn save(
         for res in this.packages.items_resolution() {
             match res.tag {
                 ResolutionTag::Folder => {
-                    debug_assert!(strings::index_of_char(
-                        this.str(res.folder()),
-                        bun_paths::SEP_WINDOWS,
-                    )
-                    .is_none());
+                    debug_assert!(
+                        strings::index_of_char(this.str(res.folder()), bun_paths::SEP_WINDOWS,)
+                            .is_none()
+                    );
                 }
                 ResolutionTag::Symlink => {
-                    debug_assert!(strings::index_of_char(
-                        this.str(res.symlink()),
-                        bun_paths::SEP_WINDOWS,
-                    )
-                    .is_none());
+                    debug_assert!(
+                        strings::index_of_char(this.str(res.symlink()), bun_paths::SEP_WINDOWS,)
+                            .is_none()
+                    );
                 }
                 ResolutionTag::LocalTarball => {
-                    debug_assert!(strings::index_of_char(
-                        this.str(res.local_tarball()),
-                        bun_paths::SEP_WINDOWS,
-                    )
-                    .is_none());
+                    debug_assert!(
+                        strings::index_of_char(
+                            this.str(res.local_tarball()),
+                            bun_paths::SEP_WINDOWS,
+                        )
+                        .is_none()
+                    );
                 }
                 ResolutionTag::Workspace => {
-                    debug_assert!(strings::index_of_char(
-                        this.str(res.workspace()),
-                        bun_paths::SEP_WINDOWS,
-                    )
-                    .is_none());
+                    debug_assert!(
+                        strings::index_of_char(this.str(res.workspace()), bun_paths::SEP_WINDOWS,)
+                            .is_none()
+                    );
                 }
                 _ => {}
             }
@@ -221,10 +218,18 @@ pub fn save(
         // We need to track the "version" field in "package.json" of workspace member packages
         // We do not necessarily have that in the Resolution struct. So we store it here.
         write_array::<PackageNameHash>(&mut stream, this.workspace_versions.keys(), PREFIX_U64)?;
-        write_array::<semver::Version>(&mut stream, this.workspace_versions.values(), PREFIX_SEMVER_VERSION)?;
+        write_array::<semver::Version>(
+            &mut stream,
+            this.workspace_versions.values(),
+            PREFIX_SEMVER_VERSION,
+        )?;
 
         write_array::<PackageNameHash>(&mut stream, this.workspace_paths.keys(), PREFIX_U64)?;
-        write_array::<SemverString>(&mut stream, this.workspace_paths.values(), PREFIX_SEMVER_STRING)?;
+        write_array::<SemverString>(
+            &mut stream,
+            this.workspace_paths.values(),
+            PREFIX_SEMVER_STRING,
+        )?;
     }
 
     if let Some(trusted_dependencies) = &this.trusted_dependencies {
@@ -258,15 +263,27 @@ pub fn save(
 
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
-        write_array::<PackageNameAndVersionHash>(&mut stream, this.patched_dependencies.keys(), PREFIX_U64)?;
+        write_array::<PackageNameAndVersionHash>(
+            &mut stream,
+            this.patched_dependencies.keys(),
+            PREFIX_U64,
+        )?;
 
-        write_array::<PatchedDep>(&mut stream, this.patched_dependencies.values(), PREFIX_PATCHED_DEP)?;
+        write_array::<PatchedDep>(
+            &mut stream,
+            this.patched_dependencies.values(),
+            PREFIX_PATCHED_DEP,
+        )?;
     }
 
     if this.catalogs.has_any() {
         stream.write_all(&HAS_CATALOGS_TAG.to_ne_bytes())?;
 
-        write_array::<SemverString>(&mut stream, this.catalogs.default.keys(), PREFIX_SEMVER_STRING)?;
+        write_array::<SemverString>(
+            &mut stream,
+            this.catalogs.default.keys(),
+            PREFIX_SEMVER_STRING,
+        )?;
 
         // PERF(port): Zig uses z_allocator + initCapacity then sets items.len directly.
         let mut external_deps_buf: Vec<dependency::External> =
@@ -278,7 +295,11 @@ pub fn save(
         write_array::<dependency::External>(&mut stream, &external_deps_buf, PREFIX_DEP_EXTERNAL)?;
         external_deps_buf.clear();
 
-        write_array::<SemverString>(&mut stream, this.catalogs.groups.keys(), PREFIX_SEMVER_STRING)?;
+        write_array::<SemverString>(
+            &mut stream,
+            this.catalogs.groups.keys(),
+            PREFIX_SEMVER_STRING,
+        )?;
 
         for catalog_deps in this.catalogs.groups.values() {
             write_array::<SemverString>(&mut stream, catalog_deps.keys(), PREFIX_SEMVER_STRING)?;
@@ -290,7 +311,11 @@ pub fn save(
                 external_deps_buf.push(dependency::to_external(src));
             }
 
-            write_array::<dependency::External>(&mut stream, &external_deps_buf, PREFIX_DEP_EXTERNAL)?;
+            write_array::<dependency::External>(
+                &mut stream,
+                &external_deps_buf,
+                PREFIX_DEP_EXTERNAL,
+            )?;
             external_deps_buf.clear();
         }
     }
@@ -367,7 +392,9 @@ pub fn load(
 
     lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
     if stream.read_int_le::<u64>()? != 0 {
-        return Err(bun_core::err!("Lockfile is malformed (expected 0 at the end)"));
+        return Err(bun_core::err!(
+            "Lockfile is malformed (expected 0 at the end)"
+        ));
     }
 
     let has_workspace_name_hashes = false;
@@ -430,10 +457,8 @@ pub fn load(
                 }
 
                 {
-                    let workspace_paths_hashes: Vec<PackageNameHash> =
-                        buffers::read_array(stream)?;
-                    let workspace_paths_strings: Vec<SemverString> =
-                        buffers::read_array(stream)?;
+                    let workspace_paths_hashes: Vec<PackageNameHash> = buffers::read_array(stream)?;
+                    let workspace_paths_strings: Vec<SemverString> = buffers::read_array(stream)?;
 
                     lockfile
                         .workspace_paths
@@ -512,9 +537,14 @@ pub fn load(
                 // `lockfile.buffers.string_bytes` while we also need
                 // `&mut lockfile.overrides`. Split the disjoint fields up front so
                 // borrowck sees sibling borrows (no raw-ptr provenance laundering).
-                let Lockfile { buffers, overrides, .. } = &mut *lockfile;
+                let Lockfile {
+                    buffers, overrides, ..
+                } = &mut *lockfile;
                 let string_bytes: &[u8] = buffers.string_bytes.as_slice();
-                debug_assert_eq!(overrides_name_hashes.len(), override_versions_external.len());
+                debug_assert_eq!(
+                    overrides_name_hashes.len(),
+                    override_versions_external.len()
+                );
                 for (name, value) in overrides_name_hashes
                     .iter()
                     .zip(override_versions_external.iter())
@@ -525,9 +555,10 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     // PERF(port): was assume_capacity
-                    overrides
-                        .map
-                        .put_assume_capacity(*name, dependency::to_dependency(*value, &mut context));
+                    overrides.map.put_assume_capacity(
+                        *name,
+                        dependency::to_dependency(*value, &mut context),
+                    );
                 }
             } else {
                 stream.pos -= 8;
@@ -585,7 +616,9 @@ pub fn load(
                 // fields up front so borrowck sees sibling borrows (no raw-ptr
                 // provenance laundering). `string_bytes` is not reallocated for
                 // the remainder of this block.
-                let Lockfile { buffers, catalogs, .. } = &mut *lockfile;
+                let Lockfile {
+                    buffers, catalogs, ..
+                } = &mut *lockfile;
                 let string_bytes: &[u8] = buffers.string_bytes.as_slice();
 
                 catalogs.default.ensure_total_capacity(default_deps.len())?;

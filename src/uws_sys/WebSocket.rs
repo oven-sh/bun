@@ -2,9 +2,9 @@ use core::ffi::{c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate as uws;
+use crate::app::uws_app_t;
 use crate::thunk;
 use crate::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_res};
-use crate::app::uws_app_t;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NewWebSocket(comptime ssl_flag) type → opaque handle, monomorphized on SSL
@@ -50,7 +50,15 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn send(&mut self, message: &[u8], opcode: Opcode) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_send(SSL_FLAG, self.raw(), message.as_ptr(), message.len(), opcode) }
+        unsafe {
+            c::uws_ws_send(
+                SSL_FLAG,
+                self.raw(),
+                message.as_ptr(),
+                message.len(),
+                opcode,
+            )
+        }
     }
 
     pub fn send_with_options(
@@ -294,7 +302,17 @@ impl AnyWebSocket {
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_send_with_options(ssl, ws, message.as_ptr(), message.len(), opcode, compress, fin) }
+        unsafe {
+            c::uws_ws_send_with_options(
+                ssl,
+                ws,
+                message.as_ptr(),
+                message.len(),
+                opcode,
+                compress,
+                fin,
+            )
+        }
     }
 
     pub fn send_last_fragment(self, message: &[u8], compress: bool) -> SendStatus {
@@ -358,7 +376,14 @@ impl AnyWebSocket {
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
             c::uws_ws_publish_with_options(
-                ssl, ws, topic.as_ptr(), topic.len(), message.as_ptr(), message.len(), opcode, compress,
+                ssl,
+                ws,
+                topic.as_ptr(),
+                topic.len(),
+                message.as_ptr(),
+                message.len(),
+                opcode,
+                compress,
             )
         }
     }
@@ -379,12 +404,18 @@ impl AnyWebSocket {
         if ssl {
             uws::NewApp::<true>::publish_with_options(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
-                topic, message, opcode, compress,
+                topic,
+                message,
+                opcode,
+                compress,
             )
         } else {
             uws::NewApp::<false>::publish_with_options(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
-                topic, message, opcode, compress,
+                topic,
+                message,
+                opcode,
+                compress,
             )
         }
     }
@@ -415,7 +446,13 @@ pub type uws_websocket_message_handler =
 pub type uws_websocket_close_handler =
     Option<unsafe extern "C" fn(*mut RawWebSocket, i32, *const u8, usize)>;
 pub type uws_websocket_upgrade_handler = Option<
-    unsafe extern "C" fn(*mut c_void, *mut uws_res, *mut Request, *mut WebSocketUpgradeContext, usize),
+    unsafe extern "C" fn(
+        *mut c_void,
+        *mut uws_res,
+        *mut Request,
+        *mut WebSocketUpgradeContext,
+        usize,
+    ),
 >;
 pub type uws_websocket_ping_pong_handler =
     Option<unsafe extern "C" fn(*mut RawWebSocket, *const u8, usize)>;
@@ -536,7 +573,11 @@ where
     #[inline(always)]
     fn make_ws(raw_ws: *mut RawWebSocket) -> AnyWebSocket {
         // Zig: @unionInit(AnyWebSocket, if (ssl) "ssl" else "tcp", @ptrCast(raw_ws))
-        if SSL { AnyWebSocket::Ssl(raw_ws) } else { AnyWebSocket::Tcp(raw_ws) }
+        if SSL {
+            AnyWebSocket::Ssl(raw_ws)
+        } else {
+            AnyWebSocket::Tcp(raw_ws)
+        }
     }
 
     // The `on_*` trampolines below are stored as fn-pointer values in
@@ -654,10 +695,26 @@ where
             max_lifetime: behavior.max_lifetime,
             upgrade: Some(Self::on_upgrade),
             open: Some(Self::on_open),
-            message: if T::HAS_ON_MESSAGE { Some(Self::on_message) } else { None },
-            drain: if T::HAS_ON_DRAIN { Some(Self::on_drain) } else { None },
-            ping: if T::HAS_ON_PING { Some(Self::on_ping) } else { None },
-            pong: if T::HAS_ON_PONG { Some(Self::on_pong) } else { None },
+            message: if T::HAS_ON_MESSAGE {
+                Some(Self::on_message)
+            } else {
+                None
+            },
+            drain: if T::HAS_ON_DRAIN {
+                Some(Self::on_drain)
+            } else {
+                None
+            },
+            ping: if T::HAS_ON_PING {
+                Some(Self::on_ping)
+            } else {
+                None
+            },
+            pong: if T::HAS_ON_PONG {
+                Some(Self::on_pong)
+            } else {
+                None
+            },
             close: Some(Self::on_close),
         }
     }

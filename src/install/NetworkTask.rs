@@ -4,16 +4,16 @@ use core::sync::atomic::Ordering;
 
 use bstr::{BStr, ByteSlice};
 
+use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
 use bun_core::{self, fmt::quote};
+use bun_core::{MutableString, StringBuilder, strings};
 use bun_http::{
-    self as http, async_http::Options as AsyncHTTPOptions, AsyncHTTP, HeaderBuilder,
-    HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
+    self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
+    HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
-use bun_core::{strings, MutableString, StringBuilder};
 use bun_threading::thread_pool::Batch;
 use bun_url::URL;
-use crate::bun_fs::{FilenameStore, FileSystem};
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
@@ -180,7 +180,11 @@ impl NetworkTask {
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
-    pub fn notify(this: *mut NetworkTask, async_http: *mut AsyncHTTP<'static>, mut result: HTTPClientResult<'_>) {
+    pub fn notify(
+        this: *mut NetworkTask,
+        async_http: *mut AsyncHTTP<'static>,
+        mut result: HTTPClientResult<'_>,
+    ) {
         // SAFETY: `this` is the `&mut NetworkTask` that was erased into the
         // callback ctx in `get_completion_callback`; the HTTP thread is the
         // sole writer for the duration of this call.
@@ -890,7 +894,8 @@ impl NetworkTask {
             // SAFETY: `package_manager` is the live owner of this task; write
             // provenance is required for `for_manifest`/`for_tarball`'s
             // `assume_mut`, so callers pass `*mut` (not `*const`).
-            addr_of_mut!((*slot).package_manager).write(bun_ptr::ParentRef::from_raw_mut(package_manager));
+            addr_of_mut!((*slot).package_manager)
+                .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
             // Struct-default fields (Zig: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());

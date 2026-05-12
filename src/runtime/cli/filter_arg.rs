@@ -1,11 +1,11 @@
 use core::mem::MaybeUninit;
 
+use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
+use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_parsers::json;
-use bun_ast::{self, ExprData, Log};
-use bun_paths::{self, platform, resolve_path, PathBuffer};
-use bun_core::{strings, ZStr};
+use bun_paths::{self, PathBuffer, platform, resolve_path};
 use bun_sys;
 
 const SKIP_LIST: &[&[u8]] = &[
@@ -277,7 +277,10 @@ pub struct PackageFilterIterator {
 }
 
 impl PackageFilterIterator {
-    pub fn init(patterns: &[Box<[u8]>], root_dir: &[u8]) -> Result<PackageFilterIterator, bun_core::Error> {
+    pub fn init(
+        patterns: &[Box<[u8]>],
+        root_dir: &[u8],
+    ) -> Result<PackageFilterIterator, bun_core::Error> {
         // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
         Ok(PackageFilterIterator {
             // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.

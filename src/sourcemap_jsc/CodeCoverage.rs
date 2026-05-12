@@ -2,15 +2,15 @@ use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
-use bun_collections::bit_set::DynamicBitSet;
-use bun_collections::VecExt;
-use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
 use bun_ast::Loc;
+use bun_collections::VecExt;
+use bun_collections::bit_set::DynamicBitSet;
+use bun_core::{self, ZigStringSlice, strings};
+use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
-    self as sourcemap, internal_source_map, line_offset_table, LineOffsetTable,
-    LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
+    self as sourcemap, LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
+    internal_source_map, line_offset_table,
 };
-use bun_core::{self, strings, ZigStringSlice};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -89,7 +89,10 @@ impl Report {
 
         let mut result: Option<Report> = None;
 
-        let mut generator = Generator { result: &mut result, byte_range_mapping };
+        let mut generator = Generator {
+            result: &mut result,
+            byte_range_mapping,
+        };
 
         // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
         // callback are kept alive for the duration of the FFI call;
@@ -318,7 +321,11 @@ pub mod lcov {
         write!(writer, "FNF:{}\n", report.functions.len())?;
 
         // FNH: functions hit
-        write!(writer, "FNH:{}\n", report.functions_which_have_executed.count())?;
+        write!(
+            writer,
+            "FNH:{}\n",
+            report.functions_which_have_executed.count()
+        )?;
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
@@ -417,7 +424,12 @@ pub struct BasicBlockRange {
 
 impl Default for BasicBlockRange {
     fn default() -> Self {
-        Self { start_offset: 0, end_offset: 0, has_executed: false, execution_count: 0 }
+        Self {
+            start_offset: 0,
+            end_offset: 0,
+            has_executed: false,
+            execution_count: 0,
+        }
     }
 }
 
@@ -528,8 +540,10 @@ impl ByteRangeMapping {
                     continue; // does not map to anything
                 }
 
-                let min: usize = usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize = usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
+                let min: usize =
+                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
+                let max: usize =
+                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
@@ -538,7 +552,9 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        Loc { start: i32::try_from(byte_offset).expect("int cast") },
+                        Loc {
+                            start: i32::try_from(byte_offset).expect("int cast"),
+                        },
                     ) else {
                         continue;
                     };
@@ -563,7 +579,10 @@ impl ByteRangeMapping {
                         stmts_which_have_executed.set(i);
                     }
 
-                    stmts.push(Block { start_line: min_line, end_line: max_line });
+                    stmts.push(Block {
+                        start_line: min_line,
+                        end_line: max_line,
+                    });
                 }
             }
 
@@ -572,15 +591,19 @@ impl ByteRangeMapping {
                     continue; // does not map to anything
                 }
 
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset)).expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset)).expect("int cast");
+                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
+                    .expect("int cast");
+                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
+                    .expect("int cast");
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        Loc { start: i32::try_from(byte_offset).expect("int cast") },
+                        Loc {
+                            start: i32::try_from(byte_offset).expect("int cast"),
+                        },
                     ) else {
                         continue;
                     };
@@ -607,7 +630,10 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block { start_line: min_line, end_line: max_line });
+                functions.push(Block {
+                    start_line: min_line,
+                    end_line: max_line,
+                });
 
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
@@ -627,8 +653,10 @@ impl ByteRangeMapping {
                     continue; // does not map to anything
                 }
 
-                let min: usize = usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize = usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
+                let min: usize =
+                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
+                let max: usize =
+                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
                 let has_executed = block.has_executed || block.execution_count > 0;
@@ -636,7 +664,9 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        Loc { start: i32::try_from(byte_offset).expect("int cast") },
+                        Loc {
+                            start: i32::try_from(byte_offset).expect("int cast"),
+                        },
                     ) else {
                         continue;
                     };
@@ -644,26 +674,35 @@ impl ByteRangeMapping {
                     if (line_start_byte_offset as usize) >= byte_offset {
                         continue;
                     }
-                    let column_position = byte_offset.saturating_sub(line_start_byte_offset as usize);
+                    let column_position =
+                        byte_offset.saturating_sub(line_start_byte_offset as usize);
 
-                    let found: Option<bun_sourcemap::Mapping> =
-                        if let Some(c) = cur_.as_mut() {
-                            c.move_to(
-                                Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast")),
-                                Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast")),
-                            )
-                        } else {
-                            parsed_mapping.find_mapping(
-                                Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast")),
-                                Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast")),
-                            )
-                        };
+                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
+                        c.move_to(
+                            Ordinal::from_zero_based(
+                                i32::try_from(new_line_index).expect("int cast"),
+                            ),
+                            Ordinal::from_zero_based(
+                                i32::try_from(column_position).expect("int cast"),
+                            ),
+                        )
+                    } else {
+                        parsed_mapping.find_mapping(
+                            Ordinal::from_zero_based(
+                                i32::try_from(new_line_index).expect("int cast"),
+                            ),
+                            Ordinal::from_zero_based(
+                                i32::try_from(column_position).expect("int cast"),
+                            ),
+                        )
+                    };
                     if let Some(point) = found.as_ref() {
                         if point.original.lines.zero_based() < 0 {
                             continue;
                         }
 
-                        let line: u32 = u32::try_from(point.original.lines.zero_based()).expect("int cast");
+                        let line: u32 =
+                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
 
                         executable_lines.set(line as usize);
                         if has_executed {
@@ -677,7 +716,10 @@ impl ByteRangeMapping {
                 }
 
                 if min_line != u32::MAX {
-                    stmts.push(Block { start_line: min_line, end_line: max_line });
+                    stmts.push(Block {
+                        start_line: min_line,
+                        end_line: max_line,
+                    });
 
                     if has_executed {
                         stmts_which_have_executed.set(i);
@@ -690,15 +732,19 @@ impl ByteRangeMapping {
                     continue; // does not map to anything
                 }
 
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset)).expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset)).expect("int cast");
+                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
+                    .expect("int cast");
+                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
+                    .expect("int cast");
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        Loc { start: i32::try_from(byte_offset).expect("int cast") },
+                        Loc {
+                            start: i32::try_from(byte_offset).expect("int cast"),
+                        },
                     ) else {
                         continue;
                     };
@@ -707,26 +753,35 @@ impl ByteRangeMapping {
                         continue;
                     }
 
-                    let column_position = byte_offset.saturating_sub(line_start_byte_offset as usize);
+                    let column_position =
+                        byte_offset.saturating_sub(line_start_byte_offset as usize);
 
-                    let found: Option<bun_sourcemap::Mapping> =
-                        if let Some(c) = cur_.as_mut() {
-                            c.move_to(
-                                Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast")),
-                                Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast")),
-                            )
-                        } else {
-                            parsed_mapping.find_mapping(
-                                Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast")),
-                                Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast")),
-                            )
-                        };
+                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
+                        c.move_to(
+                            Ordinal::from_zero_based(
+                                i32::try_from(new_line_index).expect("int cast"),
+                            ),
+                            Ordinal::from_zero_based(
+                                i32::try_from(column_position).expect("int cast"),
+                            ),
+                        )
+                    } else {
+                        parsed_mapping.find_mapping(
+                            Ordinal::from_zero_based(
+                                i32::try_from(new_line_index).expect("int cast"),
+                            ),
+                            Ordinal::from_zero_based(
+                                i32::try_from(column_position).expect("int cast"),
+                            ),
+                        )
+                    };
                     if let Some(point) = found {
                         if point.original.lines.zero_based() < 0 {
                             continue;
                         }
 
-                        let line: u32 = u32::try_from(point.original.lines.zero_based()).expect("int cast");
+                        let line: u32 =
+                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
                         min_line = min_line.min(line);
                         max_line = max_line.max(line);
                     }
@@ -750,7 +805,10 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block { start_line: min_line, end_line: max_line });
+                functions.push(Block {
+                    start_line: min_line,
+                    end_line: max_line,
+                });
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
                 }
@@ -772,7 +830,11 @@ impl ByteRangeMapping {
         })
     }
 
-    pub fn compute(source_contents: &[u8], source_id: i32, source_url: ZigStringSlice) -> ByteRangeMapping {
+    pub fn compute(
+        source_contents: &[u8],
+        source_id: i32,
+        source_url: ZigStringSlice,
+    ) -> ByteRangeMapping {
         ByteRangeMapping {
             // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
@@ -815,7 +877,9 @@ pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__find(path: bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
+pub extern "C" fn ByteRangeMapping__find(
+    path: bun_core::String,
+) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;

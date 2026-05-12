@@ -326,12 +326,17 @@ impl ZStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        unsafe { &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr) }
+        unsafe {
+            &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
+        }
     }
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
-        unsafe { &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len)) as *mut ZStr) }
+        unsafe {
+            &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
+                as *mut ZStr)
+        }
     }
     /// Wrap a `&'static [u8]` literal that already includes the trailing
     /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
@@ -365,7 +370,11 @@ impl ZStr {
     #[inline]
     pub fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
         debug_assert!(!buf.is_empty(), "ZStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(buf[buf.len() - 1], 0, "ZStr::from_slice_with_nul: missing trailing NUL");
+        debug_assert_eq!(
+            buf[buf.len() - 1],
+            0,
+            "ZStr::from_slice_with_nul: missing trailing NUL"
+        );
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
@@ -378,10 +387,22 @@ impl ZStr {
         // SAFETY: see `from_buf`.
         unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
     }
-    #[inline] pub const fn as_bytes(&self) -> &[u8] { &self.0 }
-    #[inline] pub const fn len(&self) -> usize { self.0.len() }
-    #[inline] pub const fn is_empty(&self) -> bool { self.0.is_empty() }
-    #[inline] pub const fn as_ptr(&self) -> *const core::ffi::c_char { self.0.as_ptr().cast() }
+    #[inline]
+    pub const fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    #[inline]
+    pub const fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr().cast()
+    }
     /// Includes the trailing NUL.
     #[inline]
     pub fn as_bytes_with_nul(&self) -> &[u8] {
@@ -455,7 +476,9 @@ pub struct ZBox(Box<[u8]>); // invariant: last byte == 0
 impl Default for ZBox {
     /// Zig: `[:0]const u8 = ""` field default — an empty NUL-terminated string.
     #[inline]
-    fn default() -> Self { ZBox(Box::new([0u8; 1])) }
+    fn default() -> Self {
+        ZBox(Box::new([0u8; 1]))
+    }
 }
 impl ZBox {
     /// `v` must end with `0`.
@@ -483,29 +506,56 @@ impl ZBox {
         v.push(0);
         ZBox(v.into_boxed_slice())
     }
-    #[inline] pub fn len(&self) -> usize { self.0.len() - 1 }
-    #[inline] pub fn is_empty(&self) -> bool { self.len() == 0 }
-    #[inline] pub fn as_bytes(&self) -> &[u8] { &self.0[..self.len()] }
-    #[inline] pub fn as_bytes_with_nul(&self) -> &[u8] { &self.0 }
-    #[inline] pub fn as_ptr(&self) -> *const core::ffi::c_char { self.0.as_ptr().cast() }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len() - 1
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0[..self.len()]
+    }
+    #[inline]
+    pub fn as_bytes_with_nul(&self) -> &[u8] {
+        &self.0
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr().cast()
+    }
     #[inline]
     pub fn as_zstr(&self) -> &ZStr {
         // SAFETY: invariant — `self.0[len] == 0`.
         unsafe { ZStr::from_raw(self.0.as_ptr(), self.len()) }
     }
-    #[inline] pub fn into_vec_with_nul(self) -> Vec<u8> { self.0.into_vec() }
+    #[inline]
+    pub fn into_vec_with_nul(self) -> Vec<u8> {
+        self.0.into_vec()
+    }
     /// Unwrap to the raw `Box<[u8]>` storage (trailing NUL at index `len()-1`).
     /// For call sites that must store sentinel and non-sentinel payloads in the
     /// same `Box<[u8]>` shape (e.g. GlobWalker's `MatchedPath`).
-    #[inline] pub fn into_boxed_slice_with_nul(self) -> Box<[u8]> { self.0 }
+    #[inline]
+    pub fn into_boxed_slice_with_nul(self) -> Box<[u8]> {
+        self.0
+    }
 }
 impl core::ops::Deref for ZBox {
     type Target = ZStr;
-    #[inline] fn deref(&self) -> &ZStr { self.as_zstr() }
+    #[inline]
+    fn deref(&self) -> &ZStr {
+        self.as_zstr()
+    }
 }
 impl core::ops::Deref for ZStr {
     type Target = [u8];
-    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
@@ -571,7 +621,10 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
             let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
-            if crate::strings::eql_case_insensitive_ascii_check_length(&line[..key_end], key.as_bytes()) {
+            if crate::strings::eql_case_insensitive_ascii_check_length(
+                &line[..key_end],
+                key.as_bytes(),
+            ) {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
             p = p.add(1);
@@ -587,16 +640,23 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         // startup before any reader runs.
         let environ = unsafe { crate::os::environ() };
         for &entry in environ {
-            if entry.is_null() { continue; }
+            if entry.is_null() {
+                continue;
+            }
             // SAFETY: each entry is a NUL-terminated WTF-8 string into the
             // leaked `WTF8_ENV_BUF` allocation.
             let line = unsafe {
                 let mut len = 0usize;
-                while *entry.add(len) != 0 { len += 1; }
+                while *entry.add(len) != 0 {
+                    len += 1;
+                }
                 core::slice::from_raw_parts(entry.cast::<u8>(), len)
             };
             let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
-            if crate::strings::eql_case_insensitive_ascii_check_length(&line[..key_end], key.as_bytes()) {
+            if crate::strings::eql_case_insensitive_ascii_check_length(
+                &line[..key_end],
+                key.as_bytes(),
+            ) {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
         }
@@ -618,7 +678,9 @@ impl WStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        unsafe { &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr) }
+        unsafe {
+            &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr)
+        }
     }
     /// Borrow `buf[..len]` as a `&WStr`, where `buf[len] == 0`. Safe-surface
     /// form of [`from_raw`] for the dominant call shape: a stack `WPathBuffer`
@@ -639,7 +701,11 @@ impl WStr {
     #[inline]
     pub fn from_slice_with_nul(buf: &[u16]) -> &WStr {
         debug_assert!(!buf.is_empty(), "WStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(buf[buf.len() - 1], 0, "WStr::from_slice_with_nul: missing trailing NUL");
+        debug_assert_eq!(
+            buf[buf.len() - 1],
+            0,
+            "WStr::from_slice_with_nul: missing trailing NUL"
+        );
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
@@ -660,9 +726,18 @@ impl WStr {
         // SAFETY: non-null and NUL-terminated per caller contract.
         unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
     }
-    #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
-    #[inline] pub const fn len(&self) -> usize { self.0.len() }
-    #[inline] pub const fn as_ptr(&self) -> *const u16 { self.0.as_ptr() }
+    #[inline]
+    pub const fn as_slice(&self) -> &[u16] {
+        &self.0
+    }
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    pub const fn as_ptr(&self) -> *const u16 {
+        self.0.as_ptr()
+    }
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     /// Mirrors [`ZStr::from_raw_mut`] so callers can rewrite UTF-16 path
     /// chars in place (Windows tar path-escape pass) without round-tripping
@@ -671,17 +746,29 @@ impl WStr {
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
         unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
     }
-    #[inline] pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u16] {
+        &mut self.0
+    }
 }
 impl core::ops::Deref for WStr {
     type Target = [u16];
-    #[inline] fn deref(&self) -> &[u16] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u16] {
+        &self.0
+    }
 }
 impl core::ops::DerefMut for WStr {
-    #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u16] {
+        &mut self.0
+    }
 }
 impl AsRef<[u16]> for WStr {
-    #[inline] fn as_ref(&self) -> &[u16] { &self.0 }
+    #[inline]
+    fn as_ref(&self) -> &[u16] {
+        &self.0
+    }
 }
 
 /// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time
@@ -761,12 +848,16 @@ pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
 };
 pub const PATH_MAX_WIDE: usize = 32767;
 
-#[cfg(windows)] pub type OSPathChar = u16;
-#[cfg(not(windows))] pub type OSPathChar = u8;
+#[cfg(windows)]
+pub type OSPathChar = u16;
+#[cfg(not(windows))]
+pub type OSPathChar = u8;
 
 pub type OSPathSlice<'a> = &'a [OSPathChar];
-#[cfg(windows)] pub type OSPathSliceZ = WStr;
-#[cfg(not(windows))] pub type OSPathSliceZ = ZStr;
+#[cfg(windows)]
+pub type OSPathSliceZ = WStr;
+#[cfg(not(windows))]
+pub type OSPathSliceZ = ZStr;
 
 pub use bun_alloc::SEP;
 
@@ -807,18 +898,33 @@ impl PathBuffer {
         // written by the consuming syscall / encoder.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
-    #[inline] pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0 }
-    #[inline] pub fn as_slice(&self) -> &[u8] { &self.0 }
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl Default for PathBuffer {
-    #[inline] fn default() -> Self { Self::uninit() }
+    #[inline]
+    fn default() -> Self {
+        Self::uninit()
+    }
 }
 impl core::ops::Deref for PathBuffer {
     type Target = [u8];
-    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl core::ops::DerefMut for PathBuffer {
-    #[inline] fn deref_mut(&mut self) -> &mut [u8] { &mut self.0 }
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
 }
 
 /// Zig: `[PATH_MAX_WIDE]u16`. Same newtype shape as [`PathBuffer`].
@@ -842,22 +948,37 @@ impl WPathBuffer {
     /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
     /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
     #[inline]
-    pub fn as_slice(&self) -> &[u16] { &self.0 }
+    pub fn as_slice(&self) -> &[u16] {
+        &self.0
+    }
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
+    pub fn as_mut_slice(&mut self) -> &mut [u16] {
+        &mut self.0
+    }
 }
 impl Default for WPathBuffer {
-    #[inline] fn default() -> Self { Self::uninit() }
+    #[inline]
+    fn default() -> Self {
+        Self::uninit()
+    }
 }
 impl core::ops::Deref for WPathBuffer {
     type Target = [u16];
-    #[inline] fn deref(&self) -> &[u16] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u16] {
+        &self.0
+    }
 }
 impl core::ops::DerefMut for WPathBuffer {
-    #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u16] {
+        &mut self.0
+    }
 }
-#[cfg(windows)] pub type OSPathBuffer = WPathBuffer;
-#[cfg(not(windows))] pub type OSPathBuffer = PathBuffer;
+#[cfg(windows)]
+pub type OSPathBuffer = WPathBuffer;
+#[cfg(not(windows))]
+pub type OSPathBuffer = PathBuffer;
 
 /// Zig: `bun.Dirname.dirname(u8, path)` → `std.fs.path.dirnamePosix` /
 /// `dirnameWindows`. Faithful port (handles trailing-sep stripping and root).
@@ -873,17 +994,14 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
         end -= 1;
     }
     // Windows: skip drive prefix `X:` so `C:\foo` → `C:\`, `C:foo` → None.
-    let root_end: usize = if cfg!(windows)
-        && end >= 2
-        && path[1] == b':'
-        && path[0].is_ascii_alphabetic()
-    {
-        if end >= 3 && is_sep(path[2]) { 3 } else { 2 }
-    } else if is_sep(path[0]) {
-        1
-    } else {
-        0
-    };
+    let root_end: usize =
+        if cfg!(windows) && end >= 2 && path[1] == b':' && path[0].is_ascii_alphabetic() {
+            if end >= 3 && is_sep(path[2]) { 3 } else { 2 }
+        } else if is_sep(path[0]) {
+            1
+        } else {
+            0
+        };
     // Scan back for last separator after the root.
     let mut i = end;
     while i > root_end {
@@ -914,8 +1032,10 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
 // `pub use bun_core::Fd as FD;` and adds inherent impls there.
 
 // Zig backing_int (fd.zig:1): c_int on posix, u64 on Windows.
-#[cfg(not(windows))] type FdBacking = i32;
-#[cfg(windows)] type FdBacking = u64;
+#[cfg(not(windows))]
+type FdBacking = i32;
+#[cfg(windows)]
+type FdBacking = u64;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -923,8 +1043,10 @@ pub struct Fd(pub FdBacking);
 
 // Zig packed struct(u64) { value: u63, kind: u1 } — fields are LSB-first, so
 // `value` is bits 0..63, `kind` is bit 63. (.system=0, .uv=1)
-#[cfg(windows)] const FD_KIND_BIT: u64 = 1u64 << 63;
-#[cfg(windows)] const FD_VALUE_MASK: u64 = FD_KIND_BIT - 1;
+#[cfg(windows)]
+const FD_KIND_BIT: u64 = 1u64 << 63;
+#[cfg(windows)]
+const FD_VALUE_MASK: u64 = FD_KIND_BIT - 1;
 
 impl Fd {
     /// Zig fd.zig:33-35: { kind=.system, value.as_system = minInt(field_type) }.
@@ -936,19 +1058,31 @@ impl Fd {
 
     /// Zig `bun.invalid_fd` / `FD.invalid` — function form of [`Fd::INVALID`]
     /// for call sites that read better as a constructor (`Fd::invalid()`).
-    #[inline] pub const fn invalid() -> Fd { Fd::INVALID }
+    #[inline]
+    pub const fn invalid() -> Fd {
+        Fd::INVALID
+    }
 
-    #[inline] pub const fn from_native(v: FdBacking) -> Fd { Fd(v) }
+    #[inline]
+    pub const fn from_native(v: FdBacking) -> Fd {
+        Fd(v)
+    }
     /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
-    #[inline] pub const fn from_uv(v: i32) -> Fd {
+    #[inline]
+    pub const fn from_uv(v: i32) -> Fd {
         #[cfg(windows)]
         // kind=.uv (bit 63 = 1); uv_file is i32, store sign-extended into low 63.
-        { Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK)) }
+        {
+            Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK))
+        }
         #[cfg(not(windows))]
-        { Fd(v) }
+        {
+            Fd(v)
+        }
     }
     #[cfg(windows)]
-    #[inline] pub fn from_system(h: *mut core::ffi::c_void) -> Fd {
+    #[inline]
+    pub fn from_system(h: *mut core::ffi::c_void) -> Fd {
         // kind=.system (bit 63 = 0); WindowsHandleNumber is u63.
         // Zig fd.zig:48 asserts `@intFromPtr(value) <= maxInt(u63)`.
         debug_assert!((h as u64) <= FD_VALUE_MASK);
@@ -959,9 +1093,13 @@ impl Fd {
     /// obtain the underlying HANDLE — so the returned value may not be safely
     /// closed via libc; use `FdExt::close()` instead.
     #[cfg(not(windows))]
-    #[inline] pub const fn native(self) -> FdNative { self.0 }
+    #[inline]
+    pub const fn native(self) -> FdNative {
+        self.0
+    }
     #[cfg(windows)]
-    #[inline] pub fn native(self) -> FdNative {
+    #[inline]
+    pub fn native(self) -> FdNative {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
             DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
@@ -999,7 +1137,10 @@ impl Fd {
     /// arbitrary HANDLE to a uv fd makes closing impossible. The supplier
     /// should call `make_lib_uv_owned()` near where `open()` was called.
     #[cfg(not(windows))]
-    #[inline] pub const fn uv(self) -> i32 { self.0 }
+    #[inline]
+    pub const fn uv(self) -> i32 {
+        self.0
+    }
     #[cfg(windows)]
     pub fn uv(self) -> i32 {
         match self.decode_windows() {
@@ -1011,12 +1152,24 @@ impl Fd {
                 // the live `GetStdHandle` result panics if the process std
                 // handle was swapped after startup via `SetStdHandle`,
                 // `AllocConsole`, `AttachConsole`, etc.
-                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() { return 0; }
-                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() { return 1; }
-                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() { return 2; }
-                if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) { return 0; }
-                if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) { return 1; }
-                if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) { return 2; }
+                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() {
+                    return 0;
+                }
+                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() {
+                    return 1;
+                }
+                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() {
+                    return 2;
+                }
+                if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) {
+                    return 0;
+                }
+                if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) {
+                    return 1;
+                }
+                if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) {
+                    return 2;
+                }
                 panic!(
                     "Cast bun.FD.uv({}) makes closing impossible!\n\n\
                      The supplier of fd FD should call 'FD.makeLibUVOwned',\n\
@@ -1027,27 +1180,78 @@ impl Fd {
         }
     }
 
-    #[cfg(not(windows))] #[inline] pub const fn stdin()  -> Fd { Fd(0) }
-    #[cfg(not(windows))] #[inline] pub const fn stdout() -> Fd { Fd(1) }
-    #[cfg(not(windows))] #[inline] pub const fn stderr() -> Fd { Fd(2) }
-    #[cfg(not(windows))] #[inline] pub fn cwd() -> Fd { Fd(libc::AT_FDCWD) }
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn stdin() -> Fd {
+        Fd(0)
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn stdout() -> Fd {
+        Fd(1)
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn stderr() -> Fd {
+        Fd(2)
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn cwd() -> Fd {
+        Fd(libc::AT_FDCWD)
+    }
 
-    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { fd::WINDOWS_CACHED_STDIN.get().copied().unwrap_or(Fd::INVALID) }
-    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { fd::WINDOWS_CACHED_STDOUT.get().copied().unwrap_or(Fd::INVALID) }
-    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { fd::WINDOWS_CACHED_STDERR.get().copied().unwrap_or(Fd::INVALID) }
-    #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
+    #[cfg(windows)]
+    #[inline]
+    pub fn stdin() -> Fd {
+        fd::WINDOWS_CACHED_STDIN
+            .get()
+            .copied()
+            .unwrap_or(Fd::INVALID)
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn stdout() -> Fd {
+        fd::WINDOWS_CACHED_STDOUT
+            .get()
+            .copied()
+            .unwrap_or(Fd::INVALID)
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn stderr() -> Fd {
+        fd::WINDOWS_CACHED_STDERR
+            .get()
+            .copied()
+            .unwrap_or(Fd::INVALID)
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn cwd() -> Fd {
         Fd::from_system(fd::windows_current_directory_handle())
     }
 
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
-    #[cfg(not(windows))] #[inline] pub const fn kind(self) -> FdKind { FdKind::System }
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn kind(self) -> FdKind {
+        FdKind::System
+    }
     #[cfg(windows)]
-    #[inline] pub const fn kind(self) -> FdKind {
-        if self.0 & FD_KIND_BIT == 0 { FdKind::System } else { FdKind::Uv }
+    #[inline]
+    pub const fn kind(self) -> FdKind {
+        if self.0 & FD_KIND_BIT == 0 {
+            FdKind::System
+        } else {
+            FdKind::Uv
+        }
     }
 
     #[cfg(windows)]
-    #[inline] const fn value_as_system(self) -> u64 { self.0 & FD_VALUE_MASK }
+    #[inline]
+    const fn value_as_system(self) -> u64 {
+        self.0 & FD_VALUE_MASK
+    }
 
     /// Perform different logic for each kind of windows file descriptor.
     #[cfg(windows)]
@@ -1077,13 +1281,19 @@ impl Fd {
     pub fn make_libuv_owned(self) -> Result<Fd, ()> {
         debug_assert!(self.is_valid());
         #[cfg(not(windows))]
-        { Ok(self) }
+        {
+            Ok(self)
+        }
         #[cfg(windows)]
         match self.kind() {
             FdKind::Uv => Ok(self),
             FdKind::System => {
                 let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 { Err(()) } else { Ok(Fd::from_uv(crt_fd)) }
+                if crt_fd == -1 {
+                    Err(())
+                } else {
+                    Ok(Fd::from_uv(crt_fd))
+                }
             }
         }
     }
@@ -1091,7 +1301,9 @@ impl Fd {
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
-        { self.0 != Fd::INVALID.0 }
+        {
+            self.0 != Fd::INVALID.0
+        }
         #[cfg(windows)]
         {
             match self.kind() {
@@ -1107,10 +1319,16 @@ impl Fd {
 
     /// Deprecated: renamed to `native` because it is unclear what `cast` would cast to.
     #[deprecated = "use native()"]
-    #[inline] pub fn cast(self) -> FdNative { self.native() }
+    #[inline]
+    pub fn cast(self) -> FdNative {
+        self.native()
+    }
 
     /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
-    #[inline] pub const fn to_optional(self) -> FdOptional { FdOptional(self.0) }
+    #[inline]
+    pub const fn to_optional(self) -> FdOptional {
+        FdOptional(self.0)
+    }
 
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
@@ -1127,10 +1345,15 @@ impl Fd {
             match self.decode_windows() {
                 DecodeWindows::Windows(handle) => {
                     let p = fd::windows_process_parameters();
-                    if handle == p.hStdInput { Some(Stdio::StdIn) }
-                    else if handle == p.hStdOutput { Some(Stdio::StdOut) }
-                    else if handle == p.hStdError { Some(Stdio::StdErr) }
-                    else { None }
+                    if handle == p.hStdInput {
+                        Some(Stdio::StdIn)
+                    } else if handle == p.hStdOutput {
+                        Some(Stdio::StdOut)
+                    } else if handle == p.hStdError {
+                        Some(Stdio::StdErr)
+                    } else {
+                        None
+                    }
                 }
                 DecodeWindows::Uv(n) => match n {
                     0 => Some(Stdio::StdIn),
@@ -1144,16 +1367,25 @@ impl Fd {
 }
 
 /// `std.posix.fd_t` — `c_int` on POSIX, `HANDLE` (`*anyopaque`) on Windows.
-#[cfg(not(windows))] pub type FdNative = i32;
-#[cfg(windows)] pub type FdNative = *mut core::ffi::c_void;
+#[cfg(not(windows))]
+pub type FdNative = i32;
+#[cfg(windows)]
+pub type FdNative = *mut core::ffi::c_void;
 
 /// Zig `Kind` — tag in bit 63 on Windows, `enum(u0)` (zero-width) on POSIX.
 #[cfg(not(windows))]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FdKind { System = 0 }
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum FdKind {
+    System = 0,
+}
 #[cfg(windows)]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FdKind { System = 0, Uv = 1 }
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum FdKind {
+    System = 0,
+    Uv = 1,
+}
 
 #[cfg(windows)]
 pub enum DecodeWindows {
@@ -1163,19 +1395,33 @@ pub enum DecodeWindows {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum Stdio { StdIn = 0, StdOut = 1, StdErr = 2 }
+pub enum Stdio {
+    StdIn = 0,
+    StdOut = 1,
+    StdErr = 2,
+}
 impl Stdio {
-    #[inline] pub fn fd(self) -> Fd {
+    #[inline]
+    pub fn fd(self) -> Fd {
         match self {
             Stdio::StdIn => Fd::stdin(),
             Stdio::StdOut => Fd::stdout(),
             Stdio::StdErr => Fd::stderr(),
         }
     }
-    #[inline] pub fn from_int(v: i32) -> Option<Stdio> {
-        match v { 0 => Some(Stdio::StdIn), 1 => Some(Stdio::StdOut), 2 => Some(Stdio::StdErr), _ => None }
+    #[inline]
+    pub fn from_int(v: i32) -> Option<Stdio> {
+        match v {
+            0 => Some(Stdio::StdIn),
+            1 => Some(Stdio::StdOut),
+            2 => Some(Stdio::StdErr),
+            _ => None,
+        }
     }
-    #[inline] pub fn to_int(self) -> i32 { self as i32 }
+    #[inline]
+    pub fn to_int(self) -> i32 {
+        self as i32
+    }
 }
 
 /// Niche-packed `Option<Fd>` (`enum(backing_int) { none = @bitCast(invalid), _ }`).
@@ -1185,14 +1431,26 @@ impl Stdio {
 pub struct FdOptional(FdBacking);
 impl FdOptional {
     pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline] pub const fn init(maybe: Option<Fd>) -> FdOptional {
-        match maybe { Some(fd) => fd.to_optional(), None => FdOptional::NONE }
+    #[inline]
+    pub const fn init(maybe: Option<Fd>) -> FdOptional {
+        match maybe {
+            Some(fd) => fd.to_optional(),
+            None => FdOptional::NONE,
+        }
     }
-    #[inline] pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 { None } else { Some(Fd(self.0)) }
+    #[inline]
+    pub const fn unwrap(self) -> Option<Fd> {
+        if self.0 == FdOptional::NONE.0 {
+            None
+        } else {
+            Some(Fd(self.0))
+        }
     }
-    #[inline] pub fn take(&mut self) -> Option<Fd> {
-        let r = self.unwrap(); *self = FdOptional::NONE; r
+    #[inline]
+    pub fn take(&mut self) -> Option<Fd> {
+        let r = self.unwrap();
+        *self = FdOptional::NONE;
+        r
     }
 }
 
@@ -1214,7 +1472,11 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
         if n < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+            return if e == libc::ENOENT || e == libc::EBADF {
+                -1
+            } else {
+                0
+            };
         }
         return n;
     }
@@ -1225,7 +1487,11 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+            return if e == libc::ENOENT || e == libc::EBADF {
+                -1
+            } else {
+                0
+            };
         }
         // SAFETY: kernel wrote a NUL-terminated path.
         return unsafe { libc::strlen(buf.cast()) as isize };
@@ -1243,7 +1509,11 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+            return if e == libc::ENOENT || e == libc::EBADF {
+                -1
+            } else {
+                0
+            };
         }
         // SAFETY: kernel wrote a NUL-terminated path into kf_path.
         let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
@@ -1254,7 +1524,10 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         return n as isize;
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
-    { let _ = (fd, buf, cap); 0 }
+    {
+        let _ = (fd, buf, cap);
+        0
+    }
 }
 
 /// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
@@ -1281,7 +1554,9 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // out_buffer.len) return error.NameTooLong;` — `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
         // including NUL), not a successful write of `cap` chars.
-        if n == 0 || n >= cap { return -1; }
+        if n == 0 || n >= cap {
+            return -1;
+        }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
         // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
@@ -1291,24 +1566,25 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // bounds-checked against `n` first.
         let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
         let bs = b'\\' as u16;
-        let off: usize = if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
-            if n >= 8
-                && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                && at(7) == bs
-            {
-                // `\\?\UNC\server\share` → `\\server\share`
-                // SAFETY: index 6 < n (checked above).
-                unsafe { *buf.add(6) = bs };
-                6
+        let off: usize =
+            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+                if n >= 8
+                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
+                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
+                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
+                    && at(7) == bs
+                {
+                    // `\\?\UNC\server\share` → `\\server\share`
+                    // SAFETY: index 6 < n (checked above).
+                    unsafe { *buf.add(6) = bs };
+                    6
+                } else {
+                    // `\\?\C:\...` → `C:\...`
+                    4
+                }
             } else {
-                // `\\?\C:\...` → `C:\...`
-                4
-            }
-        } else {
-            0
-        };
+                0
+            };
         let out_len = n - off;
         if off != 0 {
             // SAFETY: src = buf+off and dst = buf both derive from the same
@@ -1319,13 +1595,18 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         return out_len as isize;
     }
     #[cfg(not(windows))]
-    { let _ = (fd, buf, cap); 0 }
+    {
+        let _ = (fd, buf, cap);
+        0
+    }
 }
 
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let fd = *self;
-        if !fd.is_valid() { return w.write_str("[invalid_fd]"); }
+        if !fd.is_valid() {
+            return w.write_str("[invalid_fd]");
+        }
         #[cfg(not(windows))]
         {
             write!(w, "{}", fd.0)?;
@@ -1382,7 +1663,7 @@ pub mod fd {
         pub safe fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
-    pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // Zig: `const h = std.os.windows.GetStdHandle(id) catch return false;
@@ -1460,15 +1741,15 @@ pub type Mode = u32; // std.posix.mode_t
 pub mod S {
     use super::Mode;
 
-    pub const IFMT:   Mode = 0o170000;
+    pub const IFMT: Mode = 0o170000;
     pub const IFSOCK: Mode = 0o140000;
-    pub const IFLNK:  Mode = 0o120000;
-    pub const IFREG:  Mode = 0o100000;
-    pub const IFBLK:  Mode = 0o060000;
-    pub const IFDIR:  Mode = 0o040000;
-    pub const IFCHR:  Mode = 0o020000;
-    pub const IFIFO:  Mode = 0o010000;
-    pub const IFWHT:  Mode = 0o160000; // BSD/Darwin whiteout
+    pub const IFLNK: Mode = 0o120000;
+    pub const IFREG: Mode = 0o100000;
+    pub const IFBLK: Mode = 0o060000;
+    pub const IFDIR: Mode = 0o040000;
+    pub const IFCHR: Mode = 0o020000;
+    pub const IFIFO: Mode = 0o010000;
+    pub const IFWHT: Mode = 0o160000; // BSD/Darwin whiteout
 
     pub const ISUID: Mode = 0o4000;
     pub const ISGID: Mode = 0o2000;
@@ -1486,13 +1767,34 @@ pub mod S {
     pub const IWOTH: Mode = 0o0002;
     pub const IXOTH: Mode = 0o0001;
 
-    #[inline] pub const fn ISREG(m: Mode)  -> bool { m & IFMT == IFREG }
-    #[inline] pub const fn ISDIR(m: Mode)  -> bool { m & IFMT == IFDIR }
-    #[inline] pub const fn ISCHR(m: Mode)  -> bool { m & IFMT == IFCHR }
-    #[inline] pub const fn ISBLK(m: Mode)  -> bool { m & IFMT == IFBLK }
-    #[inline] pub const fn ISFIFO(m: Mode) -> bool { m & IFMT == IFIFO }
-    #[inline] pub const fn ISLNK(m: Mode)  -> bool { m & IFMT == IFLNK }
-    #[inline] pub const fn ISSOCK(m: Mode) -> bool { m & IFMT == IFSOCK }
+    #[inline]
+    pub const fn ISREG(m: Mode) -> bool {
+        m & IFMT == IFREG
+    }
+    #[inline]
+    pub const fn ISDIR(m: Mode) -> bool {
+        m & IFMT == IFDIR
+    }
+    #[inline]
+    pub const fn ISCHR(m: Mode) -> bool {
+        m & IFMT == IFCHR
+    }
+    #[inline]
+    pub const fn ISBLK(m: Mode) -> bool {
+        m & IFMT == IFBLK
+    }
+    #[inline]
+    pub const fn ISFIFO(m: Mode) -> bool {
+        m & IFMT == IFIFO
+    }
+    #[inline]
+    pub const fn ISLNK(m: Mode) -> bool {
+        m & IFMT == IFLNK
+    }
+    #[inline]
+    pub const fn ISSOCK(m: Mode) -> bool {
+        m & IFMT == IFSOCK
+    }
 }
 
 #[repr(u8)]
@@ -1535,7 +1837,7 @@ pub mod io {
     #[repr(C)]
     pub struct Writer {
         pub write_all: unsafe fn(*mut Writer, &[u8]) -> Result<(), crate::Error>,
-        pub flush:     unsafe fn(*mut Writer) -> Result<(), crate::Error>,
+        pub flush: unsafe fn(*mut Writer) -> Result<(), crate::Error>,
     }
     impl Writer {
         #[inline]
@@ -1558,7 +1860,11 @@ pub mod io {
             impl core::fmt::Write for A<'_> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
                     self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() { Err(core::fmt::Error) } else { Ok(()) }
+                    if self.1.is_err() {
+                        Err(core::fmt::Error)
+                    } else {
+                        Ok(())
+                    }
                 }
             }
             let mut a = A(self, Ok(()));
@@ -1652,7 +1958,10 @@ pub mod io {
                     }
                 }
             }
-            let mut bridge = Bridge { sink: self, err: None };
+            let mut bridge = Bridge {
+                sink: self,
+                err: None,
+            };
             match fmt::write(&mut bridge, args) {
                 Ok(()) => Ok(()),
                 Err(_) => Err(bridge.err.unwrap_or_else(|| crate::err!("FmtError"))),
@@ -1769,7 +2078,9 @@ pub mod io {
             }
         )*};
     }
-    impl_int_le!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+    impl_int_le!(
+        u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+    );
 }
 
 // ─── Version (from bun_semver, TYPE_ONLY for env.rs::VERSION const) ───────
@@ -1859,8 +2170,10 @@ impl<T: Default> Default for RacyCell<T> {
 // unsynchronized write to `locked_at` is exactly the Zig semantics — if two
 // threads race here, the `owning_thread.swap` panic fires first.
 pub struct ThreadLock {
-    #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64,
-    #[cfg(debug_assertions)] locked_at: core::cell::Cell<crate::StoredTrace>,
+    #[cfg(debug_assertions)]
+    owning_thread: core::sync::atomic::AtomicU64,
+    #[cfg(debug_assertions)]
+    locked_at: core::cell::Cell<crate::StoredTrace>,
 }
 // SAFETY: `locked_at` is only written after `owning_thread.swap` proves the
 // current thread is the unique acquirer; concurrent access panics first. The
@@ -1871,14 +2184,24 @@ const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {
     pub const fn init_unlocked() -> Self {
         Self {
-            #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64::new(INVALID_THREAD_ID),
-            #[cfg(debug_assertions)] locked_at: core::cell::Cell::new(crate::StoredTrace::EMPTY),
+            #[cfg(debug_assertions)]
+            owning_thread: core::sync::atomic::AtomicU64::new(INVALID_THREAD_ID),
+            #[cfg(debug_assertions)]
+            locked_at: core::cell::Cell::new(crate::StoredTrace::EMPTY),
         }
     }
-    #[inline] pub fn init_locked() -> Self { let s = Self::init_unlocked(); s.lock(); s }
+    #[inline]
+    pub fn init_locked() -> Self {
+        let s = Self::init_unlocked();
+        s.lock();
+        s
+    }
     /// Zig `initLockedIfNonComptime` — Zig comptime evaluation has no thread;
     /// in Rust there is no comptime execution, so this is just `init_locked`.
-    #[inline] pub fn init_locked_if_non_comptime() -> Self { Self::init_locked() }
+    #[inline]
+    pub fn init_locked_if_non_comptime() -> Self {
+        Self::init_locked()
+    }
     /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
     /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)
     /// so the caller's surrounding `&mut self` on the owning struct stays
@@ -1894,7 +2217,9 @@ impl ThreadLock {
     pub fn lock_or_assert(&self) {
         #[cfg(debug_assertions)]
         {
-            let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
+            let held = self
+                .owning_thread
+                .load(core::sync::atomic::Ordering::Acquire);
             if held == INVALID_THREAD_ID {
                 self.lock();
             } else {
@@ -1907,14 +2232,21 @@ impl ThreadLock {
         #[cfg(debug_assertions)]
         {
             let cur = thread_id();
-            let prev = self.owning_thread.swap(cur, core::sync::atomic::Ordering::AcqRel);
+            let prev = self
+                .owning_thread
+                .swap(cur, core::sync::atomic::Ordering::AcqRel);
             if prev != INVALID_THREAD_ID {
                 // Prior holder wrote `locked_at` after its `swap`; our AcqRel
                 // swap observes it. Debug-only diagnostic on the panic path.
                 let stored = self.locked_at.get();
-                crate::dump_stack_trace(&stored.trace(), crate::DumpStackTraceOptions {
-                    frame_count: 10, stop_at_jsc_llint: true, ..Default::default()
-                });
+                crate::dump_stack_trace(
+                    &stored.trace(),
+                    crate::DumpStackTraceOptions {
+                        frame_count: 10,
+                        stop_at_jsc_llint: true,
+                        ..Default::default()
+                    },
+                );
                 panic!("ThreadLock: thread {cur} tried to lock, already held by {prev}");
             }
             // swap above proved we are the unique acquirer (prev was INVALID);
@@ -1927,7 +2259,8 @@ impl ThreadLock {
         #[cfg(debug_assertions)]
         {
             self.assert_locked(); // Zig: assert current thread holds it before reset.
-            self.owning_thread.store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
+            self.owning_thread
+                .store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
             // assert_locked above proved we are the unique holder.
             self.locked_at.set(crate::StoredTrace::EMPTY);
         }
@@ -1939,7 +2272,9 @@ impl ThreadLock {
             // Spec uses `bun.assertf` (always-on under ci_assert). Body is
             // already cfg-gated, so plain `assert!` — `debug_assert!` would be
             // redundant gating.
-            let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
+            let held = self
+                .owning_thread
+                .load(core::sync::atomic::Ordering::Acquire);
             assert!(held != INVALID_THREAD_ID, "`ThreadLock` is not locked");
             let current = thread_id();
             assert!(
@@ -1975,7 +2310,9 @@ impl Drop for ThreadLockGuard {
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 #[inline]
-pub(crate) fn debug_thread_id() -> u64 { thread_id() }
+pub(crate) fn debug_thread_id() -> u64 {
+    thread_id()
+}
 
 #[cfg(debug_assertions)]
 #[inline]
@@ -1983,14 +2320,19 @@ fn thread_id() -> u64 {
     // Use the OS tid; matches Zig `Thread.getCurrentId()` semantics per-platform.
     #[cfg(target_os = "linux")]
     // SAFETY: `gettid` has no preconditions.
-    unsafe { libc::syscall(libc::SYS_gettid) as u64 }
+    unsafe {
+        libc::syscall(libc::SYS_gettid) as u64
+    }
     #[cfg(target_os = "macos")]
     {
         // Darwin: pthread_threadid_np(NULL, &tid) — same call Zig std uses.
         // `&mut u64` is ABI-identical to `uint64_t *`; an invalid `thread`
         // returns ESRCH (no UB), so `safe fn` discharges the link-time proof.
         unsafe extern "C" {
-            safe fn pthread_threadid_np(thread: libc::pthread_t, thread_id: &mut u64) -> core::ffi::c_int;
+            safe fn pthread_threadid_np(
+                thread: libc::pthread_t,
+                thread_id: &mut u64,
+            ) -> core::ffi::c_int;
         }
         let mut tid: u64 = 0;
         pthread_threadid_np(0, &mut tid);
@@ -1999,19 +2341,28 @@ fn thread_id() -> u64 {
     #[cfg(target_os = "freebsd")]
     {
         // No args; infallible; returns the kernel LWP id.
-        unsafe extern "C" { safe fn pthread_getthreadid_np() -> core::ffi::c_int; }
+        unsafe extern "C" {
+            safe fn pthread_getthreadid_np() -> core::ffi::c_int;
+        }
         pthread_getthreadid_np() as u64
     }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))))]
+    #[cfg(all(
+        unix,
+        not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))
+    ))]
     {
         // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
         // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
-        unsafe extern "C" { safe fn pthread_self() -> libc::pthread_t; }
+        unsafe extern "C" {
+            safe fn pthread_self() -> libc::pthread_t;
+        }
         pthread_self() as usize as u64
     }
     #[cfg(windows)]
     {
-        unsafe extern "system" { safe fn GetCurrentThreadId() -> u32; }
+        unsafe extern "system" {
+            safe fn GetCurrentThreadId() -> u32;
+        }
         GetCurrentThreadId() as u64
     }
 }
@@ -2019,7 +2370,9 @@ fn thread_id() -> u64 {
 // ─── StackCheck (from bun.zig) ───────────────────────────────────────────
 // Thin FFI wrapper; configure_thread() is all output.rs needs.
 #[derive(Clone, Copy)]
-pub struct StackCheck { cached_stack_end: usize }
+pub struct StackCheck {
+    cached_stack_end: usize,
+}
 unsafe extern "C" {
     /// No preconditions; initializes thread-local stack bookkeeping.
     safe fn Bun__StackCheck__initialize();
@@ -2036,12 +2389,28 @@ unsafe extern "C" {
 impl Default for StackCheck {
     /// Zig `.{}` — `cached_stack_end` defaults to `0`, so
     /// `is_safe_to_recurse()` always reports true until `init`/`update`.
-    #[inline] fn default() -> Self { Self { cached_stack_end: 0 } }
+    #[inline]
+    fn default() -> Self {
+        Self {
+            cached_stack_end: 0,
+        }
+    }
 }
 impl StackCheck {
-    #[inline] pub fn configure_thread() { Bun__StackCheck__initialize() }
-    #[inline] pub fn init() -> Self { Self { cached_stack_end: Bun__StackCheck__getMaxStack() as usize } }
-    #[inline] pub fn update(&mut self) { self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize; }
+    #[inline]
+    pub fn configure_thread() {
+        Bun__StackCheck__initialize()
+    }
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            cached_stack_end: Bun__StackCheck__getMaxStack() as usize,
+        }
+    }
+    #[inline]
+    pub fn update(&mut self) {
+        self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
+    }
     /// Is there enough stack space to safely recurse?
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
@@ -2050,7 +2419,11 @@ impl StackCheck {
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 };
+        let threshold: usize = if cfg!(windows) {
+            256 * 1024
+        } else {
+            128 * 1024
+        };
         remaining > threshold
     }
 
@@ -2062,7 +2435,11 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(&self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 };
+        let threshold: usize = if cfg!(windows) {
+            256 * 1024
+        } else {
+            128 * 1024
+        };
         remaining > threshold.saturating_add(extra)
     }
 
@@ -2083,14 +2460,18 @@ impl StackCheck {
         {
             let sp: usize;
             // SAFETY: reading rsp is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+            unsafe {
+                core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags))
+            };
             sp
         }
         #[cfg(target_arch = "aarch64")]
         {
             let sp: usize;
             // SAFETY: reading sp is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+            unsafe {
+                core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags))
+            };
             sp
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -2132,16 +2513,34 @@ impl Ordinal {
         debug_assert!(int > 0);
         Self(int - 1)
     }
-    #[inline] pub const fn zero_based(self) -> core::ffi::c_int { self.0 }
-    #[inline] pub const fn one_based(self) -> core::ffi::c_int { self.0 + 1 }
+    #[inline]
+    pub const fn zero_based(self) -> core::ffi::c_int {
+        self.0
+    }
+    #[inline]
+    pub const fn one_based(self) -> core::ffi::c_int {
+        self.0 + 1
+    }
     /// Add two ordinal numbers together. Both are converted to zero-based before addition.
-    #[inline] pub const fn add(self, b: Self) -> Self { Self::from_zero_based(self.0 + b.0) }
+    #[inline]
+    pub const fn add(self, b: Self) -> Self {
+        Self::from_zero_based(self.0 + b.0)
+    }
     /// Add a scalar value to an ordinal number.
-    #[inline] pub const fn add_scalar(self, inc: core::ffi::c_int) -> Self { Self::from_zero_based(self.0 + inc) }
-    #[inline] pub const fn is_valid(self) -> bool { self.0 >= 0 }
+    #[inline]
+    pub const fn add_scalar(self, inc: core::ffi::c_int) -> Self {
+        Self::from_zero_based(self.0 + inc)
+    }
+    #[inline]
+    pub const fn is_valid(self) -> bool {
+        self.0 >= 0
+    }
 }
 impl Default for Ordinal {
-    #[inline] fn default() -> Self { Self::INVALID }
+    #[inline]
+    fn default() -> Self {
+        Self::INVALID
+    }
 }
 
 // ── Once ──────────────────────────────────────────────────────────────────
@@ -2181,7 +2580,9 @@ pub struct Once<T, F = ()> {
 unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
 unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
 impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
-    for Once<T, F> {}
+    for Once<T, F>
+{
+}
 
 /// Cold contended path shared by every `Once<T, F>` instantiation. Taking
 /// `&AtomicU8` (not `&self`) keeps this **non-generic** so exactly one copy
@@ -2248,7 +2649,8 @@ impl<T, F> Once<T, F> {
             impl Drop for Reset<'_> {
                 #[inline]
                 fn drop(&mut self) {
-                    self.0.store(ONCE_UNINIT, core::sync::atomic::Ordering::Release);
+                    self.0
+                        .store(ONCE_UNINIT, core::sync::atomic::Ordering::Release);
                 }
             }
             let guard = Reset(&self.state);
@@ -2257,7 +2659,8 @@ impl<T, F> Once<T, F> {
             // be reading or writing `cell` until we publish DONE below.
             unsafe { (*self.cell.get()).write(v) };
             core::mem::forget(guard);
-            self.state.store(ONCE_DONE, core::sync::atomic::Ordering::Release);
+            self.state
+                .store(ONCE_DONE, core::sync::atomic::Ordering::Release);
         }
         // SAFETY: either we just stored DONE, or `once_claim_slow` observed
         // DONE from another thread (Acquire in the CAS failure path).
@@ -2306,7 +2709,10 @@ impl<T> Once<T, ()> {
     }
     /// Run `f` exactly once; subsequent calls return the cached payload.
     #[inline(always)]
-    pub fn call(&self, f: impl FnOnce() -> T) -> T where T: Copy {
+    pub fn call(&self, f: impl FnOnce() -> T) -> T
+    where
+        T: Copy,
+    {
         *self.get_or_init(f)
     }
 }
@@ -2327,7 +2733,10 @@ impl<T, A> Once<T, fn(A) -> T> {
     }
 }
 impl<T> Default for Once<T, ()> {
-    #[inline] fn default() -> Self { Self::new() }
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Void-result sibling of [`Once`]: declares a hidden `static std::sync::Once`
@@ -2351,7 +2760,11 @@ macro_rules! run_once {
 // Named `Pollable` to match the Phase-A draft callers (io/PipeReader.rs).
 // D050 dedup: this is the single canonical copy; `bun::`/`bun_sys::` re-export.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Pollable { Ready, NotReady, Hup }
+pub enum Pollable {
+    Ready,
+    NotReady,
+    Hup,
+}
 /// Zig `bun.PollFlag` — original name kept as an alias.
 pub type PollFlag = Pollable;
 
@@ -2394,8 +2807,14 @@ pub fn is_readable(fd: Fd) -> Pollable {
     crate::scoped_log!(
         SYS,
         "poll({}, .readable): {} ({}{})",
-        fd, result, rc.tag_name(),
-        if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+        fd,
+        result,
+        rc.tag_name(),
+        if polls[0].revents & libc::POLLERR != 0 {
+            " ERR "
+        } else {
+            ""
+        },
     );
     rc
 }
@@ -2428,8 +2847,14 @@ pub fn is_writable(fd: Fd) -> Pollable {
     crate::scoped_log!(
         SYS,
         "poll({}, .writable): {} ({}{})",
-        fd, result, rc.tag_name(),
-        if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+        fd,
+        result,
+        rc.tag_name(),
+        if polls[0].revents & libc::POLLERR != 0 {
+            " ERR "
+        } else {
+            ""
+        },
     );
     rc
 }
@@ -2447,7 +2872,13 @@ pub fn is_writable(fd: Fd) -> Pollable {
     // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer.
     let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
     let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
-    crate::scoped_log!(SYS, "poll({}) writable: {} ({})", fd, result, polls[0].revents);
+    crate::scoped_log!(
+        SYS,
+        "poll({}) writable: {} ({})",
+        fd,
+        result,
+        polls[0].revents
+    );
     // PORT NOTE: faithful port of bun.zig:679 — yes, the `WRNORM`-set branch
     // returns `.hup` (not `.ready`). Kept verbatim to match upstream behaviour.
     if result && (polls[0].revents & ws2_32::POLLWRNORM) != 0 {
@@ -2481,7 +2912,9 @@ pub fn csprng(bytes: &mut [u8]) {
             };
             if rc < 0 {
                 let err = crate::ffi::errno();
-                if err == libc::EINTR { continue; }
+                if err == libc::EINTR {
+                    continue;
+                }
                 panic!("getrandom failed: errno {err}");
             }
             filled += rc as usize;
@@ -2493,7 +2926,9 @@ pub fn csprng(bytes: &mut [u8]) {
         for chunk in bytes.chunks_mut(256) {
             // SAFETY: chunk is a valid writable slice ≤ 256 bytes.
             let rc = unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
-            if rc != 0 { panic!("getentropy failed"); }
+            if rc != 0 {
+                panic!("getentropy failed");
+            }
         }
     }
     #[cfg(windows)]
@@ -2506,7 +2941,9 @@ pub fn csprng(bytes: &mut [u8]) {
         for chunk in bytes.chunks_mut(u32::MAX as usize) {
             // SAFETY: chunk fits in u32; RtlGenRandom writes exactly that many bytes.
             let ok = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
-            if ok == 0 { panic!("RtlGenRandom failed"); }
+            if ok == 0 {
+                panic!("RtlGenRandom failed");
+            }
         }
     }
 }
@@ -2544,7 +2981,9 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
             // PORT NOTE: Zig stored the WTF-8 form. `into_string()` rejects unpaired
             // surrogates; fall back to the lossy form (Windows exe paths are valid
             // Unicode in practice).
-            let mut s = path.into_os_string().into_string()
+            let mut s = path
+                .into_os_string()
+                .into_string()
                 .unwrap_or_else(|os| os.to_string_lossy().into_owned());
             // `canonicalize()` on Windows returns a verbatim `\\?\` path; Zig's
             // `realpathW` strips that back to a plain DOS path before WTF-8
@@ -2573,10 +3012,15 @@ pub fn get_thread_count() -> u16 {
         const MAX: u16 = 1024;
         const MIN: u16 = 2;
         let from_env = || -> Option<u16> {
-            for key in [crate::zstr!("UV_THREADPOOL_SIZE"), crate::zstr!("GOMAXPROCS")] {
+            for key in [
+                crate::zstr!("UV_THREADPOOL_SIZE"),
+                crate::zstr!("GOMAXPROCS"),
+            ] {
                 if let Some(v) = getenv_z(key) {
                     if let Ok(n) = crate::fmt::parse_int::<u16>(v.trim_ascii(), 10) {
-                        if n >= MIN { return Some(n.min(MAX)); }
+                        if n >= MIN {
+                            return Some(n.min(MAX));
+                        }
                     }
                 }
                 // Windows: `getenv_z` is currently a no-op (no narrow C
@@ -2589,7 +3033,9 @@ pub fn get_thread_count() -> u16 {
                     unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
                 ) {
                     if let Ok(n) = s.trim().parse::<u16>() {
-                        if n >= MIN { return Some(n.min(MAX)); }
+                        if n >= MIN {
+                            return Some(n.min(MAX));
+                        }
                     }
                 }
             }
@@ -2644,7 +3090,10 @@ pub mod time {
     pub fn nano_timestamp() -> i128 {
         #[cfg(unix)]
         {
-            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             super::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
             (ts.tv_sec as i128) * NS_PER_S + (ts.tv_nsec as i128)
         }
@@ -2658,23 +3107,43 @@ pub mod time {
         }
     }
     /// `std.time.milliTimestamp()`
-    #[inline] pub fn milli_timestamp() -> i64 { (nano_timestamp() / NS_PER_MS as i128) as i64 }
+    #[inline]
+    pub fn milli_timestamp() -> i64 {
+        (nano_timestamp() / NS_PER_MS as i128) as i64
+    }
     /// `std.time.timestamp()` — wall-clock seconds since the Unix epoch.
-    #[inline] pub fn timestamp() -> i64 { (nano_timestamp() / NS_PER_S) as i64 }
+    #[inline]
+    pub fn timestamp() -> i64 {
+        (nano_timestamp() / NS_PER_S) as i64
+    }
 
     /// `std.time.Timer` — monotonic stopwatch.
     #[derive(Clone, Copy, Debug)]
-    pub struct Timer { start: std::time::Instant }
+    pub struct Timer {
+        start: std::time::Instant,
+    }
     impl Timer {
-        #[inline] pub fn start() -> Result<Self, crate::Error> { Ok(Self { start: std::time::Instant::now() }) }
-        #[inline] pub fn read(&self) -> u64 { self.start.elapsed().as_nanos() as u64 }
-        #[inline] pub fn lap(&mut self) -> u64 {
+        #[inline]
+        pub fn start() -> Result<Self, crate::Error> {
+            Ok(Self {
+                start: std::time::Instant::now(),
+            })
+        }
+        #[inline]
+        pub fn read(&self) -> u64 {
+            self.start.elapsed().as_nanos() as u64
+        }
+        #[inline]
+        pub fn lap(&mut self) -> u64 {
             let now = std::time::Instant::now();
             let ns = now.duration_since(self.start).as_nanos() as u64;
             self.start = now;
             ns
         }
-        #[inline] pub fn reset(&mut self) { self.start = std::time::Instant::now(); }
+        #[inline]
+        pub fn reset(&mut self) {
+            self.start = std::time::Instant::now();
+        }
     }
 }
 
@@ -2688,7 +3157,12 @@ pub mod time {
 // `codegen_embed` feature is off (debug fast-iteration), where panicking with a
 // migration hint is the same UX as the Zig `Output.panic` on read failure.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EmbedKind { Codegen, CodegenEager, Src, SrcEager }
+pub enum EmbedKind {
+    Codegen,
+    CodegenEager,
+    Src,
+    SrcEager,
+}
 /// Phase-A drafts spelled this both ways; alias keeps both compiling.
 pub type EmbedDir = EmbedKind;
 
@@ -2811,20 +3285,45 @@ macro_rules! __runtime_embed_impl {
 /// and on-disk formats (lockfile, npm manifest cache) read it directly.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct StringPointer { pub offset: u32, pub length: u32 }
+pub struct StringPointer {
+    pub offset: u32,
+    pub length: u32,
+}
 impl StringPointer {
-    #[inline] pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+    #[inline]
+    pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
-    #[inline] pub fn is_empty(self) -> bool { self.length == 0 }
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.length == 0
+    }
 }
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
-impl AsRef<ZStr> for ZStr { #[inline] fn as_ref(&self) -> &ZStr { self } }
-impl AsRef<[u8]> for ZStr { #[inline] fn as_ref(&self) -> &[u8] { &self.0 } }
-impl PartialEq<[u8]> for ZStr { #[inline] fn eq(&self, other: &[u8]) -> bool { &self.0 == other } }
+impl AsRef<ZStr> for ZStr {
+    #[inline]
+    fn as_ref(&self) -> &ZStr {
+        self
+    }
+}
+impl AsRef<[u8]> for ZStr {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+impl PartialEq<[u8]> for ZStr {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
+        &self.0 == other
+    }
+}
 impl<const N: usize> PartialEq<&[u8; N]> for ZStr {
-    #[inline] fn eq(&self, other: &&[u8; N]) -> bool { &self.0 == *other }
+    #[inline]
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        &self.0 == *other
+    }
 }
 
 // ── Hasher trait (Zig "anytype with .update([]const u8)") ─────────────────
@@ -2837,7 +3336,10 @@ pub trait Hasher {
 // Blanket: anything that already is a `core::hash::Hasher` also satisfies
 // Bun's Hasher (its `.write` IS the byte-feed).
 impl<H: core::hash::Hasher> Hasher for H {
-    #[inline] fn update(&mut self, bytes: &[u8]) { self.write(bytes) }
+    #[inline]
+    fn update(&mut self, bytes: &[u8]) {
+        self.write(bytes)
+    }
 }
 
 /// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
@@ -3004,7 +3506,9 @@ macro_rules! extern_union_accessors {
 /// sites: `u8` tags, `usize` lengths, `Index` newtypes).
 #[inline]
 pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes + ?Sized>(hasher: &mut H, thing: T)
-where T: Sized {
+where
+    T: Sized,
+{
     hasher.update(thing.as_bytes_for_hash());
 }
 
@@ -3022,9 +3526,14 @@ macro_rules! as_bytes_pod {
         }
     )* }
 }
-as_bytes_pod!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128);
+as_bytes_pod!(
+    u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128
+);
 impl<T: AsBytes> AsBytes for &T {
-    #[inline] fn as_bytes_for_hash(&self) -> &[u8] { (**self).as_bytes_for_hash() }
+    #[inline]
+    fn as_bytes_for_hash(&self) -> &[u8] {
+        (**self).as_bytes_for_hash()
+    }
 }
 
 // ── GenericIndex ──────────────────────────────────────────────────────────
@@ -3039,79 +3548,151 @@ impl<T: AsBytes> AsBytes for &T {
 #[repr(transparent)]
 pub struct GenericIndex<I, M = ()>(I, core::marker::PhantomData<M>);
 
-impl<I: Copy, M> Clone for GenericIndex<I, M> { #[inline] fn clone(&self) -> Self { *self } }
+impl<I: Copy, M> Clone for GenericIndex<I, M> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 impl<I: Copy, M> Copy for GenericIndex<I, M> {}
 impl<I: PartialEq, M> PartialEq for GenericIndex<I, M> {
-    #[inline] fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+    #[inline]
+    fn eq(&self, o: &Self) -> bool {
+        self.0 == o.0
+    }
 }
 impl<I: Eq, M> Eq for GenericIndex<I, M> {}
 impl<I: core::hash::Hash, M> core::hash::Hash for GenericIndex<I, M> {
-    #[inline] fn hash<H: core::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
 }
 impl<I: core::fmt::Display, M> core::fmt::Display for GenericIndex<I, M> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndex<I, M> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 /// `Default` = index 0 (matches the hand-rolled `#[derive(Default)]` newtypes
 /// this replaced). NOT the `Optional::none` sentinel.
 impl<I: Default, M> Default for GenericIndex<I, M> {
-    #[inline] fn default() -> Self { Self(I::default(), core::marker::PhantomData) }
+    #[inline]
+    fn default() -> Self {
+        Self(I::default(), core::marker::PhantomData)
+    }
 }
 
 impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     /// Prefer over a raw cast — asserts `int != MAX` (would alias `.none`).
-    #[inline] pub fn init(int: I) -> Self {
-        debug_assert!(int != I::NULL_VALUE, "GenericIndex::init: maxInt is reserved for Optional::none");
+    #[inline]
+    pub fn init(int: I) -> Self {
+        debug_assert!(
+            int != I::NULL_VALUE,
+            "GenericIndex::init: maxInt is reserved for Optional::none"
+        );
         Self(int, core::marker::PhantomData)
     }
-    #[inline] pub fn get(self) -> I {
-        debug_assert!(self.0 != I::NULL_VALUE, "GenericIndex::get: corrupted (== none sentinel)");
+    #[inline]
+    pub fn get(self) -> I {
+        debug_assert!(
+            self.0 != I::NULL_VALUE,
+            "GenericIndex::get: corrupted (== none sentinel)"
+        );
         self.0
     }
     /// `get()` widened to `usize` for slice indexing — covers the common
     /// `idx.get() as usize` site shape.
-    #[inline] pub fn get_usize(self) -> usize { I::to_usize(self.get()) }
+    #[inline]
+    pub fn get_usize(self) -> usize {
+        I::to_usize(self.get())
+    }
     /// `init()` from a `usize` source (Vec length etc.). Debug-panics on
     /// truncation, mirroring Zig `@intCast`.
-    #[inline] pub fn from_usize(n: usize) -> Self { Self::init(I::from_usize(n)) }
-    #[inline] pub fn to_optional(self) -> GenericIndexOptional<I, M> {
+    #[inline]
+    pub fn from_usize(n: usize) -> Self {
+        Self::init(I::from_usize(n))
+    }
+    #[inline]
+    pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
-    #[inline] pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool { a.0 < b.0 }
+    #[inline]
+    pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool {
+        a.0 < b.0
+    }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline] pub fn is_none(self) -> bool { self.0 == I::NULL_VALUE }
-    #[inline] pub fn is_some(self) -> bool { !self.is_none() }
+    #[inline]
+    pub fn is_none(self) -> bool {
+        self.0 == I::NULL_VALUE
+    }
+    #[inline]
+    pub fn is_some(self) -> bool {
+        !self.is_none()
+    }
 }
 
 /// `GenericIndex::Optional` — `MAX` is `none`.
 #[repr(transparent)]
 pub struct GenericIndexOptional<I, M = ()>(I, core::marker::PhantomData<M>);
-impl<I: Copy, M> Clone for GenericIndexOptional<I, M> { #[inline] fn clone(&self) -> Self { *self } }
+impl<I: Copy, M> Clone for GenericIndexOptional<I, M> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 impl<I: Copy, M> Copy for GenericIndexOptional<I, M> {}
 impl<I: PartialEq, M> PartialEq for GenericIndexOptional<I, M> {
-    #[inline] fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+    #[inline]
+    fn eq(&self, o: &Self) -> bool {
+        self.0 == o.0
+    }
 }
 impl<I: Eq, M> Eq for GenericIndexOptional<I, M> {}
 impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
-    #[inline] pub fn some(i: GenericIndex<I, M>) -> Self { i.to_optional() }
+    #[inline]
+    pub fn some(i: GenericIndex<I, M>) -> Self {
+        i.to_optional()
+    }
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
-    #[inline] pub fn get(self) -> Option<GenericIndex<I, M>> { self.unwrap() }
-    #[inline] pub fn init(maybe: Option<I>) -> Self {
-        match maybe { Some(i) => GenericIndex::<I, M>::init(i).to_optional(), None => Self::NONE }
+    #[inline]
+    pub fn get(self) -> Option<GenericIndex<I, M>> {
+        self.unwrap()
     }
-    #[inline] pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
-        if self.0 == I::NULL_VALUE { None } else { Some(GenericIndex(self.0, core::marker::PhantomData)) }
+    #[inline]
+    pub fn init(maybe: Option<I>) -> Self {
+        match maybe {
+            Some(i) => GenericIndex::<I, M>::init(i).to_optional(),
+            None => Self::NONE,
+        }
     }
-    #[inline] pub fn unwrap_get(self) -> Option<I> {
-        if self.0 == I::NULL_VALUE { None } else { Some(self.0) }
+    #[inline]
+    pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
+        if self.0 == I::NULL_VALUE {
+            None
+        } else {
+            Some(GenericIndex(self.0, core::marker::PhantomData))
+        }
+    }
+    #[inline]
+    pub fn unwrap_get(self) -> Option<I> {
+        if self.0 == I::NULL_VALUE {
+            None
+        } else {
+            Some(self.0)
+        }
     }
 }
 
@@ -3216,7 +3797,9 @@ pub type mach_port = u32;
 pub mod rand {
     /// xoshiro256++ — `std.Random.DefaultPrng`.
     #[derive(Clone, Copy)]
-    pub struct DefaultPrng { s: [u64; 4] }
+    pub struct DefaultPrng {
+        s: [u64; 4],
+    }
     impl DefaultPrng {
         /// Seed via splitmix64 (matches Zig stdlib `Xoshiro256.init`).
         pub fn init(seed: u64) -> Self {
@@ -3278,7 +3861,9 @@ pub fn fast_random() -> u64 {
         static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p.take().unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+        let mut prng = p
+            .take()
+            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
         let v = prng.next_u64();
         p.set(Some(prng));
         v
@@ -3297,7 +3882,9 @@ pub mod hash {
     }
     /// Wyhash one-shot (Zig `bun.hash`).
     #[inline]
-    pub fn wyhash(bytes: &[u8]) -> u64 { crate::deprecated::RapidHash::hash(0, bytes) }
+    pub fn wyhash(bytes: &[u8]) -> u64 {
+        crate::deprecated::RapidHash::hash(0, bytes)
+    }
 }
 
 // ── base64 ────────────────────────────────────────────────────────────────
@@ -3335,7 +3922,10 @@ pub mod base64 {
 
     /// Result of a decode-into-buffer call.
     #[derive(Clone, Copy, Debug)]
-    pub struct DecodeResult { pub written: usize, pub fail: bool }
+    pub struct DecodeResult {
+        pub written: usize,
+        pub fail: bool,
+    }
 
     /// `bun.base64.decode`. Scalar fallback (PERF(port): simdutf path in
     /// bun_base64). Tolerates missing padding; stops at first invalid char.
@@ -3344,11 +3934,20 @@ pub mod base64 {
         static LUT: [u8; 256] = {
             let mut t = [INV; 256];
             let mut i = 0u8;
-            while i < 26 { t[(b'A' + i) as usize] = i; i += 1; }
+            while i < 26 {
+                t[(b'A' + i) as usize] = i;
+                i += 1;
+            }
             let mut i = 0u8;
-            while i < 26 { t[(b'a' + i) as usize] = 26 + i; i += 1; }
+            while i < 26 {
+                t[(b'a' + i) as usize] = 26 + i;
+                i += 1;
+            }
             let mut i = 0u8;
-            while i < 10 { t[(b'0' + i) as usize] = 52 + i; i += 1; }
+            while i < 10 {
+                t[(b'0' + i) as usize] = 52 + i;
+                i += 1;
+            }
             t[b'+' as usize] = 62;
             t[b'/' as usize] = 63;
             t
@@ -3357,19 +3956,34 @@ pub mod base64 {
         let mut acc: u32 = 0;
         let mut bits: u32 = 0;
         for &c in source {
-            if c == b'=' || c == b'\n' || c == b'\r' { continue; }
+            if c == b'=' || c == b'\n' || c == b'\r' {
+                continue;
+            }
             let v = LUT[c as usize];
-            if v == INV { return DecodeResult { written: w, fail: true }; }
+            if v == INV {
+                return DecodeResult {
+                    written: w,
+                    fail: true,
+                };
+            }
             acc = (acc << 6) | v as u32;
             bits += 6;
             if bits >= 8 {
                 bits -= 8;
-                if w >= dest.len() { return DecodeResult { written: w, fail: true }; }
+                if w >= dest.len() {
+                    return DecodeResult {
+                        written: w,
+                        fail: true,
+                    };
+                }
                 dest[w] = (acc >> bits) as u8;
                 w += 1;
             }
         }
-        DecodeResult { written: w, fail: false }
+        DecodeResult {
+            written: w,
+            fail: false,
+        }
     }
 }
 
@@ -3390,7 +4004,9 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
     // ≥len+1 bytes (alignment ≤ MI_MAX_ALIGN_SIZE for u8).
     unsafe {
         let p = bun_alloc::mimalloc::mi_malloc(bytes.len() + 1).cast::<u8>();
-        if p.is_null() { crate::out_of_memory(); }
+        if p.is_null() {
+            crate::out_of_memory();
+        }
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
         p as *const core::ffi::c_char
@@ -3546,22 +4162,49 @@ fn argv_view() -> &'static [&'static ZStr] {
 #[derive(Clone, Copy)]
 pub struct Argv(&'static [&'static ZStr]);
 impl Argv {
-    #[inline] pub fn len(&self) -> usize { self.0.len() }
-    #[inline] pub fn is_empty(&self) -> bool { self.0.is_empty() }
-    #[inline] pub fn get(&self, i: usize) -> Option<&'static ZStr> { self.0.get(i).copied() }
-    #[inline] pub fn iter(&self) -> ArgvIter { ArgvIter { inner: self.0, i: 0 } }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    #[inline]
+    pub fn get(&self, i: usize) -> Option<&'static ZStr> {
+        self.0.get(i).copied()
+    }
+    #[inline]
+    pub fn iter(&self) -> ArgvIter {
+        ArgvIter {
+            inner: self.0,
+            i: 0,
+        }
+    }
     /// Borrow the underlying `[&ZStr]` view (Zig: `bun.argv[..]`).
-    #[inline] pub fn as_slice(&self) -> &'static [&'static ZStr] { self.0 }
+    #[inline]
+    pub fn as_slice(&self) -> &'static [&'static ZStr] {
+        self.0
+    }
     /// Owned `Vec` copy of the view — used by call sites that need to append
     /// (e.g. `--compile` exec-argv splicing) before leaking + `set_argv`.
-    #[inline] pub fn to_vec(&self) -> Vec<&'static ZStr> { self.0.to_vec() }
+    #[inline]
+    pub fn to_vec(&self) -> Vec<&'static ZStr> {
+        self.0.to_vec()
+    }
 }
 impl IntoIterator for Argv {
     type Item = &'static [u8];
     type IntoIter = ArgvIter;
-    #[inline] fn into_iter(self) -> ArgvIter { self.iter() }
+    #[inline]
+    fn into_iter(self) -> ArgvIter {
+        self.iter()
+    }
 }
-pub struct ArgvIter { inner: &'static [&'static ZStr], i: usize }
+pub struct ArgvIter {
+    inner: &'static [&'static ZStr],
+    i: usize,
+}
 impl Iterator for ArgvIter {
     type Item = &'static [u8];
     #[inline]
@@ -3573,13 +4216,15 @@ impl Iterator for ArgvIter {
 }
 
 /// `bun.argv` accessor.
-#[inline] pub fn argv() -> Argv { Argv(argv_view()) }
+#[inline]
+pub fn argv() -> Argv {
+    Argv(argv_view())
+}
 
 // ─── BUN_OPTIONS argv injection (bun.zig: bun_options_argc / appendOptionsEnv) ──
 /// Number of arguments injected into `argv` by the `BUN_OPTIONS` environment
 /// variable. Set once during single-threaded startup (`init_argv`).
-static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Zig: `bun.bun_options_argc` — read accessor.
 ///
@@ -3843,7 +4488,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         Ok(ZStr::from_buf(&buf.0[..], bi))
     }
     #[cfg(not(any(unix, windows)))]
-    { let _ = buf; Err(crate::err!(Unexpected)) }
+    {
+        let _ = buf;
+        Err(crate::err!(Unexpected))
+    }
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
@@ -3859,39 +4507,51 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
 /// for an executable named `bin`; returns the NUL-terminated match written
 /// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
 /// `bun_which` (tier-2).
-pub fn which<'a>(
-    buf: &'a mut PathBuffer,
-    path: &[u8],
-    cwd: &[u8],
-    bin: &[u8],
-) -> Option<&'a ZStr> {
-    if bin.is_empty() { return None; }
+pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+    if bin.is_empty() {
+        return None;
+    }
     // If `bin` contains a separator, resolve relative to cwd only.
     let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
     #[inline]
     fn is_absolute(p: &[u8]) -> bool {
-        if p.first() == Some(&b'/') { return true; }
+        if p.first() == Some(&b'/') {
+            return true;
+        }
         if cfg!(windows) {
-            if p.first() == Some(&b'\\') { return true; }
-            if p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic() { return true; }
+            if p.first() == Some(&b'\\') {
+                return true;
+            }
+            if p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic() {
+                return true;
+            }
         }
         false
     }
     let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
         let mut n = 0usize;
         if !dir.is_empty() {
-            if dir.len() + 1 + bin.len() + 1 > buf.0.len() { return None; }
+            if dir.len() + 1 + bin.len() + 1 > buf.0.len() {
+                return None;
+            }
             buf.0[..dir.len()].copy_from_slice(dir);
             n = dir.len();
-            if buf.0[n - 1] != b'/' { buf.0[n] = b'/'; n += 1; }
+            if buf.0[n - 1] != b'/' {
+                buf.0[n] = b'/';
+                n += 1;
+            }
         }
-        if n + bin.len() + 1 > buf.0.len() { return None; }
+        if n + bin.len() + 1 > buf.0.len() {
+            return None;
+        }
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
         #[cfg(unix)]
         unsafe {
-            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 { return Some(n); }
+            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
+                return Some(n);
+            }
         }
         #[cfg(not(unix))]
         {
@@ -3908,7 +4568,9 @@ pub fn which<'a>(
         // trailing '/' from cwd and strips a leading "./" from bin.
         let cwd = {
             let mut c = cwd;
-            while let [rest @ .., b'/'] = c { c = rest; }
+            while let [rest @ .., b'/'] = c {
+                c = rest;
+            }
             c
         };
         let bin = bin.strip_prefix(b"./").unwrap_or(bin);
@@ -3917,7 +4579,9 @@ pub fn which<'a>(
     // Bare names go straight to PATH (which.zig:44-63) — do NOT consult cwd.
     let delim: u8 = if cfg!(windows) { b';' } else { b':' };
     for dir in path.split(|&b| b == delim) {
-        if dir.is_empty() { continue; }
+        if dir.is_empty() {
+            continue;
+        }
         if let Some(n) = check(buf, dir, bin) {
             return Some(ZStr::from_buf(&buf.0, n));
         }
@@ -3936,8 +4600,14 @@ thread_local! {
     static RELOAD_IN_PROGRESS_ON_CURRENT_THREAD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
-#[inline] pub fn auto_reload_on_crash() -> bool { AUTO_RELOAD_ON_CRASH.load(AOrdering::Relaxed) }
-#[inline] pub fn set_auto_reload_on_crash(v: bool) { AUTO_RELOAD_ON_CRASH.store(v, AOrdering::Relaxed) }
+#[inline]
+pub fn auto_reload_on_crash() -> bool {
+    AUTO_RELOAD_ON_CRASH.load(AOrdering::Relaxed)
+}
+#[inline]
+pub fn set_auto_reload_on_crash(v: bool) {
+    AUTO_RELOAD_ON_CRASH.store(v, AOrdering::Relaxed)
+}
 
 #[inline]
 pub fn is_process_reload_in_progress_on_another_thread() -> bool {
@@ -4018,7 +4688,13 @@ pub fn maybe_handle_panic_during_process_reload() {
                     rem: Option<&mut libc::timespec>,
                 ) -> core::ffi::c_int;
             }
-            let _ = libc_nanosleep(&libc::timespec { tv_sec: 1, tv_nsec: 0 }, None);
+            let _ = libc_nanosleep(
+                &libc::timespec {
+                    tv_sec: 1,
+                    tv_nsec: 0,
+                },
+                None,
+            );
         }
     }
 }
@@ -4073,13 +4749,20 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(unix)]
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        { unsafe extern "C" { safe fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
+        {
+            unsafe extern "C" {
+                safe fn on_before_reload_process_linux();
+            }
+            on_before_reload_process_linux();
+        }
 
         // We clone argv so that the memory address isn't the same as the libc one
         // (mirrors Zig `allocator.dupeZ` per entry).
         let args = argv_storage();
-        let dupe_argv: Vec<ZBox> =
-            args.iter().map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec())).collect();
+        let dupe_argv: Vec<ZBox> = args
+            .iter()
+            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
+            .collect();
         let mut newargv: Vec<*const core::ffi::c_char> =
             dupe_argv.iter().map(|z| z.as_ptr()).collect();
         newargv.push(core::ptr::null());
@@ -4093,8 +4776,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
             p = p.add(1);
         }
-        let mut envp: Vec<*const core::ffi::c_char> =
-            dupe_env.iter().map(|z| z.as_ptr()).collect();
+        let mut envp: Vec<*const core::ffi::c_char> = dupe_env.iter().map(|z| z.as_ptr()).collect();
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
@@ -4104,7 +4786,10 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {
-            crate::output::pretty_errorln(&format_args!("error: Failed to reload process: errno {}", errno));
+            crate::output::pretty_errorln(&format_args!(
+                "error: Failed to reload process: errno {}",
+                errno
+            ));
             return;
         }
         panic!("Unexpected error while reloading: errno {}", errno);
@@ -4125,8 +4810,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 /// symbolizer. Port of the subset of `bun.spawnSync` needed at tier-0.
 /// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
 #[derive(Debug, Clone, Copy)]
-pub struct SpawnStatus { pub code: i32 }
-impl SpawnStatus { #[inline] pub fn is_ok(&self) -> bool { self.code == 0 } }
+pub struct SpawnStatus {
+    pub code: i32,
+}
+impl SpawnStatus {
+    #[inline]
+    pub fn is_ok(&self) -> bool {
+        self.code == 0
+    }
+}
 
 // ── posix_spawn_bun FFI (canonical #[repr(C)] mirror) ─────────────────────
 // RULE: libc `posix_spawn`/`posix_spawnp` must NEVER be called directly on
@@ -4196,7 +4888,10 @@ pub mod spawn_ffi {
 
     impl Default for ActionsList {
         fn default() -> Self {
-            Self { ptr: core::ptr::null(), len: 0 }
+            Self {
+                ptr: core::ptr::null(),
+                len: 0,
+            }
         }
     }
 
@@ -4239,7 +4934,10 @@ pub mod spawn_ffi {
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
     unsafe {
-        let cargs: Vec<ZBox> = argv.iter().map(|a| ZBox::from_vec_with_nul(a.as_ref().to_vec())).collect();
+        let cargs: Vec<ZBox> = argv
+            .iter()
+            .map(|a| ZBox::from_vec_with_nul(a.as_ref().to_vec()))
+            .collect();
         let mut ptrs: Vec<*const core::ffi::c_char> = cargs.iter().map(|z| z.as_ptr()).collect();
         ptrs.push(core::ptr::null());
 
@@ -4275,7 +4973,9 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 ptrs.as_ptr(),
                 environ,
             );
-            if rc != 0 { return Err(crate::Error::from_errno(rc as i32)); }
+            if rc != 0 {
+                return Err(crate::Error::from_errno(rc as i32));
+            }
             pid as libc::pid_t
         };
         // macOS: Apple's posix_spawnp is a kernel fast-path (no fork); keep it
@@ -4291,7 +4991,9 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if rc != 0 { return Err(crate::Error::from_errno(rc)); }
+            if rc != 0 {
+                return Err(crate::Error::from_errno(rc));
+            }
             pid
         };
         // Android: bionic only added posix_spawnp at API 28 and the `libc`
@@ -4332,12 +5034,18 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
             let r = libc::waitpid(pid, &raw mut status, 0);
             if r == -1 {
                 let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-                if e == libc::EINTR { continue; }
+                if e == libc::EINTR {
+                    continue;
+                }
                 return Err(crate::Error::from_errno(e));
             }
             break;
         }
-        let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { -1 };
+        let code = if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            -1
+        };
         Ok(SpawnStatus { code })
     }
     #[cfg(windows)]
@@ -4391,7 +5099,10 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 // for syscall ABI and intentionally do NOT alias this.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Timespec { pub sec: i64, pub nsec: i64 }
+pub struct Timespec {
+    pub sec: i64,
+    pub nsec: i64,
+}
 // SAFETY: two `i64` fields; all-zero is the epoch.
 unsafe impl crate::ffi::Zeroable for Timespec {}
 // SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
@@ -4408,15 +5119,23 @@ impl Timespec {
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
 
     #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self { Self { sec, nsec } }
+    pub const fn new(sec: i64, nsec: i64) -> Self {
+        Self { sec, nsec }
+    }
 
-    #[inline] pub fn eql(&self, other: &Timespec) -> bool { self == other }
+    #[inline]
+    pub fn eql(&self, other: &Timespec) -> bool {
+        self == other
+    }
 
     /// `self - other` (Zig: `duration`). Mimics C wrapping behaviour.
     pub fn duration(&self, other: &Timespec) -> Timespec {
         let mut sec = self.sec.wrapping_sub(other.sec);
         let mut nsec = self.nsec.wrapping_sub(other.nsec);
-        if nsec < 0 { sec = sec.wrapping_sub(1); nsec = nsec.wrapping_add(Self::NS_PER_S); }
+        if nsec < 0 {
+            sec = sec.wrapping_sub(1);
+            nsec = nsec.wrapping_add(Self::NS_PER_S);
+        }
         Timespec { sec, nsec }
     }
 
@@ -4429,26 +5148,41 @@ impl Timespec {
 
     /// Nanoseconds (saturating at `u64::MAX`).
     pub fn ns(&self) -> u64 {
-        if self.sec <= 0 { return self.nsec.max(0) as u64; }
-        let s_ns = (self.sec as u64).checked_mul(Self::NS_PER_S as u64).unwrap_or(u64::MAX);
+        if self.sec <= 0 {
+            return self.nsec.max(0) as u64;
+        }
+        let s_ns = (self.sec as u64)
+            .checked_mul(Self::NS_PER_S as u64)
+            .unwrap_or(u64::MAX);
         // Zig-exact (bun.zig:3313 returns maxInt(i64))
-        s_ns.checked_add(self.nsec.max(0) as u64).unwrap_or(i64::MAX as u64)
+        s_ns.checked_add(self.nsec.max(0) as u64)
+            .unwrap_or(i64::MAX as u64)
     }
 
     /// Signed nanoseconds (wrapping). Port of `bun.timespec.nsSigned`.
-    #[inline] pub fn ns_signed(&self) -> i64 {
+    #[inline]
+    pub fn ns_signed(&self) -> i64 {
         let ns_per_sec = self.sec.wrapping_mul(Self::NS_PER_S);
         let ns_from_nsec = self.nsec.div_euclid(Self::NS_PER_MS);
         ns_per_sec.wrapping_add(ns_from_nsec)
     }
 
     /// Milliseconds (signed, wrapping).
-    #[inline] pub fn ms(&self) -> i64 {
-        self.sec.wrapping_mul(1000).wrapping_add(self.nsec.div_euclid(Self::NS_PER_MS))
+    #[inline]
+    pub fn ms(&self) -> i64 {
+        self.sec
+            .wrapping_mul(1000)
+            .wrapping_add(self.nsec.div_euclid(Self::NS_PER_MS))
     }
-    #[inline] pub fn ms_unsigned(&self) -> u64 { self.ns() / Self::NS_PER_MS as u64 }
+    #[inline]
+    pub fn ms_unsigned(&self) -> u64 {
+        self.ns() / Self::NS_PER_MS as u64
+    }
 
-    #[inline] pub fn greater(&self, other: &Timespec) -> bool { self.order(other).is_gt() }
+    #[inline]
+    pub fn greater(&self, other: &Timespec) -> bool {
+        self.order(other).is_gt()
+    }
 
     pub fn add_ms(&self, interval: i64) -> Timespec {
         let sec_inc = interval / 1000;
@@ -4456,7 +5190,10 @@ impl Timespec {
         let mut t = *self;
         t.sec = t.sec.wrapping_add(sec_inc);
         t.nsec = t.nsec.wrapping_add(nsec_inc);
-        if t.nsec >= Self::NS_PER_S { t.sec = t.sec.wrapping_add(1); t.nsec -= Self::NS_PER_S; }
+        if t.nsec >= Self::NS_PER_S {
+            t.sec = t.sec.wrapping_add(1);
+            t.nsec -= Self::NS_PER_S;
+        }
         t
     }
 
@@ -4472,7 +5209,9 @@ impl Timespec {
         let sec_inc = ms_inc / MS_PER_S;
         let ms_remainder = ms_inc.rem_euclid(MS_PER_S);
         t.sec = t.sec.wrapping_add(sec_inc);
-        t.nsec = t.nsec.wrapping_add(ms_remainder * Self::NS_PER_MS + nsec_inc);
+        t.nsec = t
+            .nsec
+            .wrapping_add(ms_remainder * Self::NS_PER_MS + nsec_inc);
         if t.nsec >= Self::NS_PER_S {
             t.sec = t.sec.wrapping_add(1);
             t.nsec -= Self::NS_PER_S;
@@ -4483,27 +5222,46 @@ impl Timespec {
         t
     }
 
-    #[inline] pub fn min(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_lt() { a } else { b } }
-    #[inline] pub fn max(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_gt() { a } else { b } }
+    #[inline]
+    pub fn min(a: Timespec, b: Timespec) -> Timespec {
+        if a.order(&b).is_lt() { a } else { b }
+    }
+    #[inline]
+    pub fn max(a: Timespec, b: Timespec) -> Timespec {
+        if a.order(&b).is_gt() { a } else { b }
+    }
 
     /// `bun.timespec.orderIgnoreEpoch` (bun.zig:3405) — EPOCH = "no timeout", treated as +∞.
     pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
-        if a == b { return core::cmp::Ordering::Equal; }
-        if a == Self::EPOCH { return core::cmp::Ordering::Greater; }
-        if b == Self::EPOCH { return core::cmp::Ordering::Less; }
+        if a == b {
+            return core::cmp::Ordering::Equal;
+        }
+        if a == Self::EPOCH {
+            return core::cmp::Ordering::Greater;
+        }
+        if b == Self::EPOCH {
+            return core::cmp::Ordering::Less;
+        }
         a.order(&b)
     }
     /// `bun.timespec.minIgnoreEpoch` (bun.zig:3411).
     #[inline]
     pub fn min_ignore_epoch(self, b: Timespec) -> Timespec {
-        if Self::order_ignore_epoch(self, b).is_lt() { self } else { b }
+        if Self::order_ignore_epoch(self, b).is_lt() {
+            self
+        } else {
+            b
+        }
     }
 
     /// Construct from a signed nanosecond count. Euclidean division keeps
     /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
     pub const fn from_ns(ns: i64) -> Timespec {
-        Timespec { sec: ns.div_euclid(Self::NS_PER_S), nsec: ns.rem_euclid(Self::NS_PER_S) }
+        Timespec {
+            sec: ns.div_euclid(Self::NS_PER_S),
+            nsec: ns.rem_euclid(Self::NS_PER_S),
+        }
     }
 
     /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
@@ -4513,33 +5271,56 @@ impl Timespec {
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            if let Some(ns) = mock_time::get() { return Timespec::from_ns(ns); }
+            if let Some(ns) = mock_time::get() {
+                return Timespec::from_ns(ns);
+            }
         }
         Self::now_real()
     }
     /// Convenience for `now(AllowMockedTime)` (downstream short-name).
-    #[inline] pub fn now_allow_mocked_time() -> Timespec { Self::now(TimespecMockMode::AllowMockedTime) }
+    #[inline]
+    pub fn now_allow_mocked_time() -> Timespec {
+        Self::now(TimespecMockMode::AllowMockedTime)
+    }
 
     fn now_real() -> Timespec {
         #[cfg(unix)]
         {
-            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
-            Timespec { sec: ts.tv_sec as i64, nsec: ts.tv_nsec as i64 }
+            Timespec {
+                sec: ts.tv_sec as i64,
+                nsec: ts.tv_nsec as i64,
+            }
         }
         #[cfg(not(unix))]
         {
             let n = crate::time::nano_timestamp();
-            Timespec { sec: (n / 1_000_000_000) as i64, nsec: (n % 1_000_000_000) as i64 }
+            Timespec {
+                sec: (n / 1_000_000_000) as i64,
+                nsec: (n % 1_000_000_000) as i64,
+            }
         }
     }
 
-    #[inline] pub fn since_now(&self, mode: TimespecMockMode) -> u64 { Self::now(mode).duration(self).ns() }
-    #[inline] pub fn ms_from_now(mode: TimespecMockMode, interval: i64) -> Timespec { Self::now(mode).add_ms(interval) }
+    #[inline]
+    pub fn since_now(&self, mode: TimespecMockMode) -> u64 {
+        Self::now(mode).duration(self).ns()
+    }
+    #[inline]
+    pub fn ms_from_now(mode: TimespecMockMode, interval: i64) -> Timespec {
+        Self::now(mode).add_ms(interval)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TimespecMockMode { AllowMockedTime, ForceRealTime }
+pub enum TimespecMockMode {
+    AllowMockedTime,
+    ForceRealTime,
+}
 
 /// `bun_core::timespec::Mode` namespace shim — Zig nested it under the struct;
 /// Rust can't do inherent associated types stably, so expose a module with the
@@ -4560,12 +5341,19 @@ pub mod mock_time {
     static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
-    #[inline] pub fn set(ns: i64) { MOCKED_TIME_NS.store(ns, Ordering::Relaxed); }
+    #[inline]
+    pub fn set(ns: i64) {
+        MOCKED_TIME_NS.store(ns, Ordering::Relaxed);
+    }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
-    #[inline] pub fn clear() { MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed); }
+    #[inline]
+    pub fn clear() {
+        MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed);
+    }
     /// Current mocked time, or `None` if not mocked.
-    #[inline] pub fn get() -> Option<i64> {
+    #[inline]
+    pub fn get() -> Option<i64> {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
     }
@@ -4582,8 +5370,14 @@ pub mod mock_time {
 pub struct f16(pub u16);
 
 impl f16 {
-    #[inline] pub const fn from_bits(bits: u16) -> Self { Self(bits) }
-    #[inline] pub const fn to_bits(self) -> u16 { self.0 }
+    #[inline]
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+    #[inline]
+    pub const fn to_bits(self) -> u16 {
+        self.0
+    }
 
     /// Widen to `f64` (exact). Port of Zig `@floatCast(f64, h)`.
     pub fn to_f64(self) -> f64 {
@@ -4593,18 +5387,34 @@ impl f16 {
         let frac = h & 0x3FF;
         let signf = if sign != 0 { -1.0 } else { 1.0 };
         if exp == 0 {
-            if frac == 0 { return signf * 0.0; }
+            if frac == 0 {
+                return signf * 0.0;
+            }
             // subnormal: 2^-14 * (frac / 1024)
             return signf * (frac as f64) * 2.0_f64.powi(-24);
         }
         if exp == 0x1F {
-            return if frac == 0 { signf * f64::INFINITY } else { f64::NAN };
+            return if frac == 0 {
+                signf * f64::INFINITY
+            } else {
+                f64::NAN
+            };
         }
         signf * (1.0 + (frac as f64) / 1024.0) * 2.0_f64.powi(exp as i32 - 15)
     }
 }
-impl From<f16> for f64 { #[inline] fn from(h: f16) -> f64 { h.to_f64() } }
-impl From<f16> for f32 { #[inline] fn from(h: f16) -> f32 { h.to_f64() as f32 } }
+impl From<f16> for f64 {
+    #[inline]
+    fn from(h: f16) -> f64 {
+        h.to_f64()
+    }
+}
+impl From<f16> for f32 {
+    #[inline]
+    fn from(h: f16) -> f32 {
+        h.to_f64() as f32
+    }
+}
 // SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
 // `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
 // from `&[u8]` for Float16Array printing (ConsoleObject).
@@ -4629,9 +5439,9 @@ impl core::fmt::Display for f16 {
 // callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
 // the profiling target. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
-    use core::sync::atomic::{AtomicU8, Ordering};
     #[cfg(target_os = "linux")]
     use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::{AtomicU8, Ordering};
     #[cfg(target_os = "linux")]
     use std::sync::Once;
 
@@ -4650,10 +5460,17 @@ pub mod perf {
         #[inline]
         pub fn end(&mut self) {
             #[cfg(target_os = "linux")]
-            if let Some(l) = self.linux.take() { l.end(); }
+            if let Some(l) = self.linux.take() {
+                l.end();
+            }
         }
     }
-    impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
+    impl Drop for Ctx {
+        #[inline]
+        fn drop(&mut self) {
+            self.end();
+        }
+    }
 
     // Tri-state so the disabled fast path is a single Relaxed load (this sits
     // on every `trace()` call across the bundler/parser hot paths). The flag
@@ -4667,7 +5484,10 @@ pub mod perf {
     #[cold]
     fn is_enabled_init() -> bool {
         #[cfg(target_os = "linux")]
-        let on = crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported();
+        let on = crate::env_var::feature_flag::BUN_TRACE
+            .get()
+            .unwrap_or(false)
+            && Linux::is_supported();
         // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0).
         // **`bun_perf` is the canonical entry point** (it drives both the
         // ftrace and signpost backends via `PerfEvent`); `bun_core::perf` is
@@ -4697,14 +5517,24 @@ pub mod perf {
             return Ctx::DISABLED;
         }
         #[cfg(target_os = "linux")]
-        { return Ctx { linux: Some(Linux::init(name)) }; }
+        {
+            return Ctx {
+                linux: Some(Linux::init(name)),
+            };
+        }
         #[allow(unreachable_code)]
-        { let _ = name; Ctx::DISABLED }
+        {
+            let _ = name;
+            Ctx::DISABLED
+        }
     }
 
     // ── Linux ftrace backend (folded from src/perf/lib.rs) ────────────────
     #[cfg(target_os = "linux")]
-    struct Linux { start_time: u64, name: &'static str }
+    struct Linux {
+        start_time: u64,
+        name: &'static str,
+    }
 
     #[cfg(target_os = "linux")]
     impl Linux {
@@ -4725,7 +5555,9 @@ pub mod perf {
             }
         }
         fn end(self) {
-            if !Self::is_supported() { return; }
+            if !Self::is_supported() {
+                return;
+            }
             let duration = crate::Timespec::now(crate::TimespecMockMode::ForceRealTime)
                 .ns()
                 .saturating_sub(self.start_time);

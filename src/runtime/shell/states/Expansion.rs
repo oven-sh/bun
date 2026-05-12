@@ -6,7 +6,7 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
+    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
 use crate::shell::states::base::Base;
@@ -184,7 +184,9 @@ impl Expansion {
                 }
                 // ── Command substitution: spawn a Script with stdout piped
                 //    into a fresh owned buffer. Spec: expandVarAndCmdSubst.
-                let ast::SimpleAtom::CmdSubst(sub) = simple else { unreachable!() };
+                let ast::SimpleAtom::CmdSubst(sub) = simple else {
+                    unreachable!()
+                };
                 let quoted = sub.quoted;
                 let script_ast: *const ast::Script = &raw const sub.script;
                 me.state = ExpansionState::CmdSubst;
@@ -242,8 +244,11 @@ impl Expansion {
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
-        let exit: ExitCode =
-            if matches!(interp.as_expansion(this).state, ExpansionState::Err(_)) { 1 } else { 0 };
+        let exit: ExitCode = if matches!(interp.as_expansion(this).state, ExpansionState::Err(_)) {
+            1
+        } else {
+            0
+        };
         interp.child_done(parent, this, exit)
     }
 
@@ -260,8 +265,7 @@ impl Expansion {
                 braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
             )
         };
-        let count =
-            braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
+        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
         let arena = bun_alloc::Arena::new();
@@ -317,8 +321,7 @@ impl Expansion {
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state =
-                    ExpansionState::Err(ShellErr::new_sys(e));
+                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(e));
                 return Yield::Next(this);
             }
             Err(e) => {
@@ -512,9 +515,7 @@ impl Expansion {
         if let Some(err) = err {
             let shell_err = match err {
                 ShellGlobErr::Syscall(e) => ShellErr::new_sys(e),
-                ShellGlobErr::Unknown(e) => {
-                    ShellErr::Custom(e.to_string().into_bytes().into())
-                }
+                ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
             };
             interp.throw(shell_err);
             interp.as_expansion_mut(this).state = ExpansionState::Done;
@@ -539,12 +540,8 @@ impl Expansion {
                 Self::push_current_out(me);
                 me.state = ExpansionState::Done;
             } else {
-                let msg = format!(
-                    "no matches found: {}",
-                    bstr::BStr::new(&me.current_out)
-                );
-                me.state =
-                    ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+                let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
+                me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
             }
             Yield::Next(this).run(interp);
             return;

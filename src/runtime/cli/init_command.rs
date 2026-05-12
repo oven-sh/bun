@@ -2,16 +2,16 @@
 
 use core::ffi::c_char;
 
+use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{self as bun, env_var, fmt as bun_fmt, Environment, Error, Global, Output};
+use bun_core::{self as bun, Environment, Error, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{MutableString, ZStr, strings};
 use bun_js_parser as js_ast;
-use bun_ast::StoreRef;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, path_buffer_pool, PathBuffer};
+use bun_paths::{self, PathBuffer, path_buffer_pool};
 use bun_resolver::fs as Fs;
-use bun_core::{strings, MutableString, ZStr};
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;
@@ -51,12 +51,11 @@ impl InitCommand {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let _stdin_mode = bun_sys::windows::StdinModeGuard::set(
-            bun_sys::windows::UpdateStdioModeFlagsOpts {
+        let _stdin_mode =
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                 ..Default::default()
-            },
-        );
+            });
 
         let mut input: Vec<u8> = Vec::new();
         // TODO(port): bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024)
@@ -262,13 +261,14 @@ impl InitCommand {
     pub fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         // Set raw mode to read single characters without echo
         #[cfg(windows)]
-        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-            // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
-            set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-            // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
-            unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
-        });
+        let _restore =
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
+                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+            });
 
         #[cfg(unix)]
         let _restore = bun_core::tty::RawModeGuard::new(0);
@@ -400,9 +400,8 @@ impl InitCommand {
         }
 
         let _ = Fs::FileSystem::init(None)?;
-        let pathname = Fs::PathName::init(
-            Fs::FileSystem::get().top_level_dir_without_trailing_slash(),
-        );
+        let pathname =
+            Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
         // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 
@@ -410,8 +409,7 @@ impl InitCommand {
 
         // TODO(port): destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null
         let mut package_json_file: Option<bun_sys::File> =
-            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0)
-                .ok();
+            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building (Zig used the AST store).
@@ -443,7 +441,8 @@ impl InitCommand {
                     }
                 };
 
-                package_json_contents = MutableString::init(usize::try_from(size).expect("int cast"))?;
+                package_json_contents =
+                    MutableString::init(usize::try_from(size).expect("int cast"))?;
                 // Zig: list_mut().expand_to_capacity()
                 package_json_contents
                     .list
@@ -555,7 +554,9 @@ impl InitCommand {
                 let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| { let _ = bun_sys::close(d); });
+                let _close = scopeguard::guard(dir, |d| {
+                    let _ = bun_sys::close(d);
+                });
                 // Zig: bun.DirIterator.iterate(.fromStdDir(dir), .u8)
                 let mut it = bun_sys::iterate_dir(dir);
                 while let Some(file) = it.next().map_err(bun_core::Error::from)? {
@@ -578,12 +579,9 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = bun_ast::Expr::init(
-                bun_ast::E::Object::default(),
-                bun_ast::Loc::EMPTY,
-            )
-            .data
-            .e_object();
+            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+                .data
+                .e_object();
         }
 
         if !auto_yes {
@@ -708,11 +706,17 @@ impl InitCommand {
             let mut needed_dependencies = IntegerBitSet::<64>::init_empty();
             let mut needed_dev_dependencies = IntegerBitSet::<64>::init_empty();
             needed_dependencies.set_range_value(
-                bun_collections::bit_set::Range { start: 0, end: dependencies.len() },
+                bun_collections::bit_set::Range {
+                    start: 0,
+                    end: dependencies.len(),
+                },
                 true,
             );
             needed_dev_dependencies.set_range_value(
-                bun_collections::bit_set::Range { start: 0, end: dev_dependencies.len() },
+                bun_collections::bit_set::Range {
+                    start: 0,
+                    end: dev_dependencies.len(),
+                },
                 true,
             );
 
@@ -791,11 +795,11 @@ impl InitCommand {
                 let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
                     bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
-                peer_dependencies
-                    .data
-                    .e_object_mut()
-                    .unwrap()
-                    .put_string(&bump, b"typescript", b"^5")?;
+                peer_dependencies.data.e_object_mut().unwrap().put_string(
+                    &bump,
+                    b"typescript",
+                    b"^5",
+                )?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
@@ -847,7 +851,9 @@ impl InitCommand {
                 package_json_file = None;
                 break 'write_package_json;
             }
-            if let Err(err) = bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast")) {
+            if let Err(err) =
+                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+            {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -883,8 +889,7 @@ impl InitCommand {
                     // TODO(port): entry_point must be NUL-terminated for createNew
                     let mut ep_z = fields.entry_point.clone();
                     ep_z.push(0);
-                    let ep_zstr =
-                        ZStr::from_slice_with_nul(&ep_z[..]);
+                    let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
                     let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
                     // suppress
@@ -1254,54 +1259,135 @@ impl DependencyGroup {
     // Rust `const` cannot concat slices; the lists are hand-expanded below.
     pub const REACT: DependencyGroup = DependencyGroup {
         dependencies: &[
-            DependencyNeeded { name: b"react", version: b"^19" },
-            DependencyNeeded { name: b"react-dom", version: b"^19" },
+            DependencyNeeded {
+                name: b"react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"react-dom",
+                version: b"^19",
+            },
         ],
         dev_dependencies: &[
-            DependencyNeeded { name: b"@types/react", version: b"^19" },
-            DependencyNeeded { name: b"@types/react-dom", version: b"^19" },
+            DependencyNeeded {
+                name: b"@types/react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"@types/react-dom",
+                version: b"^19",
+            },
             // ++ blank.devDependencies
-            DependencyNeeded { name: b"@types/bun", version: b"latest" },
+            DependencyNeeded {
+                name: b"@types/bun",
+                version: b"latest",
+            },
         ],
     };
 
     pub const TAILWIND: DependencyGroup = DependencyGroup {
         dependencies: &[
-            DependencyNeeded { name: b"tailwindcss", version: b"^4" },
+            DependencyNeeded {
+                name: b"tailwindcss",
+                version: b"^4",
+            },
             // ++ react.dependencies
-            DependencyNeeded { name: b"react", version: b"^19" },
-            DependencyNeeded { name: b"react-dom", version: b"^19" },
+            DependencyNeeded {
+                name: b"react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"react-dom",
+                version: b"^19",
+            },
         ],
         dev_dependencies: &[
-            DependencyNeeded { name: b"bun-plugin-tailwind", version: b"latest" },
+            DependencyNeeded {
+                name: b"bun-plugin-tailwind",
+                version: b"latest",
+            },
             // ++ react.devDependencies
-            DependencyNeeded { name: b"@types/react", version: b"^19" },
-            DependencyNeeded { name: b"@types/react-dom", version: b"^19" },
-            DependencyNeeded { name: b"@types/bun", version: b"latest" },
+            DependencyNeeded {
+                name: b"@types/react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"@types/react-dom",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"@types/bun",
+                version: b"latest",
+            },
         ],
     };
 
     pub const SHADCN: DependencyGroup = DependencyGroup {
         dependencies: &[
-            DependencyNeeded { name: b"class-variance-authority", version: b"latest" },
-            DependencyNeeded { name: b"clsx", version: b"latest" },
-            DependencyNeeded { name: b"tailwind-merge", version: b"latest" },
-            DependencyNeeded { name: b"tw-animate-css", version: b"latest" },
-            DependencyNeeded { name: b"lucide-react", version: b"^1" },
-            DependencyNeeded { name: b"@radix-ui/react-label", version: b"latest" },
-            DependencyNeeded { name: b"@radix-ui/react-select", version: b"latest" },
-            DependencyNeeded { name: b"@radix-ui/react-slot", version: b"latest" },
+            DependencyNeeded {
+                name: b"class-variance-authority",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"clsx",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"tailwind-merge",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"tw-animate-css",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"lucide-react",
+                version: b"^1",
+            },
+            DependencyNeeded {
+                name: b"@radix-ui/react-label",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"@radix-ui/react-select",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"@radix-ui/react-slot",
+                version: b"latest",
+            },
             // ++ tailwind.dependencies
-            DependencyNeeded { name: b"tailwindcss", version: b"^4" },
-            DependencyNeeded { name: b"react", version: b"^19" },
-            DependencyNeeded { name: b"react-dom", version: b"^19" },
+            DependencyNeeded {
+                name: b"tailwindcss",
+                version: b"^4",
+            },
+            DependencyNeeded {
+                name: b"react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"react-dom",
+                version: b"^19",
+            },
         ],
         // ++ tailwind.devDependencies
         dev_dependencies: &[
-            DependencyNeeded { name: b"bun-plugin-tailwind", version: b"latest" },
-            DependencyNeeded { name: b"@types/react", version: b"^19" },
-            DependencyNeeded { name: b"@types/react-dom", version: b"^19" },
-            DependencyNeeded { name: b"@types/bun", version: b"latest" },
+            DependencyNeeded {
+                name: b"bun-plugin-tailwind",
+                version: b"latest",
+            },
+            DependencyNeeded {
+                name: b"@types/react",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"@types/react-dom",
+                version: b"^19",
+            },
+            DependencyNeeded {
+                name: b"@types/bun",
+                version: b"latest",
+            },
         ],
     };
 }
@@ -1328,10 +1414,18 @@ pub struct TemplateFile {
 
 impl TemplateFile {
     const fn new(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self { path, contents, can_skip_if_exists: false }
+        Self {
+            path,
+            contents,
+            can_skip_if_exists: false,
+        }
     }
     const fn new_skip(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self { path, contents, can_skip_if_exists: true }
+        Self {
+            path,
+            contents,
+            can_skip_if_exists: true,
+        }
     }
 }
 
@@ -1360,10 +1454,7 @@ impl Template {
         // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
         // never frees; allocate in the process-lifetime CLI arena instead.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(
-                bun_ast::E::String::init(b"scripts"),
-                bun_ast::Loc::EMPTY,
-            ),
+            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
             next: core::ptr::null_mut(),
         });
         // SAFETY: object is arena-allocated and live for the command duration.
@@ -1375,11 +1466,11 @@ impl Template {
             let script_name = the_scripts[i];
             let script_command = the_scripts[i + 1];
 
-            scripts_json
-                .data
-                .e_object_mut()
-                .unwrap()
-                .put_string(bump, script_name, script_command)?;
+            scripts_json.data.e_object_mut().unwrap().put_string(
+                bump,
+                script_name,
+                script_command,
+            )?;
             i += 2;
         }
         Ok(())
@@ -1440,7 +1531,9 @@ impl Template {
 
         // Give some way to opt out.
         if env_var::BUN_AGENT_RULE_DISABLED.get().unwrap_or(false)
-            || env_var::CLAUDE_CODE_AGENT_RULE_DISABLED.get().unwrap_or(false)
+            || env_var::CLAUDE_CODE_AGENT_RULE_DISABLED
+                .get()
+                .unwrap_or(false)
         {
             return false;
         }
@@ -1514,11 +1607,9 @@ impl Template {
                         let mut dest_z = template_file.path.to_vec();
                         dest_z.push(0);
                         // SAFETY: NUL-terminated above.
-                        let target_zstr =
-                            ZStr::from_slice_with_nul(&target_z[..]);
+                        let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
                         // SAFETY: NUL-terminated above.
-                        let dest_zstr =
-                            ZStr::from_slice_with_nul(&dest_z[..]);
+                        let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
                         }
@@ -1596,7 +1687,9 @@ impl Template {
                     }
                     let remaining = cursor.len();
                     let written = total - remaining;
-                    if written >= total { return false; }
+                    if written >= total {
+                        return false;
+                    }
                     pathbuf[written] = 0;
                     // SAFETY: NUL written at pathbuf[written].
                     ZStr::from_buf(&pathbuf[..], written)
@@ -1715,64 +1808,202 @@ impl Template {
 // ──────────────────────────────────────────────────────────────────────────
 
 static REACT_BLANK_FILES: &[TemplateFile] = &[
-    TemplateFile::new(b"bunfig.toml", include_bytes!("./init/react-app/bunfig.toml")),
-    TemplateFile::new(b"package.json", include_bytes!("./init/react-app/package.json")),
-    TemplateFile::new(b"tsconfig.json", include_bytes!("./init/react-app/tsconfig.json")),
-    TemplateFile::new(b"bun-env.d.ts", include_bytes!("./init/react-app/bun-env.d.ts")),
+    TemplateFile::new(
+        b"bunfig.toml",
+        include_bytes!("./init/react-app/bunfig.toml"),
+    ),
+    TemplateFile::new(
+        b"package.json",
+        include_bytes!("./init/react-app/package.json"),
+    ),
+    TemplateFile::new(
+        b"tsconfig.json",
+        include_bytes!("./init/react-app/tsconfig.json"),
+    ),
+    TemplateFile::new(
+        b"bun-env.d.ts",
+        include_bytes!("./init/react-app/bun-env.d.ts"),
+    ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
     TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
-    TemplateFile::new(b"src/index.ts", include_bytes!("./init/react-app/src/index.ts")),
-    TemplateFile::new(b"src/App.tsx", include_bytes!("./init/react-app/src/App.tsx")),
-    TemplateFile::new(b"src/index.html", include_bytes!("./init/react-app/src/index.html")),
-    TemplateFile::new(b"src/index.css", include_bytes!("./init/react-app/src/index.css")),
-    TemplateFile::new(b"src/APITester.tsx", include_bytes!("./init/react-app/src/APITester.tsx")),
-    TemplateFile::new(b"src/react.svg", include_bytes!("./init/react-app/src/react.svg")),
-    TemplateFile::new(b"src/frontend.tsx", include_bytes!("./init/react-app/src/frontend.tsx")),
-    TemplateFile::new(b"src/logo.svg", include_bytes!("./init/react-app/src/logo.svg")),
+    TemplateFile::new(
+        b"src/index.ts",
+        include_bytes!("./init/react-app/src/index.ts"),
+    ),
+    TemplateFile::new(
+        b"src/App.tsx",
+        include_bytes!("./init/react-app/src/App.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/index.html",
+        include_bytes!("./init/react-app/src/index.html"),
+    ),
+    TemplateFile::new(
+        b"src/index.css",
+        include_bytes!("./init/react-app/src/index.css"),
+    ),
+    TemplateFile::new(
+        b"src/APITester.tsx",
+        include_bytes!("./init/react-app/src/APITester.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/react.svg",
+        include_bytes!("./init/react-app/src/react.svg"),
+    ),
+    TemplateFile::new(
+        b"src/frontend.tsx",
+        include_bytes!("./init/react-app/src/frontend.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/logo.svg",
+        include_bytes!("./init/react-app/src/logo.svg"),
+    ),
 ];
 
 static REACT_TAILWIND_FILES: &[TemplateFile] = &[
-    TemplateFile::new(b"bunfig.toml", include_bytes!("./init/react-tailwind/bunfig.toml")),
-    TemplateFile::new(b"package.json", include_bytes!("./init/react-tailwind/package.json")),
-    TemplateFile::new(b"tsconfig.json", include_bytes!("./init/react-tailwind/tsconfig.json")),
-    TemplateFile::new(b"bun-env.d.ts", include_bytes!("./init/react-tailwind/bun-env.d.ts")),
+    TemplateFile::new(
+        b"bunfig.toml",
+        include_bytes!("./init/react-tailwind/bunfig.toml"),
+    ),
+    TemplateFile::new(
+        b"package.json",
+        include_bytes!("./init/react-tailwind/package.json"),
+    ),
+    TemplateFile::new(
+        b"tsconfig.json",
+        include_bytes!("./init/react-tailwind/tsconfig.json"),
+    ),
+    TemplateFile::new(
+        b"bun-env.d.ts",
+        include_bytes!("./init/react-tailwind/bun-env.d.ts"),
+    ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
     TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
-    TemplateFile::new(b"src/index.ts", include_bytes!("./init/react-tailwind/src/index.ts")),
-    TemplateFile::new(b"src/App.tsx", include_bytes!("./init/react-tailwind/src/App.tsx")),
-    TemplateFile::new(b"src/index.html", include_bytes!("./init/react-tailwind/src/index.html")),
-    TemplateFile::new(b"src/index.css", include_bytes!("./init/react-tailwind/src/index.css")),
-    TemplateFile::new(b"src/APITester.tsx", include_bytes!("./init/react-tailwind/src/APITester.tsx")),
-    TemplateFile::new(b"src/react.svg", include_bytes!("./init/react-tailwind/src/react.svg")),
-    TemplateFile::new(b"src/frontend.tsx", include_bytes!("./init/react-tailwind/src/frontend.tsx")),
-    TemplateFile::new(b"src/logo.svg", include_bytes!("./init/react-tailwind/src/logo.svg")),
-    TemplateFile::new(b"build.ts", include_bytes!("./init/react-tailwind/build.ts")),
+    TemplateFile::new(
+        b"src/index.ts",
+        include_bytes!("./init/react-tailwind/src/index.ts"),
+    ),
+    TemplateFile::new(
+        b"src/App.tsx",
+        include_bytes!("./init/react-tailwind/src/App.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/index.html",
+        include_bytes!("./init/react-tailwind/src/index.html"),
+    ),
+    TemplateFile::new(
+        b"src/index.css",
+        include_bytes!("./init/react-tailwind/src/index.css"),
+    ),
+    TemplateFile::new(
+        b"src/APITester.tsx",
+        include_bytes!("./init/react-tailwind/src/APITester.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/react.svg",
+        include_bytes!("./init/react-tailwind/src/react.svg"),
+    ),
+    TemplateFile::new(
+        b"src/frontend.tsx",
+        include_bytes!("./init/react-tailwind/src/frontend.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/logo.svg",
+        include_bytes!("./init/react-tailwind/src/logo.svg"),
+    ),
+    TemplateFile::new(
+        b"build.ts",
+        include_bytes!("./init/react-tailwind/build.ts"),
+    ),
 ];
 
 static REACT_SHADCN_FILES: &[TemplateFile] = &[
-    TemplateFile::new(b"bunfig.toml", include_bytes!("./init/react-shadcn/bunfig.toml")),
-    TemplateFile::new(b"styles/globals.css", include_bytes!("./init/react-shadcn/styles/globals.css")),
-    TemplateFile::new(b"package.json", include_bytes!("./init/react-shadcn/package.json")),
-    TemplateFile::new(b"components.json", include_bytes!("./init/react-shadcn/components.json")),
-    TemplateFile::new(b"tsconfig.json", include_bytes!("./init/react-shadcn/tsconfig.json")),
-    TemplateFile::new(b"bun-env.d.ts", include_bytes!("./init/react-shadcn/bun-env.d.ts")),
+    TemplateFile::new(
+        b"bunfig.toml",
+        include_bytes!("./init/react-shadcn/bunfig.toml"),
+    ),
+    TemplateFile::new(
+        b"styles/globals.css",
+        include_bytes!("./init/react-shadcn/styles/globals.css"),
+    ),
+    TemplateFile::new(
+        b"package.json",
+        include_bytes!("./init/react-shadcn/package.json"),
+    ),
+    TemplateFile::new(
+        b"components.json",
+        include_bytes!("./init/react-shadcn/components.json"),
+    ),
+    TemplateFile::new(
+        b"tsconfig.json",
+        include_bytes!("./init/react-shadcn/tsconfig.json"),
+    ),
+    TemplateFile::new(
+        b"bun-env.d.ts",
+        include_bytes!("./init/react-shadcn/bun-env.d.ts"),
+    ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
     TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
-    TemplateFile::new(b"src/index.ts", include_bytes!("./init/react-shadcn/src/index.ts")),
-    TemplateFile::new(b"src/App.tsx", include_bytes!("./init/react-shadcn/src/App.tsx")),
-    TemplateFile::new(b"src/index.html", include_bytes!("./init/react-shadcn/src/index.html")),
-    TemplateFile::new(b"src/index.css", include_bytes!("./init/react-shadcn/src/index.css")),
-    TemplateFile::new(b"src/components/ui/card.tsx", include_bytes!("./init/react-shadcn/src/components/ui/card.tsx")),
-    TemplateFile::new(b"src/components/ui/label.tsx", include_bytes!("./init/react-shadcn/src/components/ui/label.tsx")),
-    TemplateFile::new(b"src/components/ui/button.tsx", include_bytes!("./init/react-shadcn/src/components/ui/button.tsx")),
-    TemplateFile::new(b"src/components/ui/select.tsx", include_bytes!("./init/react-shadcn/src/components/ui/select.tsx")),
-    TemplateFile::new(b"src/components/ui/input.tsx", include_bytes!("./init/react-shadcn/src/components/ui/input.tsx")),
-    TemplateFile::new(b"src/components/ui/textarea.tsx", include_bytes!("./init/react-shadcn/src/components/ui/textarea.tsx")),
-    TemplateFile::new(b"src/APITester.tsx", include_bytes!("./init/react-shadcn/src/APITester.tsx")),
-    TemplateFile::new(b"src/lib/utils.ts", include_bytes!("./init/react-shadcn/src/lib/utils.ts")),
-    TemplateFile::new(b"src/react.svg", include_bytes!("./init/react-shadcn/src/react.svg")),
-    TemplateFile::new(b"src/frontend.tsx", include_bytes!("./init/react-shadcn/src/frontend.tsx")),
-    TemplateFile::new(b"src/logo.svg", include_bytes!("./init/react-shadcn/src/logo.svg")),
+    TemplateFile::new(
+        b"src/index.ts",
+        include_bytes!("./init/react-shadcn/src/index.ts"),
+    ),
+    TemplateFile::new(
+        b"src/App.tsx",
+        include_bytes!("./init/react-shadcn/src/App.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/index.html",
+        include_bytes!("./init/react-shadcn/src/index.html"),
+    ),
+    TemplateFile::new(
+        b"src/index.css",
+        include_bytes!("./init/react-shadcn/src/index.css"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/card.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/card.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/label.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/label.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/button.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/button.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/select.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/select.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/input.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/input.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/components/ui/textarea.tsx",
+        include_bytes!("./init/react-shadcn/src/components/ui/textarea.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/APITester.tsx",
+        include_bytes!("./init/react-shadcn/src/APITester.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/lib/utils.ts",
+        include_bytes!("./init/react-shadcn/src/lib/utils.ts"),
+    ),
+    TemplateFile::new(
+        b"src/react.svg",
+        include_bytes!("./init/react-shadcn/src/react.svg"),
+    ),
+    TemplateFile::new(
+        b"src/frontend.tsx",
+        include_bytes!("./init/react-shadcn/src/frontend.tsx"),
+    ),
+    TemplateFile::new(
+        b"src/logo.svg",
+        include_bytes!("./init/react-shadcn/src/logo.svg"),
+    ),
     TemplateFile::new(b"build.ts", include_bytes!("./init/react-shadcn/build.ts")),
 ];
 

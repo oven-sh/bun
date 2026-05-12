@@ -10,7 +10,15 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 /// Time values may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Debug, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    crate::generics::CssEql,
+    crate::generics::CssHash,
+    crate::generics::DeepClone,
+)]
 pub enum Time {
     /// A time in seconds.
     Seconds(CSSNumber) = 1,
@@ -63,7 +71,9 @@ impl Time {
                 // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol in Phase B.
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
-                } else if bun_core::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
+                } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                    b"ms", dim.unit,
+                ) {
                     Ok(Time::Milliseconds(dim.num.value))
                 } else {
                     Err(location.new_unexpected_token_error(Token::Ident(dim.unit)))

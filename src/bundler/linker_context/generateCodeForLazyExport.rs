@@ -1,23 +1,23 @@
 use crate::mal_prelude::*;
-use std::io::Write as _;
 #[allow(unused_imports)]
 use bun_collections::VecExt as _VecExt;
+use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_alloc::Arena;
+use bun_ast::ImportRecord;
+use bun_ast::Ref;
+use bun_ast::Symbol;
+use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+use bun_ast::{Loc, Log, Source};
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::fmt as bun_fmt;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
-use bun_ast::Symbol;
 use bun_js_parser::js_lexer;
-use bun_ast::Ref;
-use bun_ast::{Loc, Log, Source};
-use bun_ast::ImportRecord;
 
-use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
-use bun_collections::DynamicBitSetUnmanaged as BitSet;
+use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::{Index, IndexInt, LinkerContext};
+use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList = Vec<Symbol>;
 
@@ -47,8 +47,7 @@ pub fn generate_code_for_lazy_export(
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
-    let maybe_css_ast: Option<&BundlerStyleSheet> =
-        all_css_asts[source_index as usize].as_deref();
+    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
     if unsafe { (&*parts).len() } < 1 {
@@ -83,8 +82,7 @@ pub fn generate_code_for_lazy_export(
             let mut exports = E::Object::default();
 
             let symbols: &SymbolList = &this.graph.ast.items_symbols()[source_index as usize];
-            let all_import_records: &[Vec<ImportRecord>] =
-                this.graph.ast.items_import_records();
+            let all_import_records: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
 
             let values = css_ast.local_scope.values();
             if values.len() == 0 {
@@ -126,12 +124,7 @@ pub fn generate_code_for_lazy_export(
                     self.composes_visited.clear_retaining_capacity();
                 }
 
-                fn visit_name(
-                    &mut self,
-                    ast: &BundlerStyleSheet,
-                    ref_: CssRef,
-                    idx: IndexInt,
-                ) {
+                fn visit_name(&mut self, ast: &BundlerStyleSheet, ref_: CssRef, idx: IndexInt) {
                     debug_assert!(ref_.can_be_composed());
                     let real_ref = ref_.to_real_ref(idx);
                     let from_this_file = ref_.source_index(idx) == self.source_index;
@@ -145,7 +138,10 @@ pub fn generate_code_for_lazy_export(
                     // PERF(port): was assume-OOM `catch |err| bun.handleOom(err)`; Vec::push aborts on OOM.
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
-                            E::NameOfSymbol { ref_: real_ref, ..Default::default() },
+                            E::NameOfSymbol {
+                                ref_: real_ref,
+                                ..Default::default()
+                            },
                             self.loc,
                         ),
                         tail: E::TemplateContents::Cooked(E::String::init(b" ")),
@@ -169,9 +165,15 @@ pub fn generate_code_for_lazy_export(
                     let _ = self.arena;
                     let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                    let name: &[u8] =
-                        syms.at(css_ref.inner_index() as usize).original_name.slice();
-                    let loc = ast.local_scope.get_adapted(name, SliceBoxAdapter).unwrap().loc;
+                    let name: &[u8] = syms
+                        .at(css_ref.inner_index() as usize)
+                        .original_name
+                        .slice();
+                    let loc = ast
+                        .local_scope
+                        .get_adapted(name, SliceBoxAdapter)
+                        .unwrap()
+                        .loc;
 
                     // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
                     self.log.add_range_error_fmt_with_note(
@@ -212,9 +214,9 @@ pub fn generate_code_for_lazy_export(
                                     let import_record =
                                         import_records.at(*import_record_idx as usize);
                                     if import_record.source_index.is_valid() {
-                                        let Some(other_file) =
-                                            self.all_css_asts[import_record.source_index.get() as usize]
-                                                .as_deref()
+                                        let Some(other_file) = self.all_css_asts
+                                            [import_record.source_index.get() as usize]
+                                            .as_deref()
                                         else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
@@ -233,8 +235,9 @@ pub fn generate_code_for_lazy_export(
                                         };
                                         for name in compose.names.slice() {
                                             let name_v = name.v();
-                                            let Some(other_name_entry) =
-                                                other_file.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                            let Some(other_name_entry) = other_file
+                                                .local_scope
+                                                .get_adapted(name_v, SliceBoxAdapter)
                                             else {
                                                 continue;
                                             };
@@ -264,13 +267,10 @@ pub fn generate_code_for_lazy_export(
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         self.parts.push(E::TemplatePart {
-                                            value: Expr::init(
-                                                E::String::init(name_v),
-                                                self.loc,
-                                            ),
-                                            tail: E::TemplateContents::Cooked(
-                                                E::String::init(b" "),
-                                            ),
+                                            value: Expr::init(E::String::init(name_v), self.loc),
+                                            tail: E::TemplateContents::Cooked(E::String::init(
+                                                b" ",
+                                            )),
                                             tail_loc: self.loc,
                                         });
                                     }
@@ -296,7 +296,10 @@ pub fn generate_code_for_lazy_export(
                                         let name_ref = name_entry.ref_;
                                         if !name_ref.can_be_composed() {
                                             self.warn_non_single_class_composes(
-                                                ast, name_ref, idx, compose.loc,
+                                                ast,
+                                                name_ref,
+                                                idx,
+                                                compose.loc,
                                             );
                                         } else {
                                             self.visit_name(ast, name_ref, idx);
@@ -375,8 +378,10 @@ pub fn generate_code_for_lazy_export(
                 }
 
                 // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                let key: &[u8] =
-                    symbols.at(ref_.inner_index() as usize).original_name.slice();
+                let key: &[u8] = symbols
+                    .at(ref_.inner_index() as usize)
+                    .original_name
+                    .slice();
                 exports.put(arena, key, value)?;
             }
 
@@ -391,7 +396,10 @@ pub fn generate_code_for_lazy_export(
     let StmtData::SLazyExport(lazy) = stmt.data else {
         panic!("Internal error: expected top-level lazy export statement");
     };
-    let expr = Expr { data: *lazy, loc: stmt.loc };
+    let expr = Expr {
+        data: *lazy,
+        loc: stmt.loc,
+    };
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
@@ -443,8 +451,12 @@ pub fn generate_code_for_lazy_export(
                     // the rope in-place via `DerefMut` into the arena slot (matches Zig's
                     // `property.key.?.data.e_string.slice(...)` which takes `*String`).
                     let Some(key) = property.key else { continue };
-                    let ExprData::EString(mut key_str) = key.data else { continue };
-                    let Some(value) = property.value else { continue };
+                    let ExprData::EString(mut key_str) = key.data else {
+                        continue;
+                    };
+                    let Some(value) = property.value else {
+                        continue;
+                    };
                     if key_str.eql_comptime(b"default") || key_str.eql_comptime(b"__esModule") {
                         continue;
                     }
@@ -475,8 +487,8 @@ pub fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).
-                    let new_stmts: &mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
-                        Stmt::alloc(
+                    let new_stmts: &mut [Stmt] =
+                        alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
                                 is_export: true,
                                 decls: G::DeclList::from_slice(&[G::Decl {
@@ -490,8 +502,7 @@ pub fn generate_code_for_lazy_export(
                                 ..Default::default()
                             },
                             key.loc,
-                        ),
-                    ));
+                        )));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
                     let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
@@ -515,14 +526,10 @@ pub fn generate_code_for_lazy_export(
                     unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
-                let generated = this.generate_named_export_in_file(
-                    source_index,
-                    module_ref,
-                    name,
-                    b"default",
-                )?;
-                let new_stmts: &mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
-                    Stmt::alloc(
+                let generated =
+                    this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
+                let new_stmts: &mut [Stmt] =
+                    alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 ref_: Some(generated.0),
@@ -531,8 +538,7 @@ pub fn generate_code_for_lazy_export(
                             value: bun_ast::StmtOrExpr::Expr(expr),
                         },
                         stmt.loc,
-                    ),
-                ));
+                    )));
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
             }

@@ -7,27 +7,27 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
+use bun_core::PathString;
+use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_resolver::fs::{FileSystem, RealFS};
-use bun_core::ZBox;
-use bun_core::PathString;
 use bun_sys::{Fd, FdDirExt, FdExt};
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
-use super::coordinator::{abort_handler, Coordinator};
+use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
+use crate::Command;
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
-use crate::Command;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
 // TODO(port): `format_bytes!` placeholder — needs a macro that writes fmt args
@@ -131,7 +131,11 @@ pub fn run_as_coordinator(
         .into_boxed_slice();
         let dir_bytes: &[u8] = &dir;
         if let Err(e) = Fd::cwd().make_path(dir_bytes) {
-            Output::err(e, "failed to create worker temp dir {}", &[&bstr::BStr::new(dir_bytes)]);
+            Output::err(
+                e,
+                "failed to create worker temp dir {}",
+                &[&bstr::BStr::new(dir_bytes)],
+            );
             Global::exit(1);
         }
         let _ = env.map.put(b"BUN_TEST_WORKER_TMP", dir_bytes);
@@ -179,7 +183,10 @@ pub fn run_as_coordinator(
             // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>) — patched below
             coord: core::ptr::null(),
             idx,
-            range: FileRange { lo: idx * n / k, hi: (idx + 1) * n / k },
+            range: FileRange {
+                lo: idx * n / k,
+                hi: (idx + 1) * n / k,
+            },
             out: WorkerPipe::new(PipeRole::Stdout, core::ptr::null()),
             err: WorkerPipe::new(PipeRole::Stderr, core::ptr::null()),
             process: None,
@@ -203,7 +210,9 @@ pub fn run_as_coordinator(
         // SAFETY: see vm_ptr note above.
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: bun_jsc::EventLoopHandle::init(unsafe { (*vm_ptr).event_loop() }.cast::<()>()),
+        event_loop_handle: bun_jsc::EventLoopHandle::init(
+            unsafe { (*vm_ptr).event_loop() }.cast::<()>(),
+        ),
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
@@ -259,15 +268,18 @@ pub fn run_as_coordinator(
             // `coord` holds the unique &mut to `reporter`; obtain the summary
             // through it. Raw-pointer reborrow because merge_junit_fragments
             // also needs &mut coord (it only reads from summary).
-            let summary_ptr: *const crate::test_runner::jest::Summary =
-                coord.reporter.summary();
+            let summary_ptr: *const crate::test_runner::jest::Summary = coord.reporter.summary();
             // SAFETY: summary lives in *coord.reporter, which outlives this call
             // and is not mutated by merge_junit_fragments.
             aggregate::merge_junit_fragments(&mut coord, outfile, unsafe { &*summary_ptr });
         }
     }
     if coverage_opts.enabled {
-        let frags: Vec<&[u8]> = coord.coverage_fragments.iter().map(|b| b.as_ref()).collect();
+        let frags: Vec<&[u8]> = coord
+            .coverage_fragments
+            .iter()
+            .map(|b| b.as_ref())
+            .collect();
         if Output::enable_ansi_colors_stderr() {
             aggregate::merge_coverage_fragments::<true>(&frags, coverage_opts);
         } else {
@@ -284,7 +296,9 @@ pub fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
+fn build_worker_argv(
+    ctx: &Command::ContextData,
+) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
     // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
     // String storage was arena-owned in Zig; route through the process-lifetime
     // CLI arena (bulk-freed on exit).
@@ -294,7 +308,8 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
     // Helper: format → NUL-terminated, return raw ptr (arena-owned).
     let print_z = |args: core::fmt::Arguments<'_>| -> Result<*const c_char, bun_core::Error> {
         let mut buf = Vec::<u8>::new();
-        buf.write_fmt(args).map_err(|_| bun_core::err!("FormatFailed"))?;
+        buf.write_fmt(args)
+            .map_err(|_| bun_core::err!("FormatFailed"))?;
         Ok(crate::cli::cli_dupe_z(&buf))
     };
     let dupe_z = |s: &[u8]| -> *const c_char { crate::cli::cli_dupe_z(s) };
@@ -309,7 +324,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
     argv.push(lit(b"--test-worker\0"));
     argv.push(lit(b"--isolate\0"));
 
-    argv.push(print_z(format_args!("--timeout={}", opts.default_timeout_ms))?);
+    argv.push(print_z(format_args!(
+        "--timeout={}",
+        opts.default_timeout_ms
+    ))?);
     if opts.run_todo {
         argv.push(lit(b"--todo\0"));
     }
@@ -344,7 +362,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
     if opts.retry > 0 {
         argv.push(print_z(format_args!("--retry={}", opts.retry))?);
     }
-    argv.push(print_z(format_args!("--max-concurrency={}", opts.max_concurrency))?);
+    argv.push(print_z(format_args!(
+        "--max-concurrency={}",
+        opts.max_concurrency
+    ))?);
     if let Some(pattern) = &opts.test_filter_pattern {
         argv.push(lit(b"-t\0"));
         argv.push(dupe_z(pattern));
@@ -418,10 +439,16 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
     }
     if let Some(jsx) = &ctx.args.jsx {
         if !jsx.factory.is_empty() {
-            argv.push(print_z(format_args!("--jsx-factory={}", bstr::BStr::new(&jsx.factory)))?);
+            argv.push(print_z(format_args!(
+                "--jsx-factory={}",
+                bstr::BStr::new(&jsx.factory)
+            ))?);
         }
         if !jsx.fragment.is_empty() {
-            argv.push(print_z(format_args!("--jsx-fragment={}", bstr::BStr::new(&jsx.fragment)))?);
+            argv.push(print_z(format_args!(
+                "--jsx-fragment={}",
+                bstr::BStr::new(&jsx.fragment)
+            ))?);
         }
         if !jsx.import_source.is_empty() {
             argv.push(print_z(format_args!(
@@ -570,7 +597,9 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
-            let Some(idx) = self.cmds.pending_idx else { break };
+            let Some(idx) = self.cmds.pending_idx else {
+                break;
+            };
             self.cmds.pending_idx = None;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
@@ -587,12 +616,18 @@ impl<'a> WorkerLoop<'a> {
                 self.reporter,
                 vm,
                 self.cmds.pending_path.as_slice(),
-                FirstLast { first: true, last: true },
+                FirstLast {
+                    first: true,
+                    last: true,
+                },
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(err);
             }
             vm.swap_global_for_test_isolation();
-            self.reporter.jest.bun_test_root.reset_hook_scope_for_test_isolation();
+            self.reporter
+                .jest
+                .bun_test_root
+                .reset_hook_scope_for_test_isolation();
             self.reporter.jest.default_timeout_override = u32::MAX;
 
             let after = *self.reporter.summary();
@@ -708,9 +743,8 @@ fn worker_flush_aggregates(
         };
         if let Some(junit) = &mut reporter.reporters.junit {
             // TODO(port): allocPrintSentinel → ZBox; was bun.default_allocator (leaked)
-            let path = ZBox::from_bytes(
-                format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice(),
-            );
+            let path =
+                ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice());
             if !junit.current_file.is_empty() {
                 let _ = junit.end_test_suite();
             }
@@ -721,7 +755,11 @@ fn worker_flush_aggregates(
                     cmds.send(wf.finish());
                 }
                 Err(e) => {
-                    Output::err(e, "failed to write JUnit fragment to {}", &[&bstr::BStr::new(path.as_bytes())]);
+                    Output::err(
+                        e,
+                        "failed to write JUnit fragment to {}",
+                        &[&bstr::BStr::new(path.as_bytes())],
+                    );
                 }
             }
         }
@@ -736,7 +774,11 @@ fn worker_flush_aggregates(
                     cmds.send(wf.finish());
                 }
                 Err(e) => {
-                    Output::err(e, "failed to write coverage fragment to {}", &[&bstr::BStr::new(path.as_bytes())]);
+                    Output::err(
+                        e,
+                        "failed to write coverage fragment to {}",
+                        &[&bstr::BStr::new(path.as_bytes())],
+                    );
                 }
             }
         }
@@ -751,8 +793,7 @@ static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
 // PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
-static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> =
-    bun_core::RacyCell::new(None);
+static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
 // TODO(port): lifetime — stores a 'a-bound pointer as 'static; sound because
 // the pointee outlives all callers (process exits before it's dropped).
 
@@ -761,7 +802,9 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> =
 /// codes). The coordinator prints these bytes verbatim so output matches serial.
 pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
-    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else { return };
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };

@@ -46,7 +46,10 @@ impl Declaration {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PropertyId` is `Copy`;
         // `value: &'static [u8]` is an arena-owned slice → identity copy
         // (generics.zig "const strings" rule).
-        Self { property_id: self.property_id, value: self.value }
+        Self {
+            property_id: self.property_id,
+            value: self.value,
+        }
     }
 }
 
@@ -90,7 +93,7 @@ impl SupportsCondition {
     // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
     // `PropertyId` only impls `core::hash::Hash` today. Phase B: add
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
-    
+
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // PORT NOTE: Zig `css.implementHash` variant-walk, hand-expanded because
         // `#[derive(CssHash)]` would require `PropertyId: CssHash` (it only
@@ -175,14 +178,18 @@ impl SupportsCondition {
                 condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
             }
             SupportsCondition::And(conditions) => {
-                dest.write_separated(conditions.iter(), |d| d.write_str(b" and "), |d, cond| {
-                    cond.to_css_with_parens_if_needed(d, cond.needs_parens(self))
-                })?;
+                dest.write_separated(
+                    conditions.iter(),
+                    |d| d.write_str(b" and "),
+                    |d, cond| cond.to_css_with_parens_if_needed(d, cond.needs_parens(self)),
+                )?;
             }
             SupportsCondition::Or(conditions) => {
-                dest.write_separated(conditions.iter(), |d| d.write_str(b" or "), |d, cond| {
-                    cond.to_css_with_parens_if_needed(d, cond.needs_parens(self))
-                })?;
+                dest.write_separated(
+                    conditions.iter(),
+                    |d| d.write_str(b" or "),
+                    |d, cond| cond.to_css_with_parens_if_needed(d, cond.needs_parens(self)),
+                )?;
             }
             SupportsCondition::Declaration(decl) => {
                 Self::declaration_to_css(decl, dest)?;
@@ -199,7 +206,10 @@ impl SupportsCondition {
         Ok(())
     }
 
-    fn declaration_to_css(decl: &Declaration, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn declaration_to_css(
+        decl: &Declaration,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         let property_id = &decl.property_id;
         let value = decl.value;
 
@@ -217,7 +227,10 @@ impl SupportsCondition {
         // rules/style.rs). The Zig also builds `var p = VendorPrefix{}; @field(p, field) = true;`
         // but never reads it — dead store dropped.
         dest.write_separated(
-            css::VendorPrefix::FIELDS.iter().copied().filter(|f| prefix.contains(*f)),
+            css::VendorPrefix::FIELDS
+                .iter()
+                .copied()
+                .filter(|f| prefix.contains(*f)),
             |d| d.write_str(b") or ("),
             |d, _flag| {
                 d.serialize_name(name)?;
@@ -247,10 +260,7 @@ impl SupportsCondition {
         use bun_collections::ArrayHashMap;
         use bun_core::strings;
 
-        if input
-            .try_parse(|i| i.expect_ident_matching(b"not"))
-            .is_ok()
-        {
+        if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
             return Ok(SupportsCondition::Not(Box::new(in_parens)));
         }
@@ -267,30 +277,31 @@ impl SupportsCondition {
             // PORT NOTE: reshaped for borrowck — Zig threaded `*?i32` through a
             // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
             // capturing `&mut expected_type` is the direct equivalent.
-            let _condition = input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
-                let location = i.current_source_location();
-                let s = i.expect_ident_cloned()?;
-                let found_type: i32 = 'found_type: {
-                    // todo_stuff.match_ignore_ascii_case
-                    if strings::eql_case_insensitive_ascii_check_length(b"and", s) {
-                        break 'found_type 1;
-                    }
-                    if strings::eql_case_insensitive_ascii_check_length(b"or", s) {
-                        break 'found_type 2;
-                    }
-                    return Err(location.new_unexpected_token_error(css::Token::Ident(s)));
-                };
-
-                if let Some(expected) = expected_type {
-                    if found_type != expected {
+            let _condition =
+                input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
+                    let location = i.current_source_location();
+                    let s = i.expect_ident_cloned()?;
+                    let found_type: i32 = 'found_type: {
+                        // todo_stuff.match_ignore_ascii_case
+                        if strings::eql_case_insensitive_ascii_check_length(b"and", s) {
+                            break 'found_type 1;
+                        }
+                        if strings::eql_case_insensitive_ascii_check_length(b"or", s) {
+                            break 'found_type 2;
+                        }
                         return Err(location.new_unexpected_token_error(css::Token::Ident(s)));
-                    }
-                } else {
-                    expected_type = Some(found_type);
-                }
+                    };
 
-                SupportsCondition::parse_in_parens(i)
-            });
+                    if let Some(expected) = expected_type {
+                        if found_type != expected {
+                            return Err(location.new_unexpected_token_error(css::Token::Ident(s)));
+                        }
+                    } else {
+                        expected_type = Some(found_type);
+                    }
+
+                    SupportsCondition::parse_in_parens(i)
+                });
 
             match _condition {
                 Ok(condition) => {
@@ -387,9 +398,8 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res = input.try_parse(|i| {
-                    i.parse_nested_block(|i2| SupportsCondition::parse(i2))
-                });
+                let res =
+                    input.try_parse(|i| i.parse_nested_block(|i2| SupportsCondition::parse(i2)));
                 if res.is_ok() {
                     return res;
                 }

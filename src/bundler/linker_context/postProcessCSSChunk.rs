@@ -1,13 +1,13 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
-use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
+use bun_collections::VecExt;
 use bun_core::string_joiner::{StringJoiner, Watcher};
+use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
 use crate::chunk::IntermediateOutput;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
-use crate::{options, Chunk, CompileResultForSourceMap, Index};
+use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
 pub fn post_process_css_chunk(
@@ -127,11 +127,8 @@ pub fn post_process_css_chunk(
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();
-    chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
-        alloc,
-        &mut j,
-        ctx.chunks.len() as u32,
-    ));
+    chunk.intermediate_output =
+        bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
     chunk.isolated_hash = c.generate_isolated_hash(chunk);

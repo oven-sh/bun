@@ -9,15 +9,15 @@
 //! Lowering for TC39 standard ES decorators.
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
-use core::ptr::NonNull;
 use bun_alloc::ArenaVecExt as _;
+use core::ptr::NonNull;
 
-use bun_collections::{VecExt, HashMap};
+use bun_collections::{HashMap, VecExt};
 
-use bun_ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
 use crate::p::P;
+use crate::parser::{ARGUMENTS_STR as arguments_str, JsxT, Ref};
+use bun_ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtNodeList, Symbol};
-use crate::parser::{JsxT, Ref, ARGUMENTS_STR as arguments_str};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
@@ -138,7 +138,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     #[inline]
     fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
-        self.new_expr(E::Identifier { ref_, ..Default::default() }, l)
+        self.new_expr(
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
+            l,
+        )
     }
 
     /// Allocate args + callRuntime in one call.
@@ -160,7 +166,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
         let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
-        self.s(S::Local { decls, ..Default::default() }, l)
+        self.s(
+            S::Local {
+                decls,
+                ..Default::default()
+            },
+            l,
+        )
     }
 
     /// Two-variable declaration statement.
@@ -175,24 +187,56 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let b1 = self.b(B::Identifier { r#ref: r1 }, l);
         let b2 = self.b(B::Identifier { r#ref: r2 }, l);
         let decls = DeclList::from_slice(&[
-            G::Decl { binding: b1, value: v1 },
-            G::Decl { binding: b2, value: v2 },
+            G::Decl {
+                binding: b1,
+                value: v1,
+            },
+            G::Decl {
+                binding: b2,
+                value: v2,
+            },
         ]);
-        self.s(S::Local { decls, ..Default::default() }, l)
+        self.s(
+            S::Local {
+                decls,
+                ..Default::default()
+            },
+            l,
+        )
     }
 
     /// recordUsage + Expr.assign.
     fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
-        Expr::assign(self.new_expr(E::Identifier { ref_, ..Default::default() }, l), value)
+        Expr::assign(
+            self.new_expr(
+                E::Identifier {
+                    ref_,
+                    ..Default::default()
+                },
+                l,
+            ),
+            value,
+        )
     }
 
     /// new WeakMap() expression.
     fn new_weak_map_expr(&mut self, l: bun_ast::Loc) -> Expr {
         let ref_ = self.find_symbol(l, b"WeakMap").expect("unreachable").r#ref;
-        let target = self.new_expr(E::Identifier { ref_, ..Default::default() }, l);
+        let target = self.new_expr(
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
+            l,
+        );
         self.new_expr(
-            E::New { target, args: bun_alloc::AstAlloc::vec(), close_parens_loc: l, ..Default::default() },
+            E::New {
+                target,
+                args: bun_alloc::AstAlloc::vec(),
+                close_parens_loc: l,
+                ..Default::default()
+            },
             l,
         )
     }
@@ -200,9 +244,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     /// new WeakSet() expression.
     fn new_weak_set_expr(&mut self, l: bun_ast::Loc) -> Expr {
         let ref_ = self.find_symbol(l, b"WeakSet").expect("unreachable").r#ref;
-        let target = self.new_expr(E::Identifier { ref_, ..Default::default() }, l);
+        let target = self.new_expr(
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
+            l,
+        );
         self.new_expr(
-            E::New { target, args: bun_alloc::AstAlloc::vec(), close_parens_loc: l, ..Default::default() },
+            E::New {
+                target,
+                args: bun_alloc::AstAlloc::vec(),
+                close_parens_loc: l,
+                ..Default::default()
+            },
             l,
         )
     }
@@ -210,10 +265,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     /// Create a static block property from a single expression.
     fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
         let bump = self.arena;
-        let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
+        let stmt = self.s(
+            S::SExpr {
+                value: expr,
+                ..Default::default()
+            },
+            l,
+        );
         let stmts = bump.alloc_slice_copy(&[stmt]);
         let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
-        let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
+        let sb = bump.alloc(G::ClassStaticBlock {
+            loc: l,
+            stmts: stmts_list,
+        });
         Property {
             kind: PropertyKind::ClassStaticBlock,
             class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
@@ -228,18 +292,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             || matches!(key_expr.data, js_ast::ExprData::ENumber(_))
         {
             return self.new_expr(
-                E::Index { target: target_expr, index: key_expr, optional_chain: None },
+                E::Index {
+                    target: target_expr,
+                    index: key_expr,
+                    optional_chain: None,
+                },
                 key_expr.loc,
             );
         }
         if let js_ast::ExprData::EString(s) = &key_expr.data {
             return self.new_expr(
-                E::Dot { target: target_expr, name: s.data, name_loc: key_expr.loc, ..Default::default() },
+                E::Dot {
+                    target: target_expr,
+                    name: s.data,
+                    name_loc: key_expr.loc,
+                    ..Default::default()
+                },
                 key_expr.loc,
             );
         }
         self.new_expr(
-            E::Index { target: target_expr, index: key_expr, optional_chain: None },
+            E::Index {
+                target: target_expr,
+                index: key_expr,
+                optional_chain: None,
+            },
             key_expr.loc,
         )
     }
@@ -272,7 +349,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if is_static {
             static_blocks.push(self.make_static_block(call, loc));
         } else {
-            constructor_inject.push(self.s(S::SExpr { value: call, ..Default::default() }, loc));
+            constructor_inject.push(self.s(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                loc,
+            ));
         }
     }
 
@@ -552,7 +635,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(E::Dot { target: desc, name: b"get".into(), name_loc: l, ..Default::default() }, l);
+            let dot = self.new_expr(
+                E::Dot {
+                    target: desc,
+                    name: b"get".into(),
+                    name_loc: l,
+                    ..Default::default()
+                },
+                l,
+            );
             self.call_rt(l, b"__privateGet", &[obj, storage, dot])
         } else if let Some(fn_ref) = info.getter_fn_ref {
             let storage = self.use_ref(info.storage_ref, l);
@@ -568,11 +659,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
-    fn private_set_expr(&mut self, obj: Expr, info: PrivateLoweredInfo, val: Expr, l: bun_ast::Loc) -> Expr {
+    fn private_set_expr(
+        &mut self,
+        obj: Expr,
+        info: PrivateLoweredInfo,
+        val: Expr,
+        l: bun_ast::Loc,
+    ) -> Expr {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(E::Dot { target: desc, name: b"set".into(), name_loc: l, ..Default::default() }, l);
+            let dot = self.new_expr(
+                E::Dot {
+                    target: desc,
+                    name: b"set".into(),
+                    name_loc: l,
+                    ..Default::default()
+                },
+                l,
+            );
             self.call_rt(l, b"__privateSet", &[obj, storage, val, dot])
         } else if let Some(fn_ref) = info.setter_fn_ref {
             let storage = self.use_ref(info.storage_ref, l);
@@ -653,16 +758,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             );
                             let bump = self.arena;
                             let orig_args = e.args.slice_mut();
-                            let mut new_args =
-                                BumpVec::with_capacity_in(1 + orig_args.len(), bump);
+                            let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
                             new_args.push(obj_expr);
                             for arg in orig_args.iter_mut() {
                                 self.rewrite_private_accesses_in_expr(arg, map);
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
-                            e.args =
-                                ExprNodeList::from_bump_vec(new_args);
+                            e.args = ExprNodeList::from_bump_vec(new_args);
                             return;
                         }
                     }
@@ -674,12 +777,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.rewrite_private_accesses_in_expr(arg, map);
                 }
             }
-            js_ast::ExprData::EUnary(e) => {
-                self.rewrite_private_accesses_in_expr(&mut e.value, map)
-            }
-            js_ast::ExprData::EDot(e) => {
-                self.rewrite_private_accesses_in_expr(&mut e.target, map)
-            }
+            js_ast::ExprData::EUnary(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
+            js_ast::ExprData::EDot(e) => self.rewrite_private_accesses_in_expr(&mut e.target, map),
             js_ast::ExprData::ESpread(e) => {
                 self.rewrite_private_accesses_in_expr(&mut e.value, map)
             }
@@ -694,9 +793,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 self.rewrite_private_accesses_in_expr(&mut n, map);
                 e.no = n;
             }
-            js_ast::ExprData::EAwait(e) => {
-                self.rewrite_private_accesses_in_expr(&mut e.value, map)
-            }
+            js_ast::ExprData::EAwait(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
             js_ast::ExprData::EYield(e) => {
                 if let Some(v) = &mut e.value {
                     self.rewrite_private_accesses_in_expr(v, map);
@@ -873,11 +970,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     // ── Public API ───────────────────────────────────────
 
-    pub fn lower_standard_decorators_stmt(
-        &mut self,
-        stmt: Stmt,
-        out: &mut BumpVec<'a, Stmt>,
-    ) {
+    pub fn lower_standard_decorators_stmt(&mut self, stmt: Stmt, out: &mut BumpVec<'a, Stmt>) {
         // Every call site is the visitStmt `s_class` branch. `Stmt` and the
         // `StoreRef<S::Class>` payload are both `Copy`, so we can hold a copy
         // of the arena handle while still passing `stmt` by value below.
@@ -934,7 +1027,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let ecr = p.new_sym(js_ast::symbol::Kind::Other, b"_class");
             expr_class_ref = Some(ecr);
             let binding = p.b(B::Identifier { r#ref: ecr }, loc);
-            expr_var_decls.push(G::Decl { binding, value: None });
+            expr_var_decls.push(G::Decl {
+                binding,
+                value: None,
+            });
             if let Some(cn) = &class.class_name {
                 class_name_ref = cn.ref_.expect("infallible: ref bound");
                 class_name_loc = cn.loc;
@@ -950,15 +1046,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
         } else {
-            class_name_ref = class.class_name.as_ref().unwrap().ref_.expect("infallible: ref bound");
+            class_name_ref = class
+                .class_name
+                .as_ref()
+                .unwrap()
+                .ref_
+                .expect("infallible: ref bound");
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
         let mut inner_class_ref: Ref = class_name_ref;
         if !is_expr {
             // SAFETY: original_name is arena-owned for 'a.
-            let cns: &'a [u8] =
-                p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
+            let cns: &'a [u8] = p.symbols[class_name_ref.inner_index() as usize]
+                .original_name
+                .slice();
             let name = p.bump_name2(b"_", cns);
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
@@ -969,13 +1071,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // `ptr::read` left a second owner in the local that dropped at function
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
         // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
-        let mut class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
+        let mut class_decorators: ExprNodeList =
+            bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
         if is_expr {
             let binding = p.b(B::Identifier { r#ref: init_ref }, loc);
-            expr_var_decls.push(G::Decl { binding, value: None });
+            expr_var_decls.push(G::Decl {
+                binding,
+                value: None,
+            });
         }
 
         let mut base_ref: Option<Ref> = None;
@@ -984,7 +1090,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             base_ref = Some(br);
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: br }, loc);
-                expr_var_decls.push(G::Decl { binding, value: None });
+                expr_var_decls.push(G::Decl {
+                    binding,
+                    value: None,
+                });
             }
         }
 
@@ -1001,10 +1110,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // again on this branch (Phase-5's else-arm only runs when
             // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
             let items = bun_alloc::AstAlloc::take(&mut class_decorators);
-            let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
+            let arr = p.new_expr(
+                E::Array {
+                    items,
+                    ..Default::default()
+                },
+                loc,
+            );
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: cdr }, loc);
-                expr_var_decls.push(G::Decl { binding, value: None });
+                expr_var_decls.push(G::Decl {
+                    binding,
+                    value: None,
+                });
                 class_dec_assign_expr = Some(p.assign_to(cdr, arr, loc));
             } else {
                 class_dec_stmt = p.var_decl(cdr, Some(arr), loc);
@@ -1032,11 +1150,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 prop_dec_refs.insert(prop_idx, dec_ref);
                 if is_expr {
                     let binding = p.b(B::Identifier { r#ref: dec_ref }, loc);
-                    expr_var_decls.push(G::Decl { binding, value: None });
+                    expr_var_decls.push(G::Decl {
+                        binding,
+                        value: None,
+                    });
                 }
                 // SAFETY: shallow-reborrow arena Vec.
                 let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
-                let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
+                let arr = p.new_expr(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    loc,
+                );
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
             if prop.flags.contains(Flags::Property::IsComputed)
@@ -1053,7 +1180,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 computed_key_refs.insert(prop_idx, key_ref);
                 if is_expr {
                     let binding = p.b(B::Identifier { r#ref: key_ref }, loc);
-                    expr_var_decls.push(G::Decl { binding, value: None });
+                    expr_var_decls.push(G::Decl {
+                        binding,
+                        value: None,
+                    });
                 }
                 let key_loc = prop.key.expect("infallible: prop has key").loc;
                 pre_eval_stmts.push(p.var_decl(key_ref, prop.key, loc));
@@ -1063,10 +1193,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Replace class name refs in pre-eval expressions for inner binding
         {
-            let replacement_ref =
-                if is_expr { expr_class_ref.unwrap_or(class_name_ref) } else { inner_class_ref };
+            let replacement_ref = if is_expr {
+                expr_class_ref.unwrap_or(class_name_ref)
+            } else {
+                inner_class_ref
+            };
             if !replacement_ref.eql(class_name_ref) {
-                let rk = RewriteKind::ReplaceRef { old: class_name_ref, new: replacement_ref };
+                let rk = RewriteKind::ReplaceRef {
+                    old: class_name_ref,
+                    new: replacement_ref,
+                };
                 for pre_stmt in pre_eval_stmts.iter_mut() {
                     if let js_ast::StmtData::SLocal(local) = &mut pre_stmt.data {
                         for decl in local.decls.slice_mut() {
@@ -1083,7 +1219,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
         if is_expr && !expr_class_is_anonymous && expr_class_ref.is_some() {
             // SAFETY: see above.
-            original_class_name_for_decorator = Some(p.symbols[class_name_ref.inner_index() as usize].original_name.slice());
+            original_class_name_for_decorator = Some(
+                p.symbols[class_name_ref.inner_index() as usize]
+                    .original_name
+                    .slice(),
+            );
             class_name_ref = expr_class_ref.unwrap();
             class_name_loc = loc;
         }
@@ -1091,7 +1231,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // ── Phase 3: __decoratorStart + base decls ───────
         let init_start_expr: Expr = {
             let base_expr = if let Some(br) = base_ref {
-                p.new_expr(E::Identifier { ref_: br, ..Default::default() }, loc)
+                p.new_expr(
+                    E::Identifier {
+                        ref_: br,
+                        ..Default::default()
+                    },
+                    loc,
+                )
             } else {
                 p.new_expr(E::Undefined {}, loc)
             };
@@ -1115,8 +1261,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             class.extends = Some(p.use_ref(br, loc));
         }
 
-        let init_decl_stmt: Stmt =
-            if !is_expr { p.var_decl(init_ref, Some(init_start_expr), loc) } else { Stmt::empty() };
+        let init_decl_stmt: Stmt = if !is_expr {
+            p.var_decl(init_ref, Some(init_start_expr), loc)
+        } else {
+            Stmt::empty()
+        };
 
         // ── Phase 4: Property loop ───────────────────────
         let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
@@ -1133,7 +1282,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut static_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut instance_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut static_element_order = BumpVec::<StaticElement>::new_in(bump);
-        let mut extracted_static_blocks = BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
+        let mut extracted_static_blocks =
+            BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
@@ -1163,7 +1313,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
                 if cprop.key.is_some()
-                    && matches!(cprop.key.unwrap().data, js_ast::ExprData::EPrivateIdentifier(_))
+                    && matches!(
+                        cprop.key.unwrap().data,
+                        js_ast::ExprData::EPrivateIdentifier(_)
+                    )
                 {
                     has_any_private = true;
                 }
@@ -1179,7 +1332,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // ── Non-decorated property ──
                 if lower_all_private
                     && prop.key.is_some()
-                    && matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EPrivateIdentifier(_))
+                    && matches!(
+                        prop.key.expect("infallible: prop has key").data,
+                        js_ast::ExprData::EPrivateIdentifier(_)
+                    )
                     && prop.kind != PropertyKind::ClassStaticBlock
                     && prop.kind != PropertyKind::AutoAccessor
                 {
@@ -1230,10 +1386,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         // Assign function: _fn = function() { ... }
-                        let val = prop.value.unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                        let val = prop
+                            .value
+                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                         let assign = p.assign_to(fn_ref, val, loc);
-                        prefix_stmts
-                            .push(p.s(S::SExpr { value: assign, ..Default::default() }, loc));
+                        prefix_stmts.push(p.s(
+                            S::SExpr {
+                                value: assign,
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
 
                         // __privateAdd (once per name)
                         if !emitted_private_adds.contains_key(&npriv_inner) {
@@ -1256,14 +1419,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let wme = p.new_weak_map_expr(loc);
                         prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 
-                        let init_val =
-                            prop.initializer.unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                        let init_val = prop
+                            .initializer
+                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                         let this_e = p.new_expr(E::This {}, loc);
                         let wm_e = p.use_ref(wm_ref, loc);
                         let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
                         if !prop.flags.contains(Flags::Property::IsStatic) {
-                            constructor_inject_stmts
-                                .push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+                            constructor_inject_stmts.push(p.s(
+                                S::SExpr {
+                                    value: call,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ));
                         } else {
                             static_private_add_blocks.push(p.make_static_block(call, loc));
                         }
@@ -1278,7 +1447,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 break 'brk p.bump_name2(b"_", &s.data);
                             }
                         }
-                        let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
+                        let name =
+                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
                         accessor_storage_counter += 1;
                         name
                     };
@@ -1290,10 +1460,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let this_e = p.new_expr(E::This {}, loc);
                     let wm_e = p.use_ref(wm_ref, loc);
                     let get_ret = p.call_rt(loc, b"__privateGet", &[this_e, wm_e]);
-                    let get_body =
-                        bump.alloc_slice_copy(&[p.s(S::Return { value: Some(get_ret) }, loc)]);
+                    let get_body = bump.alloc_slice_copy(&[p.s(
+                        S::Return {
+                            value: Some(get_ret),
+                        },
+                        loc,
+                    )]);
                     let get_fn = G::Fn {
-                        body: G::FnBody { stmts: bun_ast::StoreSlice::new_mut(get_body), loc },
+                        body: G::FnBody {
+                            stmts: bun_ast::StoreSlice::new_mut(get_body),
+                            loc,
+                        },
                         ..Default::default()
                     };
 
@@ -1303,18 +1480,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let wm_e2 = p.use_ref(wm_ref, loc);
                     let v_e = p.use_ref(setter_param_ref, loc);
                     let set_call = p.call_rt(loc, b"__privateSet", &[this_e2, wm_e2, v_e]);
-                    let set_body = bump.alloc_slice_copy(&[
-                        p.s(S::SExpr { value: set_call, ..Default::default() }, loc)
-                    ]);
-                    let setter_binding =
-                        p.b(B::Identifier { r#ref: setter_param_ref }, loc);
+                    let set_body = bump.alloc_slice_copy(&[p.s(
+                        S::SExpr {
+                            value: set_call,
+                            ..Default::default()
+                        },
+                        loc,
+                    )]);
+                    let setter_binding = p.b(
+                        B::Identifier {
+                            r#ref: setter_param_ref,
+                        },
+                        loc,
+                    );
                     let setter_fn_args = bump.alloc(G::Arg {
                         binding: setter_binding,
                         ..Default::default()
                     });
                     let set_fn = G::Fn {
                         args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
-                        body: G::FnBody { stmts: bun_ast::StoreSlice::new_mut(set_body), loc },
+                        body: G::FnBody {
+                            stmts: bun_ast::StoreSlice::new_mut(set_body),
+                            loc,
+                        },
                         ..Default::default()
                     };
 
@@ -1335,18 +1523,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         ..Default::default()
                     });
 
-                    let init_val =
-                        prop.initializer.unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                    let init_val = prop
+                        .initializer
+                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                     if !prop.flags.contains(Flags::Property::IsStatic) {
                         let this_e3 = p.new_expr(E::This {}, loc);
                         let wm_e3 = p.use_ref(wm_ref, loc);
                         let call = p.call_rt(loc, b"__privateAdd", &[this_e3, wm_e3, init_val]);
-                        constructor_inject_stmts
-                            .push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+                        constructor_inject_stmts.push(p.s(
+                            S::SExpr {
+                                value: call,
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
                     } else {
                         let cn_e = p.use_ref(class_name_ref, class_name_loc);
                         let wm_e3 = p.use_ref(wm_ref, loc);
-                        suffix_exprs.push(p.call_rt(loc, b"__privateAdd", &[cn_e, wm_e3, init_val]));
+                        suffix_exprs.push(p.call_rt(
+                            loc,
+                            b"__privateAdd",
+                            &[cn_e, wm_e3, init_val],
+                        ));
                     }
                     continue;
                 }
@@ -1393,7 +1591,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 // SAFETY: shallow-reborrow arena Vec.
                 let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
-                p.new_expr(E::Array { items, ..Default::default() }, loc)
+                p.new_expr(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    loc,
+                )
             };
 
             let k = (flags as u8) & 7;
@@ -1410,8 +1614,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 };
                 let priv_inner = priv_ref.inner_index();
                 // SAFETY: arena-owned.
-                let private_orig: &'a [u8] =
-                    p.symbols[priv_inner as usize].original_name.slice();
+                let private_orig: &'a [u8] = p.symbols[priv_inner as usize].original_name.slice();
 
                 if (1..=3).contains(&k) {
                     let existing = private_lowered_map.get(&priv_inner).copied();
@@ -1470,13 +1673,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
                     let acc_ref = p.new_sym(js_ast::symbol::Kind::Other, acc_nm);
                     private_method_fn_ref = Some(acc_ref);
-                    private_lowered_map.insert(priv_inner, PrivateLoweredInfo {
-                        storage_ref: wm_ref,
-                        method_fn_ref: None,
-                        getter_fn_ref: None,
-                        setter_fn_ref: None,
-                        accessor_desc_ref: Some(acc_ref),
-                    });
+                    private_lowered_map.insert(
+                        priv_inner,
+                        PrivateLoweredInfo {
+                            storage_ref: wm_ref,
+                            method_fn_ref: None,
+                            getter_fn_ref: None,
+                            setter_fn_ref: None,
+                            accessor_desc_ref: Some(acc_ref),
+                        },
+                    );
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl2(wm_ref, Some(wme), acc_ref, None, loc));
                     dec_arg_count = 6;
@@ -1505,7 +1711,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 class_name_ref
             };
             let mut dec_args = BumpVec::with_capacity_in(dec_arg_count, bump);
-            dec_args.push(p.new_expr(E::Identifier { ref_: init_ref, ..Default::default() }, loc));
+            dec_args.push(p.new_expr(
+                E::Identifier {
+                    ref_: init_ref,
+                    ..Default::default()
+                },
+                loc,
+            ));
             dec_args.push(p.new_expr(E::Number { value: flags }, loc));
             dec_args.push(if is_private {
                 let priv_ref = match &key_expr.data {
@@ -1513,8 +1725,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     _ => unreachable!(),
                 };
                 // `original_name` is an arena-owned `StoreStr`.
-                let priv_name = E::Str::new(p.symbols[priv_ref.inner_index() as usize].original_name.slice());
-                p.new_expr(E::EString { data: priv_name, ..Default::default() }, loc)
+                let priv_name = E::Str::new(
+                    p.symbols[priv_ref.inner_index() as usize]
+                        .original_name
+                        .slice(),
+                );
+                p.new_expr(
+                    E::EString {
+                        data: priv_name,
+                        ..Default::default()
+                    },
+                    loc,
+                )
             } else {
                 key_expr
             });
@@ -1524,8 +1746,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 dec_args.push(p.use_ref(private_storage_ref.unwrap(), loc));
                 if dec_arg_count == 6 {
                     if (1..=3).contains(&k) {
-                        dec_args
-                            .push(prop.value.unwrap_or_else(|| p.new_expr(E::Undefined {}, loc)));
+                        dec_args.push(
+                            prop.value
+                                .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc)),
+                        );
                     } else if k == 4 {
                         dec_args.push(p.use_ref(private_storage_ref.unwrap(), loc));
                     } else {
@@ -1535,7 +1759,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 p.record_usage(target_ref);
                 dec_args.push(p.new_expr(
-                    E::Identifier { ref_: target_ref, ..Default::default() },
+                    E::Identifier {
+                        ref_: target_ref,
+                        ..Default::default()
+                    },
                     class_name_loc,
                 ));
                 if dec_arg_count == 6 {
@@ -1547,8 +1774,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            let dec_args_list =
-                ExprNodeList::from_bump_vec(dec_args);
+            let dec_args_list = ExprNodeList::from_bump_vec(dec_args);
             let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
             let element = if let Some(fn_ref) = private_method_fn_ref {
                 p.assign_to(fn_ref, raw_element, loc)
@@ -1561,19 +1787,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let mut prop_shallow = prop_copy(prop);
                 if is_private {
                     if let Some(ps_ref) = private_storage_ref {
-                        prop_shallow.key = Some(
-                            p.new_expr(E::Identifier { ref_: ps_ref, ..Default::default() }, loc),
-                        );
+                        prop_shallow.key = Some(p.new_expr(
+                            E::Identifier {
+                                ref_: ps_ref,
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
                     }
                 }
                 if let Some(pe_ref) = private_extra_ref {
-                    prop_shallow.value =
-                        Some(p.new_expr(E::Identifier { ref_: pe_ref, ..Default::default() }, loc));
+                    prop_shallow.value = Some(p.new_expr(
+                        E::Identifier {
+                            ref_: pe_ref,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
                 }
 
                 let is_accessor = k == 4;
-                let init_entry =
-                    FieldInitEntry { prop: prop_shallow, is_private, is_accessor };
+                let init_entry = FieldInitEntry {
+                    prop: prop_shallow,
+                    is_private,
+                    is_accessor,
+                };
 
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     if is_accessor {
@@ -1686,22 +1924,35 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // 5: Class decorator
         if class_decorators_len > 0 {
             p.record_usage(class_name_ref);
-            let class_name_str: E::Str = if let Some(name) = original_class_name_for_decorator
-            {
+            let class_name_str: E::Str = if let Some(name) = original_class_name_for_decorator {
                 name.into()
             } else if is_expr && expr_class_is_anonymous {
                 name_from_context.unwrap_or(b"").into()
             } else {
                 // `original_name` is an arena-owned `StoreStr`.
-                E::Str::new(p.symbols[class_name_ref.inner_index() as usize].original_name.slice())
+                E::Str::new(
+                    p.symbols[class_name_ref.inner_index() as usize]
+                        .original_name
+                        .slice(),
+                )
             };
 
             let mut cls_dec_args = BumpVec::with_capacity_in(5, bump);
-            cls_dec_args
-                .push(p.new_expr(E::Identifier { ref_: init_ref, ..Default::default() }, loc));
+            cls_dec_args.push(p.new_expr(
+                E::Identifier {
+                    ref_: init_ref,
+                    ..Default::default()
+                },
+                loc,
+            ));
             cls_dec_args.push(p.new_expr(E::Number { value: 0.0 }, loc));
-            cls_dec_args
-                .push(p.new_expr(E::EString { data: class_name_str.into(), ..Default::default() }, loc));
+            cls_dec_args.push(p.new_expr(
+                E::EString {
+                    data: class_name_str.into(),
+                    ..Default::default()
+                },
+                loc,
+            ));
             cls_dec_args.push(if let Some(cdr) = class_dec_ref {
                 p.use_ref(cdr, loc)
             } else {
@@ -1709,19 +1960,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // this is an empty list. Still `take` (not `ptr::read`) so the
                 // local can never own a second copy of a live buffer.
                 let items = bun_alloc::AstAlloc::take(&mut class_decorators);
-                p.new_expr(E::Array { items, ..Default::default() }, loc)
+                p.new_expr(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    loc,
+                )
             });
             cls_dec_args.push(if is_expr {
                 p.use_ref(expr_class_ref.unwrap(), loc)
             } else {
                 p.new_expr(
-                    E::Identifier { ref_: class_name_ref, ..Default::default() },
+                    E::Identifier {
+                        ref_: class_name_ref,
+                        ..Default::default()
+                    },
                     class_name_loc,
                 )
             });
 
-            let cls_dec_list =
-                ExprNodeList::from_bump_vec(cls_dec_args);
+            let cls_dec_list = ExprNodeList::from_bump_vec(cls_dec_args);
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
         }
@@ -1746,7 +2005,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let stmts_slice = sb.stmts.slice_mut();
                         p.rewrite_stmts(
                             stmts_slice,
-                            RewriteKind::ReplaceThis { ref_: class_name_ref, loc: class_name_loc },
+                            RewriteKind::ReplaceThis {
+                                ref_: class_name_ref,
+                                loc: class_name_loc,
+                            },
                         );
 
                         let all_exprs = stmts_slice
@@ -1765,7 +2027,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
                             let iife_body = p.new_expr(
                                 E::Arrow {
-                                    body: G::FnBody { loc, stmts: stmts_ptr },
+                                    body: G::FnBody {
+                                        loc,
+                                        stmts: stmts_ptr,
+                                    },
                                     is_async: false,
                                     ..Default::default()
                                 },
@@ -1795,15 +2060,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let mut run_args = BumpVec::with_capacity_in(4, bump);
                         run_args.push(p.use_ref(init_ref, loc));
-                        run_args.push(
-                            p.new_expr(E::Number { value: Self::init_flag(field_idx) }, loc),
-                        );
+                        run_args.push(p.new_expr(
+                            E::Number {
+                                value: Self::init_flag(field_idx),
+                            },
+                            loc,
+                        ));
                         run_args.push(p.use_ref(class_name_ref, class_name_loc));
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
                         }
-                        let run_args_list =
-                            ExprNodeList::from_bump_vec(run_args);
+                        let run_args_list = ExprNodeList::from_bump_vec(run_args);
                         let run_init_call =
                             p.call_runtime(loc, b"__runInitializers", run_args_list);
 
@@ -1827,8 +2094,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // Extra initializer
                         let i_e = p.use_ref(init_ref, loc);
-                        let n_e =
-                            p.new_expr(E::Number { value: Self::extra_init_flag(field_idx) }, loc);
+                        let n_e = p.new_expr(
+                            E::Number {
+                                value: Self::extra_init_flag(field_idx),
+                            },
+                            loc,
+                        );
                         let c_e = p.use_ref(class_name_ref, class_name_loc);
                         suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
                     }
@@ -1857,8 +2128,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let n_e = p.new_expr(E::Number { value: 5.0 }, loc);
             let t_e = p.new_expr(E::This {}, loc);
             let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
-            constructor_inject_stmts
-                .push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+            constructor_inject_stmts.push(p.s(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                loc,
+            ));
         }
 
         // Instance field/accessor init + extra-init
@@ -1878,14 +2154,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let mut run_args = BumpVec::with_capacity_in(4, bump);
                 run_args.push(p.use_ref(init_ref, loc));
-                run_args
-                    .push(p.new_expr(E::Number { value: Self::init_flag(field_idx) }, loc));
+                run_args.push(p.new_expr(
+                    E::Number {
+                        value: Self::init_flag(field_idx),
+                    },
+                    loc,
+                ));
                 run_args.push(p.new_expr(E::This {}, loc));
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
                 }
-                let run_args_list =
-                    ExprNodeList::from_bump_vec(run_args);
+                let run_args_list = ExprNodeList::from_bump_vec(run_args);
                 let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
 
                 if entry.is_accessor || entry.is_private {
@@ -1895,10 +2174,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         entry.prop.key.expect("infallible: prop has key")
                     };
                     let t_e = p.new_expr(E::This {}, loc);
-                    let call =
-                        p.call_rt(loc, b"__privateAdd", &[t_e, wm_ref_expr, run_init_call]);
-                    constructor_inject_stmts
-                        .push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+                    let call = p.call_rt(loc, b"__privateAdd", &[t_e, wm_ref_expr, run_init_call]);
+                    constructor_inject_stmts.push(p.s(
+                        S::SExpr {
+                            value: call,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
                 } else {
                     let t_e = p.new_expr(E::This {}, loc);
                     let mt = p.member_target(t_e, &entry.prop);
@@ -1907,12 +2190,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // Extra initializer
                 let i_e = p.use_ref(init_ref, loc);
-                let n_e =
-                    p.new_expr(E::Number { value: Self::extra_init_flag(field_idx) }, loc);
+                let n_e = p.new_expr(
+                    E::Number {
+                        value: Self::extra_init_flag(field_idx),
+                    },
+                    loc,
+                );
                 let t_e = p.new_expr(E::This {}, loc);
                 let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
-                constructor_inject_stmts
-                    .push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+                constructor_inject_stmts.push(p.s(
+                    S::SExpr {
+                        value: call,
+                        ..Default::default()
+                    },
+                    loc,
+                ));
             }
         }
 
@@ -1942,8 +2234,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 body_stmts.extend_from_slice(body_slice);
                 let mut super_index: Option<usize> = None;
                 for (index, item) in body_stmts.iter().enumerate() {
-                    let js_ast::StmtData::SExpr(se) = &item.data else { continue };
-                    let js_ast::ExprData::ECall(call) = &se.value.data else { continue };
+                    let js_ast::StmtData::SExpr(se) = &item.data else {
+                        continue;
+                    };
+                    let js_ast::ExprData::ECall(call) = &se.value.data else {
+                        continue;
+                    };
                     if !matches!(call.target.data, js_ast::ExprData::ESuper(_)) {
                         continue;
                     }
@@ -1952,8 +2248,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 let insert_at = if let Some(j) = super_index { j + 1 } else { 0 };
                 // PORT NOTE: BumpVec has no `splice`; rebuild.
-                let mut spliced =
-                    BumpVec::<Stmt>::with_capacity_in(body_stmts.len() + constructor_inject_stmts.len(), bump);
+                let mut spliced = BumpVec::<Stmt>::with_capacity_in(
+                    body_stmts.len() + constructor_inject_stmts.len(),
+                    bump,
+                );
                 spliced.extend_from_slice(&body_stmts[..insert_at]);
                 spliced.extend_from_slice(&constructor_inject_stmts);
                 spliced.extend_from_slice(&body_stmts[insert_at..]);
@@ -1968,17 +2266,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let target = p.new_expr(E::Super {}, loc);
                     let args_ref = p.new_sym(js_ast::symbol::Kind::Unbound, arguments_str);
                     let inner = p.new_expr(
-                        E::Identifier { ref_: args_ref, ..Default::default() },
+                        E::Identifier {
+                            ref_: args_ref,
+                            ..Default::default()
+                        },
                         loc,
                     );
                     let spread = p.new_expr(E::Spread { value: inner }, loc);
                     let arg_slice = bump.alloc_slice_copy(&[spread]);
                     let call_args = ExprNodeList::from_arena_slice(arg_slice);
                     let call = p.new_expr(
-                        E::Call { target, args: call_args, ..Default::default() },
+                        E::Call {
+                            target,
+                            args: call_args,
+                            ..Default::default()
+                        },
                         loc,
                     );
-                    ctor_stmts.push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
+                    ctor_stmts.push(p.s(
+                        S::SExpr {
+                            value: call,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
                 }
                 ctor_stmts.extend_from_slice(&constructor_inject_stmts);
                 let ctor_body_ptr = bun_ast::StoreSlice::new_mut(ctor_stmts.into_bump_slice_mut());
@@ -1986,19 +2297,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     name: None,
                     open_parens_loc: bun_ast::Loc::EMPTY,
                     args: bun_ast::StoreSlice::EMPTY,
-                    body: G::FnBody { loc, stmts: ctor_body_ptr },
+                    body: G::FnBody {
+                        loc,
+                        stmts: ctor_body_ptr,
+                    },
                     ..Default::default()
                 };
-                let value =
-                    Some(p.new_expr(E::Function { func }, loc));
-                let key =
-                    Some(p.new_expr(E::EString { data: b"constructor".into(), ..Default::default() }, loc));
-                new_properties.insert(0, G::Property {
-                    flags: Flags::Property::IsMethod.into(),
-                    key,
-                    value,
-                    ..Default::default()
-                });
+                let value = Some(p.new_expr(E::Function { func }, loc));
+                let key = Some(p.new_expr(
+                    E::EString {
+                        data: b"constructor".into(),
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+                new_properties.insert(
+                    0,
+                    G::Property {
+                        flags: Flags::Property::IsMethod.into(),
+                        key,
+                        value,
+                        ..Default::default()
+                    },
+                );
             }
         }
 
@@ -2047,12 +2368,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     _ => unreachable!(),
                                 };
                                 let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
-                                expr_var_decls.push(G::Decl { binding, value: None });
+                                expr_var_decls.push(G::Decl {
+                                    binding,
+                                    value: None,
+                                });
                                 if let Some(val) = decl_item.value {
                                     p.record_usage(ref_);
                                     comma_parts.push(Expr::assign(
                                         p.new_expr(
-                                            E::Identifier { ref_, ..Default::default() },
+                                            E::Identifier {
+                                                ref_,
+                                                ..Default::default()
+                                            },
                                             loc,
                                         ),
                                         val,
@@ -2075,15 +2402,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             comma_parts.extend_from_slice(&suffix_exprs);
 
             // Final value
-            let final_ref =
-                if class_decorators_len > 0 { class_name_ref } else { expr_class_ref.unwrap() };
+            let final_ref = if class_decorators_len > 0 {
+                class_name_ref
+            } else {
+                expr_class_ref.unwrap()
+            };
             comma_parts.push(p.use_ref(final_ref, loc));
 
             // Build comma chain
             let mut result = comma_parts[0];
             for part in &comma_parts[1..] {
                 result = p.new_expr(
-                    E::Binary { op: js_ast::OpCode::BinComma, left: result, right: *part },
+                    E::Binary {
+                        op: js_ast::OpCode::BinComma,
+                        left: result,
+                        right: *part,
+                    },
                     loc,
                 );
             }
@@ -2091,13 +2425,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Emit var declarations
             if !expr_var_decls.is_empty() {
                 let decls = DeclList::from_bump_vec(expr_var_decls);
-                let var_decl_stmt = p.s(S::Local { decls, ..Default::default() }, loc);
+                let var_decl_stmt = p.s(
+                    S::Local {
+                        decls,
+                        ..Default::default()
+                    },
+                    loc,
+                );
                 if let Some(stmt_list) = p.nearest_stmt_list_mut() {
                     stmt_list.push(var_decl_stmt);
                 }
             }
 
-            out.push(p.s(S::SExpr { value: result, ..Default::default() }, loc));
+            out.push(p.s(
+                S::SExpr {
+                    value: result,
+                    ..Default::default()
+                },
+                loc,
+            ));
             return;
         }
 
@@ -2113,19 +2459,37 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         out.push(init_decl_stmt);
         out.push(original_stmt.unwrap());
         for expr in suffix_exprs.iter() {
-            out.push(p.s(S::SExpr { value: *expr, ..Default::default() }, expr.loc));
+            out.push(p.s(
+                S::SExpr {
+                    value: *expr,
+                    ..Default::default()
+                },
+                expr.loc,
+            ));
         }
         // Inner class binding: let _Foo = Foo
         if !inner_class_ref.eql(class_name_ref) {
             p.record_usage(class_name_ref);
-            let binding = p.b(B::Identifier { r#ref: inner_class_ref }, loc);
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: inner_class_ref,
+                },
+                loc,
+            );
             let value = Some(p.new_expr(
-                E::Identifier { ref_: class_name_ref, ..Default::default() },
+                E::Identifier {
+                    ref_: class_name_ref,
+                    ..Default::default()
+                },
                 class_name_loc,
             ));
             let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
             out.push(p.s(
-                S::Local { kind: S::Kind::KLet, decls, ..Default::default() },
+                S::Local {
+                    kind: S::Kind::KLet,
+                    decls,
+                    ..Default::default()
+                },
                 loc,
             ));
         }

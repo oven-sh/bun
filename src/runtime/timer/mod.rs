@@ -14,11 +14,11 @@ use core::mem::offset_of;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::Mutex;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+use bun_threading::Mutex;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
@@ -283,7 +283,6 @@ pub mod timeout_object;
 #[path = "ImmediateObject.rs"]
 pub mod immediate_object;
 
-
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
 
@@ -402,12 +401,16 @@ pub struct DateHeaderTimer {
 }
 impl Default for DateHeaderTimer {
     fn default() -> Self {
-        Self { event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer) }
+        Self {
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer),
+        }
     }
 }
 impl DateHeaderTimer {
     #[inline]
-    fn timer_all() -> *mut All { crate::jsc_hooks::timer_all() }
+    fn timer_all() -> *mut All {
+        crate::jsc_hooks::timer_all()
+    }
 
     /// Spec DateHeaderTimer.zig `run` — refresh the cached `Date:` header and
     /// reschedule for 1s later iff there are active connections.
@@ -420,7 +423,10 @@ impl DateHeaderTimer {
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
 
         // Record when we last ran it.
-        self.event_loop_timer.next = ElTimespec { sec: now.sec, nsec: now.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: now.sec,
+            nsec: now.nsec,
+        };
 
         // updateDate() is an expensive function.
         loop_.update_date();
@@ -428,7 +434,10 @@ impl DateHeaderTimer {
         if loop_.internal_loop_data.sweep_timer_count > 0 {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(1000);
-            self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+            self.event_loop_timer.next = ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
@@ -458,7 +467,9 @@ impl Default for EventLoopDelayMonitor {
 }
 impl EventLoopDelayMonitor {
     #[inline]
-    fn timer_all() -> *mut All { crate::jsc_hooks::timer_all() }
+    fn timer_all() -> *mut All {
+        crate::jsc_hooks::timer_all()
+    }
 
     pub fn enable(
         &mut self,
@@ -476,7 +487,10 @@ impl EventLoopDelayMonitor {
         // Schedule timer
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let next = now.add_ms(i64::from(resolution_ms));
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
         // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
@@ -512,12 +526,14 @@ impl EventLoopDelayMonitor {
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
-            let expected_ns =
-                u64::try_from(self.resolution_ms).expect("int cast").saturating_mul(1_000_000);
+            let expected_ns = u64::try_from(self.resolution_ms)
+                .expect("int cast")
+                .saturating_mul(1_000_000);
             let actual_ns = now_ns - self.last_fire_ns;
 
             if actual_ns > expected_ns {
-                let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
+                let delay_ns =
+                    i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
                 unsafe extern "C" {
                     safe fn JSNodePerformanceHooksHistogram_recordDelay(
                         histogram: JSValue,
@@ -531,9 +547,15 @@ impl EventLoopDelayMonitor {
         self.last_fire_ns = now_ns;
 
         // Reschedule
-        let next =
-            Timespec { sec: now.sec, nsec: now.nsec }.add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let next = Timespec {
+            sec: now.sec,
+            nsec: now.nsec,
+        }
+        .add_ms(i64::from(self.resolution_ms));
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
@@ -553,8 +575,8 @@ pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
 /// `event_loop_timer`/`flags` offsets the low tier wrote.
 pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
 
-pub use self::timeout_object::TimeoutObject;
 pub use self::immediate_object::ImmediateObject;
+pub use self::timeout_object::TimeoutObject;
 
 /// Spec EventLoopTimer.zig:145 `jsTimerInternalsFlags` — recover the
 /// [`TimerFlags`] slot for the three JS-timer container tags
@@ -575,7 +597,7 @@ pub use self::immediate_object::ImmediateObject;
 pub unsafe fn js_timer_flags_ptr(
     t: *const EventLoopTimer,
 ) -> Option<core::ptr::NonNull<TimerFlags>> {
-    use core::ptr::{addr_of, NonNull};
+    use core::ptr::{NonNull, addr_of};
     // SAFETY: caller contract — `t` is live; tag invariant per fn docs.
     unsafe {
         let p: *const TimerFlags = match (*t).tag {
@@ -720,8 +742,8 @@ impl All {
         );
         if self.uv_timer.data.is_null() {
             self.uv_timer.init(uv::Loop::get());
-            self.uv_timer.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
-                .cast::<core::ffi::c_void>();
+            self.uv_timer.data =
+                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
 
@@ -733,7 +755,10 @@ impl All {
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             // SAFETY: `peek` returns a live heap node.
             let next = unsafe { &(*timer).next };
-            let next_ts = Timespec { sec: next.sec, nsec: next.nsec };
+            let next_ts = Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
             let wait = if next_ts.greater(&now) {
                 next_ts.duration(&now)
             } else {
@@ -896,15 +921,16 @@ impl All {
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
-            let (min_next_sec, min_next_nsec, min_tag) = unsafe {
-                ((*min).next.sec, (*min).next.nsec, (*min).tag)
-            };
-            let now = *maybe_now.get_or_insert_with(|| {
-                Timespec::now(TimespecMockMode::AllowMockedTime)
-            });
+            let (min_next_sec, min_next_nsec, min_tag) =
+                unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            let now =
+                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
 
             // bun_event_loop carries its own Timespec stub; compare field-wise.
-            let min_next = Timespec { sec: min_next_sec, nsec: min_next_nsec };
+            let min_next = Timespec {
+                sec: min_next_sec,
+                nsec: min_next_nsec,
+            };
             match now.order(&min_next) {
                 core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
                     // Side-effect: potentially call the StopIfNecessary timer.
@@ -912,7 +938,10 @@ impl All {
                         // SAFETY: short-lived `&mut All` scoped to
                         // `delete_min()`; dropped before `fire()`.
                         let _ = unsafe { &mut *this }.timers.delete_min();
-                        let el_now = ElTimespec { sec: now.sec, nsec: now.nsec };
+                        let el_now = ElTimespec {
+                            sec: now.sec,
+                            nsec: now.nsec,
+                        };
                         // SAFETY: `min` was just popped and is live; no `&mut`
                         // to `All` or to `*min` is held across `fire()`, which
                         // may re-enter `(*runtime_state()).timer`.
@@ -968,7 +997,12 @@ impl All {
             }
             // SAFETY: peek returns a live heap node
             let next = unsafe { &(*timer).next };
-            if (Timespec { sec: next.sec, nsec: next.nsec }).greater(now) {
+            if (Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            })
+            .greater(now)
+            {
                 return None;
             }
             let deleted = self.timers.delete_min().expect("peek succeeded");
@@ -1007,7 +1041,10 @@ impl All {
             };
             // PORT NOTE: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
-            let el_now = ElTimespec { sec: now.sec, nsec: now.nsec };
+            let el_now = ElTimespec {
+                sec: now.sec,
+                nsec: now.nsec,
+            };
             // SAFETY: `t` was just popped from the intrusive heap and is live.
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
@@ -1137,7 +1174,10 @@ pub struct ID {
 }
 impl Default for ID {
     fn default() -> Self {
-        Self { id: 0, kind: KindBig::SetTimeout }
+        Self {
+            id: 0,
+            kind: KindBig::SetTimeout,
+        }
     }
 }
 impl ID {

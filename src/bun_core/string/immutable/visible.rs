@@ -5,9 +5,9 @@
 use core::ffi::c_uint;
 
 use crate::string::immutable::{
-    self as strings, decode_wtf8_rune_t_multibyte, first_non_ascii, first_non_ascii16, grapheme,
-    index_of_char16_usize, index_of_char_usize, utf16_codepoint_with_fffd,
-    wtf8_byte_sequence_length_with_invalid, U3Fast, UNICODE_REPLACEMENT,
+    self as strings, U3Fast, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte, first_non_ascii,
+    first_non_ascii16, grapheme, index_of_char_usize, index_of_char16_usize,
+    utf16_codepoint_with_fffd, wtf8_byte_sequence_length_with_invalid,
 };
 use crate::string::immutable::{AsciiU16Vector as u16x8, AsciiVector as u8x16};
 
@@ -669,7 +669,11 @@ pub fn visible_codepoint_width(cp: u32, ambiguous_as_wide: bool) -> U3Fast {
     visible_codepoint_width_type::<u32>(cp, ambiguous_as_wide)
 }
 
-pub fn visible_codepoint_width_maybe_emoji(cp: u32, maybe_emoji: bool, ambiguous_as_wide: bool) -> U3Fast {
+pub fn visible_codepoint_width_maybe_emoji(
+    cp: u32,
+    maybe_emoji: bool,
+    ambiguous_as_wide: bool,
+) -> U3Fast {
     // UCHAR_EMOJI=57,
     if maybe_emoji && icu_hasBinaryProperty(cp, 57) {
         return 2;
@@ -754,7 +758,11 @@ pub mod visible {
     #[inline]
     pub(super) fn visible_latin1_width_scalar(c: u8) -> u8 {
         // Zero-width: control chars (0x00-0x1F, 0x7F-0x9F) and soft hyphen (0xAD)
-        if (c >= 127 && c <= 159) || c < 32 || c == 0xAD { 0 } else { 1 }
+        if (c >= 127 && c <= 159) || c < 32 || c == 0xAD {
+            0
+        } else {
+            1
+        }
     }
 
     // Scan for the first element in the inclusive range [lo, hi]. Returns
@@ -765,7 +773,11 @@ pub mod visible {
     // dead const-generic so call sites (`scan_lane_in_range::<u8, 16>(...)`)
     // diff cleanly against the Zig.
     // PERF(port): re-SIMD via bun_highway in Phase B.
-    pub(super) fn scan_lane_in_range<T, const STRIDE: usize>(lo: T, hi: T, slice: &[T]) -> Option<usize>
+    pub(super) fn scan_lane_in_range<T, const STRIDE: usize>(
+        lo: T,
+        hi: T,
+        slice: &[T],
+    ) -> Option<usize>
     where
         T: Copy + PartialOrd,
     {
@@ -784,7 +796,10 @@ pub mod visible {
     // PORT NOTE: was a SIMD lane-scan via `core::simd`. Demoted to scalar for
     // B-2; `STRIDE` is kept for call-site diff parity.
     // PERF(port): re-SIMD via bun_highway in Phase B.
-    pub(super) fn scan_lane_any_of<T, const STRIDE: usize>(targets: &[T], slice: &[T]) -> Option<usize>
+    pub(super) fn scan_lane_any_of<T, const STRIDE: usize>(
+        targets: &[T],
+        slice: &[T],
+    ) -> Option<usize>
     where
         T: Copy + PartialEq,
     {
@@ -935,7 +950,12 @@ pub mod visible {
             // Fast path for ASCII - no emoji complexity, simple width calculation
             if cp < 0x80 {
                 let w: u8 = if cp >= 0x20 && cp < 0x7F { 1 } else { 0 };
-                self.s = PackedState { count: 1, base_width: w, non_emoji_width: w as u16, ..Default::default() };
+                self.s = PackedState {
+                    count: 1,
+                    base_width: w,
+                    non_emoji_width: w as u16,
+                    ..Default::default()
+                };
                 return;
             }
 
@@ -963,7 +983,8 @@ pub mod visible {
             self.last_cp = cp;
             self.s.count = self.s.count.saturating_add(1);
             self.s.keycap = self.s.keycap || (cp == 0x20E3);
-            self.s.regional_indicator = self.s.regional_indicator || Self::is_regional_indicator(cp);
+            self.s.regional_indicator =
+                self.s.regional_indicator || Self::is_regional_indicator(cp);
             self.s.skin_tone = self.s.skin_tone || Self::is_skin_tone_modifier(cp);
             self.s.zwj = self.s.zwj || (cp == 0x200D);
             self.s.vs15 = self.s.vs15 || (cp == 0xFE0E);
@@ -973,7 +994,9 @@ pub mod visible {
                 self.s.non_emoji_width = self
                     .s
                     .non_emoji_width
-                    .saturating_add(visible_codepoint_width_type::<u32>(cp, ambiguous_as_wide) as u16)
+                    .saturating_add(
+                        visible_codepoint_width_type::<u32>(cp, ambiguous_as_wide) as u16
+                    )
                     .min(1023); // preserve Zig u10 `+|=` saturation ceiling
             }
         }
@@ -1103,7 +1126,11 @@ pub mod visible {
         total
     }
 
-    pub(super) fn visible_utf16_width_fn(input_: &[u16], exclude_ansi_colors: bool, ambiguous_as_wide: bool) -> usize {
+    pub(super) fn visible_utf16_width_fn(
+        input_: &[u16],
+        exclude_ansi_colors: bool,
+        ambiguous_as_wide: bool,
+    ) -> usize {
         let mut input = input_;
         let mut len: usize = 0;
         // `prev` tracks the literal previous codepoint (including ANSI bytes) —
@@ -1124,7 +1151,9 @@ pub mod visible {
 
         loop {
             {
-                let idx = first_non_ascii16(input).map(|v| v as usize).unwrap_or(input.len());
+                let idx = first_non_ascii16(input)
+                    .map(|v| v as usize)
+                    .unwrap_or(input.len());
 
                 // Fast path: bulk ASCII processing when not in escape sequence
                 // ASCII chars are always their own graphemes, so we can count directly
@@ -1260,7 +1289,8 @@ pub mod visible {
                     }
                     if !exclude_ansi_colors || cp != 0x1b {
                         if let Some(prev_) = prev_visible {
-                            let should_break = grapheme::grapheme_break(prev_, cp, &mut break_state);
+                            let should_break =
+                                grapheme::grapheme_break(prev_, cp, &mut break_state);
                             if should_break {
                                 len += grapheme_state.width();
                                 grapheme_state.reset(cp, ambiguous_as_wide);
@@ -1370,7 +1400,10 @@ pub mod visible {
             }
 
             pub fn utf8(input: &[u8]) -> usize {
-                super::super::visible_utf8_width_fn(input, super::super::visible_latin1_width_exclude_ansi_colors)
+                super::super::visible_utf8_width_fn(
+                    input,
+                    super::super::visible_latin1_width_exclude_ansi_colors,
+                )
             }
 
             pub fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
@@ -1445,7 +1478,13 @@ pub mod visible {
     /// accumulating visible width. Returns the absolute byte index at
     /// which adding the next codepoint would exceed `max_width`, or None
     /// if the whole run fits. Mirrors visible_utf8_width_fn's decode loop.
-    fn utf8_walk_run(input: &[u8], start: usize, len: usize, max_width: usize, w: &mut usize) -> Option<usize> {
+    fn utf8_walk_run(
+        input: &[u8],
+        start: usize,
+        len: usize,
+        max_width: usize,
+        w: &mut usize,
+    ) -> Option<usize> {
         let mut bytes = &input[start..start + len];
         while let Some(i) = first_non_ascii(bytes) {
             let i = i as usize;
@@ -1504,7 +1543,11 @@ unsafe extern "C" {
 
 /// Calculate visible width of UTF-8 string excluding ANSI escape codes
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf8(ptr: *const u8, len: usize, ambiguous_as_wide: bool) -> usize {
+pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf8(
+    ptr: *const u8,
+    len: usize,
+    ambiguous_as_wide: bool,
+) -> usize {
     let _ = ambiguous_as_wide; // UTF-8 version doesn't use this parameter
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
     let input = unsafe { core::slice::from_raw_parts(ptr, len) };
@@ -1513,7 +1556,11 @@ pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf8(ptr: *const u8, len: 
 
 /// Calculate visible width of UTF-16 string excluding ANSI escape codes
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf16(ptr: *const u16, len: usize, ambiguous_as_wide: bool) -> usize {
+pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf16(
+    ptr: *const u16,
+    len: usize,
+    ambiguous_as_wide: bool,
+) -> usize {
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
     let input = unsafe { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::utf16(input, ambiguous_as_wide)

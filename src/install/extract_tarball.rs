@@ -1,17 +1,18 @@
 use core::cell::RefCell;
 use core::fmt;
 
-use bun_core::{self as bun, fmt as bun_fmt, Output};
 use bun_core::fmt::s;
+use bun_core::{self as bun, Output, fmt as bun_fmt};
+use bun_core::{StringOrTinyString, ZStr};
+use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_semver::{self as Semver, Version};
-use bun_paths::strings; use bun_core::{ StringOrTinyString, ZStr};
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
-use bun_install::package_manager_real::PackageManager;
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
+use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
 use bun_libarchive::{ArchiveAppender, ExtractOptions};
@@ -27,8 +28,8 @@ pub struct ExtractTarball {
     pub cache_dir: Dir,
     pub temp_dir: Dir,
     pub dependency_id: DependencyID,
-    pub skip_verify: bool,      // = false
-    pub integrity: Integrity,   // = Integrity::default()
+    pub skip_verify: bool,    // = false
+    pub integrity: Integrity, // = Integrity::default()
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub package_manager: bun_ptr::BackRef<PackageManager>,
@@ -57,9 +58,7 @@ impl ExtractTarball {
         // the hash stored in the lockfile is forwarded via this.integrity and verified
         // above, preventing a compromised server from silently swapping the tarball.
         match self.resolution.tag {
-            ResolutionTag::Github
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::LocalTarball => {
+            ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
@@ -193,7 +192,9 @@ impl ExtractTarball {
         } else {
             // Not sure where this case hits yet.
             // BUN-2WQ
-            Output::warn(&format_args!("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", ));
+            Output::warn(&format_args!(
+                "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
+            ));
             debug_assert!(false);
             b"unnamed-package"
         };
@@ -241,7 +242,11 @@ impl ExtractTarball {
             bun_core::fast_random(),
         )?;
         {
-            let extract_destination = match bun_sys::make_path::make_open_path(tmpdir, tmpname.as_bytes(), Default::default()) {
+            let extract_destination = match bun_sys::make_path::make_open_path(
+                tmpdir,
+                tmpname.as_bytes(),
+                Default::default(),
+            ) {
                 Ok(d) => d,
                 Err(err) => {
                     log.add_error_fmt(
@@ -260,8 +265,7 @@ impl ExtractTarball {
             // `defer extract_destination.close()` — bun_sys::Dir is Copy with NO Drop impl
             // (see src/sys/lib.rs: "close on Drop is NOT done"), so close explicitly via
             // scopeguard. `Dir` is Copy, so `extract_destination` remains usable below.
-            let _close_extract_destination =
-                scopeguard::guard(extract_destination, |d| d.close());
+            let _close_extract_destination = scopeguard::guard(extract_destination, |d| d.close());
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
@@ -283,7 +287,9 @@ impl ExtractTarball {
                     // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
                     // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
                     let last_4_bytes: u32 = u32::from_ne_bytes(
-                        tgz_bytes[tgz_bytes.len() - 4..][..4].try_into().expect("infallible: size matches"),
+                        tgz_bytes[tgz_bytes.len() - 4..][..4]
+                            .try_into()
+                            .expect("infallible: size matches"),
                     );
                     if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
                         // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
@@ -333,7 +339,8 @@ impl ExtractTarball {
 
             if needs_to_decompress {
                 zlib_pool.list.clear();
-                let mut zlib_entry = Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
+                let mut zlib_entry =
+                    Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,
@@ -350,8 +357,7 @@ impl ExtractTarball {
             }
 
             if PackageManager::verbose_install() {
-                let decompressing_ended_at: u64 =
-                    bun_core::Timespec::now_allow_mocked_time().ns();
+                let decompressing_ended_at: u64 = bun_core::Timespec::now_allow_mocked_time().ns();
                 let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
                 Output::pretty_errorln(format_args!(
                     "[{}] Extract {}<r> (decompressed {} tgz file in {})",
@@ -412,8 +418,13 @@ impl ExtractTarball {
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
                             resolved,
-                        ).is_err() {
-                            let _ = sys::unlinkat(extract_destination.fd(), ZStr::from_static(b".bun-tag\0"));
+                        )
+                        .is_err()
+                        {
+                            let _ = sys::unlinkat(
+                                extract_destination.fd(),
+                                ZStr::from_static(b".bun-tag\0"),
+                            );
                         }
                     }
                 }
@@ -643,7 +654,9 @@ impl ExtractTarball {
                     tmpname.as_bytes(),
                     cache_dir.fd(),
                     folder_name,
-                    sys::RenameatConcurrentlyOptions { move_fallback: true },
+                    sys::RenameatConcurrentlyOptions {
+                        move_fallback: true,
+                    },
                 ) {
                     log.add_error_fmt(
                         None,
@@ -715,9 +728,7 @@ impl ExtractTarball {
                             .trusted_dependencies
                             .as_ref()
                             .unwrap()
-                            .contains(
-                                &(Semver::semver_string::Builder::string_hash(name) as u32),
-                            )
+                            .contains(&(Semver::semver_string::Builder::string_hash(name) as u32))
                 }
             };
             if needs_json {
@@ -797,7 +808,9 @@ impl ExtractTarball {
                             }
 
                             let mut dest_buf = PathBuffer::uninit();
-                            let dest_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
+                            let dest_path = path::resolve_path::join_abs_string_buf_z::<
+                                path::platform::Windows,
+                            >(
                                 // only set once, should be fine to read not on main thread
                                 package_manager.cache_directory_path.as_bytes(),
                                 &mut dest_buf,

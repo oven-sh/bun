@@ -196,10 +196,12 @@ impl SourceContentPtr {
         let data = self.data() as usize;
         match self.kind() {
             SourceProviderKind::Zig => Some(AnySourceProvider::Zig(data as *mut SourceProviderMap)),
-            SourceProviderKind::Bake => Some(AnySourceProvider::Bake(data as *mut BakeSourceProvider)),
-            SourceProviderKind::DevServer => {
-                Some(AnySourceProvider::DevServer(data as *mut DevServerSourceProvider))
+            SourceProviderKind::Bake => {
+                Some(AnySourceProvider::Bake(data as *mut BakeSourceProvider))
             }
+            SourceProviderKind::DevServer => Some(AnySourceProvider::DevServer(
+                data as *mut DevServerSourceProvider,
+            )),
         }
     }
 }
@@ -271,12 +273,9 @@ impl ParsedSourceMap {
         self.internal.as_ref().map(|ism| ism.cursor())
     }
 
-    pub fn standalone_module_graph_data(
-        &self,
-    ) -> *mut crate::SerializedSourceMap::Loaded {
+    pub fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
         debug_assert!(self.is_standalone_module_graph);
-        self.underlying_provider.data() as usize
-            as *mut crate::SerializedSourceMap::Loaded
+        self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -302,8 +301,14 @@ impl ParsedSourceMap {
         let mut last_ol: i32 = 0;
         let mut last_oc: i32 = 0;
         let mut current_line: i32 = 0;
-        debug_assert_eq!(self.mappings.generated().len(), self.mappings.original().len());
-        debug_assert_eq!(self.mappings.generated().len(), self.mappings.source_index().len());
+        debug_assert_eq!(
+            self.mappings.generated().len(),
+            self.mappings.original().len()
+        );
+        debug_assert_eq!(
+            self.mappings.generated().len(),
+            self.mappings.source_index().len()
+        );
         for (i, ((gn, orig), source_index)) in self
             .mappings
             .generated()

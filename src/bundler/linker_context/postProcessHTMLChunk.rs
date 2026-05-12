@@ -1,9 +1,9 @@
 use crate::mal_prelude::*;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 
+use crate::Chunk;
 use crate::linker_context_mod::GenerateChunkCtx;
 use crate::thread_pool;
-use crate::Chunk;
 
 pub fn post_process_html_chunk(
     ctx: GenerateChunkCtx,

@@ -7,12 +7,12 @@
 use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
 
+use bun_core::String as BunString;
 use bun_jsc::JSGlobalObject;
 use bun_sourcemap::{
     self as source_map, ParseUrl, ParseUrlResultHint, SourceContentPtr, SourceMapLoadHint,
     SourceProvider,
 };
-use bun_core::String as BunString;
 
 unsafe extern "C" {
     fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
@@ -65,8 +65,7 @@ impl BakeSourceProvider {
         // `pt.bundled_outputs[idx].value.asSlice()`) is dispatched through the
         // existing `bun_jsc::RuntimeHooks` vtable per PORTING.md §Dispatch
         // (cold path — error-stack source-map resolution).
-        let hooks = bun_jsc::virtual_machine::runtime_hooks()
-            .expect("RuntimeHooks not installed");
+        let hooks = bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: `pt` is the live `*mut PerThread` per above; called on the JS
         // thread. The returned slice borrows `PerThread.bundled_outputs`, which
         // outlives this `BakeSourceProvider` (the provider is created from a

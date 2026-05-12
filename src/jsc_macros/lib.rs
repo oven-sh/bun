@@ -12,8 +12,10 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
+    FnArg, Ident, ItemEnum, ItemFn, ItemStruct, LitStr, Token,
     parse::{Parse, ParseStream},
-    parse_macro_input, spanned::Spanned, FnArg, Ident, ItemEnum, ItemFn, ItemStruct, LitStr, Token,
+    parse_macro_input,
+    spanned::Spanned,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -289,7 +291,8 @@ impl Parse for CachedAccessorsInput {
 
 #[proc_macro]
 pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
-    let CachedAccessorsInput { type_name, props } = parse_macro_input!(input as CachedAccessorsInput);
+    let CachedAccessorsInput { type_name, props } =
+        parse_macro_input!(input as CachedAccessorsInput);
     let ty = type_name.value();
 
     let mut out = TokenStream2::new();

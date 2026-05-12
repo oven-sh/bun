@@ -345,10 +345,18 @@ unsafe extern "C" {
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
     pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
-    pub fn EVP_DigestInit_ex(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD, engine: *mut ENGINE) -> c_int;
+    pub fn EVP_DigestInit_ex(
+        ctx: *mut EVP_MD_CTX,
+        type_: *const EVP_MD,
+        engine: *mut ENGINE,
+    ) -> c_int;
     pub fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
-    pub fn EVP_DigestFinal_ex(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
+    pub fn EVP_DigestFinal_ex(
+        ctx: *mut EVP_MD_CTX,
+        md_out: *mut u8,
+        out_size: *mut c_uint,
+    ) -> c_int;
     pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
     pub fn EVP_MD_do_all_sorted(
         callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
@@ -570,9 +578,8 @@ pub type CRYPTO_refcount_t = u32;
 pub type ossl_ssize_t = isize;
 
 /// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
-pub type bio_info_cb = Option<
-    unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long,
->;
+pub type bio_info_cb =
+    Option<unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long>;
 
 /// `struct bio_method_st` — vtable for a BIO implementation. Laid out by-value
 /// so callers can construct custom BIO methods on the Rust side.
@@ -635,8 +642,7 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub type pem_password_cb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2

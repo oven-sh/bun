@@ -1,5 +1,6 @@
 use crate as css;
 use crate::css_parser::{CssResult as Result, EnumProperty, Parser, Token};
+use crate::generics::DeepClone as _;
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
@@ -9,9 +10,8 @@ use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
 use crate::{PrintErr, Printer, VendorPrefix};
-use crate::generics::DeepClone as _;
-use bun_core::strings;
 use bun_alloc::Arena;
+use bun_core::strings;
 
 // ─── B-2 round 6 notes ────────────────────────────────────────────────────
 // Un-gated. `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
@@ -67,20 +67,30 @@ pub trait GradientSideKeyword: Sized + Clone + PartialEq + Copy {
     fn into_length_percentage(&self) -> LengthPercentage;
 }
 impl GradientSideKeyword for HorizontalPositionKeyword {
-    #[inline] fn parse(input: &mut Parser) -> Result<Self> { HorizontalPositionKeyword::parse(input) }
-    #[inline] fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    #[inline]
+    fn parse(input: &mut Parser) -> Result<Self> {
+        HorizontalPositionKeyword::parse(input)
+    }
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         HorizontalPositionKeyword::to_css(self, dest)
     }
-    #[inline] fn into_length_percentage(&self) -> LengthPercentage {
+    #[inline]
+    fn into_length_percentage(&self) -> LengthPercentage {
         HorizontalPositionKeyword::into_length_percentage(self)
     }
 }
 impl GradientSideKeyword for VerticalPositionKeyword {
-    #[inline] fn parse(input: &mut Parser) -> Result<Self> { VerticalPositionKeyword::parse(input) }
-    #[inline] fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    #[inline]
+    fn parse(input: &mut Parser) -> Result<Self> {
+        VerticalPositionKeyword::parse(input)
+    }
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         VerticalPositionKeyword::to_css(self, dest)
     }
-    #[inline] fn into_length_percentage(&self) -> LengthPercentage {
+    #[inline]
+    fn into_length_percentage(&self) -> LengthPercentage {
         VerticalPositionKeyword::into_length_percentage(self)
     }
 }
@@ -173,7 +183,9 @@ impl Gradient {
     ///
     /// Returns an error in case the conversion is not possible.
     pub fn get_legacy_webkit(&self, bump: &Arena) -> Option<Gradient> {
-        Some(Gradient::WebkitGradient(WebKitGradient::from_standard(self, bump)?))
+        Some(Gradient::WebkitGradient(WebKitGradient::from_standard(
+            self, bump,
+        )?))
     }
 
     // deep_clone — provided by #[derive(css::DeepClone)] (trait impl;
@@ -197,15 +209,32 @@ impl Gradient {
 
     /// Returns the vendor prefixes needed for the given browser targets.
     pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> VendorPrefix {
-        let get_prefixes = |tgts: css::targets::Targets, feature: css::prefixes::Feature, prefix: VendorPrefix| -> VendorPrefix {
-            tgts.prefixes(prefix, feature)
-        };
+        let get_prefixes = |tgts: css::targets::Targets,
+                            feature: css::prefixes::Feature,
+                            prefix: VendorPrefix|
+         -> VendorPrefix { tgts.prefixes(prefix, feature) };
 
         match self {
-            Gradient::Linear(linear) => get_prefixes(targets, css::prefixes::Feature::LinearGradient, linear.vendor_prefix),
-            Gradient::RepeatingLinear(linear) => get_prefixes(targets, css::prefixes::Feature::RepeatingLinearGradient, linear.vendor_prefix),
-            Gradient::Radial(radial) => get_prefixes(targets, css::prefixes::Feature::RadialGradient, radial.vendor_prefix),
-            Gradient::RepeatingRadial(radial) => get_prefixes(targets, css::prefixes::Feature::RepeatingRadialGradient, radial.vendor_prefix),
+            Gradient::Linear(linear) => get_prefixes(
+                targets,
+                css::prefixes::Feature::LinearGradient,
+                linear.vendor_prefix,
+            ),
+            Gradient::RepeatingLinear(linear) => get_prefixes(
+                targets,
+                css::prefixes::Feature::RepeatingLinearGradient,
+                linear.vendor_prefix,
+            ),
+            Gradient::Radial(radial) => get_prefixes(
+                targets,
+                css::prefixes::Feature::RadialGradient,
+                radial.vendor_prefix,
+            ),
+            Gradient::RepeatingRadial(radial) => get_prefixes(
+                targets,
+                css::prefixes::Feature::RepeatingRadialGradient,
+                radial.vendor_prefix,
+            ),
             _ => VendorPrefix::NONE,
         }
     }
@@ -298,10 +327,18 @@ impl LinearGradient {
             LineDirection::Vertical(VerticalPositionKeyword::Bottom)
         };
         let items = parse_items::<LengthPercentage>(input)?;
-        Ok(LinearGradient { direction, items, vendor_prefix })
+        Ok(LinearGradient {
+            direction,
+            items,
+            vendor_prefix,
+        })
     }
 
-    pub fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_prefixed: bool,
+    ) -> core::result::Result<(), PrintErr> {
         let angle: f32 = match &self.direction {
             LineDirection::Vertical(v) => match v {
                 VerticalPositionKeyword::Bottom => 180.0,
@@ -318,25 +355,28 @@ impl LinearGradient {
         }
         // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
         // we can flip the gradient the other direction and omit the direction.
-        else if angle == 0.0 && dest.minify && 'brk: {
-            for item in self.items.iter() {
-                match item {
-                    GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
-                        break 'brk false;
+        else if angle == 0.0
+            && dest.minify
+            && 'brk: {
+                for item in self.items.iter() {
+                    match item {
+                        GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
+                            break 'brk false;
+                        }
+                        GradientItem::ColorStop(cs)
+                            if cs
+                                .position
+                                .as_ref()
+                                .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
+                        {
+                            break 'brk false;
+                        }
+                        _ => {}
                     }
-                    GradientItem::ColorStop(cs)
-                        if cs
-                            .position
-                            .as_ref()
-                            .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
-                    {
-                        break 'brk false;
-                    }
-                    _ => {}
                 }
+                true
             }
-            true
-        } {
+        {
             let mut flipped_items: Vec<GradientItem<LengthPercentage>> =
                 Vec::with_capacity(self.items.len());
 
@@ -351,19 +391,23 @@ impl LinearGradient {
                         )),
                         _ => unreachable!(),
                     },
-                    GradientItem::ColorStop(cs) => flipped_items.push(GradientItem::ColorStop(ColorStop {
-                        color: cs.color.clone(),
-                        position: if let Some(p) = &cs.position {
-                            match p {
-                                LengthPercentage::Percentage(perc) => Some(LengthPercentage::Percentage(
-                                    Percentage { v: 1.0 - perc.v },
-                                )),
-                                _ => unreachable!(),
-                            }
-                        } else {
-                            None
-                        },
-                    })),
+                    GradientItem::ColorStop(cs) => {
+                        flipped_items.push(GradientItem::ColorStop(ColorStop {
+                            color: cs.color.clone(),
+                            position: if let Some(p) = &cs.position {
+                                match p {
+                                    LengthPercentage::Percentage(perc) => {
+                                        Some(LengthPercentage::Percentage(Percentage {
+                                            v: 1.0 - perc.v,
+                                        }))
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            } else {
+                                None
+                            },
+                        }))
+                    }
                 }
             }
 
@@ -371,7 +415,9 @@ impl LinearGradient {
                 return Err(dest.add_fmt_error());
             }
         } else {
-            if !self.direction.eql(&LineDirection::Vertical(VerticalPositionKeyword::Bottom))
+            if !self
+                .direction
+                .eql(&LineDirection::Vertical(VerticalPositionKeyword::Bottom))
                 && !self.direction.eql(&LineDirection::Angle(Angle::Deg(180.0)))
             {
                 self.direction.to_css(dest, is_prefixed)?;
@@ -395,8 +441,7 @@ impl LinearGradient {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        let mut items: Vec<GradientItem<LengthPercentage>> =
-            Vec::with_capacity(self.items.len());
+        let mut items: Vec<GradientItem<LengthPercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
         }
@@ -494,8 +539,7 @@ impl RadialGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
-        let mut items: Vec<GradientItem<LengthPercentage>> =
-            Vec::with_capacity(self.items.len());
+        let mut items: Vec<GradientItem<LengthPercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.get_fallback(bump, kind));
         }
@@ -509,8 +553,7 @@ impl RadialGradient {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        let mut items: Vec<GradientItem<LengthPercentage>> =
-            Vec::with_capacity(self.items.len());
+        let mut items: Vec<GradientItem<LengthPercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
         }
@@ -595,8 +638,7 @@ impl ConicGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
-        let mut items: Vec<GradientItem<AnglePercentage>> =
-            Vec::with_capacity(self.items.len());
+        let mut items: Vec<GradientItem<AnglePercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.get_fallback(bump, kind));
         }
@@ -609,8 +651,7 @@ impl ConicGradient {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        let mut items: Vec<GradientItem<AnglePercentage>> =
-            Vec::with_capacity(self.items.len());
+        let mut items: Vec<GradientItem<AnglePercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
         }
@@ -639,8 +680,7 @@ pub struct WebKitGradientLinear {
 
 impl WebKitGradientLinear {
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        let mut stops: Vec<WebKitColorStop> =
-            Vec::with_capacity(self.stops.len());
+        let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(self.stops.len());
         for in_ in self.stops.iter() {
             stops.push(in_.deep_clone(bump));
         }
@@ -672,8 +712,7 @@ pub struct WebKitGradientRadial {
 
 impl WebKitGradientRadial {
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        let mut stops: Vec<WebKitColorStop> =
-            Vec::with_capacity(self.stops.len());
+        let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(self.stops.len());
         for in_ in self.stops.iter() {
             stops.push(in_.deep_clone(bump));
         }
@@ -774,8 +813,7 @@ impl WebKitGradient {
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
-                let mut stops: Vec<WebKitColorStop> =
-                    Vec::with_capacity(linear.stops.len());
+                let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(linear.stops.len());
                 for in_ in linear.stops.iter() {
                     stops.push(in_.get_fallback(bump, kind));
                 }
@@ -786,8 +824,7 @@ impl WebKitGradient {
                 })
             }
             WebKitGradient::Radial(radial) => {
-                let mut stops: Vec<WebKitColorStop> =
-                    Vec::with_capacity(radial.stops.len());
+                let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(radial.stops.len());
                 for in_ in radial.stops.iter() {
                     stops.push(in_.get_fallback(bump, kind));
                 }
@@ -874,8 +911,14 @@ impl WebKitGradient {
                     _ => return None,
                 };
 
-                let x = WebKitGradientPointComponent::<HorizontalPositionKeyword>::from_position(&radial.position.x, bump)?;
-                let y = WebKitGradientPointComponent::<VerticalPositionKeyword>::from_position(&radial.position.y, bump)?;
+                let x = WebKitGradientPointComponent::<HorizontalPositionKeyword>::from_position(
+                    &radial.position.x,
+                    bump,
+                )?;
+                let y = WebKitGradientPointComponent::<VerticalPositionKeyword>::from_position(
+                    &radial.position.y,
+                    bump,
+                )?;
                 let point = WebKitGradientPoint { x, y };
                 Some(WebKitGradient::Radial(WebKitGradientRadial {
                     from: point.clone(),
@@ -969,7 +1012,11 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
-    pub fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_prefixed: bool,
+    ) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
@@ -1181,18 +1228,23 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
     }
 
     /// Attempts to convert a standard position to a webkit gradient point.
-    pub fn from_position(this: &PositionComponent<S>, bump: &Arena) -> Option<WebKitGradientPointComponent<S>> {
+    pub fn from_position(
+        this: &PositionComponent<S>,
+        bump: &Arena,
+    ) -> Option<WebKitGradientPointComponent<S>> {
         match this {
             PositionComponent::Center => Some(WebKitGradientPointComponent::Center),
-            PositionComponent::Length(len) => Some(WebKitGradientPointComponent::Number(match len {
-                LengthPercentage::Percentage(p) => NumberOrPercentage::Percentage(*p),
-                // Webkit gradient points can only be specified in pixels.
-                LengthPercentage::Dimension(d) => match d.to_px() {
-                    Some(px) => NumberOrPercentage::Number(px),
-                    None => return None,
-                },
-                _ => return None,
-            })),
+            PositionComponent::Length(len) => {
+                Some(WebKitGradientPointComponent::Number(match len {
+                    LengthPercentage::Percentage(p) => NumberOrPercentage::Percentage(*p),
+                    // Webkit gradient points can only be specified in pixels.
+                    LengthPercentage::Dimension(d) => match d.to_px() {
+                        Some(px) => NumberOrPercentage::Number(px),
+                        None => return None,
+                    },
+                    _ => return None,
+                }))
+            }
             PositionComponent::Side(s) => {
                 if s.offset.is_some() {
                     None
@@ -1495,31 +1547,34 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     loop {
         // PORT NOTE: reshaped for borrowck — Zig used a Closure { items: *ArrayList, seen_stop: *bool }
         // captured into parseUntilBefore; here we close over &mut locals directly.
-        input.parse_until_before(css::Delimiters::COMMA, |i: &mut css::Parser| -> Result<()> {
-            if seen_stop {
-                if let Some(hint) = i.try_parse(D::parse).ok() {
-                    seen_stop = false;
-                    items.push(GradientItem::Hint(hint));
-                    return Ok(());
+        input.parse_until_before(
+            css::Delimiters::COMMA,
+            |i: &mut css::Parser| -> Result<()> {
+                if seen_stop {
+                    if let Some(hint) = i.try_parse(D::parse).ok() {
+                        seen_stop = false;
+                        items.push(GradientItem::Hint(hint));
+                        return Ok(());
+                    }
                 }
-            }
 
-            let stop = ColorStop::<D>::parse(i)?;
+                let stop = ColorStop::<D>::parse(i)?;
 
-            if let Some(position) = i.try_parse(D::parse).ok() {
-                let color = stop.color.clone();
-                items.push(GradientItem::ColorStop(stop));
-                items.push(GradientItem::ColorStop(ColorStop {
-                    color,
-                    position: Some(position),
-                }));
-            } else {
-                items.push(GradientItem::ColorStop(stop));
-            }
+                if let Some(position) = i.try_parse(D::parse).ok() {
+                    let color = stop.color.clone();
+                    items.push(GradientItem::ColorStop(stop));
+                    items.push(GradientItem::ColorStop(ColorStop {
+                        color,
+                        position: Some(position),
+                    }));
+                } else {
+                    items.push(GradientItem::ColorStop(stop));
+                }
 
-            seen_stop = true;
-            Ok(())
-        })?;
+                seen_stop = true;
+                Ok(())
+            },
+        )?;
 
         match input.next() {
             Ok(Token::Comma) => continue,
@@ -1551,7 +1606,9 @@ pub fn serialize_items<D: GradientPosition>(
                 crate::compat::Feature::DoublePositionGradients,
                 crate::targets::Features::DOUBLE_POSITION_GRADIENTS,
             ) {
-                if let (GradientItem::ColorStop(prev_cs), GradientItem::ColorStop(item_cs)) = (prev, item) {
+                if let (GradientItem::ColorStop(prev_cs), GradientItem::ColorStop(item_cs)) =
+                    (prev, item)
+                {
                     if prev_cs.position.is_some()
                         && item_cs.position.is_some()
                         && prev_cs.color.eql(&item_cs.color)

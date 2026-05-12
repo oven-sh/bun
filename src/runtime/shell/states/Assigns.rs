@@ -2,7 +2,7 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::{Expansion, ExpansionOpts};
@@ -84,7 +84,10 @@ impl Assigns {
                         atom,
                         this,
                         io,
-                        ExpansionOpts { for_spawn: false, single: false },
+                        ExpansionOpts {
+                            for_spawn: false,
+                            single: false,
+                        },
                     );
                     return Expansion::start(interp, child);
                 }
@@ -143,11 +146,11 @@ impl Assigns {
         };
 
         let value_ref = EnvStr::init_ref_counted(&value);
-        interp
-            .as_assigns_mut(this)
-            .base
-            .shell_mut()
-            .assign_var(EnvStr::init_slice(label), value_ref, ctx);
+        interp.as_assigns_mut(this).base.shell_mut().assign_var(
+            EnvStr::init_slice(label),
+            value_ref,
+            ctx,
+        );
         value_ref.deref();
 
         Yield::Next(this)

@@ -6,7 +6,6 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
 
-
 use bun_io::Write as _;
 
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
@@ -23,13 +22,22 @@ use crate::bake::Side;
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct OwnerPacked(pub u32);
 impl OwnerPacked {
-    #[inline] pub fn new(side: Side, file: u32) -> Self {
+    #[inline]
+    pub fn new(side: Side, file: u32) -> Self {
         Self(file | ((side as u32) << 31))
     }
-    #[inline] pub fn side(self) -> Side {
-        if self.0 >> 31 == 0 { Side::Client } else { Side::Server }
+    #[inline]
+    pub fn side(self) -> Side {
+        if self.0 >> 31 == 0 {
+            Side::Client
+        } else {
+            Side::Server
+        }
     }
-    #[inline] pub fn file(self) -> u32 { self.0 & 0x7FFF_FFFF }
+    #[inline]
+    pub fn file(self) -> u32 {
+        self.0 & 0x7FFF_FFFF
+    }
 }
 
 /// The metaphorical owner of an incremental file error. The packed variant is
@@ -75,7 +83,10 @@ impl Packed {
         debug_assert!(data <= Self::DATA_MASK);
         Packed((data & Self::DATA_MASK) | ((kind as u32) << 30))
     }
-    #[inline] pub const fn data(self) -> u32 { self.0 & Self::DATA_MASK }
+    #[inline]
+    pub const fn data(self) -> u32 {
+        self.0 & Self::DATA_MASK
+    }
     #[inline]
     pub const fn kind(self) -> PackedKind {
         match (self.0 >> 30) as u8 {
@@ -85,8 +96,14 @@ impl Packed {
             _ => PackedKind::Server,
         }
     }
-    #[inline] pub const fn bits(self) -> u32 { self.0 }
-    #[inline] pub const fn from_bits(bits: u32) -> Self { Packed(bits) }
+    #[inline]
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    pub const fn from_bits(bits: u32) -> Self {
+        Packed(bits)
+    }
 
     pub fn decode(self) -> Owner {
         match self.kind() {
@@ -117,7 +134,11 @@ impl SerializedFailure {
     /// `SerializedFailure.getOwner` — decodes the leading 4-byte `Owner.Packed`
     /// from `data` (Zig: `std.mem.bytesAsValue(Owner.Packed, data[0..4]).decode()`).
     pub fn get_owner(&self) -> Owner {
-        let raw = u32::from_ne_bytes(self.data[0..4].try_into().expect("infallible: size matches"));
+        let raw = u32::from_ne_bytes(
+            self.data[0..4]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         Packed::from_bits(raw).decode()
     }
 
@@ -153,7 +174,9 @@ impl SerializedFailure {
 
         // Zig avoided re-cloning if the stack-fallback had spilled to heap; with
         // a plain Vec the buffer is always heap-backed, so just take ownership.
-        Ok(SerializedFailure { data: payload.into_boxed_slice() })
+        Ok(SerializedFailure {
+            data: payload.into_boxed_slice(),
+        })
     }
 }
 

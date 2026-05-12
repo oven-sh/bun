@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
-use bun_io::FilePoll;
 use bun_dotenv::Loader as DotEnvLoader;
+use bun_io::FilePoll;
 use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
@@ -169,7 +169,9 @@ impl<'a> AnyEventLoop<'a> {
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).
     pub fn js_current() -> AnyEventLoop<'static> {
-        AnyEventLoop::Js { owner: JsEventLoop::current() }
+        AnyEventLoop::Js {
+            owner: JsEventLoop::current(),
+        }
     }
 
     // PORT NOTE: Zig `context: anytype` + `@ptrCast(isDone)` erases the fn-ptr
@@ -389,7 +391,11 @@ impl EventLoopHandle {
         // wraps it without an `unsafe` block; the back-reference invariant
         // (pointee outlives every copy of the handle) is the caller's
         // structural guarantee, same as before.
-        EventLoopHandle::Mini(NonNull::new(mini).expect("MiniEventLoop ptr is non-null").into())
+        EventLoopHandle::Mini(
+            NonNull::new(mini)
+                .expect("MiniEventLoop ptr is non-null")
+                .into(),
+        )
     }
 
     #[inline]
@@ -431,7 +437,10 @@ impl EventLoopHandle {
     /// `unsafe-fn-narrow`: the invariant is caller-provided, not internally
     /// guarded.)
     #[inline]
-    pub unsafe fn from_tag_ptr(tag: core::ffi::c_char, ptr: *mut core::ffi::c_void) -> EventLoopHandle {
+    pub unsafe fn from_tag_ptr(
+        tag: core::ffi::c_char,
+        ptr: *mut core::ffi::c_void,
+    ) -> EventLoopHandle {
         match tag {
             1 => EventLoopHandle::Js {
                 // SAFETY: `(tag, ptr)` was produced by `into_tag_ptr` on a
@@ -445,7 +454,6 @@ impl EventLoopHandle {
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }
-
 }
 
 /// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
@@ -481,7 +489,9 @@ impl EventLoopHandle {
     /// `EventLoopHandle` for the current thread's JS event loop. Replaces
     /// `jsc::EventLoopHandle.init(jsc::VirtualMachine.get())` for tier-≤4 callers.
     pub fn js_current() -> EventLoopHandle {
-        EventLoopHandle::Js { owner: JsEventLoop::current() }
+        EventLoopHandle::Js {
+            owner: JsEventLoop::current(),
+        }
     }
 
     /// Erased `*mut jsc::JSGlobalObject` or null (Mini has no JS global).
@@ -558,7 +568,9 @@ impl EventLoopHandle {
             // `file_polls_`.
             EventLoopHandle::Mini(mini) => {
                 let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
-                mini_mut(mini).file_polls().put(poll, ctx, was_ever_registered);
+                mini_mut(mini)
+                    .file_polls()
+                    .put(poll, ctx, was_ever_registered);
             }
         }
     }
@@ -569,7 +581,9 @@ impl EventLoopHandle {
             EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
             // SAFETY: caller guarantees `task.mini` is the active union member
             // when `self` is `Mini`.
-            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini }),
+            EventLoopHandle::Mini(mut mini) => {
+                mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini })
+            }
         }
     }
 
@@ -615,7 +629,9 @@ impl EventLoopHandle {
     pub fn pipe_read_buffer(self) -> *mut [u8] {
         match self {
             EventLoopHandle::Js { owner } => owner.pipe_read_buffer(),
-            EventLoopHandle::Mini(mut mini) => std::ptr::from_mut::<[u8]>(mini_mut(&mut mini).pipe_read_buffer()),
+            EventLoopHandle::Mini(mut mini) => {
+                std::ptr::from_mut::<[u8]>(mini_mut(&mut mini).pipe_read_buffer())
+            }
         }
     }
 
@@ -636,9 +652,11 @@ impl EventLoopHandle {
             // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
             // provenance; Zig field is `?*DotEnvLoader`). Safe via
             // `BackRef: Deref`.
-            EventLoopHandle::Mini(mini) => {
-                mini.env_ptr().expect("MiniEventLoop.env unset").as_ptr().cast()
-            }
+            EventLoopHandle::Mini(mini) => mini
+                .env_ptr()
+                .expect("MiniEventLoop.env unset")
+                .as_ptr()
+                .cast(),
         }
     }
 

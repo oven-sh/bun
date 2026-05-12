@@ -1,23 +1,25 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError, VirtualMachineSqlExt as _};
-use bun_jsc::JsCell;
+use crate::jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
+};
 use bun_core::String as BunString;
+use bun_jsc::JsCell;
 use bun_wyhash::hash;
 
-use super::postgres_request as PostgresRequest;
-use super::postgres_sql_connection;
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
-use super::postgres_sql_statement::Status as StatementStatus;
 use super::Signature;
-use bun_sql::postgres::PostgresProtocol as protocol;
+use super::command_tag_jsc::CommandTagJsc;
+use super::error_jsc::postgres_error_to_js;
+use super::postgres_request as PostgresRequest;
+use super::postgres_sql_connection;
+use super::postgres_sql_statement::Status as StatementStatus;
 use bun_sql::postgres::CommandTag;
+use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::shared::ConnectionFlags;
-use super::error_jsc::postgres_error_to_js;
-use super::command_tag_jsc::CommandTagJsc;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -200,7 +202,11 @@ impl PostgresSQLQuery {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
+    pub fn get_target(
+        &self,
+        global_object: &JSGlobalObject,
+        clean_target: bool,
+    ) -> Option<JSValue> {
         let this_value = self.this_value.get().try_get()?;
         let target = js::target_get_cached(this_value)?;
         if clean_target {
@@ -226,42 +232,73 @@ impl PostgresSQLQuery {
         // `*self` mid-body.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else { return };
+        let Some(target_value) = self.get_target(global_object, true) else {
+            return;
+        };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
+        let function = vm
+            .sql_state()
+            .postgresql_context
+            .on_query_reject_fn
+            .get()
+            .unwrap();
         let event_loop = vm.event_loop_mut();
         let js_err = postgres_error_to_js(global_object, None, err);
-        event_loop.run_callback(function, global_object, this_value, &[
-            target_value,
-            js_err.to_error().unwrap_or(js_err),
-            queries_array,
-        ]);
+        event_loop.run_callback(
+            function,
+            global_object,
+            this_value,
+            &[
+                target_value,
+                js_err.to_error().unwrap_or(js_err),
+                queries_array,
+            ],
+        );
     }
 
     pub fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else { return };
+        let Some(target_value) = self.get_target(global_object, true) else {
+            return;
+        };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
+        let function = vm
+            .sql_state()
+            .postgresql_context
+            .on_query_reject_fn
+            .get()
+            .unwrap();
         let event_loop = vm.event_loop_mut();
-        event_loop.run_callback(function, global_object, this_value, &[
-            target_value,
-            err.to_error().unwrap_or(err),
-        ]);
+        event_loop.run_callback(
+            function,
+            global_object,
+            this_value,
+            &[target_value, err.to_error().unwrap_or(err)],
+        );
     }
 
-    pub fn on_error(&self, err: super::postgres_sql_statement::Error, global_object: &JSGlobalObject) {
-        let Ok(e) = err.to_js(global_object) else { return };
+    pub fn on_error(
+        &self,
+        err: super::postgres_sql_statement::Error,
+        global_object: &JSGlobalObject,
+    ) {
+        let Ok(e) = err.to_js(global_object) else {
+            return;
+        };
         self.on_js_error(e, global_object);
     }
 
@@ -276,10 +313,20 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
-    pub fn on_result(&self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
+    pub fn on_result(
+        &self,
+        command_tag_str: &[u8],
+        global_object: &JSGlobalObject,
+        connection: JSValue,
+        is_last: bool,
+    ) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
-        self.status.set(if is_last { Status::Success } else { Status::PartialResponse });
+        self.status.set(if is_last {
+            Status::Success
+        } else {
+            Status::PartialResponse
+        });
         let tag = CommandTag::init(command_tag_str);
         let js_tag: JSValue = match tag.to_js_tag(global_object) {
             Ok(v) => v,
@@ -287,38 +334,59 @@ impl PostgresSQLQuery {
         };
         js_tag.ensure_still_alive();
 
-        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
         let _last = scopeguard::guard((), |_| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
                 self.this_value.with_mut(|r| r.downgrade());
             }
         });
-        let Some(target_value) = self.get_target(global_object, is_last) else { return };
+        let Some(target_value) = self.get_target(global_object, is_last) else {
+            return;
+        };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm.sql_state().postgresql_context.on_query_resolve_fn.get().unwrap();
+        let function = vm
+            .sql_state()
+            .postgresql_context
+            .on_query_resolve_fn
+            .get()
+            .unwrap();
         let event_loop = vm.event_loop_mut();
 
-        event_loop.run_callback(function, global_object, this_value, &[
-            target_value,
-            js::pending_value_take_cached(this_value, global_object).unwrap_or(JSValue::UNDEFINED),
-            js_tag,
-            tag.to_js_number(),
-            if connection.is_empty() {
-                JSValue::UNDEFINED
-            } else {
-                postgres_sql_connection::js::queries_get_cached(connection).unwrap_or(JSValue::UNDEFINED)
-            },
-            JSValue::from(is_last),
-        ]);
+        event_loop.run_callback(
+            function,
+            global_object,
+            this_value,
+            &[
+                target_value,
+                js::pending_value_take_cached(this_value, global_object)
+                    .unwrap_or(JSValue::UNDEFINED),
+                js_tag,
+                tag.to_js_number(),
+                if connection.is_empty() {
+                    JSValue::UNDEFINED
+                } else {
+                    postgres_sql_connection::js::queries_get_cached(connection)
+                        .unwrap_or(JSValue::UNDEFINED)
+                },
+                JSValue::from(is_last),
+            ],
+        );
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
-    pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut PostgresSQLQuery> {
+    pub fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<*mut PostgresSQLQuery> {
         let _ = callframe;
-        Err(global_this.throw(format_args!("PostgresSQLQuery cannot be constructed directly")))
+        Err(global_this.throw(format_args!(
+            "PostgresSQLQuery cannot be constructed directly"
+        )))
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -330,7 +398,8 @@ impl PostgresSQLQuery {
     // TODO(b2-blocked): #[crate::jsc::host_fn(export = "PostgresSQLQuery__createInstance")] proc-macro attr
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        let mut args = crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+        let mut args =
+            crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // ArgumentsSlice has Drop.
         let Some(query) = args.next_eat() else {
             return Err(global_this.throw(format_args!("query must be a string")));
@@ -356,7 +425,8 @@ impl PostgresSQLQuery {
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
         if simple {
             if values.get_length(global_this)? > 0 {
-                return Err(global_this.throw_invalid_arguments(format_args!("simple query cannot have parameters")));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
             }
             if query.get_length(global_this)? >= i32::MAX as u64 {
                 return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
@@ -381,7 +451,11 @@ impl PostgresSQLQuery {
         unsafe {
             (*ptr).query = query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
-            (*ptr).flags.set(Flags { bigint, simple, ..Default::default() });
+            (*ptr).flags.set(Flags {
+                bigint,
+                simple,
+                ..Default::default()
+            });
         }
 
         js::binding_set_cached(this_value, global_this, values);
@@ -400,14 +474,22 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn do_done(this: &Self, global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_done(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = global_object;
         this.update_flags(|f| f.is_done = true);
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn set_pending_value_from_js(_this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_pending_value_from_js(
+        _this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let result = callframe.argument(0);
         let this_value = callframe.this();
         js::pending_value_set_cached(this_value, global_object, result);
@@ -415,7 +497,11 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn set_mode_from_js(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_mode_from_js(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let js_mode = callframe.argument(0);
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
             return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
@@ -428,7 +514,9 @@ impl PostgresSQLQuery {
             1 => PostgresSQLQueryResultMode::Values,
             2 => PostgresSQLQueryResultMode::Raw,
             _ => {
-                return Err(global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode));
+                return Err(
+                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
+                );
             }
         };
         this.update_flags(|f| f.result_mode = result_mode);
@@ -443,7 +531,11 @@ impl PostgresSQLQuery {
     // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
     // call returns (Stacked Borrows). Passing the raw payload pointer through preserves
     // the allocation's root provenance for the queued entry.
-    pub fn do_run(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_run(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into
@@ -458,7 +550,9 @@ impl PostgresSQLQuery {
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
         let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
-            return Err(global_object.throw(format_args!("connection must be a PostgresSQLConnection")));
+            return Err(
+                global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
+            );
         };
         let connection: &PostgresSQLConnection = &connection;
 
@@ -467,9 +561,11 @@ impl PostgresSQLQuery {
         // `*mut VirtualMachine`. `global_object.bun_vm()` and `get_vm_ctx(.Js)` both
         // resolve to the same singleton JS VM, so route through the global hook —
         // identical to `PostgresSQLConnection::vm_ctx`.
-        connection
-            .poll_ref
-            .with_mut(|r| r.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)));
+        connection.poll_ref.with_mut(|r| {
+            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
+            ))
+        });
         let query = arguments[1];
 
         if !query.is_object() {
@@ -522,7 +618,9 @@ impl PostgresSQLQuery {
                     f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                     connection.flags.set(f);
                 }
-                connection.nonpipelinable_requests.set(connection.nonpipelinable_requests.get() + 1);
+                connection
+                    .nonpipelinable_requests
+                    .set(connection.nonpipelinable_requests.get() + 1);
                 this.status.set(Status::Running);
             } else {
                 this.status.set(Status::Pending);
@@ -547,7 +645,8 @@ impl PostgresSQLQuery {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let columns_value: JSValue = js::columns_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
+        let columns_value: JSValue =
+            js::columns_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
 
         let mut signature = match Signature::generate(
             global_object,
@@ -555,7 +654,10 @@ impl PostgresSQLQuery {
             binding_value,
             columns_value,
             connection.prepared_statement_id.get(),
-            connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
+            connection
+                .flags
+                .get()
+                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -576,7 +678,11 @@ impl PostgresSQLQuery {
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
             let signature_hash: u64 = hash(&signature.name);
-            if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
+            if !connection
+                .flags
+                .get()
+                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
+            {
                 // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
                 // the `get_or_put` call (single-JS-thread; no re-entry into JS
                 // until after the raw value-slot ptr is captured). Extract the
@@ -584,7 +690,11 @@ impl PostgresSQLQuery {
                 // remainder of this block needs no further `&mut` to the map.
                 let (entry_value_ptr, existing_stmt) = match connection.statements.with_mut(|s| {
                     s.get_or_put(signature_hash).map(|e| {
-                        let existing = if e.found_existing { Some(*e.value_ptr) } else { None };
+                        let existing = if e.found_existing {
+                            Some(*e.value_ptr)
+                        } else {
+                            None
+                        };
                         (
                             std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr),
                             existing,
@@ -594,7 +704,9 @@ impl PostgresSQLQuery {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);
-                        return Err(global_object.throw_error(err.into(), "failed to allocate statement"));
+                        return Err(
+                            global_object.throw_error(err.into(), "failed to allocate statement")
+                        );
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);
@@ -611,9 +723,8 @@ impl PostgresSQLQuery {
                         StatementStatus::Failed => {
                             this.statement.set(None);
                             // `error_response` is `Some` when status == Failed.
-                            let error_response = stmt.error_response.as_ref()
-                                .unwrap()
-                                .to_js(global_object)?;
+                            let error_response =
+                                stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             // SAFETY: drop the ref we took above.
                             unsafe { PostgresSQLStatement::deref(stmt_ptr) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
@@ -639,11 +750,13 @@ impl PostgresSQLQuery {
                                     unsafe { Self::deref(this_ptr) };
 
                                     if !global_object.has_exception() {
-                                        return Err(global_object.throw_value(postgres_error_to_js(
-                                            global_object,
-                                            Some(b"failed to bind and execute query"),
-                                            err,
-                                        )));
+                                        return Err(global_object.throw_value(
+                                            postgres_error_to_js(
+                                                global_object,
+                                                Some(b"failed to bind and execute query"),
+                                                err,
+                                            ),
+                                        ));
                                     }
                                     return Err(JsError::Thrown);
                                 }
@@ -654,7 +767,9 @@ impl PostgresSQLQuery {
                                 }
                                 this.status.set(Status::Binding);
                                 this.update_flags(|f| f.pipelined = true);
-                                connection.pipelined_requests.set(connection.pipelined_requests.get() + 1);
+                                connection
+                                    .pipelined_requests
+                                    .set(connection.pipelined_requests.get() + 1);
 
                                 did_write = true;
                             }
@@ -680,7 +795,9 @@ impl PostgresSQLQuery {
                         &mut signature,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
+                            let _ = connection
+                                .statements
+                                .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         this.release_statement();
@@ -703,7 +820,11 @@ impl PostgresSQLQuery {
                     }
                     this.status.set(Status::Binding);
                     did_write = true;
-                } else if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
+                } else if !connection
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
+                {
                     // Named prepared statements: send Parse+Describe+Sync now and wait
                     // for ParameterDescription before sending Bind+Execute in advance().
                     bun_core::scoped_log!(Postgres, "writeQuery");
@@ -715,7 +836,9 @@ impl PostgresSQLQuery {
                         writer,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
+                            let _ = connection
+                                .statements
+                                .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         this.release_statement();
@@ -732,7 +855,9 @@ impl PostgresSQLQuery {
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
+                            let _ = connection
+                                .statements
+                                .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         if !global_object.has_exception() {
@@ -759,14 +884,20 @@ impl PostgresSQLQuery {
             {
                 // we only have connection_entry_value if we are using named prepared statements
                 if let Some(entry_value) = connection_entry_value {
-                    connection.prepared_statement_id.set(connection.prepared_statement_id.get() + 1);
+                    connection
+                        .prepared_statement_id
+                        .set(connection.prepared_statement_id.get() + 1);
                     // Zig sets ref_count = .initExactRefs(2) (one for this.statement,
                     // one for the connection.statements map).
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
                         s.init_exact_refs(2);
-                        s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
+                        s.status = if did_write {
+                            StatementStatus::Parsing
+                        } else {
+                            StatementStatus::Pending
+                        };
                         bun_core::heap::into_raw(Box::new(s))
                     };
                     this.statement.set(Some(stmt));
@@ -780,7 +911,11 @@ impl PostgresSQLQuery {
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
-                        s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
+                        s.status = if did_write {
+                            StatementStatus::Parsing
+                        } else {
+                            StatementStatus::Pending
+                        };
                         bun_core::heap::into_raw(Box::new(s))
                     };
                     this.statement.set(Some(stmt));
@@ -806,7 +941,11 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn do_cancel(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_cancel(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = callframe;
         let _ = global_object;
         let _ = this;

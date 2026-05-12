@@ -1,9 +1,9 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_ast::Log;
 use bun_collections::VecExt;
+use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
-use bun_ast::Log;
-use bun_core::{OwnedString, String as BunString};
 
 use crate::JsResult;
 
@@ -92,12 +92,12 @@ pub fn testing_impl(
     test_kind: TestKind,
     test_category: TestCategory,
 ) -> JsResult<JSValue> {
+    use bun_ast::ImportRecord;
     use bun_css::{
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
         PrinterOptions, StyleSheet,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
-    use bun_ast::ImportRecord;
 
     let arena = Arena::new();
     // PERF(port): was arena bulk-free — CSS parser allocates into this bump
@@ -111,14 +111,25 @@ pub fn testing_impl(
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments =
-        bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-    let source_bunstr =
-        eat_string_arg(&mut arguments, global, "minifyTestWithOptions", 2, 0, "source")?;
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let source_bunstr = eat_string_arg(
+        &mut arguments,
+        global,
+        "minifyTestWithOptions",
+        2,
+        0,
+        "source",
+    )?;
     let source = source_bunstr.to_utf8();
 
-    let expected_bunstr =
-        eat_string_arg(&mut arguments, global, "minifyTestWithOptions", 2, 1, "`expected` arg")?;
+    let expected_bunstr = eat_string_arg(
+        &mut arguments,
+        global,
+        "minifyTestWithOptions",
+        2,
+        1,
+        "`expected` arg",
+    )?;
     let _expected = expected_bunstr.to_utf8();
 
     let browser_options_arg = arguments.next_eat();
@@ -192,7 +203,9 @@ pub fn testing_impl(
                     },
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(&import_records)),
+                Some(ImportRecordHandler::init_outside_of_bundler(
+                    &import_records,
+                )),
                 Some(&local_names),
                 &symbols,
             ) {
@@ -287,11 +300,11 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 }
 
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_ast::ImportRecord;
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
-    use bun_ast::ImportRecord;
 
     let arena = Arena::new();
     // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
@@ -305,8 +318,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments =
-        bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
     let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 
@@ -351,7 +363,9 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                     targets,
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(&import_records)),
+                Some(ImportRecordHandler::init_outside_of_bundler(
+                    &import_records,
+                )),
             ) {
                 Ok(r) => r,
                 Err(_e) => {

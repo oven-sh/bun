@@ -1,5 +1,5 @@
-use crate::shared::Data;
 use super::new_reader::{NewReader, ReaderContext};
+use crate::shared::Data;
 
 pub struct ErrorPacket {
     pub header: u8,

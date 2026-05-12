@@ -115,7 +115,10 @@ pub enum Code {
 
 impl Code {
     // Zig std.json.Stringify hook → write the tag name as a JSON string.
-    pub fn json_stringify<W: crate::JsonWriter>(self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 
@@ -259,7 +262,11 @@ pub struct Op {
 
 impl Default for Op {
     fn default() -> Self {
-        Op { text: b"", level: Level::Lowest, is_keyword: false }
+        Op {
+            text: b"",
+            level: Level::Lowest,
+            is_keyword: false,
+        }
     }
 }
 
@@ -267,12 +274,19 @@ impl Op {
     // PORT NOTE: Zig `init(triple: anytype)` took an anonymous tuple .{text, level, is_keyword}
     // and accessed .@"0"/.@"1"/.@"2". Flattened to positional params.
     pub const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
-        Op { text, level, is_keyword }
+        Op {
+            text,
+            level,
+            is_keyword,
+        }
     }
 
     // Zig std.json.Stringify hook → emits `self.text` as a JSON-encoded string
     // (quoted + escaped), e.g. `"+"` — not raw bytes.
-    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(self.text)
     }
 }
@@ -317,11 +331,11 @@ pub static TABLE: Table = Table({
     let mut t = [NIL; <Code as Enum>::LENGTH];
 
     // Prefix
-    t[Code::UnPos as usize]    = Op::init(b"+", Level::Prefix, false);
-    t[Code::UnNeg as usize]    = Op::init(b"-", Level::Prefix, false);
-    t[Code::UnCpl as usize]    = Op::init(b"~", Level::Prefix, false);
-    t[Code::UnNot as usize]    = Op::init(b"!", Level::Prefix, false);
-    t[Code::UnVoid as usize]   = Op::init(b"void", Level::Prefix, true);
+    t[Code::UnPos as usize] = Op::init(b"+", Level::Prefix, false);
+    t[Code::UnNeg as usize] = Op::init(b"-", Level::Prefix, false);
+    t[Code::UnCpl as usize] = Op::init(b"~", Level::Prefix, false);
+    t[Code::UnNot as usize] = Op::init(b"!", Level::Prefix, false);
+    t[Code::UnVoid as usize] = Op::init(b"void", Level::Prefix, true);
     t[Code::UnTypeof as usize] = Op::init(b"typeof", Level::Prefix, true);
     t[Code::UnDelete as usize] = Op::init(b"delete", Level::Prefix, true);
 
@@ -334,52 +348,52 @@ pub static TABLE: Table = Table({
     t[Code::UnPostInc as usize] = Op::init(b"++", Level::Postfix, false);
 
     // Left-associative
-    t[Code::BinAdd as usize]               = Op::init(b"+", Level::Add, false);
-    t[Code::BinSub as usize]               = Op::init(b"-", Level::Add, false);
-    t[Code::BinMul as usize]               = Op::init(b"*", Level::Multiply, false);
-    t[Code::BinDiv as usize]               = Op::init(b"/", Level::Multiply, false);
-    t[Code::BinRem as usize]               = Op::init(b"%", Level::Multiply, false);
-    t[Code::BinPow as usize]               = Op::init(b"**", Level::Exponentiation, false);
-    t[Code::BinLt as usize]                = Op::init(b"<", Level::Compare, false);
-    t[Code::BinLe as usize]                = Op::init(b"<=", Level::Compare, false);
-    t[Code::BinGt as usize]                = Op::init(b">", Level::Compare, false);
-    t[Code::BinGe as usize]                = Op::init(b">=", Level::Compare, false);
-    t[Code::BinIn as usize]                = Op::init(b"in", Level::Compare, true);
-    t[Code::BinInstanceof as usize]        = Op::init(b"instanceof", Level::Compare, true);
-    t[Code::BinShl as usize]               = Op::init(b"<<", Level::Shift, false);
-    t[Code::BinShr as usize]               = Op::init(b">>", Level::Shift, false);
-    t[Code::BinUShr as usize]              = Op::init(b">>>", Level::Shift, false);
-    t[Code::BinLooseEq as usize]           = Op::init(b"==", Level::Equals, false);
-    t[Code::BinLooseNe as usize]           = Op::init(b"!=", Level::Equals, false);
-    t[Code::BinStrictEq as usize]          = Op::init(b"===", Level::Equals, false);
-    t[Code::BinStrictNe as usize]          = Op::init(b"!==", Level::Equals, false);
+    t[Code::BinAdd as usize] = Op::init(b"+", Level::Add, false);
+    t[Code::BinSub as usize] = Op::init(b"-", Level::Add, false);
+    t[Code::BinMul as usize] = Op::init(b"*", Level::Multiply, false);
+    t[Code::BinDiv as usize] = Op::init(b"/", Level::Multiply, false);
+    t[Code::BinRem as usize] = Op::init(b"%", Level::Multiply, false);
+    t[Code::BinPow as usize] = Op::init(b"**", Level::Exponentiation, false);
+    t[Code::BinLt as usize] = Op::init(b"<", Level::Compare, false);
+    t[Code::BinLe as usize] = Op::init(b"<=", Level::Compare, false);
+    t[Code::BinGt as usize] = Op::init(b">", Level::Compare, false);
+    t[Code::BinGe as usize] = Op::init(b">=", Level::Compare, false);
+    t[Code::BinIn as usize] = Op::init(b"in", Level::Compare, true);
+    t[Code::BinInstanceof as usize] = Op::init(b"instanceof", Level::Compare, true);
+    t[Code::BinShl as usize] = Op::init(b"<<", Level::Shift, false);
+    t[Code::BinShr as usize] = Op::init(b">>", Level::Shift, false);
+    t[Code::BinUShr as usize] = Op::init(b">>>", Level::Shift, false);
+    t[Code::BinLooseEq as usize] = Op::init(b"==", Level::Equals, false);
+    t[Code::BinLooseNe as usize] = Op::init(b"!=", Level::Equals, false);
+    t[Code::BinStrictEq as usize] = Op::init(b"===", Level::Equals, false);
+    t[Code::BinStrictNe as usize] = Op::init(b"!==", Level::Equals, false);
     t[Code::BinNullishCoalescing as usize] = Op::init(b"??", Level::NullishCoalescing, false);
-    t[Code::BinLogicalOr as usize]         = Op::init(b"||", Level::LogicalOr, false);
-    t[Code::BinLogicalAnd as usize]        = Op::init(b"&&", Level::LogicalAnd, false);
-    t[Code::BinBitwiseOr as usize]         = Op::init(b"|", Level::BitwiseOr, false);
-    t[Code::BinBitwiseAnd as usize]        = Op::init(b"&", Level::BitwiseAnd, false);
-    t[Code::BinBitwiseXor as usize]        = Op::init(b"^", Level::BitwiseXor, false);
+    t[Code::BinLogicalOr as usize] = Op::init(b"||", Level::LogicalOr, false);
+    t[Code::BinLogicalAnd as usize] = Op::init(b"&&", Level::LogicalAnd, false);
+    t[Code::BinBitwiseOr as usize] = Op::init(b"|", Level::BitwiseOr, false);
+    t[Code::BinBitwiseAnd as usize] = Op::init(b"&", Level::BitwiseAnd, false);
+    t[Code::BinBitwiseXor as usize] = Op::init(b"^", Level::BitwiseXor, false);
 
     // Non-associative
     t[Code::BinComma as usize] = Op::init(b",", Level::Comma, false);
 
     // Right-associative
-    t[Code::BinAssign as usize]                  = Op::init(b"=", Level::Assign, false);
-    t[Code::BinAddAssign as usize]               = Op::init(b"+=", Level::Assign, false);
-    t[Code::BinSubAssign as usize]               = Op::init(b"-=", Level::Assign, false);
-    t[Code::BinMulAssign as usize]               = Op::init(b"*=", Level::Assign, false);
-    t[Code::BinDivAssign as usize]               = Op::init(b"/=", Level::Assign, false);
-    t[Code::BinRemAssign as usize]               = Op::init(b"%=", Level::Assign, false);
-    t[Code::BinPowAssign as usize]               = Op::init(b"**=", Level::Assign, false);
-    t[Code::BinShlAssign as usize]               = Op::init(b"<<=", Level::Assign, false);
-    t[Code::BinShrAssign as usize]               = Op::init(b">>=", Level::Assign, false);
-    t[Code::BinUShrAssign as usize]              = Op::init(b">>>=", Level::Assign, false);
-    t[Code::BinBitwiseOrAssign as usize]         = Op::init(b"|=", Level::Assign, false);
-    t[Code::BinBitwiseAndAssign as usize]        = Op::init(b"&=", Level::Assign, false);
-    t[Code::BinBitwiseXorAssign as usize]        = Op::init(b"^=", Level::Assign, false);
+    t[Code::BinAssign as usize] = Op::init(b"=", Level::Assign, false);
+    t[Code::BinAddAssign as usize] = Op::init(b"+=", Level::Assign, false);
+    t[Code::BinSubAssign as usize] = Op::init(b"-=", Level::Assign, false);
+    t[Code::BinMulAssign as usize] = Op::init(b"*=", Level::Assign, false);
+    t[Code::BinDivAssign as usize] = Op::init(b"/=", Level::Assign, false);
+    t[Code::BinRemAssign as usize] = Op::init(b"%=", Level::Assign, false);
+    t[Code::BinPowAssign as usize] = Op::init(b"**=", Level::Assign, false);
+    t[Code::BinShlAssign as usize] = Op::init(b"<<=", Level::Assign, false);
+    t[Code::BinShrAssign as usize] = Op::init(b">>=", Level::Assign, false);
+    t[Code::BinUShrAssign as usize] = Op::init(b">>>=", Level::Assign, false);
+    t[Code::BinBitwiseOrAssign as usize] = Op::init(b"|=", Level::Assign, false);
+    t[Code::BinBitwiseAndAssign as usize] = Op::init(b"&=", Level::Assign, false);
+    t[Code::BinBitwiseXorAssign as usize] = Op::init(b"^=", Level::Assign, false);
     t[Code::BinNullishCoalescingAssign as usize] = Op::init(b"??=", Level::Assign, false);
-    t[Code::BinLogicalOrAssign as usize]         = Op::init(b"||=", Level::Assign, false);
-    t[Code::BinLogicalAndAssign as usize]        = Op::init(b"&&=", Level::Assign, false);
+    t[Code::BinLogicalOrAssign as usize] = Op::init(b"||=", Level::Assign, false);
+    t[Code::BinLogicalAndAssign as usize] = Op::init(b"&&=", Level::Assign, false);
 
     t
 });

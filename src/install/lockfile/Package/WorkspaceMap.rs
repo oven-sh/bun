@@ -1,16 +1,18 @@
-use bun_collections::VecExt;
+use bstr::BStr;
+use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
+use bun_collections::VecExt;
+use bun_core::{ZStr, strings};
+use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP_STR};
-use bun_core::{strings, ZStr};
-use bun_glob as glob;
-use bun_ast as js_ast;
-use bun_alloc::Arena; // bumpalo::Bump re-export
-use bstr::BStr;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
 
-use crate::package_manager::workspace_package_json_cache::{WorkspacePackageJSONCache, GetJSONOptions};
 use crate::lockfile_real::StringBuilder;
+use crate::package_manager::workspace_package_json_cache::{
+    GetJSONOptions, WorkspacePackageJSONCache,
+};
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -182,11 +184,12 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let abs_package_json_path: &ZStr = resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                source.path.name.dir,
-                filepath_buf,
-                &[input_path.as_bytes(), b"package.json"],
-            );
+            let abs_package_json_path: &ZStr =
+                resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                    source.path.name.dir,
+                    filepath_buf,
+                    &[input_path.as_bytes(), b"package.json"],
+                );
 
             // skip root package.json
             if strings::eql_long(
@@ -197,35 +200,39 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let workspace_entry = match process_workspace_name(json_cache, abs_package_json_path, log) {
-                Ok(e) => e,
-                Err(err) => {
-                    // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent (Zig error return traces)
-                    if err == bun_core::err!("EISNOTDIR")
-                        || err == bun_core::err!("EISDIR")
-                        || err == bun_core::err!("EACCESS")
-                        || err == bun_core::err!("EPERM")
-                        || err == bun_core::err!("ENOENT")
-                        || err == bun_core::err!("FileNotFound")
-                    {
-                        let _ = log.add_error_fmt(
-                            Some(source),
-                            item.loc,
-                            format_args!("Workspace not found \"{}\"", BStr::new(input_path.as_bytes())),
-                        );
-                    } else if err == bun_core::err!("MissingPackageName") {
-                        let _ = log.add_error_fmt(
-                            Some(source),
-                            loc,
-                            format_args!(
-                                "Missing \"name\" from package.json in {}",
-                                BStr::new(input_path.as_bytes())
-                            ),
-                        );
-                    } else {
-                        let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
-                        let _ = log.add_error_fmt(
+            let workspace_entry =
+                match process_workspace_name(json_cache, abs_package_json_path, log) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent (Zig error return traces)
+                        if err == bun_core::err!("EISNOTDIR")
+                            || err == bun_core::err!("EISDIR")
+                            || err == bun_core::err!("EACCESS")
+                            || err == bun_core::err!("EPERM")
+                            || err == bun_core::err!("ENOENT")
+                            || err == bun_core::err!("FileNotFound")
+                        {
+                            let _ = log.add_error_fmt(
+                                Some(source),
+                                item.loc,
+                                format_args!(
+                                    "Workspace not found \"{}\"",
+                                    BStr::new(input_path.as_bytes())
+                                ),
+                            );
+                        } else if err == bun_core::err!("MissingPackageName") {
+                            let _ = log.add_error_fmt(
+                                Some(source),
+                                loc,
+                                format_args!(
+                                    "Missing \"name\" from package.json in {}",
+                                    BStr::new(input_path.as_bytes())
+                                ),
+                            );
+                        } else {
+                            let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
+                            let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
+                            let _ = log.add_error_fmt(
                             Some(source),
                             item.loc,
                             format_args!(
@@ -235,10 +242,10 @@ impl WorkspaceMap {
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
+                        }
+                        continue;
                     }
-                    continue;
-                }
-            };
+                };
 
             if workspace_entry.name.len() == 0 {
                 continue;
@@ -374,7 +381,8 @@ impl WorkspaceMap {
                     };
                     let matched_path: &[u8] = &matched_path_owned;
 
-                    let entry_dir: &[u8] = resolve_path::dirname::<path::platform::Auto>(matched_path);
+                    let entry_dir: &[u8] =
+                        resolve_path::dirname::<path::platform::Auto>(matched_path);
 
                     // skip root package.json
                     if matched_path == b"package.json" {
@@ -413,13 +421,15 @@ impl WorkspaceMap {
                         BStr::new(entry_dir)
                     );
 
-                    let abs_package_json_path = resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                        cwd,
-                        filepath_buf,
-                        &[entry_dir, b"package.json"],
+                    let abs_package_json_path = resolve_path::join_abs_string_buf_z::<
+                        path::platform::Auto,
+                    >(
+                        cwd, filepath_buf, &[entry_dir, b"package.json"]
                     );
-                    let abs_workspace_dir_path: &[u8] =
-                        strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json");
+                    let abs_workspace_dir_path: &[u8] = strings::without_suffix_comptime(
+                        abs_package_json_path.as_bytes(),
+                        b"package.json",
+                    );
 
                     let workspace_entry = match process_workspace_name(
                         json_cache,
@@ -468,10 +478,11 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    let workspace_path: &[u8] = resolve_path::relative_platform::<path::platform::Auto, true>(
-                        source.path.name.dir,
-                        abs_workspace_dir_path,
-                    );
+                    let workspace_path: &[u8] =
+                        resolve_path::relative_platform::<path::platform::Auto, true>(
+                            source.path.name.dir,
+                            abs_workspace_dir_path,
+                        );
                     #[cfg(windows)]
                     let workspace_path: &[u8] = {
                         // `workspace_path` is a shared borrow into the thread-local
@@ -487,7 +498,8 @@ impl WorkspaceMap {
                         // SAFETY: thread-local scratch; this is the only live borrow on
                         // this thread for the remainder of this block.
                         let s: &mut [u8] =
-                            &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
+                            &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }
+                                [0..len];
                         path::dangerously_convert_path_to_posix_in_place::<u8>(s);
                         &*s
                     };
@@ -520,19 +532,17 @@ impl WorkspaceMap {
         // Sort the names for determinism
         // PORT NOTE: reshaped for borrowck — Zig captured `values()` slice in sort ctx;
         // here ArrayHashMap::sort provides values internally to the comparator.
-        workspace_names.map.sort(|_keys, values: &[Entry], a: usize, b: usize| {
-            strings::order(&values[a].name, &values[b].name) == core::cmp::Ordering::Less
-        });
+        workspace_names
+            .map
+            .sort(|_keys, values: &[Entry], a: usize, b: usize| {
+                strings::order(&values[a].name, &values[b].name) == core::cmp::Ordering::Less
+            });
 
         Ok(workspace_names.count() as u32)
     }
 }
 
-const IGNORED_PATHS: &[&[u8]] = &[
-    b"node_modules",
-    b".git",
-    b"CMakeFiles",
-];
+const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];
 
 fn ignored_workspace_paths(path: &[u8]) -> bool {
     for ignored in IGNORED_PATHS {

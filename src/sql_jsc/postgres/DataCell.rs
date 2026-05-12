@@ -2,9 +2,9 @@
 
 use core::mem::size_of;
 
-use bun_core::err;
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
+use bun_core::err;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -46,7 +46,10 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     })
 }
 
-fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> Result<&'a mut [u8], bun_core::Error> {
+fn unescape_postgres_string<'a>(
+    input: &[u8],
+    buffer: &'a mut [u8],
+) -> Result<&'a mut [u8], bun_core::Error> {
     let mut out_index: usize = 0;
     let mut i: usize = 0;
 
@@ -59,12 +62,12 @@ fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> Result<&'
             i += 1;
             match input[i] {
                 // Common escapes
-                b'b' => buffer[out_index] = 0x08, // Backspace
-                b'f' => buffer[out_index] = 0x0C, // Form feed
-                b'n' => buffer[out_index] = b'\n', // Line feed
-                b'r' => buffer[out_index] = b'\r', // Carriage return
-                b't' => buffer[out_index] = b'\t', // Tab
-                b'"' => buffer[out_index] = b'"', // Double quote
+                b'b' => buffer[out_index] = 0x08,   // Backspace
+                b'f' => buffer[out_index] = 0x0C,   // Form feed
+                b'n' => buffer[out_index] = b'\n',  // Line feed
+                b'r' => buffer[out_index] = b'\r',  // Carriage return
+                b't' => buffer[out_index] = b'\t',  // Tab
+                b'"' => buffer[out_index] = b'"',   // Double quote
                 b'\\' => buffer[out_index] = b'\\', // Backslash
                 b'\'' => buffer[out_index] = b'\'', // Single quote
 
@@ -125,7 +128,11 @@ fn parse_array(
         return Ok(SQLDataCell {
             tag: Tag::Array,
             value: Value {
-                array: Array { ptr: core::ptr::null_mut(), len: 0, cap: 0 },
+                array: Array {
+                    ptr: core::ptr::null_mut(),
+                    len: 0,
+                    cap: 0,
+                },
             },
             ..Default::default()
         });
@@ -163,7 +170,14 @@ fn parse_array(
             break;
         } else if ch == opening_brace {
             let mut sub_array_offset: usize = 0;
-            let sub_array = parse_array(slice, bigint, array_type, global_object, Some(&mut sub_array_offset), is_json_sub_array)?;
+            let sub_array = parse_array(
+                slice,
+                bigint,
+                array_type,
+                global_object,
+                Some(&mut sub_array_offset),
+                is_json_sub_array,
+            )?;
             // errdefer sub_array.deinit() — Vec::push cannot fail in Rust (aborts on OOM)
             array.push(sub_array);
             slice = try_slice(slice, sub_array_offset);
@@ -198,13 +212,18 @@ fn parse_array(
                     // invalid bytea array
                     return Err(AnyPostgresError::UnsupportedByteaFormat);
                 }
-                types::Tag::timestamptz_array | types::Tag::timestamp_array | types::Tag::date_array => {
+                types::Tag::timestamptz_array
+                | types::Tag::timestamp_array
+                | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
                     let mut str = BunString::init(date_str);
                     // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell {
                         tag: Tag::Date,
-                        value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
+                        value: Value {
+                            date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                .map_err(crate::jsc::js_error_to_postgres)?,
+                        },
                         ..Default::default()
                     });
 
@@ -246,7 +265,9 @@ fn parse_array(
                 // empty string
                 array.push(SQLDataCell {
                     tag: Tag::String,
-                    value: Value { string: core::ptr::null_mut() },
+                    value: Value {
+                        string: core::ptr::null_mut(),
+                    },
                     free_value: 1,
                     ..Default::default()
                 });
@@ -728,8 +749,10 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
-    let dimensions_raw: types::int4 = u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"));
-    let contains_nulls: types::int4 = u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
+    let dimensions_raw: types::int4 =
+        u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"));
+    let contains_nulls: types::int4 =
+        u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
 
     let dimensions = dimensions_raw.swap_bytes();
     if dimensions > 1 {
@@ -767,7 +790,9 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     if bytes.len() < 20 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
-    let array_len: i32 = i32::from_ne_bytes(bytes[12..16].try_into().expect("infallible: size matches")).swap_bytes();
+    let array_len: i32 =
+        i32::from_ne_bytes(bytes[12..16].try_into().expect("infallible: size matches"))
+            .swap_bytes();
     if array_len < 0 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
@@ -804,8 +829,8 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
             // `from_unaligned_ne_bytes`/`write_unaligned_ne_bytes` are safe
             // `from_ne_bytes`/`to_ne_bytes` round-trips (bounds-checked), so
             // the per-element POD cast needs no raw-pointer access.
-            let val: Elem =
-                Elem::from_unaligned_ne_bytes(&bytes[src_off..src_off + elem_size]).wire_byte_swap();
+            let val: Elem = Elem::from_unaligned_ne_bytes(&bytes[src_off..src_off + elem_size])
+                .wire_byte_swap();
             val.write_unaligned_ne_bytes(&mut out[i * elem_size..(i + 1) * elem_size]);
         }
         (Box::into_raw(out).cast::<u8>(), 1u8)
@@ -1225,7 +1250,10 @@ impl<'a> PGNummericString<'a> {
     }
 }
 
-fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGNummericString<'a>, bun_core::Error> {
+fn parse_binary_numeric<'a>(
+    input: &[u8],
+    result: &'a mut Vec<u8>,
+) -> Result<PGNummericString<'a>, bun_core::Error> {
     // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
     if input.len() < 8 {
         return Err(err!("InvalidBuffer"));
@@ -1294,7 +1322,11 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
 
         while idx <= weight as usize {
             // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
-            let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) { read_be!(u16) } else { 0 };
+            let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) {
+                read_be!(u16)
+            } else {
+                0
+            };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             let digit_len = 4usize;
@@ -1328,7 +1360,9 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
         while idx < dscale as isize {
             if idx >= 0 && idx < dscale as isize {
                 let digit: u16 = if cursor.len() >= 2 {
-                    let v = u16::from_be_bytes(cursor[..2].try_into().expect("infallible: size matches"));
+                    let v = u16::from_be_bytes(
+                        cursor[..2].try_into().expect("infallible: size matches"),
+                    );
                     cursor = &cursor[2..];
                     v
                 } else {
@@ -1371,8 +1405,12 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i32),
-        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"))) as i32),
-        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"))) as i32),
+        2 => Ok(pg_ntoh16(u16::from_ne_bytes(
+            bytes[0..2].try_into().expect("infallible: size matches"),
+        )) as i32),
+        4 => Ok(pg_ntoh32(u32::from_ne_bytes(
+            bytes[0..4].try_into().expect("infallible: size matches"),
+        )) as i32),
         _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
@@ -1380,8 +1418,12 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
 pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     match bytes.len() {
         1 => Ok(bytes[0] as u32),
-        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"))) as u32),
-        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches")))),
+        2 => Ok(pg_ntoh16(u16::from_ne_bytes(
+            bytes[0..2].try_into().expect("infallible: size matches"),
+        )) as u32),
+        4 => Ok(pg_ntoh32(u32::from_ne_bytes(
+            bytes[0..4].try_into().expect("infallible: size matches"),
+        ))),
         _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
@@ -1393,7 +1435,8 @@ pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
         2 => {
             // PostgreSQL stores numbers in big-endian format, so we must read as big-endian
             // Read as raw 16-bit unsigned integer
-            let value: u16 = u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"));
+            let value: u16 =
+                u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"));
             // Convert from big-endian to native-endian (we always use little endian)
             Ok(value.swap_bytes() as i16) // Cast to signed 16-bit integer (i16)
         }
@@ -1462,10 +1505,15 @@ impl<'a> Putter<'a> {
             result_mode as u8,
             names,
             names_count,
-        ).map_err(crate::jsc::js_error_to_postgres)?)
+        )
+        .map_err(crate::jsc::js_error_to_postgres)?)
     }
 
-    fn put_impl<const IS_RAW: bool>(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    fn put_impl<const IS_RAW: bool>(
+        &mut self,
+        index: u32,
+        optional_bytes: Option<&mut Data>,
+    ) -> Result<bool> {
         // Bounds check to prevent crash when fields/list arrays are empty
         if (index as usize) >= self.fields.len() {
             bun_core::scoped_log!(
@@ -1551,8 +1599,17 @@ unsafe extern "C" {
     // "valid for `buffer_size` bytes" precondition, so → `safe fn`. The C++
     // side never writes past `buffer_size`, and the only two callers pass
     // exactly these fixed-size stack arrays.
-    safe fn Postgres__formatTime(microseconds: i64, buffer: &mut [u8; 32], buffer_size: usize) -> usize;
-    safe fn Postgres__formatTimeTz(microseconds: i64, tz_offset_seconds: i32, buffer: &mut [u8; 48], buffer_size: usize) -> usize;
+    safe fn Postgres__formatTime(
+        microseconds: i64,
+        buffer: &mut [u8; 32],
+        buffer_size: usize,
+    ) -> usize;
+    safe fn Postgres__formatTimeTz(
+        microseconds: i64,
+        tz_offset_seconds: i32,
+        buffer: &mut [u8; 48],
+        buffer_size: usize,
+    ) -> usize;
 }
 
 // ported from: src/sql_jsc/postgres/DataCell.zig

@@ -144,7 +144,10 @@ pub struct IndentInfo {
 
 impl Default for IndentInfo {
     fn default() -> Self {
-        Self { guess: Indentation::default(), first_newline: true }
+        Self {
+            guess: Indentation::default(),
+            first_newline: true,
+        }
     }
 }
 
@@ -330,7 +333,9 @@ where
         if self.prev_error_loc == r.loc {
             return Ok(());
         }
-        let _ = self.log_mut().add_range_error_fmt(Some(self.source), r, args);
+        let _ = self
+            .log_mut()
+            .add_range_error_fmt(Some(self.source), r, args);
         self.prev_error_loc = r.loc;
         Ok(())
     }
@@ -371,9 +376,9 @@ where
             self.end = self.source.contents.len();
             return -1;
         }
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(
-            self.source.contents[self.current],
-        ) as usize;
+        let cp_len =
+            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
+                as usize;
         let slice: &[u8] = if !(cp_len + self.current > self.source.contents.len()) {
             &self.source.contents[self.current..cp_len + self.current]
         } else {
@@ -590,12 +595,19 @@ where
         }
 
         // Reset string literal.
-        let base = if QUOTE == 0 { self.start } else { self.start + 1 };
+        let base = if QUOTE == 0 {
+            self.start
+        } else {
+            self.start + 1
+        };
         let end_pos = self.end.saturating_sub(suffix_len);
         let slice_end = self.source.contents.len().min(base.max(end_pos));
         self.string_literal_raw_content = &self.source.contents[base..slice_end];
-        self.string_literal_raw_format =
-            if needs_decode { StringLiteralFormat::NeedsDecode } else { StringLiteralFormat::Ascii };
+        self.string_literal_raw_format = if needs_decode {
+            StringLiteralFormat::NeedsDecode
+        } else {
+            StringLiteralFormat::Ascii
+        };
         self.string_literal_start = self.start;
         self.is_ascii_only = self.is_ascii_only && !needs_decode;
 
@@ -627,8 +639,7 @@ where
             }
             StringLiteralFormat::NeedsDecode => {
                 // Escape parsing may surface a syntax error.
-                let mut buf: Vec<u16> =
-                    Vec::with_capacity(self.string_literal_raw_content.len());
+                let mut buf: Vec<u16> = Vec::with_capacity(self.string_literal_raw_content.len());
                 self.decode_escape_sequences(
                     self.string_literal_start,
                     self.string_literal_raw_content,
@@ -1030,10 +1041,7 @@ where
                 match s.parse::<f64>() {
                     Ok(n) => self.number = n,
                     Err(_) => {
-                        return self.add_syntax_error(
-                            self.start,
-                            format_args!("Invalid number"),
-                        );
+                        return self.add_syntax_error(self.start, format_args!("Invalid number"));
                     }
                 }
             }
@@ -1168,8 +1176,7 @@ where
                             self.step();
                             count += 1;
                         }
-                        self.indent_info.guess.character = if indent_character == ' ' as CodePoint
-                        {
+                        self.indent_info.guess.character = if indent_character == ' ' as CodePoint {
                             bun_ast::IndentationCharacter::Space
                         } else {
                             bun_ast::IndentationCharacter::Tab
@@ -1214,8 +1221,7 @@ where
 
                 cp if cp == '-' as CodePoint => {
                     self.step();
-                    if self.code_point == '=' as CodePoint || self.code_point == '-' as CodePoint
-                    {
+                    if self.code_point == '=' as CodePoint || self.code_point == '-' as CodePoint {
                         return self
                             .add_unsupported_syntax_error("Operators are not allowed in JSON");
                     }
@@ -1297,9 +1303,8 @@ where
                             continue;
                         }
                         _ => {
-                            return self.add_unsupported_syntax_error(
-                                "Operators are not allowed in JSON",
-                            );
+                            return self
+                                .add_unsupported_syntax_error("Operators are not allowed in JSON");
                         }
                     }
                 }
@@ -1355,12 +1360,10 @@ where
                     );
                 }
                 cp if cp == ';' as CodePoint => {
-                    return self
-                        .add_unsupported_syntax_error("Semicolons are not allowed in JSON");
+                    return self.add_unsupported_syntax_error("Semicolons are not allowed in JSON");
                 }
                 cp if cp == '@' as CodePoint => {
-                    return self
-                        .add_unsupported_syntax_error("Decorators are not allowed in JSON");
+                    return self.add_unsupported_syntax_error("Decorators are not allowed in JSON");
                 }
                 cp if cp == '~' as CodePoint => {
                     return self.add_unsupported_syntax_error("~ is not allowed in JSON");
@@ -1380,8 +1383,7 @@ where
                     || cp == ')' as CodePoint
                     || cp == '`' as CodePoint =>
                 {
-                    return self
-                        .add_unsupported_syntax_error("Operators are not allowed in JSON");
+                    return self.add_unsupported_syntax_error("Operators are not allowed in JSON");
                 }
 
                 cp => {
@@ -1415,7 +1417,9 @@ where
 
 #[inline]
 fn push_codepoint(buf: &mut Vec<u16>, cp: CodePoint) {
-    if cp < 0 { return; }
+    if cp < 0 {
+        return;
+    }
     strings::push_codepoint_utf16(buf, cp as u32);
 }
 

@@ -1,8 +1,8 @@
 use crate as css;
-use crate::{Parser, Printer, PrintErr, SmallList};
-use crate::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger, CSSIntegerFns};
-use crate::css_values::length::LengthPercentage;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
+use crate::css_values::length::LengthPercentage;
+use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use crate::{Parser, PrintErr, Printer, SmallList};
 
 use bun_collections::VecExt;
 use bun_core::strings;
@@ -200,7 +200,11 @@ impl TrackSizeList {
             return Ok(());
         }
 
-        dest.write_separated(self.v.slice(), |d| d.write_char(b' '), |d, item| item.to_css(d))
+        dest.write_separated(
+            self.v.slice(),
+            |d| d.write_char(b' '),
+            |d, item| item.to_css(d),
+        )
     }
 }
 
@@ -359,10 +363,14 @@ impl TrackRepeat {
 
 fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(), PrintErr> {
     dest.write_char(b'[')?;
-    dest.write_separated(names, |d| d.write_char(b' '), |d, name| {
-        // SAFETY: arena-owned slice valid for 'bump.
-        write_ident(unsafe { crate::arena_str(name.v) }, d)
-    })?;
+    dest.write_separated(
+        names,
+        |d| d.write_char(b' '),
+        |d, name| {
+            // SAFETY: arena-owned slice valid for 'bump.
+            write_ident(unsafe { crate::arena_str(name.v) }, d)
+        },
+    )?;
     dest.write_char(b']')
 }
 

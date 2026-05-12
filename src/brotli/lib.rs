@@ -5,7 +5,7 @@ pub use bun_brotli_sys::brotli_c as c;
 use c::{BrotliDecoder, BrotliEncoder};
 
 #[allow(unused_imports)]
-use bun_core::{self as bun, err, Error};
+use bun_core::{self as bun, Error, err};
 
 // ──────────────────────────────────────────────────────────────────────────
 // BrotliAllocator
@@ -139,11 +139,8 @@ impl<'a> BrotliReaderArrayList<'a> {
         .ok_or(err!("BrotliFailedToCreateInstance"))?;
 
         if options.params.large_window {
-            let _ = BrotliDecoder::set_parameter(
-                brotli,
-                c::BrotliDecoderParameter::LARGE_WINDOW,
-                1,
-            );
+            let _ =
+                BrotliDecoder::set_parameter(brotli, c::BrotliDecoderParameter::LARGE_WINDOW, 1);
         }
         if options.params.disable_ring_buffer_reallocation {
             let _ = BrotliDecoder::set_parameter(
@@ -224,7 +221,10 @@ impl<'a> BrotliReaderArrayList<'a> {
                     self.state = ReaderState::Error;
                     if cfg!(debug_assertions) {
                         let code = BrotliDecoder::get_error_code(self.brotli());
-                        bun_core::Output::debug_warn(&format_args!("Brotli error: {:?} ({})", code, code as i32));
+                        bun_core::Output::debug_warn(&format_args!(
+                            "Brotli error: {:?} ({})",
+                            code, code as i32
+                        ));
                     }
 
                     return Err(err!("BrotliDecompressionError"));
@@ -330,7 +330,11 @@ impl BrotliCompressionStream {
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
         // TODO(port): narrow error set
         self.total_in += input.len();
-        let op = if last { self.finish_flush_op } else { self.flush_op };
+        let op = if last {
+            self.finish_flush_op
+        } else {
+            self.flush_op
+        };
         // NOTE: cannot use `self.brotli_mut()` here — `result.output` borrows
         // the encoder for the return lifetime, and the error branch must write
         // `self.state` while that borrow is conditionally live (NLL problem

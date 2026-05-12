@@ -93,7 +93,9 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn init_in(/* allocator dropped */) -> Self {
-        Self { unmanaged: Vec::new() }
+        Self {
+            unmanaged: Vec::new(),
+        }
     }
 
     pub fn init_capacity(num: usize) -> Result<Self, AllocError> {
@@ -104,7 +106,9 @@ impl<T> ArrayListAlignedIn<T> {
         // Zig: `try .initCapacity(bun.allocators.asStd(allocator_), num)`
         // PERF(port): Vec::with_capacity aborts on OOM rather than returning Err — Phase B may
         // swap to `Vec::try_with_capacity` (nightly) or a fallible wrapper if OOM recovery matters.
-        Ok(Self { unmanaged: Vec::with_capacity(num) })
+        Ok(Self {
+            unmanaged: Vec::with_capacity(num),
+        })
     }
 
     // Zig `pub fn deinit` → `impl Drop` (see below). Body only deinits items + frees backing,
@@ -120,13 +124,17 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn from_owned_slice(slice: Slice<T>) -> Self {
-        Self { unmanaged: Vec::from(slice) }
+        Self {
+            unmanaged: Vec::from(slice),
+        }
     }
 
     // TODO(port): `from_owned_slice_sentinel` — sentinel-terminated owned slices are not a Rust
     // type. If needed, accept `Box<[T]>` with the sentinel already stripped, or `ZStr`/`WStr`.
     pub fn from_owned_slice_sentinel(/* sentinel: T, */ slice: Slice<T>) -> Self {
-        Self { unmanaged: Vec::from(slice) }
+        Self {
+            unmanaged: Vec::from(slice),
+        }
     }
 
     // TODO(port): `writer()` — Zig returns an `std.io.Writer` that appends bytes. For `T = u8`
@@ -176,7 +184,9 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        Ok(Self { unmanaged: self.unmanaged.clone() })
+        Ok(Self {
+            unmanaged: self.unmanaged.clone(),
+        })
     }
 
     pub fn insert(&mut self, i: usize, item: T) -> Result<(), AllocError> {
@@ -224,7 +234,8 @@ impl<T> ArrayListAlignedIn<T> {
         // TODO(port): Zig takes `[]const T` and bit-copies, transferring ownership. Rust must
         // `Clone` from a borrowed slice. If callers own the data, change signature to
         // `impl IntoIterator<Item = T>` in Phase B to avoid the clone.
-        self.unmanaged.splice(index..index, new_items.iter().cloned());
+        self.unmanaged
+            .splice(index..index, new_items.iter().cloned());
         Ok(())
     }
 
@@ -514,7 +525,11 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn get_last_or_null(&self) -> Option<&T> {
-        if self.is_empty() { None } else { Some(self.get_last()) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(self.get_last())
+        }
     }
 
     pub fn is_empty(&self) -> bool {

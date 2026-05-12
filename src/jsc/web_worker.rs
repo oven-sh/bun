@@ -58,17 +58,17 @@
 //! the close task posts, the thread-held `Worker` ref is intentionally
 //! leaked (see `Worker::dispatchExit`).
 
-use core::cell::Cell;
 use crate::JsCell;
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_io::KeepAlive;
 use bun_core::{String as BunString, WTFStringImpl};
+use bun_io::KeepAlive;
 use bun_threading::{Futex, Mutex};
 
-use crate::virtual_machine::{self, runtime_hooks, VirtualMachine};
+use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
@@ -112,7 +112,6 @@ pub struct WebWorker {
     name: bun_core::ZBox,
 
     // ---- Cross-thread signalling --------------------------------------------
-
     /// Intrusive node for the process-global `LiveWorkers` list. Registered
     /// before the thread is spawned; removed in `shutdown()` once the worker is
     /// past all process-global resolver access.
@@ -147,7 +146,6 @@ pub struct WebWorker {
     vm_lock: Mutex,
 
     // ---- Parent-thread only -------------------------------------------------
-
     /// Keep-alive on the parent's event loop. `Async.KeepAlive` is not
     /// thread-safe; it is reffed in `create()`, toggled by `setRef()` (JS
     /// `.ref()`/`.unref()`), and released by `releaseParentPollRef()` from the
@@ -167,7 +165,6 @@ pub struct WebWorker {
     // `terminate_all_and_wait`); materialising `&mut WebWorker` on the worker
     // thread while another thread holds `&WebWorker` is aliased-&mut UB. Hence
     // `Cell` / `UnsafeCell` even for single-threaded data.
-
     status: Cell<Status>,
     // PERF(port): was MimallocArena bulk-free backing the worker VM — keep as
     // explicit arena rather than deleting per §Allocators non-AST rule, because
@@ -754,7 +751,9 @@ impl WebWorker {
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
         } else {
-            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Worker\0"));
+            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(
+                b"Worker\0",
+            ));
         }
 
         // Terminated before we even started — skip straight to shutdown so the
@@ -938,8 +937,9 @@ impl WebWorker {
             // arena initialised above; worker-thread only field. `with_mut`
             // scopes a `&mut Option<Arena>` to the closure; we extract the raw
             // address (escaping as `*mut`, no borrow) for the VM backref.
-            vm_ref.arena =
-                self.arena.with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
+            vm_ref.arena = self
+                .arena
+                .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
             // Move the pre-cloned proxy storage into the worker VM.
             *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
@@ -1068,11 +1068,7 @@ impl WebWorker {
                     // `Log::add_error` takes `impl IntoText`; pass an owned
                     // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
                     // to `err`, which is dropped immediately after).
-                    vm_log.add_error(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        err.slice().to_vec(),
-                    );
+                    vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
                 }
                 resolve_error.deref();
                 self.flush_logs(vm);
@@ -1106,8 +1102,11 @@ impl WebWorker {
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
             if (*promise).status() == jsc::js_promise::Status::Rejected {
-                let handled =
-                    vm.as_mut().uncaught_exception(vm.global(), (*promise).result(vm.jsc_vm()), true);
+                let handled = vm.as_mut().uncaught_exception(
+                    vm.global(),
+                    (*promise).result(vm.jsc_vm()),
+                    true,
+                );
                 if !handled {
                     vm.as_mut().exit_handler.exit_code = 1;
                     return self.shutdown();
@@ -1387,7 +1386,10 @@ impl WebWorker {
             // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null-ZST deref proof (`exc` is non-null per the
             // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(global, jsc::Exception::opaque_ref(exc));
+            let _ = jsc::js_global_object::report_uncaught_exception(
+                global,
+                jsc::Exception::opaque_ref(exc),
+            );
         }
     }
 }
@@ -1529,9 +1531,11 @@ unsafe fn resolve_entry_point_specifier<'s>(
             'try_from_extension: {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Loose,
-                >(base_path, &mut pathbuf[..], &[str]);
+                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+                    base_path,
+                    &mut pathbuf[..],
+                    &[str],
+                );
                 let base_len = base.len();
                 let extname_len = bun_paths::extension(base).len();
                 // PORT NOTE: reshaped for borrowck — Zig held `extname` as a
@@ -1558,8 +1562,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 }
 
                 if extname.len() == 4 {
-                    const EXTS: [&[u8]; 6] =
-                        [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
+                    const EXTS: [&[u8]; 6] = [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
                     for ext in EXTS {
                         if extname == ext {
                             let js_len = b".js".len();

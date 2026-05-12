@@ -4,9 +4,9 @@
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_core::String as BunString;
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
-use bun_core::String as BunString;
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
 pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -101,9 +101,7 @@ pub extern "C" fn node_module_paths_js_value(
         }
     }
 
-    while !root_path.is_empty()
-        && Platform::AUTO.is_separator(root_path[root_path.len() - 1])
-    {
+    while !root_path.is_empty() && Platform::AUTO.is_separator(root_path[root_path.len() - 1]) {
         root_path = &root_path[..root_path.len() - 1];
     }
 
@@ -113,9 +111,7 @@ pub extern "C" fn node_module_paths_js_value(
         SEP_STR,
     )));
 
-    list.as_slice()
-        .to_js_array(global)
-        .unwrap_or(JSValue::ZERO)
+    list.as_slice().to_js_array(global).unwrap_or(JSValue::ZERO)
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below

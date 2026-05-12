@@ -15,9 +15,9 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
 use syn::{
+    Data, DeriveInput, Expr, ExprLit, ExprMacro, Fields, Lit, LitBool, LitStr, Meta, Token,
     parse::{Parse, ParseStream, Parser},
-    parse_macro_input, Data, DeriveInput, Expr, ExprLit, ExprMacro, Fields, Lit, LitBool, LitStr,
-    Meta, Token,
+    parse_macro_input,
 };
 
 struct PrettyFmtInput {
@@ -34,7 +34,10 @@ impl Parse for PrettyFmtInput {
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
         }
-        Ok(PrettyFmtInput { fmt, enabled: enabled.value })
+        Ok(PrettyFmtInput {
+            fmt,
+            enabled: enabled.value,
+        })
     }
 }
 
@@ -42,7 +45,9 @@ impl Parse for PrettyFmtInput {
 /// into a single owned `String`. Anything else is a compile error.
 fn eval_literal(expr: &Expr, out: &mut String) -> Result<(), syn::Error> {
     match expr {
-        Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => {
             out.push_str(&s.value());
             Ok(())
         }
@@ -73,7 +78,7 @@ fn eval_literal(expr: &Expr, out: &mut String) -> Result<(), syn::Error> {
     }
 }
 
-use bun_output_tags::{color_for, RESET};
+use bun_output_tags::{RESET, color_for};
 
 /// 1:1 port of `prettyFmt` from output.zig, plus Zig→Rust format-spec rewrites
 /// (`{s}`/`{d}` → `{}`, `{any}`/`{?}` → `{:?}`).
@@ -141,7 +146,9 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                     is_reset = true;
                     ""
                 } else {
-                    return Err(format!("invalid color name passed to pretty_fmt!: <{name}>"));
+                    return Err(format!(
+                        "invalid color name passed to pretty_fmt!: <{name}>"
+                    ));
                 };
                 if is_enabled {
                     out.push_str(if is_reset { RESET } else { seq });
@@ -216,13 +223,16 @@ fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
             return Err(syn::Error::new(
                 Span::call_site(),
                 "ref-count derive: only named-field structs are supported",
-            ))
+            ));
         }
     };
 
     // 1. explicit #[ref_count] attr (bare, not the struct-level destroy form)
     for f in named {
-        if f.attrs.iter().any(|a| a.path().is_ident("ref_count") && matches!(a.meta, Meta::Path(_))) {
+        if f.attrs
+            .iter()
+            .any(|a| a.path().is_ident("ref_count") && matches!(a.meta, Meta::Path(_)))
+        {
             return Ok(f.ident.as_ref().unwrap());
         }
     }
@@ -275,7 +285,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(name, "CellRefCounted: only structs are supported")
                 .to_compile_error()
-                .into()
+                .into();
         }
     };
 
@@ -381,7 +391,7 @@ fn find_live_marker_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
             return Err(syn::Error::new(
                 Span::call_site(),
                 "Anchored derive: only named-field structs are supported",
-            ))
+            ));
         }
     };
     // 1. explicit #[live_marker] attr
@@ -394,7 +404,12 @@ fn find_live_marker_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     let mut found: Option<&syn::Ident> = None;
     for f in named {
         if let syn::Type::Path(tp) = &f.ty {
-            if tp.path.segments.last().is_some_and(|s| s.ident == "LiveMarker") {
+            if tp
+                .path
+                .segments
+                .last()
+                .is_some_and(|s| s.ident == "LiveMarker")
+            {
                 if found.is_some() {
                     return Err(syn::Error::new_spanned(
                         &f.ty,
@@ -425,7 +440,7 @@ pub fn derive_anchored(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(name, "Anchored: only structs are supported")
                 .to_compile_error()
-                .into()
+                .into();
         }
     };
     let field = match find_live_marker_field(fields) {
@@ -454,9 +469,12 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
     let fields = match &input.data {
         Data::Struct(s) => &s.fields,
         _ => {
-            return syn::Error::new_spanned(name, "ThreadSafeRefCounted: only structs are supported")
-                .to_compile_error()
-                .into()
+            return syn::Error::new_spanned(
+                name,
+                "ThreadSafeRefCounted: only structs are supported",
+            )
+            .to_compile_error()
+            .into();
         }
     };
 
@@ -595,7 +613,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(name, "RefCounted: only structs are supported")
                 .to_compile_error()
-                .into()
+                .into();
         }
     };
 
@@ -687,7 +705,7 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(name, "EnumTag: only enums are supported")
                 .to_compile_error()
-                .into()
+                .into();
         }
     };
 

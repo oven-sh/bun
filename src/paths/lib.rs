@@ -6,17 +6,22 @@
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
-
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
 #![warn(unreachable_pub)]
 pub mod w_path_buffer_pool {
-    use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
     use super::WPathBuffer;
+    use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
     pub type Guard = PoolGuard<WPathBuffer>;
-    #[inline] pub fn get() -> PoolGuard<WPathBuffer> { PathBufferPoolT::<WPathBuffer>::get() }
-    #[inline] pub fn put(buf: Box<WPathBuffer>) { PathBufferPoolT::<WPathBuffer>::put(buf) }
+    #[inline]
+    pub fn get() -> PoolGuard<WPathBuffer> {
+        PathBufferPoolT::<WPathBuffer>::get()
+    }
+    #[inline]
+    pub fn put(buf: Box<WPathBuffer>) {
+        PathBufferPoolT::<WPathBuffer>::put(buf)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -31,18 +36,18 @@ pub mod string_paths;
 /// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
 /// import `bun_paths::strings` instead.
 pub mod strings {
-    pub use bun_core::strings::*;
     pub use super::string_paths::*;
+    pub use bun_core::strings::*;
     // Disambiguate names that exist in both `bun_core::strings` and
     // `string_paths` (path-shape transcoders win — they're the canonical
     // `bun.strings.*` impl that depends on this crate's path helpers).
-    pub use super::string_paths::{
-        remove_leading_dot_slash, starts_with_windows_drive_letter_t, without_trailing_slash,
-    };
     /// `bun.strings.paths` submodule alias (Zig: `bun.strings.paths.X`).
     pub use super::string_paths as paths;
     pub use super::string_paths::from_w_path as from_wpath;
     pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
+    pub use super::string_paths::{
+        remove_leading_dot_slash, starts_with_windows_drive_letter_t, without_trailing_slash,
+    };
 }
 
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
@@ -59,9 +64,13 @@ pub fn is_absolute_posix(p: &[u8]) -> bool {
 
 /// Generic over u8/u16. Port of `std.fs.path.isAbsoluteWindows{,WTF16}`.
 pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
-    if p.is_empty() { return false; }
+    if p.is_empty() {
+        return false;
+    }
     let c0 = p[0];
-    if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') { return true; }
+    if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') {
+        return true;
+    }
     // Drive letter: `X:\` or `X:/` — Zig std does NOT require `X` be alphabetic.
     if p.len() >= 3
         && p[1] == T::from_u8(b':')
@@ -72,10 +81,14 @@ pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
     false
 }
 #[inline]
-pub fn is_absolute_windows(p: &[u8]) -> bool { is_absolute_windows_t::<u8>(p) }
+pub fn is_absolute_windows(p: &[u8]) -> bool {
+    is_absolute_windows_t::<u8>(p)
+}
 /// `std.fs.path.isAbsoluteWindowsWTF16` — UTF-16 sibling.
 #[inline]
-pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool { is_absolute_windows_t::<u16>(p) }
+pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
+    is_absolute_windows_t::<u16>(p)
+}
 
 /// Port of `std.fs.path.diskDesignatorWindows` — returns the leading drive
 /// designator (e.g. `C:` or `\\server\share`) or empty.
@@ -113,7 +126,11 @@ macro_rules! path_literal {
             let mut o = [0u8; __N + 1];
             let mut i = 0;
             while i < __N {
-                o[i] = if cfg!(windows) && __B[i] == b'/' { b'\\' } else { __B[i] };
+                o[i] = if cfg!(windows) && __B[i] == b'/' {
+                    b'\\'
+                } else {
+                    __B[i]
+                };
                 i += 1;
             }
             o // o[__N] == 0 (NUL terminator)
@@ -136,7 +153,9 @@ macro_rules! path_literal {
 macro_rules! os_path_literal {
     ($lit:literal) => {{
         #[cfg(not(windows))]
-        { $crate::path_literal!($lit) }
+        {
+            $crate::path_literal!($lit)
+        }
         #[cfg(windows)]
         {
             // Const-eval ASCII→UTF-16LE widening with `/`→`\` rewrite, then
@@ -149,7 +168,11 @@ macro_rules! os_path_literal {
                 let mut i = 0;
                 while i < __N {
                     debug_assert!(__B[i].is_ascii(), "os_path_literal!() must be ASCII");
-                    out[i] = if __B[i] == b'/' { b'\\' as u16 } else { __B[i] as u16 };
+                    out[i] = if __B[i] == b'/' {
+                        b'\\' as u16
+                    } else {
+                        __B[i] as u16
+                    };
                     i += 1;
                 }
                 out
@@ -166,8 +189,14 @@ macro_rules! os_path_literal {
 }
 
 pub fn is_absolute(p: &[u8]) -> bool {
-    #[cfg(not(windows))] { p.first() == Some(&b'/') }
-    #[cfg(windows)] { is_absolute_windows(p) }
+    #[cfg(not(windows))]
+    {
+        p.first() == Some(&b'/')
+    }
+    #[cfg(windows)]
+    {
+        is_absolute_windows(p)
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -243,13 +272,15 @@ pub fn join_sep_z(parts: &[&[u8]]) -> bun_core::ZBox {
 /// `dirname` semantics (Option, trailing-slash handling, root preservation)
 /// use `bun_core::dirname`.
 pub fn dirname_simple(p: &[u8]) -> &[u8] {
-    p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
-        .map(|i| &p[..i]).unwrap_or(b"")
+    p.iter()
+        .rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
+        .map(|i| &p[..i])
+        .unwrap_or(b"")
 }
 /// Port of `std.fs.path.basename` — strips trailing separators before slicing
 /// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
 /// Canonical impls (width-generic over `PathByte`) live in `bun_core::strings`.
-pub use bun_core::strings::{basename, basename_posix, basename_windows, PathByte};
+pub use bun_core::strings::{PathByte, basename, basename_posix, basename_windows};
 
 /// Port of `std.fs.path.extension` — returns the file extension of `p`
 /// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
@@ -278,7 +309,7 @@ pub fn stem(p: &[u8]) -> &[u8] {
 // are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
-pub use bun_core::{PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE};
+pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
 /// Zig spells the wide-path capacity `bun.MAX_WPATH` (`libuv.zig` uses the same
 /// alias); keep both names so ported call sites resolve without churn.
 pub const MAX_WPATH: usize = PATH_MAX_WIDE;
@@ -313,7 +344,7 @@ pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
 pub mod component_iterator;
 pub use component_iterator::{
-    component_iterator, make_path_with, Component, ComponentIterator, MakePathStep, PathFormat,
+    Component, ComponentIterator, MakePathStep, PathFormat, component_iterator, make_path_with,
 };
 // Crate-root re-exports for the path-mutation helpers callers spell as
 // `bun.path.*` in Zig (e.g. `bun.path.dangerouslyConvertPathToPosixInPlace`,
@@ -321,26 +352,11 @@ pub use component_iterator::{
 // namespace; mirror that here so `#[cfg(windows)]` install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
-    dangerously_convert_path_to_posix_in_place,
-    dangerously_convert_path_to_windows_in_place,
-    slashes_to_posix_in_place,
-    slashes_to_windows_in_place,
-    join_abs_string_buf,
-    dirname_w,
-    is_drive_letter,
-    is_drive_letter_t,
-    is_sep_any,
-    is_sep_any_t,
-    is_sep_native,
-    is_sep_native_t,
-    is_sep_posix,
-    is_sep_posix_t,
-    is_sep_win32,
-    is_sep_win32_t,
-    join_abs_string_buf_z,
-    join_string_buf_wz,
-    path_to_posix_buf,
-    relative_to_common_path_buf,
+    dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
+    dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
+    is_sep_native_t, is_sep_posix, is_sep_posix_t, is_sep_win32, is_sep_win32_t,
+    join_abs_string_buf, join_abs_string_buf_z, join_string_buf_wz, path_to_posix_buf,
+    relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
     windows_volume_name_len,
 };
 // `bun.os_path_buffer_pool.get()` in Zig is a namespace call, not a value.
@@ -348,8 +364,11 @@ pub use resolve_path::{
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
 // POSIX).
 pub use path_buffer_pool::os_path_buffer_pool;
-#[path = "Path.rs"] pub mod path;
-pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
+#[path = "Path.rs"]
+pub mod path;
+pub use path::{
+    AbsPath, AutoAbsPath, AutoRelPath, Path, PathUnit, RelPath, options as path_options,
+};
 
 /// Duck-typing surface for the `anytype` `buf` parameter on Zig path-builder
 /// helpers (`appendStorePath`, `appendGlobalStoreEntryPath`, etc. in
@@ -365,9 +384,16 @@ pub trait PathLike {
 impl<U: PathUnit, const KIND: u8, const SEP: u8, const CHK: u8> PathLike
     for path::Path<U, KIND, SEP, CHK>
 {
-    #[inline] fn clear(&mut self) { path::Path::clear(self) }
-    #[inline] fn append(&mut self, bytes: &[u8]) { let _ = path::Path::append(self, bytes); }
-    #[inline] fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+    #[inline]
+    fn clear(&mut self) {
+        path::Path::clear(self)
+    }
+    #[inline]
+    fn append(&mut self, bytes: &[u8]) {
+        let _ = path::Path::append(self, bytes);
+    }
+    #[inline]
+    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
         let _ = path::Path::append_fmt(self, args);
     }
 }
@@ -377,7 +403,7 @@ impl<U: PathUnit, const KIND: u8, const SEP: u8, const CHK: u8> PathLike
 /// `path::dirname_generic`.
 #[allow(non_snake_case)]
 pub mod Dirname {
-    use super::path::{dirname_generic, PathUnit};
+    use super::path::{PathUnit, dirname_generic};
 
     #[inline]
     pub fn dirname<U: PathUnit>(p: &[U]) -> Option<&[U]> {
@@ -404,7 +430,8 @@ pub use bun_core::dirname;
 pub fn dirname(p: &[u8]) -> Option<&[u8]> {
     path::dirname_generic(p)
 }
-#[path = "EnvPath.rs"] pub mod env_path;
+#[path = "EnvPath.rs"]
+pub mod env_path;
 pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -418,8 +445,14 @@ pub mod windows {
     pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
     pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
-        '\\' as u16, '?' as u16, '?' as u16, '\\' as u16,
-        'U' as u16, 'N' as u16, 'C' as u16, '\\' as u16,
+        '\\' as u16,
+        '?' as u16,
+        '?' as u16,
+        '\\' as u16,
+        'U' as u16,
+        'N' as u16,
+        'C' as u16,
+        '\\' as u16,
     ];
     /// `\\?\` — Win32 long-path prefix (UTF-16).
     pub const LONG_PATH_PREFIX: [u16; 4] = ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
@@ -527,14 +560,18 @@ pub mod fs {
         /// `instance_loaded` is asserted.
         #[inline]
         pub fn instance() -> &'static FileSystem {
-            INSTANCE.get().expect("FileSystem.instance accessed before init")
+            INSTANCE
+                .get()
+                .expect("FileSystem.instance accessed before init")
         }
 
         /// Zig: `FileSystem.init(top_level_dir)` (force=false path). Higher-tier
         /// `bun_resolver::fs` calls this during its own `initWithForce` after it
         /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
         pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
-            let _ = INSTANCE.set(FileSystem { top_level_dir: top_level_dir.to_vec() });
+            let _ = INSTANCE.set(FileSystem {
+                top_level_dir: top_level_dir.to_vec(),
+            });
             INSTANCE_LOADED.store(true, Ordering::Release);
             INSTANCE.get().unwrap()
         }
@@ -622,7 +659,12 @@ pub mod fs {
     impl<'a> Default for PathName<'a> {
         #[inline]
         fn default() -> Self {
-            Self { base: b"", dir: b"", ext: b"", filename: b"" }
+            Self {
+                base: b"",
+                dir: b"",
+                ext: b"",
+                filename: b"",
+            }
         }
     }
 
@@ -641,7 +683,11 @@ pub mod fs {
 
         #[inline]
         pub fn ext_without_leading_dot(&self) -> &'a [u8] {
-            if !self.ext.is_empty() && self.ext[0] == b'.' { &self.ext[1..] } else { self.ext }
+            if !self.ext.is_empty() && self.ext[0] == b'.' {
+                &self.ext[1..]
+            } else {
+                self.ext
+            }
         }
 
         /// Zig: `PathName.nonUniqueNameStringBase`.
@@ -680,8 +726,8 @@ pub mod fs {
                 return b"./";
             }
             let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
-                && (self.dir.as_ptr() as usize + self.dir.len() + 1)
-                    == self.base.as_ptr() as usize) as usize;
+                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
+                as usize;
             // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
             // immediately preceding `base` — both slices borrow the same underlying
             // allocation (the `path_` passed to `init`).
@@ -744,9 +790,18 @@ pub mod fs {
                 dir = &path_[0..dir.len() + 2];
             }
 
-            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
+            let filename = if !dir.is_empty() {
+                &path_[dir.len() + 1..]
+            } else {
+                path_
+            };
 
-            PathName { dir, base, ext, filename }
+            PathName {
+                dir,
+                base,
+                ext,
+                filename,
+            }
         }
     }
 
@@ -826,7 +881,12 @@ pub mod fs {
             pretty: b"",
             text: b"",
             namespace: b"file",
-            name: PathName { base: b"", dir: b"", ext: b"", filename: b"" },
+            name: PathName {
+                base: b"",
+                dir: b"",
+                ext: b"",
+                filename: b"",
+            },
             is_disabled: false,
             is_symlink: false,
         };
@@ -928,10 +988,22 @@ pub mod fs {
             }
         }
 
-        #[inline] pub fn empty() -> Path<'static> { Path::EMPTY }
-        #[inline] pub fn text(&self) -> &'a [u8] { self.text }
-        #[inline] pub fn pretty(&self) -> &'a [u8] { self.pretty }
-        #[inline] pub fn namespace(&self) -> &'a [u8] { self.namespace }
+        #[inline]
+        pub fn empty() -> Path<'static> {
+            Path::EMPTY
+        }
+        #[inline]
+        pub fn text(&self) -> &'a [u8] {
+            self.text
+        }
+        #[inline]
+        pub fn pretty(&self) -> &'a [u8] {
+            self.pretty
+        }
+        #[inline]
+        pub fn namespace(&self) -> &'a [u8] {
+            self.namespace
+        }
 
         #[inline]
         pub fn is_file(&self) -> bool {
@@ -939,13 +1011,19 @@ pub mod fs {
         }
 
         #[inline]
-        pub fn is_data_url(&self) -> bool { self.namespace == b"dataurl" }
+        pub fn is_data_url(&self) -> bool {
+            self.namespace == b"dataurl"
+        }
 
         #[inline]
-        pub fn is_bun(&self) -> bool { self.namespace == b"bun" }
+        pub fn is_bun(&self) -> bool {
+            self.namespace == b"bun"
+        }
 
         #[inline]
-        pub fn is_macro(&self) -> bool { self.namespace == b"macro" }
+        pub fn is_macro(&self) -> bool {
+            self.namespace == b"macro"
+        }
 
         /// Zig: `pub inline fn sourceDir(this: *const Path) string`
         #[inline]
@@ -978,7 +1056,11 @@ pub mod fs {
         /// Zig: `Path.keyForIncrementalGraph`.
         #[inline]
         pub fn key_for_incremental_graph(&self) -> &'a [u8] {
-            if self.is_file() { self.text } else { self.pretty }
+            if self.is_file() {
+                self.text
+            } else {
+                self.pretty
+            }
         }
 
         /// Zig: `Path.setRealpath`.

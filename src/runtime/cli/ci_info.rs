@@ -24,7 +24,9 @@ pub fn detect_ci_name() -> Option<&'static [u8]> {
 }
 
 fn is_ci_uncached() -> bool {
-    env_var::CI.get().unwrap_or_else(|| generated::is_ci_uncached_generated())
+    env_var::CI
+        .get()
+        .unwrap_or_else(|| generated::is_ci_uncached_generated())
         || detect_ci_name().is_some()
 }
 

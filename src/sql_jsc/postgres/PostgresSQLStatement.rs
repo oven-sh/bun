@@ -1,12 +1,12 @@
 use core::cell::Cell;
 
-use bun_collections::StringHashMap;
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_collections::StringHashMap;
 
-use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
-use crate::shared::sql_data_cell::Flags as DataCellFlags;
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::signature::Signature;
+use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
+use crate::shared::sql_data_cell::Flags as DataCellFlags;
 
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -62,9 +62,10 @@ impl Error {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Error::Protocol(err) => {
-                Ok(crate::postgres::protocol::error_response_jsc::to_js(err, global_object))
-            }
+            Error::Protocol(err) => Ok(crate::postgres::protocol::error_response_jsc::to_js(
+                err,
+                global_object,
+            )),
             Error::PostgresError(err) => Ok(postgres_error_to_js(global_object, None, *err)),
         }
     }

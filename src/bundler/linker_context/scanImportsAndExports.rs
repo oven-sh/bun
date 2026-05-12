@@ -13,21 +13,21 @@
 
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
-use bun_collections::{VecExt, HashMap, MultiArrayList};
-use bun_core::FeatureFlags;
 use bun_ast::Source;
-use bun_ast::{import_record, ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
+use bun_collections::{HashMap, MultiArrayList, VecExt};
+use bun_core::FeatureFlags;
 
+use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::ungate_support::perf;
 use crate::{
-    js_meta, EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, JSMeta,
-    LinkerContext, Part, RefImportData, ResolvedExports, WrapKind,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, JSMeta, LinkerContext,
+    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
 };
-use bun_js_parser as js_ast;
-use crate::bundled_ast::{self, NamedExports, NamedImports};
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
+use bun_js_parser as js_ast;
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -207,8 +207,12 @@ pub fn scan_imports_and_exports(
                         //
                         // In that case the module *is* considered a CommonJS module because
                         // the namespace object must be created.
-                        if (record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || record.flags.contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
+                        if (record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                            || record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
                             && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
                             && !other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && col_ref!(exports_kind)[other_file] == ExportsKind::None
@@ -217,7 +221,9 @@ pub fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
-                        if record.flags.contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
+                        if record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
@@ -384,10 +390,11 @@ pub fn scan_imports_and_exports(
                             named_exports,
                         });
                     }
-                    export_star_ctx
-                        .as_mut()
-                        .unwrap()
-                        .add_exports(resolved_exports, id, source_index);
+                    export_star_ctx.as_mut().unwrap().add_exports(
+                        resolved_exports,
+                        id,
+                        source_index,
+                    );
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
@@ -447,8 +454,14 @@ pub fn scan_imports_and_exports(
                     && export_kind == ExportsKind::Cjs
                     && flag.wrap == WrapKind::None
                 {
-                    let exports_ref = this.graph.symbols.follow(col_ref!(exports_refs)[source_index]);
-                    let module_ref = this.graph.symbols.follow(col_ref!(module_refs)[source_index]);
+                    let exports_ref = this
+                        .graph
+                        .symbols
+                        .follow(col_ref!(exports_refs)[source_index]);
+                    let module_ref = this
+                        .graph
+                        .symbols
+                        .follow(col_ref!(module_refs)[source_index]);
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
@@ -638,10 +651,12 @@ pub fn scan_imports_and_exports(
                 && export_kind != ExportsKind::Cjs
                 && output_format != Format::InternalBakeDev
             {
-                let exports_name =
-                    bun_ast::StoreStr::new(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
-                let module_name =
-                    bun_ast::StoreStr::new(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
+                let exports_name = bun_ast::StoreStr::new(
+                    builder.fmt(format_args!("exports_{}", source.fmt_identifier())),
+                );
+                let module_name = bun_ast::StoreStr::new(
+                    builder.fmt(format_args!("module_{}", source.fmt_identifier())),
+                );
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -697,7 +712,8 @@ pub fn scan_imports_and_exports(
                     // lets the inner-loop reads go through safe `Deref`.
                     let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
                     {
-                        let import: &ImportData = &col_ref!(imports_to_bind_list)[id].values()[itb_i];
+                        let import: &ImportData =
+                            &col_ref!(imports_to_bind_list)[id].values()[itb_i];
                         import_source_index = import.data.source_index.get();
                         import_ref = import.data.import_ref;
                         re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
@@ -727,7 +743,9 @@ pub fn scan_imports_and_exports(
                             for resolved_part_index in parts_declaring_symbol {
                                 // PERF(port): was appendAssumeCapacity
                                 part.dependencies.push(Dependency {
-                                    source_index: bun_ast::Index::source(import_source_index as usize),
+                                    source_index: bun_ast::Index::source(
+                                        import_source_index as usize,
+                                    ),
                                     part_index: resolved_part_index,
                                 });
                             }
@@ -851,15 +869,16 @@ pub fn scan_imports_and_exports(
                 // Imports of wrapped files must depend on the wrapper
                 // PORT NOTE: iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
-                let import_record_indices_len =
-                    col_ref!(parts_list)[id].slice()[part_index].import_record_indices.len() as usize;
+                let import_record_indices_len = col_ref!(parts_list)[id].slice()[part_index]
+                    .import_record_indices
+                    .len() as usize;
                 for iri in 0..import_record_indices_len {
                     let import_record_index = col_ref!(parts_list)[id].slice()[part_index]
                         .import_record_indices
                         .slice()[iri];
                     let (kind, rec_source_index, rec_flags) = {
-                        let record =
-                            &col_ref!(import_records_list)[id].slice()[import_record_index as usize];
+                        let record = &col_ref!(import_records_list)[id].slice()
+                            [import_record_index as usize];
                         (record.kind, record.source_index, record.flags)
                     };
                     let other_id = rec_source_index.value() as usize;
@@ -868,8 +887,8 @@ pub fn scan_imports_and_exports(
                     // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
-                        let record =
-                            &col_ref!(import_records_list)[id].slice()[import_record_index as usize];
+                        let record = &col_ref!(import_records_list)[id].slice()
+                            [import_record_index as usize];
                         this.is_external_dynamic_import(record, source_index)
                     };
                     if !rec_source_index.is_valid() || is_external_dyn {
@@ -1041,8 +1060,8 @@ pub fn scan_imports_and_exports(
 
                 for import_record_index in col_ref!(export_star_import_records)[id].iter() {
                     let (rec_source_index,) = {
-                        let record =
-                            &col_ref!(import_records_list)[id].slice()[*import_record_index as usize];
+                        let record = &col_ref!(import_records_list)[id].slice()
+                            [*import_record_index as usize];
                         (record.source_index,)
                     };
 
@@ -1175,8 +1194,7 @@ impl DependencyWrapper<'_> {
             let rec_source_index =
                 self.import_records[source_index as usize].slice()[*id as usize].source_index;
             if (rec_source_index.is_invalid()
-                && (!kind.is_entry_point()
-                    || !self.output_format.keep_es6_import_export_syntax()))
+                && (!kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()))
                 || (rec_source_index.is_valid()
                     && rec_source_index.get() != source_index
                     && self.has_dynamic_exports_due_to_export_star(rec_source_index.get()))
@@ -1284,8 +1302,9 @@ impl ExportStarContext {
                 // `BackRef<[u8]>` — points into the `named_exports` key
                 // storage, which is not mutated in this loop; the backref
                 // invariant lets reads go through safe `Deref`.
-                let alias: bun_ptr::BackRef<[u8]> =
-                    bun_ptr::BackRef::new(col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref());
+                let alias: bun_ptr::BackRef<[u8]> = bun_ptr::BackRef::new(
+                    col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref(),
+                );
                 let name = col_ref!(self.named_exports)[other_id].values()[ne_i];
 
                 // ES6 export star statements ignore exports named "default"
@@ -1363,10 +1382,10 @@ impl ExportStarContext {
 // ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
-    use bun_collections::{ArrayHashMap, StringArrayHashMap};
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
-    use bun_ast::{ Log};
+    use bun_ast::Log;
+    use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
     // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
@@ -1397,8 +1416,7 @@ mod __css_validation {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
         // `other_css_ast` below may alias the same allocation when a file
         // composes from itself, so bind as shared.
-        let css_ast: &BundlerStyleSheet =
-            col_ref!(css_asts)[id].as_deref().unwrap();
+        let css_ast: &BundlerStyleSheet = col_ref!(css_asts)[id].as_deref().unwrap();
         let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
 
         // Validate cross-file "composes: ... from" named imports
@@ -1508,7 +1526,10 @@ mod __css_validation {
                 let entry = self.properties.get_or_put(property_name).expect("oom");
 
                 if !entry.found_existing {
-                    *entry.value_ptr = PropertyInFile { source_index, range };
+                    *entry.value_ptr = PropertyInFile {
+                        source_index,
+                        range,
+                    };
                     return;
                 }
 
@@ -1518,8 +1539,12 @@ mod __css_validation {
                     return;
                 }
 
-                let local_original_name: &[u8] =
-                    self.all_symbols.get_const(local).unwrap().original_name.slice();
+                let local_original_name: &[u8] = self
+                    .all_symbols
+                    .get_const(local)
+                    .unwrap()
+                    .original_name
+                    .slice();
 
                 let _ = self.log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Err,
@@ -1611,9 +1636,8 @@ mod __css_validation {
                                     else {
                                         continue;
                                     };
-                                    let other_name_ref = other_name
-                                        .ref_
-                                        .to_real_ref(record.source_index.get());
+                                    let other_name_ref =
+                                        other_name.ref_.to_real_ref(record.source_index.get());
                                     self.visit(
                                         record.source_index.get(),
                                         other_ast,

@@ -7,29 +7,31 @@ use core::ptr::NonNull;
 use bun_jsc::JsCell;
 use enumset::EnumSet;
 
+use super::response::HeadersRef;
+use crate::api::AnyRequestContext;
+use crate::webcore::BlobExt as _;
+use crate::webcore::blob::ZigStringBlobExt as _;
+use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value as BodyValue};
+use crate::webcore::jsc::{
+    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
+};
+use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
-use bun_core::{fmt as bun_fmt, Output};
+use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
+use bun_http_jsc::fetch_enums_jsc::{
+    fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
+};
+use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
-use crate::webcore::BlobExt as _;
-use bun_jsc::generated::JSRequest as js_gen;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
-};
-use bun_ptr::weak_ptr::WeakPtrData;
-use crate::api::AnyRequestContext;
-use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value as BodyValue};
-use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_jsc::AbortSignalRef;
-use super::response::HeadersRef;
-use bun_core::{strings, OwnedStringCell, String as BunString, ZigString};
-use bun_uws as uws;
 use bun_jsc::StringJsc as _;
-use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
-use crate::webcore::blob::ZigStringBlobExt as _;
+use bun_jsc::generated::JSRequest as js_gen;
+use bun_ptr::weak_ptr::WeakPtrData;
+use bun_uws as uws;
 
 // TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
 // keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.
@@ -187,7 +189,8 @@ impl BodyMixin for Request {
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
         self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr()).expect("HeadersRef wraps a non-null *mut FetchHeaders")
+            core::ptr::NonNull::new(h.as_ptr())
+                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
     #[inline]
@@ -272,10 +275,7 @@ impl Request {
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
     #[allow(clippy::mut_from_ref)]
-    pub fn ensure_fetch_headers(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
+    pub fn ensure_fetch_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
         if self.headers.get().is_some() {
             // headers is already set
             return Ok(self.headers_mut().as_mut().unwrap());
@@ -283,7 +283,9 @@ impl Request {
 
         if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(req.cast::<core::ffi::c_void>())));
+            self.headers.set(Some(HeadersRef::create_from_uws(
+                req.cast::<core::ffi::c_void>(),
+            )));
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
@@ -331,7 +333,9 @@ impl Request {
         if self.headers.get().is_none() {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(req.cast::<core::ffi::c_void>())));
+                self.headers.set(Some(HeadersRef::create_from_uws(
+                    req.cast::<core::ffi::c_void>(),
+                )));
             }
         }
 
@@ -348,14 +352,12 @@ impl Request {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
 
-    pub fn clone_headers(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<Option<HeadersRef>> {
+    pub fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
-                self.headers
-                    .set(Some(HeadersRef::create_from_uws(uws_req.cast::<core::ffi::c_void>())));
+                self.headers.set(Some(HeadersRef::create_from_uws(
+                    uws_req.cast::<core::ffi::c_void>(),
+                )));
             }
         }
 
@@ -419,12 +421,9 @@ impl Request {
     }
 
     #[bun_uws::uws_callback(export = "Request__setInternalEventCallback")]
-    pub fn ffi_set_internal_event_callback(
-        &self,
-        callback: JSValue,
-        global_this: &JSGlobalObject,
-    ) {
-        self.internal_event_callback.set(InternalJSEventCallback::init(callback, global_this));
+    pub fn ffi_set_internal_event_callback(&self, callback: JSValue, global_this: &JSGlobalObject) {
+        self.internal_event_callback
+            .set(InternalJSEventCallback::init(callback, global_this));
         // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
         self.request_context.enable_timeout_events();
     }
@@ -485,8 +484,7 @@ impl Request {
             return Ok(None);
         };
         // `defer content_type_slice.deinit()` → Drop on ZigString::Slice
-        let Some(encoding) =
-            crate::webcore::form_data::Encoding::get(content_type_slice.slice())
+        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
         else {
             return Ok(None);
         };
@@ -632,7 +630,9 @@ impl Request {
             let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref())?;
+            writer.write_str(
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref(),
+            )?;
 
             // Zig: `bun.asByteSlice(@tagName(this.method))` — wire-form token
             // (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
@@ -644,7 +644,8 @@ impl Request {
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
+            writer
+                .write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
             self.ensure_url().map_err(|_| core::fmt::Error)?;
             write!(
                 writer,
@@ -664,7 +665,9 @@ impl Request {
 
             if params_object.is_cell() {
                 formatter.write_indent(writer)?;
-                writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref())?;
+                writer.write_str(
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref(),
+                )?;
                 formatter
                     .print_as::<_, ENABLE_ANSI_COLORS>(
                         bun_jsc::FormatTag::Private,
@@ -680,7 +683,9 @@ impl Request {
             }
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref())?;
+            writer.write_str(
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
+            )?;
             let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
@@ -708,7 +713,9 @@ impl Request {
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
                         crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
-                            false, size as usize, writer,
+                            false,
+                            size as usize,
+                            writer,
                         )?;
                     }
                 }
@@ -832,7 +839,8 @@ impl Request {
         // Zig: `signal.unref()` — AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
         // internal_event_callback.deinit() → Drop on Strong inside; explicit take to match timing
-        self.internal_event_callback.set(InternalJSEventCallback::default());
+        self.internal_event_callback
+            .set(InternalJSEventCallback::default());
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -1167,8 +1175,12 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
-                        match Request::clone_into(request, &mut req, global_this, fields.contains(Fields::Url))
-                        {
+                        match Request::clone_into(
+                            request,
+                            &mut req,
+                            global_this,
+                            fields.contains(Fields::Url),
+                        ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
@@ -1725,7 +1737,10 @@ impl Request {
             body,
             js_ref: JsCell::new(JsRef::empty()),
             method,
-            flags: Flags { https, ..Flags::default() },
+            flags: Flags {
+                https,
+                ..Flags::default()
+            },
             request_context,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),

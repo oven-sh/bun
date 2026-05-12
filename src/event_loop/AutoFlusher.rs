@@ -69,7 +69,8 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     debug_assert!(this.auto_flusher().registered);
     // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally; the
     // *check* is debug-only but the side effect must run in release too.
-    let removed = deferred.unregister_task(NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()));
+    let removed =
+        deferred.unregister_task(NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()));
     debug_assert!(removed);
     this.auto_flusher().registered = false;
 }

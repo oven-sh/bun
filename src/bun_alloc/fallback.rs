@@ -24,12 +24,20 @@ impl CAllocator {
                 libc::malloc(len)
             } else {
                 #[cfg(windows)]
-                { libc::aligned_malloc(len, align) }
+                {
+                    libc::aligned_malloc(len, align)
+                }
                 #[cfg(not(windows))]
-                { libc::aligned_alloc(align, len) }
+                {
+                    libc::aligned_alloc(align, len)
+                }
             }
         };
-        if ptr.is_null() { None } else { Some(ptr.cast()) }
+        if ptr.is_null() {
+            None
+        } else {
+            Some(ptr.cast())
+        }
     }
 
     #[inline]

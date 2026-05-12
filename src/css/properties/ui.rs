@@ -3,12 +3,12 @@
 use crate as css;
 
 use css::css_properties::Property;
-use css::{Printer, PrintErr, PropertyHandlerContext, SmallList};
+use css::{PrintErr, Printer, PropertyHandlerContext, SmallList};
 
-use css::css_values::number::CSSNumber;
+use css::css_values::color::CssColor;
 #[allow(unused_imports)]
 use css::css_values::ident::DashedIdent;
-use css::css_values::color::CssColor;
+use css::css_values::number::CSSNumber;
 use css::css_values::url::Url;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an arena crate)
@@ -206,7 +206,10 @@ impl ColorSchemeHandler {
         match property {
             Property::ColorScheme(color_scheme_) => {
                 let color_scheme: ColorScheme = *color_scheme_;
-                if !context.targets.is_compatible(css::compat::Feature::LightDark) {
+                if !context
+                    .targets
+                    .is_compatible(css::compat::Feature::LightDark)
+                {
                     if color_scheme.contains(ColorScheme::LIGHT) {
                         dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));
                         dest.push(define_var(b"--buncss-dark", css::Token::Whitespace(b" ")));
@@ -235,7 +238,12 @@ impl ColorSchemeHandler {
         }
     }
 
-    pub fn finalize(&mut self, _: &mut css::DeclarationList<'_>, _: &mut PropertyHandlerContext<'_>) {}
+    pub fn finalize(
+        &mut self,
+        _: &mut css::DeclarationList<'_>,
+        _: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
 }
 
 fn define_var(name: &'static [u8], value: css::Token) -> Property {

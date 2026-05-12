@@ -13,10 +13,10 @@ pub mod password_object;
 
 #[path = "CryptoHasher.rs"]
 pub mod crypto_hasher;
-#[path = "HMAC.rs"]
-pub mod hmac;
 #[path = "EVP.rs"]
 pub mod evp;
+#[path = "HMAC.rs"]
+pub mod hmac;
 
 #[path = "PBKDF2.rs"]
 pub mod pbkdf2;
@@ -62,7 +62,11 @@ pub fn pbkdf2<'a>(
     // static EVP_MD singleton returned by BoringSSL above.
     let rc = unsafe {
         boringssl::PKCS5_PBKDF2_HMAC(
-            if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
+            if password.is_empty() {
+                core::ptr::null()
+            } else {
+                password.as_ptr()
+            },
             password.len(),
             salt.as_ptr(),
             salt.len(),
@@ -78,8 +82,8 @@ pub fn pbkdf2<'a>(
     Some(output)
 }
 
-pub use password_object::PasswordObject;
 pub use password_object::JSPasswordObject;
+pub use password_object::PasswordObject;
 
 pub use crypto_hasher::CryptoHasher;
 pub use crypto_hasher::MD4;

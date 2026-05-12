@@ -1,24 +1,24 @@
+use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
-use crate::bundled_ast::Flags as AstFlags;
-use bun_collections::{VecExt, BoundedArray};
+use bun_collections::{BoundedArray, VecExt};
 
-use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 use bun_js_printer::renamer;
+use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
+use crate::linker_context_mod::{StmtList, StmtListWhich};
+use crate::options::Format as OutputFormat;
+use crate::ungate_support::generic_path_with_pretty_initialized;
 use crate::{
     Chunk, DeclInfo, DeclInfoKind, Index, JSAst, JSMeta, LinkerContext, Part, PartRange, WrapKind,
 };
-use crate::ungate_support::generic_path_with_pretty_initialized;
-use crate::linker_context_mod::{StmtList, StmtListWhich};
-use crate::options::Format as OutputFormat;
 
 use bun_ast as js_ast;
-use bun_ast::{Binding, Expr, Ref, Stmt, B, E, G, S};
-use bun_ast::binding::ToExprWrapper;
-use bun_js_parser::lexer as js_lexer;
 use bun_ast::StoreRef;
+use bun_ast::binding::ToExprWrapper;
+use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
+use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
@@ -51,7 +51,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts: *mut [Part] = unsafe {
         let list = &mut c.graph.ast.items_parts_mut()[source_index];
         core::ptr::addr_of_mut!(
-            list.slice_mut()[part_range.part_index_begin as usize..part_range.part_index_end as usize]
+            list.slice_mut()
+                [part_range.part_index_begin as usize..part_range.part_index_end as usize]
         )
     };
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
@@ -110,8 +111,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs. Matches Zig which slices then continues appending.
-            let inner =
-                bun_ast::StoreSlice::new_mut(&mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
+            let inner = bun_ast::StoreSlice::new_mut(
+                &mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len],
+            );
 
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
@@ -123,11 +125,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 ..Default::default()
             });
 
-            if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
+            if ast
+                .flags
+                .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
+            {
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
                         temp_arena,
-                        B::Identifier { r#ref: ast.module_ref },
+                        B::Identifier {
+                            r#ref: ast.module_ref,
+                        },
                         bun_ast::Loc::EMPTY,
                     ),
                     ..Default::default()
@@ -135,7 +142,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
                         temp_arena,
-                        B::Identifier { r#ref: ast.exports_ref },
+                        B::Identifier {
+                            r#ref: ast.exports_ref,
+                        },
                         bun_ast::Loc::EMPTY,
                     ),
                     ..Default::default()
@@ -186,32 +195,34 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
             let mut source_storage: bun_ast::Source;
-            let source: &bun_ast::Source =
-                if core::ptr::eq(source_ref.path.text.as_ptr(), source_ref.path.pretty.as_ptr()) {
-                    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-                    let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
-                        source_ref.path.clone(),
-                        c.options.target,
-                        top_level_dir,
-                        arena,
-                    ));
-                    source_storage = bun_ast::Source {
-                        path: new_path,
-                        // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
-                        // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
-                        contents: std::borrow::Cow::Borrowed(unsafe {
-                            &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
-                        }),
-                        contents_is_recycled: source_ref.contents_is_recycled,
-                        identifier_name: std::borrow::Cow::Borrowed(unsafe {
-                            &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
-                        }),
-                        index: source_ref.index,
-                    };
-                    &source_storage
-                } else {
-                    source_ref
+            let source: &bun_ast::Source = if core::ptr::eq(
+                source_ref.path.text.as_ptr(),
+                source_ref.path.pretty.as_ptr(),
+            ) {
+                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
+                    source_ref.path.clone(),
+                    c.options.target,
+                    top_level_dir,
+                    arena,
+                ));
+                source_storage = bun_ast::Source {
+                    path: new_path,
+                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                    // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
+                    contents: std::borrow::Cow::Borrowed(unsafe {
+                        &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
+                    }),
+                    contents_is_recycled: source_ref.contents_is_recycled,
+                    identifier_name: std::borrow::Cow::Borrowed(unsafe {
+                        &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
+                    }),
+                    index: source_ref.index,
                 };
+                &source_storage
+            } else {
+                source_ref
+            };
 
             return c.print_code_for_file_in_chunk_js(
                 r,
@@ -253,7 +264,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
-        && ast.flags.contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
+        && ast
+            .flags
+            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
         && !chunk.is_entry_point()
         && !output_format.is_always_strict_mode()
     {
@@ -295,8 +308,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // PORT NOTE: reshaped for borrowck — append_slice borrows `stmts` mutably while
                 // also reading from a sibling field.
                 let suffix = core::mem::take(&mut stmts.inside_wrapper_suffix);
-                stmts
-                    .append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice());
+                stmts.append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice());
                 stmts.inside_wrapper_suffix = suffix;
             }
             _ => {
@@ -389,8 +401,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
-                let mut new_properties =
-                    Vec::<G::Property>::init_capacity(src_len);
+                let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
                 unsafe {
@@ -402,14 +413,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     unsafe { new_properties.set_len((src_len as u32) as usize) };
                 }
 
-                let resolved_exports =
-                    &c.graph.meta.items_resolved_exports()[source_index];
+                let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
 
                 // If any top-level properties ended up being imported directly, change
                 // the property to just reference the corresponding variable instead
                 for prop in new_properties.slice_mut() {
                     if prop.key.is_none()
-                        || !matches!(prop.key.as_ref().expect("infallible: prop has key").data, ExprData::EString(_))
+                        || !matches!(
+                            prop.key.as_ref().expect("infallible: prop has key").data,
+                            ExprData::EString(_)
+                        )
                         || prop.value.is_none()
                     {
                         continue;
@@ -418,9 +431,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ExprData::EString(s) => s.slice(temp_arena),
                         _ => unreachable!(),
                     };
-                    if name == b"default"
-                        || name == b"__esModule"
-                        || !js_lexer::is_identifier(name)
+                    if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)
                     {
                         continue;
                     }
@@ -502,9 +513,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts.all_stmts.reserve(
-        stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len(),
-    );
+    stmts
+        .all_stmts
+        .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
     // PERF(port): was appendSliceAssumeCapacity
     stmts
         .all_stmts
@@ -528,7 +539,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // Only include the arguments that are actually used
                 let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
                     bun_alloc::ArenaVec::with_capacity_in(
-                        if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
+                        if ast
+                            .flags
+                            .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
+                        {
                             2
                         } else {
                             0
@@ -536,12 +550,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         temp_arena,
                     );
 
-                if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
+                if ast
+                    .flags
+                    .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
+                {
                     // PERF(port): was appendAssumeCapacity
                     args.push(G::Arg {
                         binding: Binding::alloc(
                             temp_arena,
-                            B::Identifier { r#ref: ast.exports_ref },
+                            B::Identifier {
+                                r#ref: ast.exports_ref,
+                            },
                             bun_ast::Loc::EMPTY,
                         ),
                         ..Default::default()
@@ -552,7 +571,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         args.push(G::Arg {
                             binding: Binding::alloc(
                                 temp_arena,
-                                B::Identifier { r#ref: ast.module_ref },
+                                B::Identifier {
+                                    r#ref: ast.module_ref,
+                                },
                                 bun_ast::Loc::EMPTY,
                             ),
                             ..Default::default()
@@ -594,23 +615,24 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
-                            B::Identifier { r#ref: ast.wrapper_ref },
+                            B::Identifier {
+                                r#ref: ast.wrapper_ref,
+                            },
                             bun_ast::Loc::EMPTY,
                         ),
                         value: Some(commonjs_wrapper_definition),
                     }]);
 
-                    stmts
-                        .append(
-                            StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::alloc(
-                                S::Local {
-                                    decls,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                        );
+                    stmts.append(
+                        StmtListWhich::OutsideWrapperPrefix,
+                        Stmt::alloc(
+                            S::Local {
+                                decls,
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                    );
                 }
             }
             WrapKind::Esm => {
@@ -645,7 +667,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     }
 
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
-                    fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: bun_ast::Loc, ref_: Ref) -> Expr {
+                    fn wrap_trampoline(
+                        ctx: *mut core::ffi::c_void,
+                        loc: bun_ast::Loc,
+                        ref_: Ref,
+                    ) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
                         let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
@@ -697,9 +723,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                                 (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
-                                            value = value.join_with_comma(
-                                                Expr::assign(binding, initializer),
-                                            );
+                                            value = value.join_with_comma(Expr::assign(
+                                                binding,
+                                                initializer,
+                                            ));
                                         }
                                     } else {
                                         let _ = Binding::to_expr(
@@ -717,8 +744,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 break 'stmt Stmt::allocate_expr(temp_arena, value);
                             }
                             StmtData::SFunction(_) => {
-                                
-                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                 continue 'hoist;
                             }
                             StmtData::SClass(mut class) => 'stmt: {
@@ -727,13 +753,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
                                 // Zig's `&class.class`.
                                 if class.class.can_be_moved() {
-                                    
-                                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                     continue 'hoist;
                                 }
 
                                 let class_name_loc = class.class.class_name.unwrap().loc;
-                                let class_name_ref = class.class.class_name.unwrap().ref_.expect("infallible: ref bound");
+                                let class_name_ref = class
+                                    .class
+                                    .class_name
+                                    .unwrap()
+                                    .ref_
+                                    .expect("infallible: ref bound");
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
                                 let class_ref: StoreRef<E::Class> =
                                     StoreRef::from_bump(&mut class.class);
@@ -760,19 +790,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 if !hoist.decls.is_empty() {
-                    stmts
-                        .append(
-                            StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::alloc(
-                                S::Local {
-                                    decls: G::DeclList::move_from_list(core::mem::take(
-                                        &mut hoist.decls,
-                                    )),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                        );
+                    stmts.append(
+                        StmtListWhich::OutsideWrapperPrefix,
+                        Stmt::alloc(
+                            S::Local {
+                                decls: G::DeclList::move_from_list(core::mem::take(
+                                    &mut hoist.decls,
+                                )),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                    );
                     hoist.decls.clear();
                 }
 
@@ -808,7 +837,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
-                            B::Identifier { r#ref: ast.wrapper_ref },
+                            B::Identifier {
+                                r#ref: ast.wrapper_ref,
+                            },
                             bun_ast::Loc::EMPTY,
                         ),
                         value: Some(value),
@@ -859,16 +890,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             StmtListWhich::OutsideWrapperPrefix,
                             Stmt::alloc(
                                 S::Local {
-                                    decls: G::DeclList::from_slice(&[
-                                        G::Decl {
-                                            binding: Binding::alloc(
-                                                temp_arena,
-                                                B::Identifier { r#ref: ast.wrapper_ref },
-                                                bun_ast::Loc::EMPTY,
-                                            ),
-                                            value: Some(value),
-                                        },
-                                    ]),
+                                    decls: G::DeclList::from_slice(&[G::Decl {
+                                        binding: Binding::alloc(
+                                            temp_arena,
+                                            B::Identifier {
+                                                r#ref: ast.wrapper_ref,
+                                            },
+                                            bun_ast::Loc::EMPTY,
+                                        ),
+                                        value: Some(value),
+                                    }]),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -930,7 +961,10 @@ pub struct DeclCollector {
 
 impl Default for DeclCollector {
     fn default() -> Self {
-        Self { decls: Vec::new(), arena: core::ptr::null() }
+        Self {
+            decls: Vec::new(),
+            arena: core::ptr::null(),
+        }
     }
 }
 
@@ -1048,16 +1082,13 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                     if did_merge_with_previous_local {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
-                        before
-                            .decls
-                            .append_slice(after.decls.slice());
+                        before.decls.append_slice(after.decls.slice());
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        let mut clone = Vec::<G::Decl>::init_capacity(
-                            before.decls.len() + after.decls.len(),
-                        );
+                        let mut clone =
+                            Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
                         // PERF(port): was appendSliceAssumeCapacity
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
@@ -1089,9 +1120,9 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 }
 
 // Type aliases / re-imports for readability of match arms (mirrors Zig naming).
-use bun_ast::stmt::Data as StmtData;
-use bun_ast::expr::Data as ExprData;
-use bun_ast::binding::Data as BindingData;
 use bun_ast::LocalKind;
+use bun_ast::binding::Data as BindingData;
+use bun_ast::expr::Data as ExprData;
+use bun_ast::stmt::Data as StmtData;
 
 // ported from: src/bundler/linker_context/generateCodeForFileInChunkJS.zig

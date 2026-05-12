@@ -3,20 +3,20 @@ use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
 
+use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap};
 use bun_core::Output;
-use bun_ast as js_ast;
+use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
-use bun_core::strings;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
 
-use crate::fs;
 use crate as resolver;
+use crate::fs;
 use bun_alloc::Arena as Bump;
 use bun_wyhash::Wyhash;
 
@@ -25,11 +25,11 @@ use bun_wyhash::Wyhash;
 // auto-install path is dormant until `bun_install` writes `r.package_manager`;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
-pub use ::bun_install_types::resolver_hooks::{PackageID, INVALID_PACKAGE_ID};
 pub use ::bun_install_types::resolver_hooks::{
     Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
     DependencyVersion, DependencyVersionTag, OperatingSystem,
 };
+pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 
 /// Compat namespace: older callers spell `install_stubs::Version::Tag` etc.
 /// Everything re-exports `bun_install_types::resolver_hooks` — no local stubs.
@@ -68,7 +68,9 @@ pub mod options {
         pub defaults: Vec<EnvDefault>,
     }
     impl Env {
-        pub fn init() -> Env { Env::default() }
+        pub fn init() -> Env {
+            Env::default()
+        }
         /// `options.zig` Env::setBehaviorFromPrefix.
         pub fn set_behavior_from_prefix(&mut self, prefix: Box<[u8]>) {
             self.behavior = EnvBehavior::disable;
@@ -169,12 +171,16 @@ impl Clone for DependencyMap {
     /// `SemverString`/`Dependency` are POD over `source_buf`, so semantics
     /// match the Zig shallow copy.
     fn clone(&self) -> Self {
-        Self { map: self.map.clone().expect("OOM"), source_buf: self.source_buf }
+        Self {
+            map: self.map.clone().expect("OOM"),
+            source_buf: self.source_buf,
+        }
     }
 }
 
 // PORT NOTE: Zig had `DependencyMap.HashMap` as a nested decl; Rust inherent impls cannot carry associated type aliases (stable), so use a free alias.
-pub type DependencyHashMap = ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
+pub type DependencyHashMap =
+    ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 // TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false
 
 pub struct PackageJSON {
@@ -293,12 +299,24 @@ pub enum IncludeDependencies {
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
 impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
-    fn name(&self) -> &[u8] { &self.name }
-    fn version(&self) -> &[u8] { &self.version }
-    fn source_path(&self) -> &[u8] { self.source.path.text }
-    fn dependency_source_buf(&self) -> &[u8] { self.dependencies.source_buf }
-    fn arch(&self) -> Architecture { self.arch }
-    fn os(&self) -> OperatingSystem { self.os }
+    fn name(&self) -> &[u8] {
+        &self.name
+    }
+    fn version(&self) -> &[u8] {
+        &self.version
+    }
+    fn source_path(&self) -> &[u8] {
+        self.source.path.text
+    }
+    fn dependency_source_buf(&self) -> &[u8] {
+        self.dependencies.source_buf
+    }
+    fn arch(&self) -> Architecture {
+        self.arch
+    }
+    fn os(&self) -> OperatingSystem {
+        self.os
+    }
     fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
         let buf = self.dependencies.source_buf;
         Box::new(
@@ -395,7 +413,10 @@ impl SideEffects {
             }
             SideEffects::Mixed(mixed) => {
                 // First check exact matches
-                if mixed.exact.contains_key(&StringHashMapUnownedKey::init(path)) {
+                if mixed
+                    .exact
+                    .contains_key(&StringHashMapUnownedKey::init(path))
+                {
                     return true;
                 }
                 // Then check glob patterns with normalized path
@@ -440,10 +461,9 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
         // threadlocal buffer; caller immediately dupes. Return owned to avoid
         // laundering the threadlocal borrow into `'static`.
-        let out = resolve_path::resolve_path::join_abs_string::<resolve_path::resolve_path::platform::Loose>(
-            self.top_level_dir,
-            parts,
-        );
+        let out = resolve_path::resolve_path::join_abs_string::<
+            resolve_path::resolve_path::platform::Loose,
+        >(self.top_level_dir, parts);
         Box::from(out)
     }
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
@@ -455,7 +475,10 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         // only; it does NOT join against cwd. Writes into a threadlocal buffer;
         // caller immediately dupes. Return owned to avoid laundering the
         // threadlocal borrow into `'static`.
-        let out = resolve_path::resolve_path::normalize_string::<true, resolve_path::resolve_path::platform::Auto>(str);
+        let out = resolve_path::resolve_path::normalize_string::<
+            true,
+            resolve_path::resolve_path::platform::Auto,
+        >(str);
         Box::from(&*out)
     }
 }
@@ -472,7 +495,13 @@ impl PackageJSON {
         // TODO(port): narrow error set
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
+            if !matches!(
+                prop.value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .data,
+                js_ast::ExprData::EString(_)
+            ) {
                 continue;
             }
             valid_count += 1;
@@ -482,30 +511,52 @@ impl PackageJSON {
         let _ = env.defaults.reserve(valid_count);
 
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
+            if !matches!(
+                prop.value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .data,
+                js_ast::ExprData::EString(_)
+            ) {
                 continue;
             }
             // PERF(port): was appendAssumeCapacity
             env.defaults.push(options::EnvDefault {
                 key: Box::from(
-                    prop.key.as_ref().expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
+                    prop.key
+                        .as_ref()
+                        .expect("infallible: prop has key")
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .string(bump)
+                        .expect("unreachable"),
                 ),
                 value: Box::from(
-                    prop.value.as_ref().expect("infallible: prop has value").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
+                    prop.value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .string(bump)
+                        .expect("unreachable"),
                 ),
             });
         }
         Ok(())
     }
 
-    fn load_overrides(
-        framework: &mut options::Framework,
-        json: &js_ast::E::Object,
-        bump: &Bump,
-    ) {
+    fn load_overrides(framework: &mut options::Framework, json: &js_ast::E::Object, bump: &Bump) {
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
+            if !matches!(
+                prop.value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .data,
+                js_ast::ExprData::EString(_)
+            ) {
                 continue;
             }
             valid_count += 1;
@@ -517,14 +568,34 @@ impl PackageJSON {
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let _ = buffer; // unused after reshaping
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
+            if !matches!(
+                prop.value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .data,
+                js_ast::ExprData::EString(_)
+            ) {
                 continue;
             }
             keys.push(Box::from(
-                prop.key.as_ref().expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
+                prop.key
+                    .as_ref()
+                    .expect("infallible: prop has key")
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .string(bump)
+                    .expect("unreachable"),
             ));
             values.push(Box::from(
-                prop.value.as_ref().expect("infallible: prop has value").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
+                prop.value
+                    .as_ref()
+                    .expect("infallible: prop has value")
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .string(bump)
+                    .expect("unreachable"),
             ));
         }
         framework.override_modules = api::StringMap { keys, values };
@@ -541,7 +612,12 @@ impl PackageJSON {
                     let str = e_str.string(bump).unwrap_or_default();
 
                     if str == b"defaults" {
-                        match &prop.value.as_ref().expect("infallible: prop has value").data {
+                        match &prop
+                            .value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .data
+                        {
                             js_ast::ExprData::EObject(obj) => {
                                 Self::load_define_defaults(env, obj, bump)?;
                             }
@@ -550,7 +626,12 @@ impl PackageJSON {
                             }
                         }
                     } else if str == b".env" {
-                        match &prop.value.as_ref().expect("infallible: prop has value").data {
+                        match &prop
+                            .value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .data
+                        {
                             js_ast::ExprData::EString(value_str) => {
                                 env.set_behavior_from_prefix(Box::from(
                                     value_str.string(bump).unwrap_or_default(),
@@ -615,7 +696,8 @@ impl PackageJSON {
                     if let js_ast::ExprData::EObject(object) = &client.expr.data {
                         framework.client.env = options::Env::init();
 
-                        let _ = Self::load_define_expression(&mut framework.client.env, object, bump);
+                        let _ =
+                            Self::load_define_expression(&mut framework.client.env, object, bump);
                         framework.fallback.env = framework.client.env.clone();
                         skip_fallback = true;
                     }
@@ -626,7 +708,11 @@ impl PackageJSON {
                         if let js_ast::ExprData::EObject(object) = &client.expr.data {
                             framework.fallback.env = options::Env::init();
 
-                            let _ = Self::load_define_expression(&mut framework.fallback.env, object, bump);
+                            let _ = Self::load_define_expression(
+                                &mut framework.fallback.env,
+                                object,
+                                bump,
+                            );
                         }
                     }
                 }
@@ -635,7 +721,8 @@ impl PackageJSON {
                     if let js_ast::ExprData::EObject(object) = &server.expr.data {
                         framework.server.env = options::Env::init();
 
-                        let _ = Self::load_define_expression(&mut framework.server.env, object, bump);
+                        let _ =
+                            Self::load_define_expression(&mut framework.server.env, object, bump);
                     }
                 }
             }
@@ -650,7 +737,9 @@ impl PackageJSON {
             }
         }
 
-        framework.client.is_enabled() || framework.server.is_enabled() || framework.fallback.is_enabled()
+        framework.client.is_enabled()
+            || framework.server.is_enabled()
+            || framework.fallback.is_enabled()
     }
 
     // PORT NOTE: Zig `comptime load_framework: LoadFramework` lowered to a runtime
@@ -663,7 +752,9 @@ impl PackageJSON {
         bump: &Bump,
         load_framework: LoadFramework,
     ) {
-        let Some(framework_object) = json.as_property(b"framework") else { return };
+        let Some(framework_object) = json.as_property(b"framework") else {
+            return;
+        };
 
         if let Some(name) = framework_object.expr.as_property(b"displayName") {
             if let Some(str) = name.expr.as_string(bump) {
@@ -716,12 +807,18 @@ impl PackageJSON {
                             let mut count: usize = 0;
                             let items = array.items.slice();
                             for item in items {
-                                count += (matches!(&item.data, js_ast::ExprData::EString(s) if !s.data.is_empty())) as usize;
+                                count += (matches!(&item.data, js_ast::ExprData::EString(s) if !s.data.is_empty()))
+                                    as usize;
                             }
                             match count {
                                 0 => {}
                                 1 => {
-                                    let str = items[0].data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable");
+                                    let str = items[0]
+                                        .data
+                                        .e_string()
+                                        .expect("infallible: variant checked")
+                                        .string(bump)
+                                        .expect("unreachable");
                                     if !str.is_empty() {
                                         pair.router.dir = str.into();
                                         pair.router.possible_dirs = Box::default();
@@ -735,7 +832,9 @@ impl PackageJSON {
                                     for item in items {
                                         if let js_ast::ExprData::EString(s) = &item.data {
                                             if !s.data.is_empty() {
-                                                list.push(Box::from(s.string(bump).expect("unreachable")));
+                                                list.push(Box::from(
+                                                    s.string(bump).expect("unreachable"),
+                                                ));
                                             }
                                         }
                                     }
@@ -757,7 +856,9 @@ impl PackageJSON {
                         let mut valid_count: usize = 0;
 
                         while let Some(expr) = array.next() {
-                            let js_ast::ExprData::EString(e_str) = &expr.data else { continue };
+                            let js_ast::ExprData::EString(e_str) = &expr.data else {
+                                continue;
+                            };
                             if e_str.data.is_empty() || e_str.data[0] != b'.' {
                                 continue;
                             }
@@ -770,7 +871,9 @@ impl PackageJSON {
 
                             // We don't need to allocate the strings because we keep the package.json source string in memory
                             while let Some(expr) = array.next() {
-                                let js_ast::ExprData::EString(e_str) = &expr.data else { continue };
+                                let js_ast::ExprData::EString(e_str) = &expr.data else {
+                                    continue;
+                                };
                                 if e_str.data.is_empty() || e_str.data[0] != b'.' {
                                     continue;
                                 }
@@ -787,8 +890,13 @@ impl PackageJSON {
         match load_framework {
             LoadFramework::Development => {
                 if let Some(env) = framework_object.expr.as_property(b"development") {
-                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr, bump) {
-                        pair.framework.package = package_json.name_for_import().expect("unreachable");
+                    if Self::load_framework_expression::<READ_DEFINES>(
+                        pair.framework,
+                        env.expr,
+                        bump,
+                    ) {
+                        pair.framework.package =
+                            package_json.name_for_import().expect("unreachable");
                         pair.framework.development = true;
                         if let Some(static_prop) = env.expr.as_property(b"static") {
                             if let Some(str) = static_prop.expr.as_string(bump) {
@@ -805,8 +913,13 @@ impl PackageJSON {
             }
             LoadFramework::Production => {
                 if let Some(env) = framework_object.expr.as_property(b"production") {
-                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr, bump) {
-                        pair.framework.package = package_json.name_for_import().expect("unreachable");
+                    if Self::load_framework_expression::<READ_DEFINES>(
+                        pair.framework,
+                        env.expr,
+                        bump,
+                    ) {
+                        pair.framework.package =
+                            package_json.name_for_import().expect("unreachable");
                         pair.framework.development = false;
 
                         if let Some(static_prop) = env.expr.as_property(b"static") {
@@ -825,7 +938,11 @@ impl PackageJSON {
             _ => unreachable!(), // @compileError("unreachable")
         }
 
-        if Self::load_framework_expression::<READ_DEFINES>(pair.framework, framework_object.expr, bump) {
+        if Self::load_framework_expression::<READ_DEFINES>(
+            pair.framework,
+            framework_object.expr,
+            bump,
+        ) {
             pair.framework.package = package_json.name_for_import().expect("unreachable");
             pair.framework.development = false;
         }
@@ -846,8 +963,12 @@ impl PackageJSON {
         let properties = obj.properties.slice();
 
         for property in properties {
-            let Some(key_expr) = property.key.as_ref() else { continue };
-            let Some(key) = key_expr.as_utf8_string_literal() else { continue };
+            let Some(key_expr) = property.key.as_ref() else {
+                continue;
+            };
+            let Some(key) = key_expr.as_utf8_string_literal() else {
+                continue;
+            };
             if !resolver::is_package_path(key) {
                 log.add_range_warning_fmt(
                     Some(json_source),
@@ -860,7 +981,9 @@ impl PackageJSON {
                 continue;
             }
 
-            let Some(value) = property.value.as_ref() else { continue };
+            let Some(value) = property.value.as_ref() else {
+                continue;
+            };
             let js_ast::ExprData::EObject(value_obj) = &value.data else {
                 log.add_warning_fmt(
                     Some(json_source),
@@ -881,10 +1004,17 @@ impl PackageJSON {
             let mut map = MacroImportReplacementMap::default();
             map.reserve(remap_properties.len());
             for remap in remap_properties {
-                let Some(remap_key) = remap.key.as_ref() else { continue };
-                let Some(import_name) = remap_key.as_utf8_string_literal() else { continue };
-                let Some(remap_value) = remap.value.as_ref() else { continue };
-                let valid = matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
+                let Some(remap_key) = remap.key.as_ref() else {
+                    continue;
+                };
+                let Some(import_name) = remap_key.as_utf8_string_literal() else {
+                    continue;
+                };
+                let Some(remap_value) = remap.value.as_ref() else {
+                    continue;
+                };
+                let valid =
+                    matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
                 if !valid {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -937,7 +1067,10 @@ impl PackageJSON {
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
         let package_json_path_ = r_fs.abs(&parts);
-        let package_json_path = r_fs.dirname_store.append_slice(package_json_path_).expect("unreachable");
+        let package_json_path = r_fs
+            .dirname_store
+            .append_slice(package_json_path_)
+            .expect("unreachable");
 
         // DirInfo cache is reused globally
         // So we cannot free these
@@ -953,16 +1086,15 @@ impl PackageJSON {
             Ok(e) => e,
             Err(err) => {
                 if err != bun_core::err!("IsDir") {
-                    r_log
-                        .add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Cannot read file \"{}\": {}",
-                                bstr::BStr::new(input_path),
-                                bstr::BStr::new(err.name())
-                            ),
-                        );
+                    r_log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Cannot read file \"{}\": {}",
+                            bstr::BStr::new(input_path),
+                            bstr::BStr::new(err.name())
+                        ),
+                    );
                 }
 
                 return None;
@@ -983,7 +1115,10 @@ impl PackageJSON {
         });
 
         if let Some(debug) = r.debug_logs.as_mut() {
-            debug.add_note_fmt(format_args!("The file \"{}\" exists", bstr::BStr::new(package_json_path)));
+            debug.add_note_fmt(format_args!(
+                "The file \"{}\" exists",
+                bstr::BStr::new(package_json_path)
+            ));
         }
 
         // PORT NOTE: `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
@@ -1076,7 +1211,11 @@ impl PackageJSON {
 
         if let Some(type_json) = json.as_property(b"type") {
             if let Some(type_str) = type_json.expr.as_utf8_string_literal() {
-                match ModuleType::LIST.get(type_str).copied().unwrap_or(ModuleType::Unknown) {
+                match ModuleType::LIST
+                    .get(type_str)
+                    .copied()
+                    .unwrap_or(ModuleType::Unknown)
+                {
                     ModuleType::Cjs => {
                         package_json.module_type = ModuleType::Cjs;
                     }
@@ -1096,8 +1235,11 @@ impl PackageJSON {
                     }
                 }
             } else {
-                r_log
-                    .add_warning(Some(json_source), type_json.loc, b"The value for \"type\" must be a string");
+                r_log.add_warning(
+                    Some(json_source),
+                    type_json.loc,
+                    b"The value for \"type\" must be a string",
+                );
             }
         }
 
@@ -1108,7 +1250,10 @@ impl PackageJSON {
 
                 if let Some(str) = expr.as_utf8_string_literal() {
                     if !str.is_empty() {
-                        package_json.main_fields.put(main, Box::from(str)).expect("unreachable");
+                        package_json
+                            .main_fields
+                            .put(main, Box::from(str))
+                            .expect("unreachable");
                     }
                 }
             }
@@ -1137,9 +1282,15 @@ impl PackageJSON {
 
                         // Remap all files in the browser field
                         for prop in obj.properties.slice() {
-                            let Some(key_expr) = prop.key.as_ref() else { continue };
-                            let Some(_key_str) = key_expr.as_utf8_string_literal() else { continue };
-                            let Some(value) = prop.value.as_ref() else { continue };
+                            let Some(key_expr) = prop.key.as_ref() else {
+                                continue;
+                            };
+                            let Some(_key_str) = key_expr.as_utf8_string_literal() else {
+                                continue;
+                            };
+                            let Some(value) = prop.value.as_ref() else {
+                                continue;
+                            };
 
                             // Normalize the path so we can compare against it without getting
                             // confused by "./". There is no distinction between package paths and
@@ -1166,19 +1317,24 @@ impl PackageJSON {
                                 }
                                 js_ast::ExprData::EBoolean(boolean) => {
                                     if !boolean.value {
-                                        package_json.browser_map.put(&key, Box::default()).expect("unreachable");
+                                        package_json
+                                            .browser_map
+                                            .put(&key, Box::default())
+                                            .expect("unreachable");
                                     }
                                 }
                                 _ => {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
                                     // PORT NOTE: `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
-                                    if !strings::contains(json_source.path.text, NODE_MODULES_PATH.as_bytes()) {
-                                        r_log
-                                            .add_warning(
-                                                Some(json_source),
-                                                value.loc,
-                                                b"Each \"browser\" mapping must be a string or boolean",
-                                            );
+                                    if !strings::contains(
+                                        json_source.path.text,
+                                        NODE_MODULES_PATH.as_bytes(),
+                                    ) {
+                                        r_log.add_warning(
+                                            Some(json_source),
+                                            value.loc,
+                                            b"Each \"browser\" mapping must be a string or boolean",
+                                        );
                                     }
                                 }
                             }
@@ -1190,13 +1346,17 @@ impl PackageJSON {
         }
 
         if let Some(exports_prop) = json.as_property(b"exports") {
-            if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr, exports_prop.loc) {
+            if let Some(exports_map) =
+                ExportsMap::parse(json_source, r_log, exports_prop.expr, exports_prop.loc)
+            {
                 package_json.exports = Some(exports_map);
             }
         }
 
         if let Some(imports_prop) = json.as_property(b"imports") {
-            if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr, imports_prop.loc) {
+            if let Some(imports_map) =
+                ExportsMap::parse(json_source, r_log, imports_prop.expr, imports_prop.loc)
+            {
                 package_json.imports = Some(imports_map);
             }
         }
@@ -1247,10 +1407,8 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] = [
-                                json_source.path.name.dir_with_trailing_slash(),
-                                name,
-                            ];
+                            let joined: [&[u8]; 2] =
+                                [json_source.path.name.dir_with_trailing_slash(), name];
 
                             let pattern = r_fs.join(&joined);
 
@@ -1260,20 +1418,20 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'{')
                             {
                                 // Normalize pattern to use forward slashes for cross-platform compatibility
-                                let normalized_pattern =
-                                    Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
+                                let normalized_pattern = Self::normalize_path_for_glob(pattern)
+                                    .unwrap_or_else(|_| pattern.to_vec());
                                 // PERF(port): was appendAssumeCapacity
                                 glob_list.push(normalized_pattern.into_boxed_slice());
                             } else {
                                 // PERF(port): was getOrPutAssumeCapacity
-                                let _ = map.insert(
-                                    StringHashMapUnownedKey::init(pattern),
-                                    (),
-                                );
+                                let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                             }
                         }
                     }
-                    package_json.side_effects = SideEffects::Mixed(MixedPatterns { exact: map, globs: glob_list });
+                    package_json.side_effects = SideEffects::Mixed(MixedPatterns {
+                        exact: map,
+                        globs: glob_list,
+                    });
                 } else if has_globs {
                     // Only glob patterns
                     glob_list.reserve(items.len());
@@ -1285,15 +1443,13 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] = [
-                                json_source.path.name.dir_with_trailing_slash(),
-                                name,
-                            ];
+                            let joined: [&[u8]; 2] =
+                                [json_source.path.name.dir_with_trailing_slash(), name];
 
                             let pattern = r_fs.join(&joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
-                            let normalized_pattern =
-                                Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
+                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
+                                .unwrap_or_else(|_| pattern.to_vec());
                             // PERF(port): was appendAssumeCapacity
                             glob_list.push(normalized_pattern.into_boxed_slice());
                         }
@@ -1304,16 +1460,12 @@ impl PackageJSON {
                     map.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_utf8_string_literal() {
-                            let joined: [&[u8]; 2] = [
-                                json_source.path.name.dir_with_trailing_slash(),
-                                name,
-                            ];
+                            let joined: [&[u8]; 2] =
+                                [json_source.path.name.dir_with_trailing_slash(), name];
 
                             // PERF(port): was getOrPutAssumeCapacity
-                            let _ = map.insert(
-                                StringHashMapUnownedKey::init(r_fs.join(&joined)),
-                                (),
-                            );
+                            let _ =
+                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
@@ -1324,8 +1476,10 @@ impl PackageJSON {
         // TODO(b2-blocked): bun_install::{Dependency, Architecture, OperatingSystem,
         // lockfile::Package::DependencyGroup, PackageManager}. The whole
         // dependencies/os/cpu block is install-tier.
-        
-        if INCLUDE_DEPENDENCIES == IncludeDependencies::Main || INCLUDE_DEPENDENCIES == IncludeDependencies::Local {
+
+        if INCLUDE_DEPENDENCIES == IncludeDependencies::Main
+            || INCLUDE_DEPENDENCIES == IncludeDependencies::Local
+        {
             'update_dependencies: {
                 if let Some(pkg) = package_id {
                     package_json.package_manager_package_id = pkg;
@@ -1338,7 +1492,10 @@ impl PackageJSON {
                         let tag = pm.infer_dependency_tag(&package_json.version);
 
                         if tag == DependencyVersionTag::Npm {
-                            let sliced = Semver::SlicedString::init(&package_json.version, &package_json.version);
+                            let sliced = Semver::SlicedString::init(
+                                &package_json.version,
+                                &package_json.version,
+                            );
                             if let Some(dependency_version) = pm.parse_dependency_with_tag(
                                 SemverString::init(&package_json.name, &package_json.name),
                                 Semver::semver_string::Builder::string_hash(&package_json.name),
@@ -1399,10 +1556,7 @@ impl PackageJSON {
                         DependencyGroup::OPTIONAL,
                     ]
                 } else {
-                    &[
-                        DependencyGroup::DEPENDENCIES,
-                        DependencyGroup::OPTIONAL,
-                    ]
+                    &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
                 };
                 // PERF(port): was comptime monomorphization (inline for over comptime array) — profile in Phase B
 
@@ -1433,13 +1587,27 @@ impl PackageJSON {
                         if let Some(group_json) = json.get(group.field) {
                             if let js_ast::ExprData::EObject(group_obj) = &group_json.data {
                                 for prop in group_obj.properties.slice() {
-                                    let Some(name_prop) = prop.key.as_ref() else { continue };
-                                    let Some(name_str) = name_prop.as_utf8_string_literal() else { continue };
-                                    let name_hash = Semver::semver_string::Builder::string_hash(name_str);
-                                    let name = SemverString::init(package_json.dependencies.source_buf, name_str);
-                                    let Some(version_value) = prop.value.as_ref() else { continue };
-                                    let Some(version_str) = version_value.as_utf8_string_literal() else { continue };
-                                    let sliced_str = Semver::SlicedString::init(version_str, version_str);
+                                    let Some(name_prop) = prop.key.as_ref() else {
+                                        continue;
+                                    };
+                                    let Some(name_str) = name_prop.as_utf8_string_literal() else {
+                                        continue;
+                                    };
+                                    let name_hash =
+                                        Semver::semver_string::Builder::string_hash(name_str);
+                                    let name = SemverString::init(
+                                        package_json.dependencies.source_buf,
+                                        name_str,
+                                    );
+                                    let Some(version_value) = prop.value.as_ref() else {
+                                        continue;
+                                    };
+                                    let Some(version_str) = version_value.as_utf8_string_literal()
+                                    else {
+                                        continue;
+                                    };
+                                    let sliced_str =
+                                        Semver::SlicedString::init(version_str, version_str);
 
                                     // Zig's `Dependency.parse` accepts `?*PackageManager`;
                                     // the parser body lives in install-tier so route through
@@ -1497,23 +1665,37 @@ impl PackageJSON {
             // top-level object property. Values are JSON string literals, so
             // `as_utf8_string_literal()` (no bump) returns slices into
             // `contents_static`.
-            let property_string_map = |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
-                let prop = json.as_property(name)?;
-                let js_ast::ExprData::EObject(obj) = &prop.expr.data else { return None };
-                if obj.properties.len_u32() == 0 { return None }
-                let mut map = StringArrayHashMap::<&'static [u8]>::default();
-                map.ensure_total_capacity(obj.properties.len_u32() as usize).ok()?;
-                for p in obj.properties.slice() {
-                    let Some(key) = p.key.as_ref().and_then(|k| k.as_utf8_string_literal()) else { continue };
-                    let Some(value) = p.value.as_ref().and_then(|v| v.as_utf8_string_literal()) else { continue };
-                    if key.is_empty() { continue }
-                    // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
-                    // on `contents_static` above (owned by the returned PackageJSON).
-                    let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
-                    map.put_assume_capacity(key, value);
-                }
-                Some(Box::new(map))
-            };
+            let property_string_map =
+                |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
+                    let prop = json.as_property(name)?;
+                    let js_ast::ExprData::EObject(obj) = &prop.expr.data else {
+                        return None;
+                    };
+                    if obj.properties.len_u32() == 0 {
+                        return None;
+                    }
+                    let mut map = StringArrayHashMap::<&'static [u8]>::default();
+                    map.ensure_total_capacity(obj.properties.len_u32() as usize)
+                        .ok()?;
+                    for p in obj.properties.slice() {
+                        let Some(key) = p.key.as_ref().and_then(|k| k.as_utf8_string_literal())
+                        else {
+                            continue;
+                        };
+                        let Some(value) = p.value.as_ref().and_then(|v| v.as_utf8_string_literal())
+                        else {
+                            continue;
+                        };
+                        if key.is_empty() {
+                            continue;
+                        }
+                        // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
+                        // on `contents_static` above (owned by the returned PackageJSON).
+                        let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
+                        map.put_assume_capacity(key, value);
+                    }
+                    Some(Box::new(map))
+                };
             if let Some(scripts) = property_string_map(b"scripts") {
                 package_json.scripts = Some(scripts);
             }
@@ -1617,7 +1799,10 @@ impl<'a> Visitor<'a> {
                 }
                 return Entry {
                     data: EntryData::Array(array.into_boxed_slice()),
-                    first_token: bun_ast::Range { loc: expr.loc, len: 1 },
+                    first_token: bun_ast::Range {
+                        loc: expr.loc,
+                        len: 1,
+                    },
                 };
             }
             js_ast::ExprData::EObject(e_obj) => {
@@ -1669,7 +1854,11 @@ impl<'a> Visitor<'a> {
                     }
 
                     let value = self.visit(prop.value.expect("infallible: prop has value"));
-                    map_data.push(MapEntry { key: key.clone(), key_range, value: value.clone() });
+                    map_data.push(MapEntry {
+                        key: key.clone(),
+                        key_range,
+                        value: value.clone(),
+                    });
 
                     // safe to use "/" on windows. exports in package.json does not use "\\"
                     if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
@@ -1710,12 +1899,11 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        self.log
-            .add_range_warning(
-                Some(self.source),
-                first_token,
-                b"This value must be a string, an object, an array, or null",
-            );
+        self.log.add_range_warning(
+            Some(self.source),
+            first_token,
+            b"This value must be a string, an object, an array, or null",
+        );
         Entry {
             data: EntryData::Invalid,
             first_token,
@@ -1897,7 +2085,11 @@ pub struct Package<'a> {
 
 impl Default for Package<'_> {
     fn default() -> Self {
-        Package { name: b"", version: b"", subpath: b"" }
+        Package {
+            name: b"",
+            version: b"",
+            subpath: b"",
+        }
     }
 }
 
@@ -1959,7 +2151,11 @@ impl<'a> Package<'a> {
     pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
-            slash = if slash == -1 { i32::try_from(specifier.len()).expect("int cast") } else { slash };
+            slash = if slash == -1 {
+                i32::try_from(specifier.len()).expect("int cast")
+            } else {
+                slash
+            };
             Some(&specifier[0..usize::try_from(slash).expect("int cast")])
         } else {
             if slash == -1 {
@@ -2006,7 +2202,9 @@ impl<'a> Package<'a> {
             version: b"",
         };
 
-        if strings::starts_with(package.name, b".") || strings::index_any_comptime(package.name, b"\\%").is_some() {
+        if strings::starts_with(package.name, b".")
+            || strings::index_any_comptime(package.name, b"\\%").is_some()
+        {
             return None;
         }
 
@@ -2014,7 +2212,11 @@ impl<'a> Package<'a> {
         // the specifier. Searching the entire specifier misparses wildcard subpaths
         // whose matched substring contains `@` (e.g. `test-pkg/@scope/sub/index.js`
         // or `ember-source/@ember/renderer/...`) as if the package had a version.
-        let offset: usize = if package.name.is_empty() || package.name[0] != b'@' { 0 } else { 1 };
+        let offset: usize = if package.name.is_empty() || package.name[0] != b'@' {
+            0
+        } else {
+            1
+        };
         if offset < package.name.len() {
             if let Some(at) = strings::index_of_char(&specifier[offset..package.name.len()], b'@') {
                 let at = at as usize;
@@ -2029,13 +2231,18 @@ impl<'a> Package<'a> {
 
                 Self::parse_subpath(
                     &mut package.subpath,
-                    &specifier[(package.name.len() + package.version.len() + 1).min(specifier.len())..],
+                    &specifier
+                        [(package.name.len() + package.version.len() + 1).min(specifier.len())..],
                     subpath_buf,
                 );
                 return Some(package);
             }
         }
-        Self::parse_subpath(&mut package.subpath, &specifier[package.name.len()..], subpath_buf);
+        Self::parse_subpath(
+            &mut package.subpath,
+            &specifier[package.name.len()..],
+            subpath_buf,
+        );
 
         Some(package)
     }
@@ -2175,7 +2382,10 @@ impl<'a> ESModule<'a> {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
-                debug: ResolutionDebug { token: bun_ast::Range::NONE, ..Default::default() },
+                debug: ResolutionDebug {
+                    token: bun_ast::Range::NONE,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
         }
@@ -2185,7 +2395,10 @@ impl<'a> ESModule<'a> {
         match result.status {
             Status::Undefined | Status::Null => Resolution {
                 status: Status::PackageImportNotDefined,
-                debug: ResolutionDebug { token: result.debug.token, ..Default::default() },
+                debug: ResolutionDebug {
+                    token: result.debug.token,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             _ => Self::finalize(result),
@@ -2208,7 +2421,10 @@ impl<'a> ESModule<'a> {
         let resolved_path_buf_percent: &mut PathBuffer =
             unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
         // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
-        let len = match bun_url::PercentEncoding::decode_into(&mut resolved_path_buf_percent.0, &result.path) {
+        let len = match bun_url::PercentEncoding::decode_into(
+            &mut resolved_path_buf_percent.0,
+            &result.path,
+        ) {
             Ok(n) => n,
             Err(_) => {
                 return Resolution {
@@ -2255,7 +2471,12 @@ impl<'a> ESModule<'a> {
         result
     }
 
-    fn resolve_exports(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+    fn resolve_exports(
+        &mut self,
+        package_url: &[u8],
+        subpath: &[u8],
+        exports: &Entry,
+    ) -> Resolution {
         if matches!(exports.data, EntryData::Invalid) {
             if let Some(logs) = self.debug_logs.as_deref_mut() {
                 logs.add_note(b"Invalid package configuration".to_vec());
@@ -2263,13 +2484,19 @@ impl<'a> ESModule<'a> {
 
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
-                debug: ResolutionDebug { token: exports.first_token, ..Default::default() },
+                debug: ResolutionDebug {
+                    token: exports.first_token,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
         }
 
         if subpath == b"." {
-            let mut main_export = Entry { data: EntryData::Null, first_token: bun_ast::Range::NONE };
+            let mut main_export = Entry {
+                data: EntryData::Null,
+                first_token: bun_ast::Range::NONE,
+            };
             let cond = match &exports.data {
                 EntryData::String(_) | EntryData::Array(_) => true,
                 EntryData::Map(_) => !exports.keys_start_with_dot(),
@@ -2298,19 +2525,28 @@ impl<'a> ESModule<'a> {
             if result.status == Status::Null {
                 return Resolution {
                     status: Status::PackagePathDisabled,
-                    debug: ResolutionDebug { token: exports.first_token, ..Default::default() },
+                    debug: ResolutionDebug {
+                        token: exports.first_token,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
             }
         }
 
         if let Some(logs) = self.debug_logs.as_deref_mut() {
-            logs.add_note_fmt(format_args!("The path \"{}\" was not exported", bstr::BStr::new(subpath)));
+            logs.add_note_fmt(format_args!(
+                "The path \"{}\" was not exported",
+                bstr::BStr::new(subpath)
+            ));
         }
 
         Resolution {
             status: Status::PackagePathNotExported,
-            debug: ResolutionDebug { token: exports.first_token, ..Default::default() },
+            debug: ResolutionDebug {
+                token: exports.first_token,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -2323,7 +2559,10 @@ impl<'a> ESModule<'a> {
         package_url: &[u8],
     ) -> Resolution {
         if let Some(logs) = self.debug_logs.as_deref_mut() {
-            logs.add_note_fmt(format_args!("Checking object path map for \"{}\"", bstr::BStr::new(match_key)));
+            logs.add_note_fmt(format_args!(
+                "Checking object path map for \"{}\"",
+                bstr::BStr::new(match_key)
+            ));
         }
 
         // If matchKey is a key of matchObj and does not end in "/" or contain "*", then
@@ -2356,10 +2595,12 @@ impl<'a> ESModule<'a> {
                         // patternTrailer and the length of matchKey is greater than or
                         // equal to the length of expansionKey, then
                         if pattern_trailer.is_empty()
-                            || (strings::ends_with(match_key, pattern_trailer) && match_key.len() >= expansion.key.len())
+                            || (strings::ends_with(match_key, pattern_trailer)
+                                && match_key.len() >= expansion.key.len())
                         {
                             let target = &expansion.value;
-                            let subpath = &match_key[pattern_base.len()..match_key.len() - pattern_trailer.len()];
+                            let subpath = &match_key
+                                [pattern_base.len()..match_key.len() - pattern_trailer.len()];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "The key \"{}\" matched with \"{}\" left over",
@@ -2367,7 +2608,12 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(subpath)
                                 ));
                             }
-                            return self.resolve_target::<true>(package_url, target, subpath, is_imports);
+                            return self.resolve_target::<true>(
+                                package_url,
+                                target,
+                                subpath,
+                                is_imports,
+                            );
                         }
                     }
                 } else {
@@ -2383,8 +2629,11 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let mut result = self.resolve_target::<false>(package_url, target, subpath, is_imports);
-                        if result.status == Status::Exact || result.status == Status::ExactEndsWithStar {
+                        let mut result =
+                            self.resolve_target::<false>(package_url, target, subpath, is_imports);
+                        if result.status == Status::Exact
+                            || result.status == Status::ExactEndsWithStar
+                        {
                             // Return the object { resolved, exact: false }.
                             result.status = Status::Inexact;
                         }
@@ -2393,18 +2642,27 @@ impl<'a> ESModule<'a> {
                 }
 
                 if let Some(log) = self.debug_logs.as_deref_mut() {
-                    log.add_note_fmt(format_args!("The key \"{}\" did not match", bstr::BStr::new(&expansion.key)));
+                    log.add_note_fmt(format_args!(
+                        "The key \"{}\" did not match",
+                        bstr::BStr::new(&expansion.key)
+                    ));
                 }
             }
         }
 
         if let Some(log) = self.debug_logs.as_deref_mut() {
-            log.add_note_fmt(format_args!("No keys matched \"{}\"", bstr::BStr::new(match_key)));
+            log.add_note_fmt(format_args!(
+                "No keys matched \"{}\"",
+                bstr::BStr::new(match_key)
+            ));
         }
 
         Resolution {
             status: Status::Null,
-            debug: ResolutionDebug { token: match_obj.first_token, ..Default::default() },
+            debug: ResolutionDebug {
+                token: match_obj.first_token,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -2424,7 +2682,8 @@ impl<'a> ESModule<'a> {
                 // hold these — that's why acquisition is here, not at fn entry.
                 let mb = module_bufs();
                 let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
-                let resolve_target_buf2: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf2 };
+                let resolve_target_buf2: &mut PathBuffer =
+                    unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
                 if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(
@@ -2461,7 +2720,10 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(str),
                             status: Status::InvalidModuleSpecifier,
-                            debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
                         };
                     }
                 }
@@ -2475,7 +2737,10 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
-                    if internal && !strings::has_prefix(str, b"../") && !strings::has_prefix(str, b"/") {
+                    if internal
+                        && !strings::has_prefix(str, b"../")
+                        && !strings::has_prefix(str, b"/")
+                    {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                             let len = replacement_size(str, b"*", subpath);
@@ -2493,11 +2758,18 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
-                                debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                                debug: ResolutionDebug {
+                                    token: target.first_token,
+                                    ..Default::default()
+                                },
                             };
                         } else {
                             let parts2 = [str, subpath];
-                            let result = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf2.0, &parts2);
+                            let result = resolve_path::resolve_path::join_string_buf::<
+                                resolve_path::platform::Auto,
+                            >(
+                                &mut resolve_target_buf2.0, &parts2
+                            );
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
@@ -2510,7 +2782,10 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path,
                                 status: Status::PackageResolve,
-                                debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                                debug: ResolutionDebug {
+                                    token: target.first_token,
+                                    ..Default::default()
+                                },
                             };
                         }
                     }
@@ -2518,7 +2793,10 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 }
 
@@ -2536,13 +2814,18 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 }
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
                 let parts = [package_url, str];
-                let resolved_target = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf.0, &parts);
+                let resolved_target = resolve_path::resolve_path::join_string_buf::<
+                    resolve_path::platform::Auto,
+                >(&mut resolve_target_buf.0, &parts);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
@@ -2558,7 +2841,10 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 }
 
@@ -2577,7 +2863,8 @@ impl<'a> ESModule<'a> {
                     }
 
                     let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize == result.len() - 1
+                        && strings::index_of_char(result, b'*').unwrap() as usize
+                            == result.len() - 1
                     {
                         Status::ExactEndsWithStar
                     } else {
@@ -2587,11 +2874,16 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(result),
                         status,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
-                    let result = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf2.0, &parts2);
+                    let result = resolve_path::resolve_path::join_string_buf::<
+                        resolve_path::platform::Auto,
+                    >(&mut resolve_target_buf2.0, &parts2);
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
@@ -2605,7 +2897,10 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path,
                         status: Status::Exact,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 }
             }
@@ -2619,11 +2914,19 @@ impl<'a> ESModule<'a> {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
-                            log.add_note_fmt(format_args!("The key \"{}\" matched", bstr::BStr::new(key)));
+                            log.add_note_fmt(format_args!(
+                                "The key \"{}\" matched",
+                                bstr::BStr::new(key)
+                            ));
                         }
 
                         let prev_module_type = *self.module_type;
-                        let result = self.resolve_target::<PATTERN>(package_url, &entry.value, subpath, internal);
+                        let result = self.resolve_target::<PATTERN>(
+                            package_url,
+                            &entry.value,
+                            subpath,
+                            internal,
+                        );
                         if result.status.is_undefined() {
                             did_find_map_entry = true;
                             last_map_entry_i = i;
@@ -2643,7 +2946,10 @@ impl<'a> ESModule<'a> {
                     }
 
                     if let Some(log) = self.debug_logs.as_deref_mut() {
-                        log.add_note_fmt(format_args!("The key \"{}\" did not match", bstr::BStr::new(key)));
+                        log.add_note_fmt(format_args!(
+                            "The key \"{}\" did not match",
+                            bstr::BStr::new(key)
+                        ));
                     }
                 }
 
@@ -2689,7 +2995,12 @@ impl<'a> ESModule<'a> {
                     }
 
                     let unmatched: Box<[Box<[u8]>]> = match &return_target.data {
-                        EntryData::Map(m) => m.list.iter().map(|e| e.key.clone()).collect::<Vec<_>>().into_boxed_slice(),
+                        EntryData::Map(m) => m
+                            .list
+                            .iter()
+                            .map(|e| e.key.clone())
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
                         _ => Box::default(),
                     };
 
@@ -2706,30 +3017,49 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::UndefinedNoConditionsMatch,
-                    debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                    debug: ResolutionDebug {
+                        token: target.first_token,
+                        ..Default::default()
+                    },
                 };
             }
             EntryData::Array(array) => {
                 if array.is_empty() {
                     if let Some(log) = self.debug_logs.as_deref_mut() {
-                        log.add_note_fmt(format_args!("The path \"{}\" is an empty array", bstr::BStr::new(subpath)));
+                        log.add_note_fmt(format_args!(
+                            "The path \"{}\" is an empty array",
+                            bstr::BStr::new(subpath)
+                        ));
                     }
 
                     return Resolution {
                         path: Box::default(),
                         status: Status::Null,
-                        debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                        debug: ResolutionDebug {
+                            token: target.first_token,
+                            ..Default::default()
+                        },
                     };
                 }
 
                 let mut last_exception = Status::Undefined;
-                let mut last_debug = ResolutionDebug { token: target.first_token, ..Default::default() };
+                let mut last_debug = ResolutionDebug {
+                    token: target.first_token,
+                    ..Default::default()
+                };
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
                     let prev_module_type = *self.module_type;
-                    let result = self.resolve_target::<PATTERN>(package_url, target_value, subpath, internal);
-                    if result.status == Status::InvalidPackageTarget || result.status == Status::Null {
+                    let result = self.resolve_target::<PATTERN>(
+                        package_url,
+                        target_value,
+                        subpath,
+                        internal,
+                    );
+                    if result.status == Status::InvalidPackageTarget
+                        || result.status == Status::Null
+                    {
                         last_debug = result.debug.clone();
                         last_exception = result.status;
                     }
@@ -2742,29 +3072,45 @@ impl<'a> ESModule<'a> {
                     return result;
                 }
 
-                return Resolution { path: Box::default(), status: last_exception, debug: last_debug };
+                return Resolution {
+                    path: Box::default(),
+                    status: last_exception,
+                    debug: last_debug,
+                };
             }
             EntryData::Null => {
                 if let Some(log) = self.debug_logs.as_deref_mut() {
-                    log.add_note_fmt(format_args!("The path \"{}\" is null", bstr::BStr::new(subpath)));
+                    log.add_note_fmt(format_args!(
+                        "The path \"{}\" is null",
+                        bstr::BStr::new(subpath)
+                    ));
                 }
 
                 return Resolution {
                     path: Box::default(),
                     status: Status::Null,
-                    debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+                    debug: ResolutionDebug {
+                        token: target.first_token,
+                        ..Default::default()
+                    },
                 };
             }
             _ => {}
         }
 
         if let Some(logs) = self.debug_logs.as_deref_mut() {
-            logs.add_note_fmt(format_args!("Invalid package target for path \"{}\"", bstr::BStr::new(subpath)));
+            logs.add_note_fmt(format_args!(
+                "Invalid package target for path \"{}\"",
+                bstr::BStr::new(subpath)
+            ));
         }
 
         Resolution {
             status: Status::InvalidPackageTarget,
-            debug: ResolutionDebug { token: target.first_token, ..Default::default() },
+            debug: ResolutionDebug {
+                token: target.first_token,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -2779,13 +3125,21 @@ impl<'a> ESModule<'a> {
         None
     }
 
-    fn resolve_imports_exports_reverse(&mut self, query: &[u8], match_obj: &Entry) -> Option<ReverseResolution> {
-        let EntryData::Map(map) = &match_obj.data else { return None };
+    fn resolve_imports_exports_reverse(
+        &mut self,
+        query: &[u8],
+        match_obj: &Entry,
+    ) -> Option<ReverseResolution> {
+        let EntryData::Map(map) = &match_obj.data else {
+            return None;
+        };
 
         if !strings::ends_with_char_or_is_zero_length(query, b'*') {
             // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
             for entry in map.list.iter() {
-                if let Some(result) = self.resolve_target_reverse(query, &entry.key, &entry.value, ReverseKind::Exact) {
+                if let Some(result) =
+                    self.resolve_target_reverse(query, &entry.key, &entry.value, ReverseKind::Exact)
+                {
                     return Some(result);
                 }
             }
@@ -2793,17 +3147,23 @@ impl<'a> ESModule<'a> {
 
         for expansion in map.expansion_keys.iter() {
             if strings::ends_with_char_or_is_zero_length(&expansion.key, b'*') {
-                if let Some(result) =
-                    self.resolve_target_reverse(query, &expansion.key, &expansion.value, ReverseKind::Pattern)
-                {
+                if let Some(result) = self.resolve_target_reverse(
+                    query,
+                    &expansion.key,
+                    &expansion.value,
+                    ReverseKind::Pattern,
+                ) {
                     return Some(result);
                 }
             }
 
             // TODO(port): Zig used `.reverse` here but ReverseKind has no `.reverse` variant — preserved as Prefix? Actually Zig defines {exact, pattern, prefix}; `.reverse` is a typo in Zig source
-            if let Some(result) =
-                self.resolve_target_reverse(query, &expansion.key, &expansion.value, ReverseKind::Prefix)
-            {
+            if let Some(result) = self.resolve_target_reverse(
+                query,
+                &expansion.key,
+                &expansion.value,
+                ReverseKind::Prefix,
+            ) {
                 return Some(result);
             }
         }
@@ -2833,7 +3193,10 @@ impl<'a> ESModule<'a> {
                 match kind {
                     ReverseKind::Exact => {
                         if strings::eql(query, str) {
-                            return Some(ReverseResolution { subpath: Box::<[u8]>::from(str), token: target.first_token });
+                            return Some(ReverseResolution {
+                                subpath: Box::<[u8]>::from(str),
+                                token: target.first_token,
+                            });
                         }
                     }
                     ReverseKind::Prefix => {
@@ -2870,7 +3233,9 @@ impl<'a> ESModule<'a> {
                         // Only support tracing through a single "*"
                         let prefix = &str[0..star];
                         let suffix = &str[star + 1..];
-                        if strings::starts_with(query, prefix) && !strings::contains_char(suffix, b'*') {
+                        if strings::starts_with(query, prefix)
+                            && !strings::contains_char(suffix, b'*')
+                        {
                             let after_prefix = &query[prefix.len()..];
                             if strings::ends_with(after_prefix, suffix) {
                                 let star_data = &after_prefix[0..after_prefix.len() - suffix.len()];
@@ -2896,7 +3261,9 @@ impl<'a> ESModule<'a> {
                 for entry in map.list.iter() {
                     let map_key: &[u8] = &entry.key;
                     if self.conditions.contains_key(map_key) {
-                        if let Some(result) = self.resolve_target_reverse(query, key, &entry.value, kind) {
+                        if let Some(result) =
+                            self.resolve_target_reverse(query, key, &entry.value, kind)
+                        {
                             if map_key == b"import" {
                                 *self.module_type = ModuleType::Esm;
                             } else if map_key == b"require" {
@@ -2911,7 +3278,9 @@ impl<'a> ESModule<'a> {
 
             EntryData::Array(array) => {
                 for target_value in array.iter() {
-                    if let Some(result) = self.resolve_target_reverse(query, key, target_value, kind) {
+                    if let Some(result) =
+                        self.resolve_target_reverse(query, key, target_value, kind)
+                    {
                         return Some(result);
                     }
                 }

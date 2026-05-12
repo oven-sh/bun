@@ -1,6 +1,6 @@
 use bun_install::integrity::Integrity;
 use bun_install::npm::{Architecture, OperatingSystem};
-use bun_install::{Origin, PackageID, INVALID_PACKAGE_ID};
+use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
 use crate::lockfile_real::StringBuilder as LockfileStringBuilder;

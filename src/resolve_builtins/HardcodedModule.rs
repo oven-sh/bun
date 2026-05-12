@@ -1,7 +1,7 @@
-use bun_core::zstr;
-use bun_ast::import_record;
 use bun_ast::Target;
+use bun_ast::import_record;
 use bun_core::ZStr;
+use bun_core::zstr;
 
 // Zig: `const string = []const u8;` — in Rust we use `&'static [u8]` directly for keys.
 
@@ -501,31 +501,183 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("_http_server"),
     //
     // sys is a deprecated alias for util
-    (b"sys", Alias { path: zstr!("node:util"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:sys", Alias { path: zstr!("node:util"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
+    (
+        b"sys",
+        Alias {
+            path: zstr!("node:util"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:sys",
+        Alias {
+            path: zstr!("node:util"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
     //
     // These are returned in builtinModules, but probably not many
     // packages use them so we will just alias them.
-    (b"node:_stream_duplex", Alias { path: zstr!("node:_stream_duplex"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_stream_passthrough", Alias { path: zstr!("node:_stream_passthrough"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_stream_readable", Alias { path: zstr!("node:_stream_readable"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_stream_transform", Alias { path: zstr!("node:_stream_transform"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_stream_wrap", Alias { path: zstr!("node:_stream_wrap"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_stream_writable", Alias { path: zstr!("node:_stream_writable"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_tls_wrap", Alias { path: zstr!("node:tls"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"node:_tls_common", Alias { path: zstr!("node:_tls_common"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_duplex", Alias { path: zstr!("node:_stream_duplex"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_passthrough", Alias { path: zstr!("node:_stream_passthrough"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_readable", Alias { path: zstr!("node:_stream_readable"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_transform", Alias { path: zstr!("node:_stream_transform"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_wrap", Alias { path: zstr!("node:_stream_wrap"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_stream_writable", Alias { path: zstr!("node:_stream_writable"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_tls_wrap", Alias { path: zstr!("node:tls"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
-    (b"_tls_common", Alias { path: zstr!("node:_tls_common"), tag: import_record::Tag::Builtin, node_builtin: true, node_only_prefix: false }),
+    (
+        b"node:_stream_duplex",
+        Alias {
+            path: zstr!("node:_stream_duplex"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_stream_passthrough",
+        Alias {
+            path: zstr!("node:_stream_passthrough"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_stream_readable",
+        Alias {
+            path: zstr!("node:_stream_readable"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_stream_transform",
+        Alias {
+            path: zstr!("node:_stream_transform"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_stream_wrap",
+        Alias {
+            path: zstr!("node:_stream_wrap"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_stream_writable",
+        Alias {
+            path: zstr!("node:_stream_writable"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_tls_wrap",
+        Alias {
+            path: zstr!("node:tls"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"node:_tls_common",
+        Alias {
+            path: zstr!("node:_tls_common"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_duplex",
+        Alias {
+            path: zstr!("node:_stream_duplex"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_passthrough",
+        Alias {
+            path: zstr!("node:_stream_passthrough"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_readable",
+        Alias {
+            path: zstr!("node:_stream_readable"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_transform",
+        Alias {
+            path: zstr!("node:_stream_transform"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_wrap",
+        Alias {
+            path: zstr!("node:_stream_wrap"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_stream_writable",
+        Alias {
+            path: zstr!("node:_stream_writable"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_tls_wrap",
+        Alias {
+            path: zstr!("node:tls"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"_tls_common",
+        Alias {
+            path: zstr!("node:_tls_common"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: true,
+            node_only_prefix: false,
+        },
+    ),
 ];
 
 const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
-    (b"bun", Alias { path: zstr!("bun"), tag: import_record::Tag::Bun, node_builtin: false, node_only_prefix: false }),
+    (
+        b"bun",
+        Alias {
+            path: zstr!("bun"),
+            tag: import_record::Tag::Bun,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     entry!("bun:test"),
     entry!("bun:app"),
     entry!("bun:ffi"),
@@ -534,7 +686,15 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
-    (b"ffi", Alias { path: zstr!("bun:ffi"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
+    (
+        b"ffi",
+        Alias {
+            path: zstr!("bun:ffi"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     //
     // Thirdparty packages we override
     entry!("@vercel/fetch"),
@@ -543,21 +703,77 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("undici"),
     entry!("utf-8-validate"),
     entry!("ws"),
-    (b"ws/lib/websocket", Alias { path: zstr!("ws"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
+    (
+        b"ws/lib/websocket",
+        Alias {
+            path: zstr!("ws"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     //
     // Polyfills we force to native
     entry!("abort-controller"),
-    (b"abort-controller/polyfill", Alias { path: zstr!("abort-controller"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
+    (
+        b"abort-controller/polyfill",
+        Alias {
+            path: zstr!("abort-controller"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     //
     // To force Next.js to not use bundled dependencies.
-    (b"next/dist/compiled/ws", Alias { path: zstr!("ws"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
-    (b"next/dist/compiled/node-fetch", Alias { path: zstr!("node-fetch"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
-    (b"next/dist/compiled/undici", Alias { path: zstr!("undici"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
+    (
+        b"next/dist/compiled/ws",
+        Alias {
+            path: zstr!("ws"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"next/dist/compiled/node-fetch",
+        Alias {
+            path: zstr!("node-fetch"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"next/dist/compiled/undici",
+        Alias {
+            path: zstr!("undici"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
 ];
 
 const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
-    (b"@jest/globals", Alias { path: zstr!("bun:test"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
-    (b"vitest", Alias { path: zstr!("bun:test"), tag: import_record::Tag::Builtin, node_builtin: false, node_only_prefix: false }),
+    (
+        b"@jest/globals",
+        Alias {
+            path: zstr!("bun:test"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"vitest",
+        Alias {
+            path: zstr!("bun:test"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
 ];
 
 // TODO(port): replace with `phf::Map<&'static [u8], Alias>` generated by
@@ -565,7 +781,11 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
 // PERF(port): linear scan placeholder — Zig used a comptime perfect-hash map.
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 pub const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];
-const BUN_TEST_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS, BUN_TEST_EXTRA_ALIAS_KVS];
+const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
+    COMMON_ALIAS_KVS,
+    BUN_EXTRA_ALIAS_KVS,
+    BUN_TEST_EXTRA_ALIAS_KVS,
+];
 
 #[inline]
 fn lookup(tables: &[&[AliasKv]], name: &[u8]) -> Option<Alias> {

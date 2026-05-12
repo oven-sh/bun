@@ -1,10 +1,10 @@
 use core::mem::size_of;
 
-use crate::shared::Data;
 use super::new_writer::NewWriter;
 use super::write_wrap::WriteWrap;
 use super::z_helpers::z_field_count;
-use crate::postgres::types::int_types::{int32, int4};
+use crate::postgres::types::int_types::{int4, int32};
+use crate::shared::Data;
 
 pub struct StartupMessage {
     pub user: Data,

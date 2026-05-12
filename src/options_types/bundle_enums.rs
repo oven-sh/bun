@@ -321,9 +321,9 @@ impl From<bun_ast::ExportsKind> for ModuleType {
         match k {
             K::None => ModuleType::Unknown,
             K::Cjs => ModuleType::Cjs,
-            K::EsmWithDynamicFallback
-            | K::EsmWithDynamicFallbackFromCjs
-            | K::Esm => ModuleType::Esm,
+            K::EsmWithDynamicFallback | K::EsmWithDynamicFallbackFromCjs | K::Esm => {
+                ModuleType::Esm
+            }
         }
     }
 }

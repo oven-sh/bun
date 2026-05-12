@@ -18,10 +18,13 @@ use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 
 use bun_core::{self, Error};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn::{
+    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
+    SpawnResultExt as _, Status, Stdio,
+};
 use bun_sys::{self, Fd, FdExt as _};
 
 declare_scope!(WebViewHost, hidden);
@@ -47,7 +50,10 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 pub extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
-        if let Some(i) = INSTANCE.load(core::sync::atomic::Ordering::Relaxed).as_mut() {
+        if let Some(i) = INSTANCE
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .as_mut()
+        {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
             let _ = i.process.as_mut().kill(9);
@@ -75,13 +81,20 @@ pub extern "C" fn Bun__WebViewHost__ensure(
     }
     #[cfg(target_os = "macos")]
     {
-        if !INSTANCE.load(core::sync::atomic::Ordering::Relaxed).is_null() {
+        if !INSTANCE
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .is_null()
+        {
             return -1; // C++ already holds the fd
         }
 
         // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
         // `*mut` because it threads through C ABI / event-loop dispatch.
-        let fd = match spawn(global.bun_vm() as *const _ as *mut _, stdout_inherit, stderr_inherit) {
+        let fd = match spawn(
+            global.bun_vm() as *const _ as *mut _,
+            stdout_inherit,
+            stderr_inherit,
+        ) {
             Ok(fd) => fd,
             Err(err) => {
                 scoped_log!(WebViewHost, "spawn failed: {}", err.name());
@@ -111,11 +124,7 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-fn spawn(
-    vm: *mut VirtualMachine,
-    stdout_inherit: bool,
-    stderr_inherit: bool,
-) -> Result<Fd, Error> {
+fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (vm, stdout_inherit, stderr_inherit);
@@ -163,23 +172,27 @@ fn spawn(
             // Default ignore — the child runs no JS or user code, so output is
             // only panics/NSLog from WebKit. Opt-in via backend.stderr when
             // debugging a silent host crash.
-            stdout: if stdout_inherit { Stdio::Inherit } else { Stdio::Ignore },
-            stderr: if stderr_inherit { Stdio::Inherit } else { Stdio::Ignore },
+            stdout: if stdout_inherit {
+                Stdio::Inherit
+            } else {
+                Stdio::Ignore
+            },
+            stderr: if stderr_inherit {
+                Stdio::Inherit
+            } else {
+                Stdio::Ignore
+            },
             extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
             argv0: Some(exe.as_ptr()),
             ..SpawnOptions::default()
         };
 
-        let spawned = bun_spawn::spawn_process(
-            &opts,
-            argv.as_ptr(),
-            env.as_ptr(),
-        )??;
+        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr())??;
 
         // SAFETY: vm is valid for the call.
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
-        let process = NonNull::new(spawned.to_process(event_loop, false))
-            .expect("toProcess returned null");
+        let process =
+            NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.

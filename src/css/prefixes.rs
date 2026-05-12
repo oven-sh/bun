@@ -4,8 +4,8 @@
 
 #![allow(clippy::manual_range_contains)]
 
-use crate::targets::Browsers;
 use crate::VendorPrefix;
+use crate::targets::Browsers;
 
 /// CSS features that may require a vendor prefix on one or more browsers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -571,16 +571,8 @@ impl Feature {
                     }
                 }
             }
-            Columns
-            | ColumnWidth
-            | ColumnGap
-            | ColumnRule
-            | ColumnRuleColor
-            | ColumnRuleWidth
-            | ColumnCount
-            | ColumnRuleStyle
-            | ColumnSpan
-            | ColumnFill => {
+            Columns | ColumnWidth | ColumnGap | ColumnRule | ColumnRuleColor | ColumnRuleWidth
+            | ColumnCount | ColumnRuleStyle | ColumnSpan | ColumnFill => {
                 if let Some(version) = browsers.android {
                     if version >= 131328 && version <= 263171 {
                         prefixes |= VendorPrefix::WEBKIT;
@@ -696,19 +688,8 @@ impl Feature {
                     }
                 }
             }
-            DisplayFlex
-            | InlineFlex
-            | Flex
-            | FlexGrow
-            | FlexShrink
-            | FlexBasis
-            | FlexDirection
-            | FlexWrap
-            | FlexFlow
-            | JustifyContent
-            | Order
-            | AlignItems
-            | AlignSelf
+            DisplayFlex | InlineFlex | Flex | FlexGrow | FlexShrink | FlexBasis | FlexDirection
+            | FlexWrap | FlexFlow | JustifyContent | Order | AlignItems | AlignSelf
             | AlignContent => {
                 if let Some(version) = browsers.android {
                     if version >= 131328 && version <= 262656 {
@@ -1439,20 +1420,9 @@ impl Feature {
                     }
                 }
             }
-            MaskClip
-            | MaskComposite
-            | MaskImage
-            | MaskOrigin
-            | MaskRepeat
-            | MaskBorderRepeat
-            | MaskBorderSource
-            | Mask
-            | MaskPosition
-            | MaskSize
-            | MaskBorder
-            | MaskBorderOutset
-            | MaskBorderWidth
-            | MaskBorderSlice => {
+            MaskClip | MaskComposite | MaskImage | MaskOrigin | MaskRepeat | MaskBorderRepeat
+            | MaskBorderSource | Mask | MaskPosition | MaskSize | MaskBorder | MaskBorderOutset
+            | MaskBorderWidth | MaskBorderSlice => {
                 if let Some(version) = browsers.android {
                     if version >= 131328 && version <= 263171 {
                         prefixes |= VendorPrefix::WEBKIT;
@@ -1669,12 +1639,8 @@ impl Feature {
                     }
                 }
             }
-            BorderInlineStart
-            | BorderInlineEnd
-            | MarginInlineStart
-            | MarginInlineEnd
-            | PaddingInlineStart
-            | PaddingInlineEnd => {
+            BorderInlineStart | BorderInlineEnd | MarginInlineStart | MarginInlineEnd
+            | PaddingInlineStart | PaddingInlineEnd => {
                 if let Some(version) = browsers.android {
                     if version >= 131328 && version <= 263171 {
                         prefixes |= VendorPrefix::WEBKIT;
@@ -1711,12 +1677,8 @@ impl Feature {
                     }
                 }
             }
-            BorderBlockStart
-            | BorderBlockEnd
-            | MarginBlockStart
-            | MarginBlockEnd
-            | PaddingBlockStart
-            | PaddingBlockEnd => {
+            BorderBlockStart | BorderBlockEnd | MarginBlockStart | MarginBlockEnd
+            | PaddingBlockStart | PaddingBlockEnd => {
                 if let Some(version) = browsers.android {
                     if version >= 131328 && version <= 263171 {
                         prefixes |= VendorPrefix::WEBKIT;
@@ -1999,22 +1961,9 @@ impl Feature {
                     }
                 }
             }
-            DisplayGrid
-            | InlineGrid
-            | GridTemplateColumns
-            | GridTemplateRows
-            | GridRowStart
-            | GridColumnStart
-            | GridRowEnd
-            | GridColumnEnd
-            | GridRow
-            | GridColumn
-            | GridArea
-            | GridTemplate
-            | GridTemplateAreas
-            | PlaceSelf
-            | GridColumnAlign
-            | GridRowAlign => {
+            DisplayGrid | InlineGrid | GridTemplateColumns | GridTemplateRows | GridRowStart
+            | GridColumnStart | GridRowEnd | GridColumnEnd | GridRow | GridColumn | GridArea
+            | GridTemplate | GridTemplateAreas | PlaceSelf | GridColumnAlign | GridRowAlign => {
                 if let Some(version) = browsers.edge {
                     if version >= 786432 && version <= 983040 {
                         prefixes |= VendorPrefix::MS;

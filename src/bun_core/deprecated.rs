@@ -1,7 +1,5 @@
 use core::ptr;
 
-
-
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReader
 // ──────────────────────────────────────────────────────────────────────────
@@ -360,7 +358,11 @@ mod tests {
     use super::*;
 
     fn dnode(data: u32) -> DoublyLinkedNode<u32> {
-        DoublyLinkedNode { prev: ptr::null_mut(), next: ptr::null_mut(), data }
+        DoublyLinkedNode {
+            prev: ptr::null_mut(),
+            next: ptr::null_mut(),
+            data,
+        }
     }
 
     #[test]

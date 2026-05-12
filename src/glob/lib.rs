@@ -1,15 +1,20 @@
 // Port of src/glob/glob.zig
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
-pub mod matcher;
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
+pub mod matcher;
 
 // `match` is a Rust keyword; re-export with raw identifier.
-pub use crate::matcher::{r#match, MatchResult};
 pub use crate::glob_walker as walk;
+pub use crate::matcher::{MatchResult, r#match};
 pub use walk::GlobWalker;
 
 // PORT NOTE: Zig passes `null` as the first comptime arg to `GlobWalker_(null, Accessor, sentinel)`.

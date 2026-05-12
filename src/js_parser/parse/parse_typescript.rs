@@ -3,22 +3,22 @@
 use bun_collections::VecExt;
 use core::ptr::NonNull;
 
-use bun_core::{err, Error};
+use crate::lexer::{self as js_lexer, T};
+use crate::p::P;
+use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::expr::EFlags;
+use bun_ast::flags;
+use bun_ast::op::Level;
+use bun_ast::scope::Kind as ScopeKind;
+use bun_ast::symbol::Kind as SymbolKind;
+use bun_ast::ts::Data as TSNamespaceMemberData;
 use bun_ast::{
     self as js_ast, B, E, EnumValue, Expr, ExprNodeIndex, ExprNodeList, G, LocRef, S, Stmt,
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
-use crate::p::P;
-use bun_ast::expr::EFlags;
-use bun_ast::scope::Kind as ScopeKind;
-use bun_ast::symbol::Kind as SymbolKind;
-use bun_ast::ts::Data as TSNamespaceMemberData;
-use bun_ast::flags;
-use crate::lexer::{self as js_lexer, T};
-use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
-use bun_ast::op::Level;
 use bun_core::strings;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::{Error, err};
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
@@ -106,7 +106,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ident = p.lexer.identifier;
         let ref_ = p.store_name_in_ref(ident)?;
         let mut expr = p.new_expr(
-            E::Identifier { ref_, ..Default::default() },
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
             loc,
         );
         p.lexer.next()?;
@@ -189,7 +192,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Arena-owned `StoreRef<TSNamespaceScope>` (Zig held a pointer into the arena).
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
-        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> = ts_namespace.exported_members;
+        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
+            ts_namespace.exported_members;
         let ns_member_data = TSNamespaceMemberData::Namespace(exported_members);
 
         // Declare the namespace and create the scope
@@ -287,7 +291,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
                                 ns_name,
-                                TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
+                                TSNamespaceMember {
+                                    data: clone_ts_member_data(&member_data),
+                                    loc: ns.name.loc,
+                                },
                             )?;
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
@@ -303,7 +310,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
                                 enum_name,
-                                TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
+                                TSNamespaceMember {
+                                    data: clone_ts_member_data(&member_data),
+                                    loc: ns.name.loc,
+                                },
                             )?;
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
@@ -349,8 +359,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "export declare" statements as non-empty even though "declare"
         // statements are only type annotations. We cannot omit the namespace
         // in that case. See https://github.com/evanw/esbuild/issues/1158.
-        if (stmts.len() == import_equal_count
-            && !has_non_local_export_declare_inside_namespace)
+        if (stmts.len() == import_equal_count && !has_non_local_export_declare_inside_namespace)
             || opts.is_typescript_declare
         {
             p.pop_and_discard_scope(scope_index);
@@ -435,7 +444,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let target_ref = p.store_name_in_ref(name).expect("unreachable");
         let target_loc = p.lexer.loc();
         let target = p.new_expr(
-            E::Identifier { ref_: target_ref, ..Default::default() },
+            E::Identifier {
+                ref_: target_ref,
+                ..Default::default()
+            },
             target_loc,
         );
         let mut value = target;
@@ -497,7 +509,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .expect("unreachable");
         // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile in Phase B
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
-        let decls = G::DeclList::init_one(G::Decl { binding, value: Some(value) });
+        let decls = G::DeclList::init_one(G::Decl {
+            binding,
+            value: Some(value),
+        });
         Ok(p.s(
             S::Local {
                 kind,
@@ -531,7 +546,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut arg_ref: Ref = Ref::NONE;
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
-        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> = ts_namespace.exported_members;
+        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
+            ts_namespace.exported_members;
 
         // Declare the enum and create the scope
         let scope_index = p.scopes_in_order.len();
@@ -540,9 +556,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
             // Zig: putNoClobber — debug-assert no prior entry.
-            let prev = p
-                .ref_to_ts_namespace_member
-                .insert(name.ref_.expect("infallible: ref bound"), TSNamespaceMemberData::Namespace(exported_members));
+            let prev = p.ref_to_ts_namespace_member.insert(
+                name.ref_.expect("infallible: ref bound"),
+                TSNamespaceMemberData::Namespace(exported_members),
+            );
             debug_assert!(prev.is_none());
         }
 
@@ -688,8 +705,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            let mut items: BumpVec<'_, ScopeOrder> =
-                BumpVec::with_capacity_in(count, p.arena);
+            let mut items: BumpVec<'_, ScopeOrder> = BumpVec::with_capacity_in(count, p.arena);
             for item in &p.scopes_in_order[scope_index..] {
                 let Some(item) = item else { continue };
                 items.push(*item);
@@ -699,9 +715,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Zig: putNoClobber — debug-assert no prior entry.
         // Stored as `&'a [ScopeOrder]`; the visit pass only reads these, so
         // `scope_order_to_visit` may alias the same arena slice freely.
-        let prev = p
-            .scopes_in_order_for_enum
-            .insert(loc, scope_order_clone);
+        let prev = p.scopes_in_order_for_enum.insert(loc, scope_order_clone);
         debug_assert!(prev.is_none());
 
         Ok(p.s(

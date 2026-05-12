@@ -107,9 +107,8 @@ pub mod features {
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
     // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
     // insert — fine for ≤~80 entries written once each at module-load time.
-    pub static BUILTIN_MODULES: parking_lot::Mutex<
-        std::collections::BTreeSet<&'static str>,
-    > = parking_lot::const_mutex(std::collections::BTreeSet::new());
+    pub static BUILTIN_MODULES: parking_lot::Mutex<std::collections::BTreeSet<&'static str>> =
+        parking_lot::const_mutex(std::collections::BTreeSet::new());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because the set is not a single atomic word.
 
@@ -312,7 +311,9 @@ pub mod features {
 }
 
 // Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
-pub use features::{packed_features, Formatter as FeaturesFormatter, PackedFeatures, PACKED_FEATURES_LIST};
+pub use features::{
+    Formatter as FeaturesFormatter, PACKED_FEATURES_LIST, PackedFeatures, packed_features,
+};
 
 /// Zig: `pub fn validateFeatureName(name: []const u8) void` (comptime-only).
 /// In Rust this is enforced at the macro definition site; kept as a `const fn`
@@ -352,9 +353,13 @@ pub enum EventName {
 
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
-    { analytics::Architecture::arm }
+    {
+        analytics::Architecture::arm
+    }
     #[cfg(not(target_arch = "aarch64"))]
-    { analytics::Architecture::x64 }
+    {
+        analytics::Architecture::x64
+    }
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -396,11 +401,7 @@ pub mod generate_header {
                         0,
                     )
                 };
-                if rc == -1 {
-                    [0u8; 32]
-                } else {
-                    name
-                }
+                if rc == -1 { [0u8; 32] } else { name }
             });
 
             analytics::Platform {
@@ -482,8 +483,8 @@ pub mod generate_header {
             }
             #[cfg(target_os = "macos")]
             {
-                *USE_MSGX_ON_MACOS_14_OR_LATER
-                    .get_or_init(detect_use_msgx_on_macos_14_or_later) as i32
+                *USE_MSGX_ON_MACOS_14_OR_LATER.get_or_init(detect_use_msgx_on_macos_14_or_later)
+                    as i32
             }
         }
 

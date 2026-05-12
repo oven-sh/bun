@@ -1,12 +1,12 @@
 use core::ptr::NonNull;
 
-use bun_io as Async;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
-use bun_core::{self, zstr, Output};
+use bun_core::{self, Output, zstr};
+use bun_io as Async;
 use bun_js_parser as js_ast;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
-use crate::bundle_v2::{dispatch, FileMap, JSBundlerPlugin};
+use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
@@ -439,7 +439,11 @@ pub mod singleton {
     pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
         // INSTANCE is a leaked 'static Box of `BundleThread<C>` (same `C` per
         // the safety contract).
-        INSTANCE.get_or_init(load_once_impl::<C>).0.as_ptr().cast::<BundleThread<C>>()
+        INSTANCE
+            .get_or_init(load_once_impl::<C>)
+            .0
+            .as_ptr()
+            .cast::<BundleThread<C>>()
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {

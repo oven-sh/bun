@@ -5,10 +5,10 @@ use crate::options::Loader;
 // the B-1 stub `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
-use bun_paths::fs;
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{self, platform};
 use bun_core::{PathString, String as BunString};
+use bun_paths::PathBuffer;
+use bun_paths::fs;
+use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 
 use crate::bun_fs::RealFS;
@@ -135,10 +135,7 @@ impl FileOperation {
             // PORT NOTE: `resolve_path.joinAbs` writes into a threadlocal buffer in
             // Zig; the Rust port returns a borrow into that TLS buffer (`'static`),
             // which coerces to the `&self` lifetime here.
-            return resolve_path::join_abs::<platform::Auto>(
-                RealFS::tmpdir_path(),
-                &self.pathname,
-            );
+            return resolve_path::join_abs::<platform::Auto>(RealFS::tmpdir_path(), &self.pathname);
         }
         &self.pathname
     }
@@ -184,7 +181,9 @@ impl Clone for Value {
             Value::Move(op) => Value::Move(op.clone()),
             Value::Copy(op) => Value::Copy(op.clone()),
             Value::Noop => Value::Noop,
-            Value::Buffer { bytes } => Value::Buffer { bytes: bytes.clone() },
+            Value::Buffer { bytes } => Value::Buffer {
+                bytes: bytes.clone(),
+            },
             Value::Pending(_) => unreachable!("OutputFile.Value::Pending is never cloned"),
             Value::Saved(s) => Value::Saved(*s),
         }
@@ -324,7 +323,12 @@ impl OutputFile {
     }
 
     // TODO(port): Zig took `std.fs.Dir`; using `Fd` for the dir handle.
-    pub fn init_file_with_dir(file: Fd, pathname: &'static [u8], size: usize, dir: Fd) -> OutputFile {
+    pub fn init_file_with_dir(
+        file: Fd,
+        pathname: &'static [u8],
+        size: usize,
+        dir: Fd,
+    ) -> OutputFile {
         let mut res = Self::init_file(file, pathname, size);
         if let Value::Copy(op) = &mut res.value {
             // PORT NOTE: Zig wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but

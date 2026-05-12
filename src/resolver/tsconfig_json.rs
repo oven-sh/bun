@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
 use bun_collections::ArrayHashMap;
-use bun_parsers::json_parser;
+use bun_collections::VecExt;
+use bun_core::strings;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
-use bun_core::strings;
+use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -39,7 +39,9 @@ pub struct JsonCache {
 
 impl JsonCache {
     pub fn init() -> JsonCache {
-        JsonCache { bump: bun_alloc::Arena::new() }
+        JsonCache {
+            bump: bun_alloc::Arena::new(),
+        }
     }
 
     /// Port of `cache::Json::parse` (cache.zig:287).
@@ -278,7 +280,11 @@ impl TSConfigJSON {
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
-        let mut string_builder = bun_core::StringBuilder { len: 0, cap: 0, ptr: None };
+        let mut string_builder = bun_core::StringBuilder {
+            len: 0,
+            cap: 0,
+            ptr: None,
+        };
         let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.
@@ -357,10 +363,11 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = compiler_opts.expr.as_property(b"baseUrl") {
                 if let Some(base_url) = base_url_prop.expr.as_utf8_string_literal() {
-                    result.base_url = match Self::str_replacing_templates(Box::from(base_url), source) {
-                        Ok(v) => v,
-                        Err(_) => return Ok(None),
-                    };
+                    result.base_url =
+                        match Self::str_replacing_templates(Box::from(base_url), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
                     has_base_url = true;
                 }
             }
@@ -387,7 +394,8 @@ impl TSConfigJSON {
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFactory") {
                 if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.factory =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?.into();
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?
+                            .into();
                     result.jsx_flags.insert(JsxField::Factory);
                 }
             }
@@ -396,7 +404,8 @@ impl TSConfigJSON {
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFragmentFactory") {
                 if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.fragment =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?.into();
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?
+                            .into();
                     result.jsx_flags.insert(JsxField::Fragment);
                 }
             }
@@ -652,8 +661,8 @@ impl TSConfigJSON {
         // foo == 1
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
-        let parts_count = text.iter().filter(|&&b| b == b'.').count()
-            + usize::from(text[text.len() - 1] != b'.');
+        let parts_count =
+            text.iter().filter(|&&b| b == b'.').count() + usize::from(text[text.len() - 1] != b'.');
         let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(parts_count);
 
         if parts_count == 1 {
@@ -719,8 +728,7 @@ impl TSConfigJSON {
             }
             // "..", ".\", "./"
             2 => {
-                return text[0] == b'.'
-                    && (text[1] == b'.' || text[1] == b'\\' || text[1] == b'/');
+                return text[0] == b'.' && (text[1] == b'.' || text[1] == b'\\' || text[1] == b'/');
             }
             _ => {
                 c0 = text[0];

@@ -22,8 +22,8 @@ use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::ZBox;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 use bun_core::{self, ZigString};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
 use crate::napi::NapiEnv;
 
@@ -55,7 +55,6 @@ fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Opti
     scope.return_if_exception()?;
     if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
 }
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // Symbol-spec parsing — generate_symbols / generate_symbol_for_function
@@ -96,9 +95,9 @@ pub fn generate_symbol_for_function(
                     // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
-                    return Ok(Some(global.create_error_instance(format_args!(
-                        "invalid ABI type"
-                    ))));
+                    return Ok(Some(
+                        global.create_error_instance(format_args!("invalid ABI type")),
+                    ));
                 }
             }
 
@@ -136,9 +135,9 @@ pub fn generate_symbol_for_function(
                     return_type = t;
                     break 'brk;
                 } else {
-                    return Ok(Some(global.create_error_instance(format_args!(
-                        "invalid ABI type"
-                    ))));
+                    return Ok(Some(
+                        global.create_error_instance(format_args!("invalid ABI type")),
+                    ));
                 }
             }
 
@@ -409,7 +408,11 @@ impl Function {
         writer.write_all(b"return ")?;
 
         if self.return_type != ABIType::Void {
-            write!(writer, "{}.asZigRepr", self.return_type.to_js(b"return_value"))?;
+            write!(
+                writer,
+                "{}.asZigRepr",
+                self.return_type.to_js(b"return_value")
+            )?;
         } else {
             writer.write_all(b"ValueUndefined.asZigRepr")?;
         }
@@ -427,7 +430,9 @@ impl Function {
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
         {
-            let ptr = global_object.map(|g| std::ptr::from_ref(g) as usize).unwrap_or(0);
+            let ptr = global_object
+                .map(|g| std::ptr::from_ref(g) as usize)
+                .unwrap_or(0);
             write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL\n", ptr)?;
         }
 
@@ -476,7 +481,11 @@ impl Function {
 
         if !self.arg_types.is_empty() {
             let mut arg_buf = [0u8; 32];
-            write!(writer, " ZIG_REPR_TYPE arguments[{}];\n", self.arg_types.len())?;
+            write!(
+                writer,
+                " ZIG_REPR_TYPE arguments[{}];\n",
+                self.arg_types.len()
+            )?;
 
             arg_buf[0..3].copy_from_slice(b"arg");
             for (i, arg) in self.arg_types.iter().enumerate() {

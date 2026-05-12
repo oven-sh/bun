@@ -58,7 +58,9 @@ impl JSCell {
         // TODO(b2-blocked): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
         // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.
-        CustomGetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>())
+        CustomGetterSetter::opaque_ref(
+            std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>(),
+        )
     }
 
     pub fn ensure_still_alive(&self) {

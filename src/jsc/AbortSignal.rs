@@ -4,7 +4,10 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{
+    CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
+    VirtualMachineRef as VirtualMachine,
+};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -309,7 +312,10 @@ impl Timeout {
         // is the global allocator per PORTING.md §Prereq).
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
-                next: ElTimespec { sec: deadline.sec, nsec: deadline.nsec },
+                next: ElTimespec {
+                    sec: deadline.sec,
+                    nsec: deadline.nsec,
+                },
                 tag: TimerTag::AbortSignalTimeout,
                 state: TimerState::CANCELLED,
                 heap: IntrusiveField::default(),

@@ -193,7 +193,12 @@ impl Parser<'_> {
                         if p < text.len() && text[p] == b'\n' {
                             p += 1;
                         }
-                        return Some(ParsedRefDef { end_pos: p, label, dest, title });
+                        return Some(ParsedRefDef {
+                            end_pos: p,
+                            label,
+                            dest,
+                            title,
+                        });
                     }
                     // Title present but not followed by end of line — if title was on same line as dest, invalid
                     // If title was on new line, treat as no title (title line is separate paragraph content)
@@ -221,7 +226,12 @@ impl Parser<'_> {
             p += 1;
         }
 
-        Some(ParsedRefDef { end_pos: p, label, dest, title })
+        Some(ParsedRefDef {
+            end_pos: p,
+            label,
+            dest,
+            title,
+        })
     }
 
     pub fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
@@ -283,7 +293,10 @@ impl Parser<'_> {
             if p == dest_start {
                 return None; // empty dest not allowed for bare
             }
-            Some(ParsedDest { dest: &text[dest_start..p], end_pos: p })
+            Some(ParsedDest {
+                dest: &text[dest_start..p],
+                end_pos: p,
+            })
         }
     }
 
@@ -340,8 +353,7 @@ impl Parser<'_> {
 
             // SAFETY: off is aligned to BlockHeader and within bounds; block_bytes
             // stores BlockHeader-prefixed records written by the block parser.
-            let hdr: &mut BlockHeader =
-                unsafe { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
+            let hdr: &mut BlockHeader = unsafe { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
             let hdr_off = off;
             off += size_of::<BlockHeader>();
 
@@ -352,8 +364,7 @@ impl Parser<'_> {
             }
 
             // SAFETY: VerbatimLine array immediately follows the header in block_bytes.
-            let line_ptr: *mut VerbatimLine =
-                unsafe { bytes_ptr.add(off).cast::<VerbatimLine>() };
+            let line_ptr: *mut VerbatimLine = unsafe { bytes_ptr.add(off).cast::<VerbatimLine>() };
             let block_lines: &[VerbatimLine] =
                 unsafe { core::slice::from_raw_parts(line_ptr, n_lines) };
             off += lines_size;

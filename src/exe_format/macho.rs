@@ -3,8 +3,8 @@ use core::mem::size_of;
 // `std.macho` types ported locally (see macho_types.rs).
 use crate::align_up as align_size;
 use crate::macho_types as macho;
-use crate::{read_struct, write_struct};
 use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
+use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
@@ -56,13 +56,17 @@ macro_rules! shift_fields {
 }
 
 impl MachoFile {
-    pub fn init(obj_file: &[u8], blob_to_embed_length: usize) -> Result<Box<MachoFile>, MachoError> {
+    pub fn init(
+        obj_file: &[u8],
+        blob_to_embed_length: usize,
+    ) -> Result<Box<MachoFile>, MachoError> {
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
 
         // data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
         // the slice index panics on a short input rather than reading OOB.
-        let header: macho::mach_header_64 = read_struct(&data[..size_of::<macho::mach_header_64>()]);
+        let header: macho::mach_header_64 =
+            read_struct(&data[..size_of::<macho::mach_header_64>()]);
 
         Ok(Box::new(MachoFile {
             header,
@@ -106,7 +110,9 @@ impl MachoFile {
             let cmd = entry.hdr;
             match cmd.cmd {
                 macho::LC::SEGMENT_64 => {
-                    let command = entry.cast::<macho::segment_command_64>().expect("unreachable");
+                    let command = entry
+                        .cast::<macho::segment_command_64>()
+                        .expect("unreachable");
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
@@ -116,7 +122,9 @@ impl MachoFile {
                                 core::slice::from_raw_parts_mut(
                                     self.data
                                         .as_mut_ptr()
-                                        .add(section_offset + size_of::<macho::segment_command_64>())
+                                        .add(
+                                            section_offset + size_of::<macho::segment_command_64>(),
+                                        )
                                         .cast::<macho::section_64>(),
                                     command.nsects as usize,
                                 )
@@ -132,7 +140,8 @@ impl MachoFile {
                                     self.section = *sect;
 
                                     // Update segment with proper sizes and alignment
-                                    self.segment.vmsize = align_vmsize(aligned_size, blob_alignment);
+                                    self.segment.vmsize =
+                                        align_vmsize(aligned_size, blob_alignment);
                                     self.segment.filesize = aligned_size;
                                     self.segment.maxprot = macho::PROT::READ | macho::PROT::WRITE;
                                     self.segment.initprot = macho::PROT::READ | macho::PROT::WRITE;
@@ -180,8 +189,8 @@ impl MachoFile {
         }
 
         // Calculate how much larger/smaller the section will be compared to its current size
-        let size_diff: i64 =
-            i64::try_from(aligned_size).expect("int cast") - i64::try_from(original_segsize).expect("int cast");
+        let size_diff: i64 = i64::try_from(aligned_size).expect("int cast")
+            - i64::try_from(original_segsize).expect("int cast");
 
         // We assume that the section is page-aligned, so we can calculate the number of new pages
         debug_assert!(size_diff % PAGE_SIZE as i64 == 0);
@@ -191,8 +200,9 @@ impl MachoFile {
         // content and one SHA-256 hash per new page. `buildAndSign` may grow further
         // to write the complete signature, but reserving this up front avoids the
         // common reallocation.
-        self.data
-            .reserve(usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"));
+        self.data.reserve(
+            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"),
+        );
 
         let linkedit_seg_idx = match linkedit_seg_idx {
             Some(idx) => idx,
@@ -205,7 +215,8 @@ impl MachoFile {
         // are written below before being read (memmove + memset cover the whole range).
         let prev_len = self.data.len();
         unsafe {
-            self.data.set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
+            self.data
+                .set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
         }
 
         // Binary is:
@@ -222,7 +233,8 @@ impl MachoFile {
                 .data
                 .as_ptr()
                 .add(original_fileoff as usize + original_segsize as usize);
-            let prev_after_bun_len = prev_len - (original_fileoff as usize + original_segsize as usize);
+            let prev_after_bun_len =
+                prev_len - (original_fileoff as usize + original_segsize as usize);
             core::ptr::copy(prev_after_bun_src, after_bun_dst, prev_after_bun_len);
         }
 
@@ -271,8 +283,7 @@ impl MachoFile {
                 let cs_sz = size_of::<macho::linkedit_data_command>();
                 let seg_sz = size_of::<macho::segment_command_64>();
 
-                let mut cs: macho::linkedit_data_command =
-                    read_struct(&self.data[idx..][..cs_sz]);
+                let mut cs: macho::linkedit_data_command = read_struct(&self.data[idx..][..cs_sz]);
                 let new_sig_dataoff: u64 =
                     cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
                 let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
@@ -359,8 +370,14 @@ impl MachoFile {
                     // SAFETY: as above.
                     let dysymtab = unsafe { &mut *cmd_ptr.cast::<macho::dysymtab_command>() };
                     shift_fields!(
-                        shifter, dysymtab, tocoff, modtaboff, extrefsymoff, indirectsymoff,
-                        extreloff, locreloff
+                        shifter,
+                        dysymtab,
+                        tocoff,
+                        modtaboff,
+                        extrefsymoff,
+                        indirectsymoff,
+                        extreloff,
+                        locreloff
                     );
                 }
                 macho::LC::DYLD_CHAINED_FIXUPS
@@ -385,7 +402,12 @@ impl MachoFile {
                     // SAFETY: as above.
                     let dyld_info = unsafe { &mut *cmd_ptr.cast::<macho::dyld_info_command>() };
                     shift_fields!(
-                        shifter, dyld_info, rebase_off, bind_off, weak_bind_off, lazy_bind_off,
+                        shifter,
+                        dyld_info,
+                        rebase_off,
+                        bind_off,
+                        weak_bind_off,
+                        lazy_bind_off,
                         export_off
                     );
                 }
@@ -416,7 +438,9 @@ impl MachoFile {
         while let Some(entry) = iter.next() {
             let cmd = entry.hdr;
             if cmd.cmd == macho::LC::SEGMENT_64 {
-                let seg = entry.cast::<macho::segment_command_64>().expect("unreachable");
+                let seg = entry
+                    .cast::<macho::segment_command_64>()
+                    .expect("unreachable");
                 if seg.fileoff < prev_end {
                     return Err(MachoError::OverlappingSegments);
                 }
@@ -504,7 +528,8 @@ impl MachoSigner {
 
         // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
         let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
-        let mut linkedit_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut linkedit_seg: macho::segment_command_64 =
+            unsafe { bun_core::ffi::zeroed_unchecked() };
 
         let mut it = macho::LoadCommandIterator::new(
             header.ncmds,
@@ -514,7 +539,9 @@ impl MachoSigner {
         // First pass: find segments to establish bounds
         while let Some(cmd) = it.next() {
             if cmd.cmd() == macho::LC::SEGMENT_64 {
-                let seg = cmd.cast::<macho::segment_command_64>().expect("unreachable");
+                let seg = cmd
+                    .cast::<macho::segment_command_64>()
+                    .expect("unreachable");
 
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
@@ -541,7 +568,9 @@ impl MachoSigner {
         while let Some(cmd) = it.next() {
             match cmd.cmd() {
                 macho::LC::CODE_SIGNATURE => {
-                    let cs = cmd.cast::<macho::linkedit_data_command>().expect("unreachable");
+                    let cs = cmd
+                        .cast::<macho::linkedit_data_command>()
+                        .expect("unreachable");
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
                     cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
@@ -686,7 +715,8 @@ impl MachoSigner {
         while end - off >= PAGE_SIZE {
             let mut digest = [0u8; HASH_SIZE];
             // SAFETY: range [off..off+PAGE_SIZE] is within the original len (sig_off).
-            let page = unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
             sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
             off += PAGE_SIZE;
@@ -742,7 +772,8 @@ pub mod utils {
         if data.len() < 4 {
             return false;
         }
-        u32::from_le_bytes(data[0..4].try_into().expect("infallible: size matches")) == macho::MH_MAGIC_64
+        u32::from_le_bytes(data[0..4].try_into().expect("infallible: size matches"))
+            == macho::MH_MAGIC_64
     }
 }
 
@@ -757,6 +788,5 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut());
 }
-
 
 // ported from: src/exe_format/macho.zig

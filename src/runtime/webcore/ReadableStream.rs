@@ -2,16 +2,16 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::jsc::SysErrorJsc as _;
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_sys as syscall;
 use bun_collections::{ByteVecExt, VecExt};
+use bun_sys as syscall;
 
+use crate::webcore::streams;
 #[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
-use crate::webcore::streams;
 
 #[derive(Copy, Clone)]
 pub struct ReadableStream {
@@ -30,7 +30,9 @@ pub type ReadableStreamStrong = Strong;
 
 impl Default for Strong {
     fn default() -> Self {
-        Self { held: bun_jsc::strong::Optional::empty() }
+        Self {
+            held: bun_jsc::strong::Optional::empty(),
+        }
     }
 }
 
@@ -133,7 +135,10 @@ unsafe extern "C" {
 
 // ─── ReadableStream methods ──────────────────────────────────────────────────
 impl ReadableStream {
-    pub fn tee(&self, global_this: &JSGlobalObject) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
+    pub fn tee(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
         let mut out1 = JSValue::ZERO;
         let mut out2 = JSValue::ZERO;
         let ok = bun_jsc::from_js_host_call_generic(global_this, || {
@@ -159,7 +164,10 @@ impl ReadableStream {
         if let Some(stream) = ReadableStream::from_js(self.value, global_this)? {
             *self = stream;
         } else {
-            *self = ReadableStream { ptr: Source::Invalid, value: JSValue::ZERO };
+            *self = ReadableStream {
+                ptr: Source::Invalid,
+                value: JSValue::ZERO,
+            };
         }
         Ok(())
     }
@@ -270,7 +278,10 @@ impl ReadableStream {
         ReadableStream__isLocked(self.value, global_object)
     }
 
-    pub fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
+    pub fn from_js(
+        value: JSValue,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<ReadableStream>> {
         value.ensure_still_alive();
         let mut out = value;
         let mut ptr: *mut c_void = core::ptr::null_mut();
@@ -446,7 +457,10 @@ impl ReadableStream {
         });
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &raw mut source.context;
-        source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
+        source
+            .context
+            .reader()
+            .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
         source.to_readable_stream(global_this)
     }
@@ -758,7 +772,10 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
         // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
         // (`heap::alloc`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
         // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
-        C::js_create(std::ptr::from_mut::<Self>(self).cast::<c_void>(), global_this)
+        C::js_create(
+            std::ptr::from_mut::<Self>(self).cast::<c_void>(),
+            global_this,
+        )
     }
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_pending_promise_set_cached(this, global, value)
@@ -1063,7 +1080,9 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::Pending(_) => {
                 let out = result.to_js(global_this)?;
                 <Self as NewSourceCodegen>::pending_promise_set_cached(
-                    this_jsvalue, global_this, out,
+                    this_jsvalue,
+                    global_this,
+                    out,
                 );
                 Ok(out)
             }
@@ -1150,7 +1169,9 @@ impl<C: SourceContext> NewSource<C> {
         }
         let cb = value.with_async_context_if_needed(global_object);
         <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-            self.this_jsvalue, global_object, cb,
+            self.this_jsvalue,
+            global_object,
+            cb,
         );
         Ok(())
     }
@@ -1233,7 +1254,11 @@ impl<C: SourceContext> NewSource<C> {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::ArrayBuffer)
+        self.to_buffered_value_from_js(
+            global_this,
+            call_frame,
+            streams::BufferActionTag::ArrayBuffer,
+        )
     }
 
     pub fn blob_from_js(

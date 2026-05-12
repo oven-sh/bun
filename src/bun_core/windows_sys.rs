@@ -10,7 +10,7 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 pub use bun_windows_sys::{
-    BOOL, COORD, CONSOLE_SCREEN_BUFFER_INFO, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
+    BOOL, CONSOLE_SCREEN_BUFFER_INFO, COORD, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
     SHORT, SMALL_RECT, TRUE, WCHAR, WORD,
 };
 
@@ -28,7 +28,11 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
     let h = kernel32::GetStdHandle(std_handle);
-    if h == INVALID_HANDLE_VALUE || h.is_null() { None } else { Some(h) }
+    if h == INVALID_HANDLE_VALUE || h.is_null() {
+        None
+    } else {
+        Some(h)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

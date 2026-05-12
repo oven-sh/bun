@@ -23,10 +23,10 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_io::file_poll::{FilePoll, Store as FilePollStore};
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
+use bun_io::file_poll::{FilePoll, Store as FilePollStore};
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -154,21 +154,28 @@ pub fn init_global(
     {
         let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
         // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*global.loop_ptr()).internal_loop_data.set_parent_raw(tag, ptr) };
+        unsafe {
+            (*global.loop_ptr())
+                .internal_loop_data
+                .set_parent_raw(tag, ptr)
+        };
     }
 
     // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
     // port stores it as `AtomicPtr<Loader<'static>>`.
     global.env = env.map(NonNull::from).or_else(|| {
         NonNull::new(
-            dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire).cast::<DotEnvLoader<'static>>(),
+            dotenv::INSTANCE
+                .load(core::sync::atomic::Ordering::Acquire)
+                .cast::<DotEnvLoader<'static>>(),
         )
     });
     if global.env.is_none() {
         // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
         let map: *mut dotenv::Map = bun_core::heap::into_raw(Box::new(dotenv::Map::init()));
         // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
-        let loader = bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+        let loader =
+            bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
         global.env = Some(loader);
     }
 
@@ -252,7 +259,9 @@ impl<'a> MiniEventLoop<'a> {
     pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
         // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
         // would create in debug builds.
-        &mut self.pipe_read_buffer.get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
+        &mut self
+            .pipe_read_buffer
+            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
     }
 
     pub fn on_after_event_loop(&mut self) {
@@ -345,10 +354,7 @@ impl<'a> MiniEventLoop<'a> {
         // first, track items written in a local, then commit via `update()` after the borrow ends.
         let mut written: usize = 0;
         {
-            let mut writable = self
-                .tasks
-                .writable_with_size(count)
-                .expect("unreachable");
+            let mut writable = self.tasks.writable_with_size(count).expect("unreachable");
             loop {
                 let task = iter.next();
                 if task.is_null() {
@@ -436,7 +442,11 @@ impl<'a> MiniEventLoop<'a> {
     ) {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
-        let task = unsafe { ctx.cast::<u8>().add(field_offset).cast::<AnyTaskWithExtraContext>() };
+        let task = unsafe {
+            ctx.cast::<u8>()
+                .add(field_offset)
+                .cast::<AnyTaskWithExtraContext>()
+        };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
@@ -466,7 +476,11 @@ impl<'a> MiniEventLoop<'a> {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
         // (intrusive node; ownership stays with caller).
-        let task = unsafe { ctx.cast::<u8>().add(field_offset).cast::<AnyTaskWithExtraContext>() };
+        let task = unsafe {
+            ctx.cast::<u8>()
+                .add(field_offset)
+                .cast::<AnyTaskWithExtraContext>()
+        };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };

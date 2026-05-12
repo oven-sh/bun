@@ -12,21 +12,23 @@ use bun_install::integrity::Integrity;
 // LoadResult enum, so import from `lockfile_real` and alias it back to
 // `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
 // resolve against the ported types.
-use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
-use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta, PackageColumns as _};
-use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::Origin;
+use crate::lockfile_real::package::meta::HasInstallScript;
+use crate::lockfile_real::package::{
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
+};
+use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
 use bun_install::npm;
 // PORT NOTE: `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
 // `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
-use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue, Tag as ResolutionTag};
-use crate::repository::Repository;
-use crate::versioned_url::VersionedURL;
 use crate::bun_json;
+use crate::repository::Repository;
+use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
+use crate::versioned_url::VersionedURL;
+use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
-use bun_core::strings;
 use bun_sys::Fd;
 
 // TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
@@ -204,9 +206,7 @@ impl<'a> Entry<'a> {
     }
 
     pub fn is_file_dependency(version: &[u8]) -> bool {
-        version.starts_with(b"file:")
-            || version.starts_with(b"./")
-            || version.starts_with(b"../")
+        version.starts_with(b"file:") || version.starts_with(b"./") || version.starts_with(b"../")
     }
 
     pub fn parse_git_url(
@@ -241,7 +241,8 @@ impl<'a> Entry<'a> {
                 owner = Some(&path_without_commit[0..slash_idx]);
                 repo = Some(&path_without_commit[slash_idx + 1..]);
             }
-            let mut buf = Vec::with_capacity(b"https://github.com/".len() + path_without_commit.len());
+            let mut buf =
+                Vec::with_capacity(b"https://github.com/".len() + path_without_commit.len());
             buf.extend_from_slice(b"https://github.com/");
             buf.extend_from_slice(path_without_commit);
             owned_url = Some(buf);
@@ -262,12 +263,21 @@ impl<'a> Entry<'a> {
             }
         }
 
-        Ok(ParsedGitUrl { url, commit, owner, repo, owned_url })
+        Ok(ParsedGitUrl {
+            url,
+            commit,
+            owner,
+            repo,
+            owned_url,
+        })
     }
 
     pub fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
         if version.len() <= 4 {
-            return ParsedNpmAlias { package: b"", version: b"*" };
+            return ParsedNpmAlias {
+                package: b"",
+                version: b"*",
+            };
         }
 
         let npm_part = &version[4..];
@@ -281,7 +291,10 @@ impl<'a> Entry<'a> {
                 },
             };
         }
-        ParsedNpmAlias { package: npm_part, version: b"*" }
+        ParsedNpmAlias {
+            package: npm_part,
+            version: b"*",
+        }
     }
 
     pub fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
@@ -317,7 +330,9 @@ impl<'a> Entry<'a> {
 
 impl<'a> YarnLock<'a> {
     pub fn init() -> YarnLock<'a> {
-        YarnLock { entries: Vec::new() }
+        YarnLock {
+            entries: Vec::new(),
+        }
     }
 
     pub fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
@@ -592,8 +607,13 @@ fn process_deps(
         let dep_name: &[u8] = dep_name_key.as_ref();
         let dep_version: &[u8] = *dep_version_ref;
         let mut dep_spec = Vec::new();
-        write!(&mut dep_spec, "{}@{}", bstr::BStr::new(dep_name), bstr::BStr::new(dep_version))
-            .expect("unreachable");
+        write!(
+            &mut dep_spec,
+            "{}@{}",
+            bstr::BStr::new(dep_name),
+            bstr::BStr::new(dep_version)
+        )
+        .expect("unreachable");
 
         if let Some(dep_entry) = yarn_lock_.find_entry_by_spec(&dep_spec) {
             let dep_entry_workspace = dep_entry.workspace;
@@ -720,10 +740,7 @@ pub fn migrate_yarn_lockfile<'a>(
             else {
                 return Err(bun_core::err!("InvalidPackageJSON"));
             };
-            bun_ast::Source::init_path_string(
-                &*package_json_path,
-                package_json_contents.as_slice(),
-            )
+            bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
         };
         let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
 
@@ -740,8 +757,7 @@ pub fn migrate_yarn_lockfile<'a>(
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(&package_json_source, log, &json_bump)
-        else {
+        >(&package_json_source, log, &json_bump) else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
 
@@ -785,13 +801,17 @@ pub fn migrate_yarn_lockfile<'a>(
                     continue;
                 };
 
-                let Ok(name_slice) = key_str.string(&json_bump) else { continue };
+                let Ok(name_slice) = key_str.string(&json_bump) else {
+                    continue;
+                };
                 let Some(value) = &p.value else { continue };
                 let bun_ast::ExprData::EString(value_str) = &value.data else {
                     continue;
                 };
 
-                let Ok(version_slice) = value_str.string(&json_bump) else { continue };
+                let Ok(version_slice) = value_str.string(&json_bump) else {
+                    continue;
+                };
                 if version_slice.is_empty() {
                     continue;
                 }
@@ -827,10 +847,15 @@ pub fn migrate_yarn_lockfile<'a>(
 
         let num_packages = u32::try_from(yarn_lock.entries.len() + 1).expect("int cast");
 
-        this.buffers.dependencies.reserve((num_deps as usize).saturating_sub(this.buffers.dependencies.len()));
-        this.buffers.resolutions.reserve((num_deps as usize).saturating_sub(this.buffers.resolutions.len()));
+        this.buffers
+            .dependencies
+            .reserve((num_deps as usize).saturating_sub(this.buffers.dependencies.len()));
+        this.buffers
+            .resolutions
+            .reserve((num_deps as usize).saturating_sub(this.buffers.resolutions.len()));
         this.packages.ensure_total_capacity(num_packages as usize)?;
-        this.package_index.ensure_total_capacity(num_packages as usize)?;
+        this.package_index
+            .ensure_total_capacity(num_packages as usize)?;
 
         let root_name = if let Some(name) = &package_name {
             sbuf!().append_with_hash(name, package_name_hash)?
@@ -894,8 +919,7 @@ pub fn migrate_yarn_lockfile<'a>(
         bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
     };
 
-    let mut yarn_entry_to_package_id: Vec<PackageID> =
-        vec![0; yarn_lock.entries.len()];
+    let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
 
     let mut package_versions: StringHashMap<VersionInfo> = StringHashMap::new();
 
@@ -1045,7 +1069,8 @@ pub fn migrate_yarn_lockfile<'a>(
                         if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
                             if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
                                 let after_registry = &resolved[registry_idx..];
-                                if let Some(domain_slash) = strings::index_of(after_registry, b"/") {
+                                if let Some(domain_slash) = strings::index_of(after_registry, b"/")
+                                {
                                     let package_start = registry_idx + domain_slash + 1;
                                     let extracted_name = &resolved[package_start..separator_idx];
                                     break 'blk extracted_name;
@@ -1077,9 +1102,7 @@ pub fn migrate_yarn_lockfile<'a>(
                         sbuf!().append(file)?,
                     ));
                 } else {
-                    break 'blk Resolution::init(ResolutionValue::Folder(
-                        sbuf!().append(file)?,
-                    ));
+                    break 'blk Resolution::init(ResolutionValue::Folder(sbuf!().append(file)?));
                 }
             } else if let Some(commit) = entry.commit {
                 if let Some(resolved) = entry.resolved {
@@ -1349,34 +1372,35 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len =
-            (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
+        let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
         let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
-        this.packages.items_dependencies_mut()[package_id as usize] = lockfile::DependencySlice::new(
-            u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-            u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
-        );
+        this.packages.items_dependencies_mut()[package_id as usize] =
+            lockfile::DependencySlice::new(
+                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
+                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
+            );
         let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
-        let res_len =
-            (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
-        this.packages.items_resolutions_mut()[package_id as usize] = lockfile::DependencyIDSlice::new(
-            u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-            u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
-        );
+        let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
+        this.packages.items_resolutions_mut()[package_id as usize] =
+            lockfile::DependencyIDSlice::new(
+                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
+                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
+            );
     }
 
-    let final_deps_len =
-        ((dependencies_buf.as_mut_ptr() as usize) - (dependencies_base_ptr as usize))
-            / core::mem::size_of::<Dependency>();
+    let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
+        - (dependencies_base_ptr as usize))
+        / core::mem::size_of::<Dependency>();
     unsafe {
         // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
         this.buffers.dependencies.set_len(final_deps_len);
         this.buffers.resolutions.set_len(final_deps_len);
     }
 
-    this.buffers
-        .hoisted_dependencies
-        .reserve((this.buffers.dependencies.len() * 2).saturating_sub(this.buffers.hoisted_dependencies.len()));
+    this.buffers.hoisted_dependencies.reserve(
+        (this.buffers.dependencies.len() * 2)
+            .saturating_sub(this.buffers.hoisted_dependencies.len()),
+    );
 
     this.buffers.trees.push(Tree {
         id: 0,
@@ -1447,8 +1471,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
                             if found {
                                 let dep_package_id = yarn_entry_to_package_id[idx];
-                                package_dependents[dep_package_id as usize]
-                                    .push(parent_package_id);
+                                package_dependents[dep_package_id as usize].push(parent_package_id);
                                 break;
                             }
                         }
@@ -2039,9 +2062,18 @@ fn string_hash(s: &[u8]) -> u64 {
 #[inline]
 fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
     dependency::Behavior::default()
-        .with(dependency::Behavior::PROD, dep_type == DependencyType::Production)
-        .with(dependency::Behavior::OPTIONAL, dep_type == DependencyType::Optional)
-        .with(dependency::Behavior::DEV, dep_type == DependencyType::Development)
+        .with(
+            dependency::Behavior::PROD,
+            dep_type == DependencyType::Production,
+        )
+        .with(
+            dependency::Behavior::OPTIONAL,
+            dep_type == DependencyType::Optional,
+        )
+        .with(
+            dependency::Behavior::DEV,
+            dep_type == DependencyType::Development,
+        )
         .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
         .with(dependency::Behavior::WORKSPACE, workspace)
 }

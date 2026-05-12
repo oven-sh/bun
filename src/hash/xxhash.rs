@@ -83,8 +83,16 @@ mod tests {
             (0, b"message", 0x0b1ca9b8977554fa),
             (0, b"message digest", 0x160d8e9329be94f9),
             (0, b"abcdefghijklmnopqrstuvwxyz", 0x810f9ca067fbb90c),
-            (0, b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0x643542bb51639cb2),
-            (0, b"12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x7f58aa2520c681f9),
+            (
+                0,
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                0x643542bb51639cb2,
+            ),
+            (
+                0,
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                0x7f58aa2520c681f9,
+            ),
             // seeded
             (1, b"", 0x4dc5b0cc826f6703),
             (1, b"a", 0xd2f6d0996f37a720),
@@ -92,11 +100,24 @@ mod tests {
             (1, b"message", 0x73fb1cf20d561766),
             (1, b"message digest", 0xfe71a82a70381174),
             (1, b"abcdefghijklmnopqrstuvwxyz", 0x902a2c2d016a37ba),
-            (1, b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0xbf552e540c5c6882),
-            (1, b"12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0xf2ca33235a6b865b),
+            (
+                1,
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                0xbf552e540c5c6882,
+            ),
+            (
+                1,
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                0xf2ca33235a6b865b,
+            ),
         ];
         for &(seed, input, expected) in cases {
-            assert_eq!(XxHash3::hash(seed, input), expected, "seed={seed} input={:?}", input);
+            assert_eq!(
+                XxHash3::hash(seed, input),
+                expected,
+                "seed={seed} input={:?}",
+                input
+            );
         }
     }
 
@@ -108,8 +129,16 @@ mod tests {
             (0, b"abc", 0x44bc2cf5ad770999),
             (0, b"message digest", 0x066ed728fceeb3be),
             (0, b"abcdefghijklmnopqrstuvwxyz", 0xcfe1f278fa89835c),
-            (0, b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0xaaa46907d3047814),
-            (0, b"12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0xe04a477f19ee145d),
+            (
+                0,
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                0xaaa46907d3047814,
+            ),
+            (
+                0,
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                0xe04a477f19ee145d,
+            ),
         ];
         for &(seed, input, expected) in cases {
             assert_eq!(XxHash64::hash(seed, input), expected);
@@ -124,8 +153,16 @@ mod tests {
             (0, b"abc", 0x32d153ff),
             (0, b"message digest", 0x7c948494),
             (0, b"abcdefghijklmnopqrstuvwxyz", 0x63a14d5f),
-            (0, b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0x9c285e64),
-            (0, b"12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x9c05f475),
+            (
+                0,
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                0x9c285e64,
+            ),
+            (
+                0,
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                0x9c05f475,
+            ),
         ];
         for &(seed, input, expected) in cases {
             assert_eq!(XxHash32::hash(seed, input), expected);

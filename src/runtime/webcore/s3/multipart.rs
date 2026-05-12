@@ -95,10 +95,11 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_io::KeepAlive;
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
+use bun_core::{MutableString, strings};
 use bun_core::{declare_scope, scoped_log};
+use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject};
@@ -106,17 +107,16 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
 use bun_s3_signing::storage_class::StorageClass;
-use bun_core::{strings, MutableString};
 
 // PORT NOTE: file-level mods are declared flat in `webcore.rs` via `#[path]`, so
 // `super` here is `crate::webcore`, not the `s3` directory. Route through the
 // `s3` re-export hub instead.
+use crate::webcore::ResumableSinkBackpressure;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, execute_simple_s3_request, S3CommitResult, S3DownloadResult,
-    S3PartResult, S3UploadResult,
+    self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
+    execute_simple_s3_request,
 };
-use crate::webcore::ResumableSinkBackpressure;
 
 // TODO(port): verify exact path/type for `bun.JSTerminated!T` — assumed `Result<T, bun_jsc::JsTerminated>`
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
@@ -239,7 +239,11 @@ impl UploadPart {
             // StreamBuffer's backing allocation). Reconstruct and drop.
             unsafe {
                 let ptr = (*self.data).as_ptr().cast_mut();
-                drop(Vec::from_raw_parts(ptr, self.allocated_size, self.allocated_size));
+                drop(Vec::from_raw_parts(
+                    ptr,
+                    self.allocated_size,
+                    self.allocated_size,
+                ));
             }
         }
         self.data = std::ptr::from_ref::<[u8]>(b"" as &[u8]);
@@ -262,7 +266,11 @@ impl UploadPart {
         let ctx = unsafe { ctx_ref.get_mut() };
 
         if this.state == PartState::Canceled || ctx.state == State::Finished {
-            scoped_log!(S3MultiPartUpload, "onPartResponse {} canceled", this.part_number);
+            scoped_log!(
+                S3MultiPartUpload,
+                "onPartResponse {} canceled",
+                this.part_number
+            );
             this.free_allocated_slice();
             MultiPartUpload::deref_(this.ctx.as_ptr());
             return Ok(());
@@ -273,14 +281,22 @@ impl UploadPart {
         match result {
             S3PartResult::Failure(err) => {
                 if this.retry > 0 {
-                    scoped_log!(S3MultiPartUpload, "onPartResponse {} retry", this.part_number);
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "onPartResponse {} retry",
+                        this.part_number
+                    );
                     this.retry -= 1;
                     // retry failed
                     this.perform()?;
                     Ok(())
                 } else {
                     this.state = PartState::NotAssigned;
-                    scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", this.part_number);
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "onPartResponse {} failed",
+                        this.part_number
+                    );
                     this.free_allocated_slice();
                     // PORT NOTE: `defer this.ctx.deref()` reordered after fail()
                     let ctx_ptr = this.ctx.as_ptr();
@@ -291,7 +307,11 @@ impl UploadPart {
                 }
             }
             S3PartResult::Etag(etag) => {
-                scoped_log!(S3MultiPartUpload, "onPartResponse {} success", this.part_number);
+                scoped_log!(
+                    S3MultiPartUpload,
+                    "onPartResponse {} success",
+                    this.part_number
+                );
                 let sent = this.data().len();
                 this.free_allocated_slice();
                 // we will need to order this
@@ -381,8 +401,9 @@ impl Drop for MultiPartUpload {
         // PORT NOTE: KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref
-            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
+        ));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // credentials: Arc<S3Credentials> — dropped automatically (== .deref())
         // uploadid_buffer: MutableString — Drop
@@ -411,7 +432,8 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
-                    let callback_context: *mut c_void = std::ptr::from_mut::<Self>(this).cast::<c_void>();
+                    let callback_context: *mut c_void =
+                        std::ptr::from_mut::<Self>(this).cast::<c_void>();
                     execute_simple_s3_request(
                         &*this.credentials,
                         s3_simple_request::S3RequestOptions {
@@ -723,7 +745,8 @@ impl MultiPartUpload {
                 }
                 this_ref.state = State::Finished;
                 // PORT NOTE: `defer this.deref()` reordered after callback
-                let r = (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
+                let r =
+                    (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
                 MultiPartUpload::deref_(this);
                 r
             }

@@ -67,7 +67,11 @@ type VirtualMachine = c_void;
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     // SAFETY: caller guarantees `msg` is valid for `len` bytes.
-    let bytes = if msg.is_null() { &b""[..] } else { unsafe { core::slice::from_raw_parts(msg, len) } };
+    let bytes = if msg.is_null() {
+        &b""[..]
+    } else {
+        unsafe { core::slice::from_raw_parts(msg, len) }
+    };
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
 }
 
@@ -267,13 +271,21 @@ pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i
 
 // Declared `CPP_DECL` in headers.h:279 but bindings.cpp never defines it.
 #[unsafe(no_mangle)]
-pub extern "C" fn JSC__JSValue__parseJSON(string: *const c_void, global: *const JSGlobalObject) -> JSValue {
-    unreachable!("JSC__JSValue__parseJSON: not implemented in Zig either (CPP_DECL with no C++ body)")
+pub extern "C" fn JSC__JSValue__parseJSON(
+    string: *const c_void,
+    global: *const JSGlobalObject,
+) -> JSValue {
+    unreachable!(
+        "JSC__JSValue__parseJSON: not implemented in Zig either (CPP_DECL with no C++ body)"
+    )
 }
 
 // Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
 #[unsafe(no_mangle)]
-pub extern "C" fn BunString__toErrorInstance(this: *const c_void, global: *mut JSGlobalObject) -> JSValue {
+pub extern "C" fn BunString__toErrorInstance(
+    this: *const c_void,
+    global: *mut JSGlobalObject,
+) -> JSValue {
     unreachable!("BunString__toErrorInstance: not implemented in Zig either (no C++ body)")
 }
 

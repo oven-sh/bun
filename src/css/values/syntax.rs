@@ -1,5 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, ParserOptions, PrintErr, Printer, Token};
+use crate::properties::custom::TokenList;
+use crate::properties::transform::{Transform, TransformList};
 use crate::values::angle::Angle;
 use crate::values::color::CssColor;
 use crate::values::ident::{CustomIdent, CustomIdentFns, Ident};
@@ -10,8 +12,6 @@ use crate::values::percentage::Percentage;
 use crate::values::resolution::Resolution;
 use crate::values::time::Time;
 use crate::values::url::Url;
-use crate::properties::custom::TokenList;
-use crate::properties::transform::{Transform, TransformList};
 
 use bun_core::strings;
 
@@ -45,7 +45,11 @@ impl SyntaxString {
         match self {
             SyntaxString::Universal => dest.write_char(b'*')?,
             SyntaxString::Components(components) => {
-                dest.write_separated(components.iter(), |d| d.delim(b'|', true), |d, c| c.to_css(d))?;
+                dest.write_separated(
+                    components.iter(),
+                    |d| d.delim(b'|', true),
+                    |d, c| c.to_css(d),
+                )?;
             }
         }
 
@@ -115,19 +119,35 @@ impl SyntaxString {
                     loop {
                         let value_result = input.try_parse(|i| -> CssResult<ParsedComponent> {
                             let value = match &component.kind {
-                                SyntaxComponentKind::Length => ParsedComponent::Length(Length::parse(i)?),
-                                SyntaxComponentKind::Number => ParsedComponent::Number(CSSNumberFns::parse(i)?),
-                                SyntaxComponentKind::Percentage => ParsedComponent::Percentage(Percentage::parse(i)?),
+                                SyntaxComponentKind::Length => {
+                                    ParsedComponent::Length(Length::parse(i)?)
+                                }
+                                SyntaxComponentKind::Number => {
+                                    ParsedComponent::Number(CSSNumberFns::parse(i)?)
+                                }
+                                SyntaxComponentKind::Percentage => {
+                                    ParsedComponent::Percentage(Percentage::parse(i)?)
+                                }
                                 SyntaxComponentKind::LengthPercentage => {
                                     ParsedComponent::LengthPercentage(LengthPercentage::parse(i)?)
                                 }
-                                SyntaxComponentKind::Color => ParsedComponent::Color(CssColor::parse(i)?),
-                                SyntaxComponentKind::Image => ParsedComponent::Image(Image::parse(i)?),
+                                SyntaxComponentKind::Color => {
+                                    ParsedComponent::Color(CssColor::parse(i)?)
+                                }
+                                SyntaxComponentKind::Image => {
+                                    ParsedComponent::Image(Image::parse(i)?)
+                                }
                                 SyntaxComponentKind::Url => ParsedComponent::Url(Url::parse(i)?),
-                                SyntaxComponentKind::Integer => ParsedComponent::Integer(CSSIntegerFns::parse(i)?),
-                                SyntaxComponentKind::Angle => ParsedComponent::Angle(Angle::parse(i)?),
+                                SyntaxComponentKind::Integer => {
+                                    ParsedComponent::Integer(CSSIntegerFns::parse(i)?)
+                                }
+                                SyntaxComponentKind::Angle => {
+                                    ParsedComponent::Angle(Angle::parse(i)?)
+                                }
                                 SyntaxComponentKind::Time => ParsedComponent::Time(Time::parse(i)?),
-                                SyntaxComponentKind::Resolution => ParsedComponent::Resolution(Resolution::parse(i)?),
+                                SyntaxComponentKind::Resolution => {
+                                    ParsedComponent::Resolution(Resolution::parse(i)?)
+                                }
                                 SyntaxComponentKind::TransformFunction => {
                                     ParsedComponent::TransformFunction(Transform::parse(i)?)
                                 }
@@ -141,9 +161,12 @@ impl SyntaxString {
                                     let location = i.current_source_location();
                                     let ident = i.expect_ident_cloned()?;
                                     if !strings::eql(ident, value) {
-                                        return Err(location.new_unexpected_token_error(Token::Ident(ident)));
+                                        return Err(location
+                                            .new_unexpected_token_error(Token::Ident(ident)));
                                     }
-                                    ParsedComponent::Literal(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
+                                    ParsedComponent::Literal(Ident {
+                                        v: std::ptr::from_ref::<[u8]>(ident),
+                                    })
                                 }
                             };
                             Ok(value)
@@ -474,7 +497,9 @@ impl ParsedComponent {
             ParsedComponent::Length(v) => ParsedComponent::Length(v.deep_clone()),
             ParsedComponent::Number(v) => ParsedComponent::Number(*v),
             ParsedComponent::Percentage(v) => ParsedComponent::Percentage(*v),
-            ParsedComponent::LengthPercentage(v) => ParsedComponent::LengthPercentage(v.deep_clone()),
+            ParsedComponent::LengthPercentage(v) => {
+                ParsedComponent::LengthPercentage(v.deep_clone())
+            }
             ParsedComponent::Color(v) => ParsedComponent::Color(v.deep_clone(bump)),
             ParsedComponent::Image(v) => ParsedComponent::Image(v.deep_clone(bump)),
             ParsedComponent::Url(v) => ParsedComponent::Url(v.deep_clone(bump)),
@@ -482,7 +507,9 @@ impl ParsedComponent {
             ParsedComponent::Angle(v) => ParsedComponent::Angle(*v),
             ParsedComponent::Time(v) => ParsedComponent::Time(*v),
             ParsedComponent::Resolution(v) => ParsedComponent::Resolution(*v),
-            ParsedComponent::TransformFunction(v) => ParsedComponent::TransformFunction(v.deep_clone(bump)),
+            ParsedComponent::TransformFunction(v) => {
+                ParsedComponent::TransformFunction(v.deep_clone(bump))
+            }
             ParsedComponent::TransformList(v) => ParsedComponent::TransformList(v.deep_clone(bump)),
             ParsedComponent::CustomIdent(v) => ParsedComponent::CustomIdent(*v),
             ParsedComponent::Literal(v) => ParsedComponent::Literal(*v),

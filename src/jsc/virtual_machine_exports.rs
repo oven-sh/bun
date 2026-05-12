@@ -7,9 +7,9 @@ use crate::{
     VirtualMachineRef as VirtualMachine,
 };
 use bun_bundler::transpiler::PluginResolver;
+use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
-use bun_core::String as BunString;
 
 // Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
 // Handled below by `#[cfg(windows)]` on the fn definition itself.
@@ -102,7 +102,10 @@ pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
 // HOST_EXPORT(Bun__queueTask, c)
 pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    global.bun_vm().event_loop_mut().enqueue_task(Task::init(task));
+    global
+        .bun_vm()
+        .event_loop_mut()
+        .enqueue_task(Task::init(task));
 }
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
@@ -110,7 +113,10 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        let _ = global.bun_vm().as_mut().uncaught_exception(global, value, false);
+        let _ = global
+            .bun_vm()
+            .as_mut()
+            .uncaught_exception(global, value, false);
     }
     JSValue::UNDEFINED
 }
@@ -119,10 +125,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 // HOST_EXPORT(Bun__queueTaskConcurrently, c)
-pub fn queue_task_concurrently(
-    global: &JSGlobalObject,
-    task: *mut crate::cpp_task::CppTask,
-) {
+pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
     // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
     // returns null for a Bun-owned global. Called off-thread but the loop
@@ -165,7 +168,10 @@ impl HandledPromiseContext {
         let context = unsafe { bun_core::heap::take(context) };
         let global: &JSGlobalObject = &context.global_this;
         // JSGlobalObject::bun_vm contract.
-        let _ = global.bun_vm().as_mut().handled_promise(global, context.promise.get());
+        let _ = global
+            .bun_vm()
+            .as_mut()
+            .handled_promise(global, context.promise.get());
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
         // Strong's Drop replaces the explicit `.unprotect()`.
         Ok(())
@@ -180,7 +186,10 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
         global_this: global.into(),
         promise: Strong::create(promise_js, global),
     }));
-    global.bun_vm().event_loop_mut().enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+    global
+        .bun_vm()
+        .event_loop_mut()
+        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)
@@ -196,8 +205,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
     let runner = jsc_vm.plugin_runner.insert(PluginRunner {
         global_object: bun_ptr::BackRef::new(global),
     });
-    jsc_vm.transpiler.linker.plugin_runner =
-        Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
+    jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
 }
 
 #[cfg(windows)]
@@ -209,13 +217,19 @@ pub extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)
 pub fn set_tls_reject_unauthorized_value(value: i32) {
     // SAFETY: VM singleton is process-lifetime.
-    VirtualMachine::get().as_mut().default_tls_reject_unauthorized = Some(value != 0);
+    VirtualMachine::get()
+        .as_mut()
+        .default_tls_reject_unauthorized = Some(value != 0);
 }
 
 // HOST_EXPORT(Bun__getTLSRejectUnauthorizedValue, c)
 pub fn get_tls_reject_unauthorized_value() -> i32 {
     // SAFETY: VM singleton is process-lifetime.
-    if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() { 1 } else { 0 }
+    if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() {
+        1
+    } else {
+        0
+    }
 }
 
 // HOST_EXPORT(Bun__isNoProxy, c)

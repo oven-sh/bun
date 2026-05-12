@@ -94,13 +94,27 @@ impl<'a> StackReader<'a> {
 }
 
 impl<'a> ReaderContext for StackReader<'a> {
-    fn mark_message_start(self) { Self::mark_message_start(&self) }
-    fn peek(&self) -> &[u8] { Self::peek(self) }
-    fn skip(self, count: isize) { Self::skip(&self, count) }
-    fn ensure_capacity(self, count: usize) -> bool { Self::ensure_capacity(&self, count) }
-    fn read(self, count: usize) -> Result<Data, AnyMySQLError> { Self::read(&self, count) }
-    fn read_z(self) -> Result<Data, AnyMySQLError> { Self::read_z(&self) }
-    fn set_offset_from_start(self, offset: usize) { Self::set_offset_from_start(&self, offset) }
+    fn mark_message_start(self) {
+        Self::mark_message_start(&self)
+    }
+    fn peek(&self) -> &[u8] {
+        Self::peek(self)
+    }
+    fn skip(self, count: isize) {
+        Self::skip(&self, count)
+    }
+    fn ensure_capacity(self, count: usize) -> bool {
+        Self::ensure_capacity(&self, count)
+    }
+    fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
+        Self::read(&self, count)
+    }
+    fn read_z(self) -> Result<Data, AnyMySQLError> {
+        Self::read_z(&self)
+    }
+    fn set_offset_from_start(self, offset: usize) {
+        Self::set_offset_from_start(&self, offset)
+    }
 }
 
 // ported from: src/sql/mysql/protocol/StackReader.zig

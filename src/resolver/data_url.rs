@@ -120,8 +120,8 @@ impl<'a> DataURL<'a> {
 
     pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, bun_core::Error> {
         // TODO(port): narrow error set
-        let comma = strings::index_of_char(url, b',')
-            .ok_or(bun_core::err!("InvalidDataURL"))? as usize;
+        let comma =
+            strings::index_of_char(url, b',').ok_or(bun_core::err!("InvalidDataURL"))? as usize;
 
         let mut parsed = DataURL {
             url: bun_core::String::empty(),
@@ -145,8 +145,7 @@ impl<'a> DataURL<'a> {
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
-        let percent_decoded_owned: Option<Vec<u8>> =
-            PercentEncoding::decode_unstrict(self.data)?;
+        let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
         // defer: `percent_decoded_owned` drops at scope exit
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
@@ -173,11 +172,8 @@ impl<'a> DataURL<'a> {
 
         'use_base64: {
             let mut counter = CountingBuf { len: 0 };
-            let success = Self::encode_string_as_percent_escaped_data_url(
-                &mut counter,
-                mime_type,
-                text,
-            );
+            let success =
+                Self::encode_string_as_percent_escaped_data_url(&mut counter, mime_type, text);
             if !success {
                 break 'use_base64;
             }
@@ -188,9 +184,8 @@ impl<'a> DataURL<'a> {
 
             let mut buf: Vec<u8> = Vec::new();
             // errdefer: `buf` drops automatically
-            let success2 = Self::encode_string_as_percent_escaped_data_url(
-                &mut buf, mime_type, text,
-            );
+            let success2 =
+                Self::encode_string_as_percent_escaped_data_url(&mut buf, mime_type, text);
             if !success2 {
                 break 'use_base64;
             }

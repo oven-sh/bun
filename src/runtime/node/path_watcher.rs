@@ -29,11 +29,11 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
-use bun_core::{handle_oom, zstr, Output, ZBox, ZStr};
-use bun_paths::resolve_path::{join_string_buf, join_z_buf};
-use bun_paths::{self as path, platform, PathBuffer};
 use bun_core::strings;
-use bun_sys::{self as sys, Fd, FdExt, Tag, E};
+use bun_core::{Output, ZBox, ZStr, handle_oom, zstr};
+use bun_paths::resolve_path::{join_string_buf, join_z_buf};
+use bun_paths::{self as path, PathBuffer, platform};
+use bun_sys::{self as sys, E, Fd, FdExt, Tag};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
@@ -145,7 +145,11 @@ impl PathWatcherManager {
         if let Err(e) = Platform::init(m) {
             // SAFETY: `m` came from `release(Box::new(..))` above and has not
             // been published — reclaim it so the failed init isn't a leak.
-            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<PathWatcherManager>(m))) };
+            unsafe {
+                drop(bun_core::heap::take(
+                    std::ptr::from_mut::<PathWatcherManager>(m),
+                ))
+            };
             return Err(e);
         }
         // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
@@ -532,7 +536,11 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    let dfd = match sys::open(abs_dir, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
+    let dfd = match sys::open(
+        abs_dir,
+        sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
+        0,
+    ) {
         Err(_) => return,
         Ok(f) => f,
     };
@@ -781,7 +789,9 @@ impl Linux {
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let wd_map = unsafe { &mut (*plat).wd_map };
         for &wd in watcher.platform.wds.iter() {
-            let Some(owners) = wd_map.get_mut(&wd) else { continue };
+            let Some(owners) = wd_map.get_mut(&wd) else {
+                continue;
+            };
             let mut j: usize = 0;
             while j < owners.len() {
                 if core::ptr::eq(owners[j].watcher, watcher) {
@@ -915,7 +925,9 @@ impl Linux {
                     // and may rehash. Extract the owner's watcher ptr and subpath bytes,
                     // then drop the map borrow before any of that runs.
                     let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = unsafe {
-                        let Some(owners) = (*plat).wd_map.get(&wd) else { break };
+                        let Some(owners) = (*plat).wd_map.get(&wd) else {
+                            break;
+                        };
                         if oi >= owners.len() {
                             break;
                         }
@@ -924,7 +936,10 @@ impl Linux {
                         // `wd_map` rehashes (only the Vec header does). Launder the slice
                         // through a raw ptr so its provenance is decoupled from the map
                         // borrow that `add_one` will invalidate.
-                        (o.watcher, &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()))
+                        (
+                            o.watcher,
+                            &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()),
+                        )
                     };
                     // SAFETY: owner_watcher live under manager.mutex. Read the scalar
                     // fields and the path bytes via the raw pointer *before* forming
@@ -1118,7 +1133,9 @@ impl Darwin {
         // watcher already unlinked. Forming `&mut *ctx` here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else { return };
+        let Some(&manager) = DEFAULT_MANAGER.get() else {
+            return;
+        };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex; see above.
         if unsafe { (*watcher_ptr).manager.is_none() } {
@@ -1138,7 +1155,9 @@ impl Darwin {
     fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else { return };
+        let Some(&manager) = DEFAULT_MANAGER.get() else {
+            return;
+        };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex.
         if unsafe { (*watcher_ptr).manager.is_none() } {
@@ -1246,7 +1265,7 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
-        use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
+        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
         let plat: *mut Kqueue = manager.platform.get();
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
@@ -1344,7 +1363,7 @@ impl Kqueue {
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
-        use bun_sys::freebsd::{kevent, Kevent, NOTE};
+        use bun_sys::freebsd::{Kevent, NOTE, kevent};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Kqueue = manager.platform.get();
         let kq = manager.kq_fd();
@@ -1397,12 +1416,14 @@ impl Kqueue {
                     unsafe { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
                 let watcher = unsafe { &mut *entry.watcher };
 
-                let event_type: EventType =
-                    if kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK) != 0 {
-                        EventType::Rename
-                    } else {
-                        EventType::Change
-                    };
+                let event_type: EventType = if kev.fflags
+                    & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)
+                    != 0
+                {
+                    EventType::Rename
+                } else {
+                    EventType::Change
+                };
 
                 // kqueue has no filenames. For a file watch, report the basename; for a
                 // directory, report the subpath (empty for root → caller re-scans).

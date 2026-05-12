@@ -4,8 +4,8 @@ use bun_paths::resolve_path;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
+    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
+    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -77,17 +77,12 @@ impl Cp {
                 }
                 Ok(_) => {
                     Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-                    return Builtin::write_failing_error(
-                        interp,
-                        cmd,
-                        Kind::Cp.usage_string(),
-                        1,
-                    );
+                    return Builtin::write_failing_error(interp, cmd, Kind::Cp.usage_string(), 1);
                 }
                 Err(e) => {
                     return Builtin::fail_parse(interp, cmd, Kind::Cp, e, || {
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    })
+                    });
                 }
             }
         };
@@ -109,7 +104,11 @@ impl Cp {
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             #[allow(dead_code)]
-            enum Action { Done(ExitCode), Schedule { start: usize, target: usize }, Ebusy(ExitCode) }
+            enum Action {
+                Done(ExitCode),
+                Schedule { start: usize, target: usize },
+                Ebusy(ExitCode),
+            }
             let action = match &mut Self::state_mut(interp, cmd).state {
                 State::Idle => panic!(
                     "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
@@ -144,7 +143,9 @@ impl Cp {
                 }
                 State::Ebusy(_) => {
                     #[cfg(windows)]
-                    { return Self::ignore_ebusy_error_if_possible(interp, cmd); }
+                    {
+                        return Self::ignore_ebusy_error_if_possible(interp, cmd);
+                    }
                     #[cfg(not(windows))]
                     panic!("Should only be called on Windows");
                 }
@@ -169,7 +170,10 @@ impl Cp {
                         continue;
                     }
                     #[cfg(not(windows))]
-                    { let _ = exit_code; unreachable!(); }
+                    {
+                        let _ = exit_code;
+                        unreachable!();
+                    }
                 }
                 Action::Schedule { start, target } => {
                     let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
@@ -181,7 +185,13 @@ impl Cp {
                     for i in start..target {
                         let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                         let task = ShellCpTask::create(
-                            cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
+                            cmd,
+                            evtloop,
+                            opts,
+                            operands,
+                            src,
+                            tgt.clone(),
+                            cwd.clone(),
                             interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
@@ -262,11 +272,7 @@ impl Cp {
     }
 
     /// Spec: cp.zig `onShellCpTaskDone`.
-    pub fn on_shell_cp_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellCpTask,
-    ) {
+    pub fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
@@ -311,11 +317,7 @@ impl Cp {
     }
 
     /// Spec: cp.zig `printShellCpTask`.
-    fn print_shell_cp_task(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellCpTask,
-    ) -> Yield {
+    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) -> Yield {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         // Spec: cp.zig `task.takeOutput()`. The lock is uncontended here (all
@@ -470,9 +472,13 @@ impl ShellCpTask {
     /// Takes `&self` because subtasks fan out concurrently — the only mutated
     /// state is the locked `verbose_output` buffer.
     pub fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
-        if !self.opts.verbose { return; }
+        if !self.opts.verbose {
+            return;
+        }
         #[cfg(not(windows))]
-        { self.on_copy_impl(src, dest); }
+        {
+            self.on_copy_impl(src, dest);
+        }
         #[cfg(windows)]
         {
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -571,11 +577,10 @@ impl ShellCpTask {
         {
             match bun_sys::get_file_attributes(path) {
                 Some(attrs) => Ok(attrs.is_directory),
-                None => Err(bun_sys::Error::from_code(
-                    bun_sys::E::ENOENT,
-                    bun_sys::Tag::copyfile,
-                )
-                .with_path(path.as_bytes())),
+                None => Err(
+                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile)
+                        .with_path(path.as_bytes()),
+                ),
             }
         }
         #[cfg(not(windows))]
@@ -590,7 +595,7 @@ impl ShellCpTask {
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
-        use resolve_path::{platform, Platform};
+        use resolve_path::{Platform, platform};
 
         let mut buf2 = bun_paths::PathBuffer::uninit();
         let mut buf3 = bun_paths::PathBuffer::uninit();
@@ -629,12 +634,9 @@ impl ShellCpTask {
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
             return Some(ShellErr::Custom(
-                format!(
-                    "{} is a directory (not copied)",
-                    bstr::BStr::new(&self.src)
-                )
-                .into_bytes()
-                .into_boxed_slice(),
+                format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
+                    .into_bytes()
+                    .into_boxed_slice(),
             ));
         }
 
@@ -685,12 +687,9 @@ impl ShellCpTask {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
                 return Some(ShellErr::Custom(
-                    format!(
-                        "{} is a directory (not copied)",
-                        bstr::BStr::new(&self.src)
-                    )
-                    .into_bytes()
-                    .into_boxed_slice(),
+                    format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
+                        .into_bytes()
+                        .into_boxed_slice(),
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
@@ -731,7 +730,11 @@ impl ShellCpTask {
         // bookkeeping; the Rust `NewAsyncCpTask` owns its allocations.
         match self.task.event_loop {
             EventLoopHandle::Js { .. } => {
-                let vm_ptr = self.task.event_loop.bun_vm().cast::<bun_jsc::virtual_machine::VirtualMachine>();
+                let vm_ptr = self
+                    .task
+                    .event_loop
+                    .bun_vm()
+                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 // SAFETY: `Js` arm always has a live VM (set at interpreter
                 // construction); accessed read-only here for the
                 // global-object handle and event-loop pointer — same as Zig's

@@ -54,7 +54,8 @@ impl ColorBox {
 
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
-    fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32) -> u32;
+    fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
+    -> u32;
 }
 
 pub struct Options {

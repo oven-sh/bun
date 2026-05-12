@@ -1,5 +1,5 @@
-use std::cell::Cell;
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
 
 use bun_collections::VecExt;
 
@@ -216,13 +216,21 @@ impl Symbol {
     #[inline]
     pub fn chunk_index(&self) -> Option<u32> {
         let i = self.chunk_index.load(Ordering::Relaxed);
-        if i == INVALID_CHUNK_INDEX { None } else { Some(i) }
+        if i == INVALID_CHUNK_INDEX {
+            None
+        } else {
+            Some(i)
+        }
     }
 
     #[inline]
     pub fn nested_scope_slot(&self) -> Option<u32> {
         let i = self.nested_scope_slot;
-        if i == INVALID_NESTED_SCOPE_SLOT { None } else { Some(i) }
+        if i == INVALID_NESTED_SCOPE_SLOT {
+            None
+        } else {
+            Some(i)
+        }
     }
 
     pub fn slot_namespace(&self) -> SlotNamespace {
@@ -341,7 +349,10 @@ pub enum Kind {
 impl Kind {
     // TODO(port): Zig std.json.stringify protocol — `writer.write(@tagName(self))` writes a
     // JSON string value (with quotes). Verify the Rust JSON writer trait used.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: core::fmt::Write>(
+        self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write_str(<&'static str>::from(self))?;
         Ok(())
@@ -349,7 +360,8 @@ impl Kind {
 
     #[inline]
     pub fn is_private(self) -> bool {
-        (self as u8) >= (Kind::PrivateField as u8) && (self as u8) <= (Kind::PrivateStaticGetSetPair as u8)
+        (self as u8) >= (Kind::PrivateField as u8)
+            && (self as u8) <= (Kind::PrivateStaticGetSetPair as u8)
     }
 
     #[inline]
@@ -359,7 +371,10 @@ impl Kind {
 
     #[inline]
     pub fn is_hoisted_or_function(self) -> bool {
-        matches!(self, Kind::Hoisted | Kind::HoistedFunction | Kind::GeneratorOrAsyncFunction)
+        matches!(
+            self,
+            Kind::Hoisted | Kind::HoistedFunction | Kind::GeneratorOrAsyncFunction
+        )
     }
 
     #[inline]
@@ -404,11 +419,7 @@ impl Map {
     // Debug-only dump of the symbol table.
     pub fn dump(&self) {
         for (i, symbols) in self.symbols_for_source.slice().iter().enumerate() {
-            bun_core::prettyln!(
-                "\n\n-- Source ID: {} ({} symbols) --\n",
-                i,
-                symbols.len(),
-            );
+            bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);
             for (inner_index, symbol) in symbols.slice().iter().enumerate() {
                 let display_ref = if symbol.has_link() {
                     symbol.link.get()
@@ -464,12 +475,17 @@ impl Map {
                     },
                     "Symbol.chunk_index reassigned across chunks (linker partition invariant broken)",
                 );
-                symbol.chunk_index.store(self.chunk_index, Ordering::Relaxed);
+                symbol
+                    .chunk_index
+                    .store(self.chunk_index, Ordering::Relaxed);
             }
         }
         DeclaredSymbol::for_each_top_level_symbol(
             decls_,
-            &mut Iterator { map: self, chunk_index },
+            &mut Iterator {
+                map: self,
+                chunk_index,
+            },
             Iterator::next,
         );
     }
@@ -572,7 +588,9 @@ impl Map {
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
         let mut v: Vec<List> = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);
-        Map { symbols_for_source: NestedList::move_from_list(v) }
+        Map {
+            symbols_for_source: NestedList::move_from_list(v),
+        }
     }
 
     // PORT NOTE: Zig aliased the caller's stack `[1]List` slot directly; that's
@@ -585,7 +603,9 @@ impl Map {
     }
 
     pub fn init_list(list: NestedList) -> Map {
-        Map { symbols_for_source: list }
+        Map {
+            symbols_for_source: list,
+        }
     }
 
     /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors

@@ -12,7 +12,7 @@ use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
-use crate::webcore::{response, ReadableStream, Response};
+use crate::webcore::{ReadableStream, Response, response};
 
 unsafe extern "C" {
     // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
@@ -71,7 +71,10 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
         return Err(this
             .err(
                 ErrorCode::WEBASSEMBLY_RESPONSE,
-                format_args!("WebAssembly response has status code {}", response.status_code()),
+                format_args!(
+                    "WebAssembly response has status code {}",
+                    response.status_code()
+                ),
             )
             .throw());
     }

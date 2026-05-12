@@ -1,5 +1,11 @@
 #![feature(allocator_api)]
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -46,23 +52,23 @@ macro_rules! match_ignore_ascii_case {
 // follow-up B-2 round.
 
 // ─── B-2 un-gated modules ─────────────────────────────────────────────────
-#[path = "logical.rs"]
-pub mod logical;
-#[path = "sourcemap.rs"]
-pub mod sourcemap;
 #[path = "compat.rs"]
 pub mod compat;
+#[path = "logical.rs"]
+pub mod logical;
 #[path = "prefixes.rs"]
 pub mod prefixes;
+#[path = "sourcemap.rs"]
+pub mod sourcemap;
 #[path = "targets.rs"]
 pub mod targets;
 
-#[path = "error.rs"]
-pub mod error;
-#[path = "dependencies.rs"]
-pub mod dependencies;
 #[path = "css_modules.rs"]
 pub mod css_modules;
+#[path = "dependencies.rs"]
+pub mod dependencies;
+#[path = "error.rs"]
+pub mod error;
 #[path = "small_list.rs"]
 pub mod small_list;
 pub use small_list::SmallList;
@@ -75,14 +81,14 @@ pub use small_list::SmallList;
 // surface (`CssRule`, `CssRuleList`, `SelectorList`, `MediaList`,
 // `PropertyId`, ...) so `css_parser::AtRulePrelude` / `TopLevelRuleParser`
 // can flip to the real paths in a follow-up round.
+#[path = "media_query.rs"]
+pub mod media_query;
 #[path = "properties/mod.rs"]
 pub mod properties;
 #[path = "rules/mod.rs"]
 pub mod rules;
 #[path = "selectors/mod.rs"]
 pub mod selectors;
-#[path = "media_query.rs"]
-pub mod media_query;
 
 // ─── B-2 round 4: declaration/context un-gated ────────────────────────────
 // `DeclarationBlock` / `DeclarationList` / `DeclarationHandler` and
@@ -106,16 +112,16 @@ pub use declaration::{DeclarationBlock, DeclarationHandler, DeclarationList};
 // Path aliases the ported submodules expect at crate root (Zig's `css.*`
 // namespace was flat; the Rust port re-nests under `values/`/`properties/`
 // but most callers still spell `bun_css::css_values::...`).
-pub use values as css_values;
 pub use properties as css_properties;
 pub use rules as css_rules;
 pub use selectors::selector;
+pub use values as css_values;
 
 // Crate-root re-exports of parser-core helpers referenced by the rule/
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
-    enum_property_util, nth, parse_utility, signfns, void_wrap, CssRef, CssRefTag,
-    CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe, ParserState,
+    CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe,
+    ParserState, enum_property_util, nth, parse_utility, signfns, void_wrap,
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
@@ -144,13 +150,13 @@ pub unsafe fn arena_str(p: Str) -> &'static [u8] {
     // whose backing storage outlives the returned reference.
     unsafe { &*p }
 }
-pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
-pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
-pub use properties::custom::{TokenList, TokenListFns};
+pub use compat::Feature;
 /// `css::ParseErrorKind` — Zig spelling. Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
-pub use compat::Feature;
 pub use error::ParserErrorKind as ErrorKind;
+pub use properties::custom::{TokenList, TokenListFns};
+pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 
 // `css::generic::*` is the Zig-spelled namespace for the protocol traits +
 // reflection helpers. The Rust module is `generics`; alias both spellings so
@@ -190,10 +196,10 @@ pub mod generics;
 // write/indent/delim). `values/` is real for the leaf submodules; the heavy
 // ones (color, calc, gradient, image, length, syntax) are internally gated
 // inside values/mod.rs.
-#[path = "printer.rs"]
-pub mod printer;
 #[path = "css_parser.rs"]
 pub mod css_parser;
+#[path = "printer.rs"]
+pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
@@ -231,7 +237,6 @@ pub mod values_stub {
         pub use crate::values::ident::*;
     }
 }
-
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 // TODO(b1): real types come back when modules are un-gated in B-2.
@@ -276,9 +281,7 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// union of the same name in css_parser.zig:3783); the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
-pub use values::color::{
-    CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA,
-};
+pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
 pub use values_stub::color::CssColorParseResult;
 
 // Real re-exports from un-gated modules (cross-crate surface).
@@ -287,14 +290,14 @@ pub use error::{
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
 pub type Error = Err<ParserError>;
-pub use targets::{Browsers, Features, Targets};
 pub use logical::{LogicalGroup, PropertyCategory};
+pub use targets::{Browsers, Features, Targets};
 
 // Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
 // reach for these via `bun_css::*`).
-pub use rules::import::ImportConditions;
-pub use properties::PropertyIdTag;
 pub use css_parser::BundlerStyleSheet;
+pub use properties::PropertyIdTag;
+pub use rules::import::ImportConditions;
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
@@ -395,7 +398,11 @@ pub struct Location {
 
 impl Location {
     pub fn dummy() -> Location {
-        Location { source_index: u32::MAX, line: u32::MAX, column: u32::MAX }
+        Location {
+            source_index: u32::MAX,
+            line: u32::MAX,
+            column: u32::MAX,
+        }
     }
 }
 
@@ -433,7 +440,11 @@ pub enum Token {
     /// A `<delim-token>` — single codepoint. In practice always ASCII.
     Delim(u32),
     Number(Num),
-    Percentage { has_sign: bool, unit_value: f32, int_value: Option<i32> },
+    Percentage {
+        has_sign: bool,
+        unit_value: f32,
+        int_value: Option<i32>,
+    },
     Dimension(Dimension),
     Whitespace(&'static [u8]),
     /// `<!--`
@@ -465,10 +476,17 @@ impl core::fmt::Display for Token {
         // depends on `serializer::*`; that impl supersedes this when un-gated.
         use bstr::BStr;
         match self {
-            Token::Ident(v) | Token::Function(v) | Token::AtKeyword(v)
-            | Token::UnrestrictedHash(v) | Token::IdHash(v) | Token::QuotedString(v)
-            | Token::BadString(v) | Token::UnquotedUrl(v) | Token::BadUrl(v)
-            | Token::Whitespace(v) | Token::Comment(v) => {
+            Token::Ident(v)
+            | Token::Function(v)
+            | Token::AtKeyword(v)
+            | Token::UnrestrictedHash(v)
+            | Token::IdHash(v)
+            | Token::QuotedString(v)
+            | Token::BadString(v)
+            | Token::UnquotedUrl(v)
+            | Token::BadUrl(v)
+            | Token::Whitespace(v)
+            | Token::Comment(v) => {
                 write!(f, "{}", BStr::new(v))
             }
             Token::Delim(c) => write!(f, "{}", char::from_u32(*c).unwrap_or('\u{FFFD}')),

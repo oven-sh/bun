@@ -34,17 +34,17 @@ pub struct Error(NonZeroU16);
 /// `ErrnoNames` hook; entries here are only fast-path intern hits.)
 const SEED: &[&str] = &[
     // — well-known Zig error-set members the runtime matches on by value —
-    "Unexpected",       // 1  (Zig's catch-all; also `errno_map` default)
-    "OutOfMemory",      // 2
-    "EndOfStream",      // 3
-    "StreamTooLong",    // 4
-    "NoSpaceLeft",      // 5
-    "WriteFailed",      // 6
-    "Overflow",         // 7
-    "InvalidArgument",  // 8
-    "Timeout",          // 9
-    "Aborted",          // 10
-    "WouldBlock",       // 11
+    "Unexpected",      // 1  (Zig's catch-all; also `errno_map` default)
+    "OutOfMemory",     // 2
+    "EndOfStream",     // 3
+    "StreamTooLong",   // 4
+    "NoSpaceLeft",     // 5
+    "WriteFailed",     // 6
+    "Overflow",        // 7
+    "InvalidArgument", // 8
+    "Timeout",         // 9
+    "Aborted",         // 10
+    "WouldBlock",      // 11
     // — POSIX errno tag names (intern fast-path only; the actual errno→name
     //   mapping is the per-platform table in bun_errno, via ErrnoNames hook) —
     "EPERM",   // 12
@@ -163,7 +163,9 @@ impl Error {
 
     /// Alias for [`intern`]; kept for `err!(from e)` and Phase-A call sites.
     #[inline]
-    pub fn from_name(name: &'static str) -> Self { Self::intern(name) }
+    pub fn from_name(name: &'static str) -> Self {
+        Self::intern(name)
+    }
 
     /// Zig: `@errorName(e)`. Never allocates; the table only stores `'static`.
     pub fn name(self) -> &'static str {
@@ -180,7 +182,9 @@ impl Error {
 
     /// Zig: `@intFromError(e)`.
     #[inline]
-    pub const fn as_u16(self) -> u16 { self.0.get() }
+    pub const fn as_u16(self) -> u16 {
+        self.0.get()
+    }
 
     /// Zig: `@errorFromInt(n)`. `0` (the "no error" value Zig forbids) maps to
     /// `Unexpected` rather than panicking, since callers feed untrusted ints.
@@ -212,8 +216,12 @@ impl Error {
         });
 
         // Windows libuv errnos are negative; normalise like the Zig original.
-        let n = if cfg!(windows) { errno.unsigned_abs() } else {
-            if errno <= 0 { return Self::UNEXPECTED; }
+        let n = if cfg!(windows) {
+            errno.unsigned_abs()
+        } else {
+            if errno <= 0 {
+                return Self::UNEXPECTED;
+            }
             errno as u32
         };
         if let Some(&e) = map.get(n as usize) {
@@ -264,14 +272,18 @@ impl From<std::io::Error> for Error {
     }
 }
 impl From<bun_alloc::AllocError> for Error {
-    fn from(_: bun_alloc::AllocError) -> Self { Self::OUT_OF_MEMORY }
+    fn from(_: bun_alloc::AllocError) -> Self {
+        Self::OUT_OF_MEMORY
+    }
 }
 /// Zig's `std.Io.Writer` error set surfaces as `error.WriteFailed` when
 /// propagated through `try writer.print(…)`; the Rust port routes formatted
 /// output through `core::fmt::Write`, whose only error value is the unit
 /// `fmt::Error`. Map it to the same tag so `?`-propagation matches the spec.
 impl From<core::fmt::Error> for Error {
-    fn from(_: core::fmt::Error) -> Self { Self::WRITE_FAILED }
+    fn from(_: core::fmt::Error) -> Self {
+        Self::WRITE_FAILED
+    }
 }
 
 /// Extension for `?`-propagating non-`fmt::Error` write failures (e.g.
@@ -369,7 +381,12 @@ pub mod coreutils_error_map {
     // Since windows is just an emulation of linux, it derives the linux messages.
     // Android shares the Linux kernel errno → strerror() text (bionic copies
     // glibc's strings), so it derives the linux messages too.
-    #[cfg(any(target_os = "linux", target_os = "android", windows, target_family = "wasm"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        windows,
+        target_family = "wasm"
+    ))]
     static MESSAGES: phf::Map<&'static str, &'static str> = phf::phf_map! {
         "EPERM" => "Operation not permitted",
         "ENOENT" => "No such file or directory",
@@ -755,7 +772,10 @@ mod tests {
         assert_eq!(Error::UNEXPECTED.name(), "Unexpected");
         assert_eq!(Error::OUT_OF_MEMORY.name(), "OutOfMemory");
         assert_eq!(Error::intern("OutOfMemory"), Error::OUT_OF_MEMORY);
-        assert_eq!(Error::from_raw(Error::OUT_OF_MEMORY.as_u16()), Error::OUT_OF_MEMORY);
+        assert_eq!(
+            Error::from_raw(Error::OUT_OF_MEMORY.as_u16()),
+            Error::OUT_OF_MEMORY
+        );
     }
 
     // `errno_mapping`, `errno_table_full_range`, `coreutils_map` moved to

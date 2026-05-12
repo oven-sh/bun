@@ -46,17 +46,13 @@ impl Cd {
                     let homedir = Builtin::shell(interp, cmd).get_homedir();
                     let target = homedir.slice().to_vec();
                     homedir.deref();
-                    if let Err(err) =
-                        interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target)
-                    {
+                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
                         return Self::handle_change_cwd_err(interp, cmd, err, &target);
                     }
                 }
                 _ => {
                     let target = first_arg.to_vec();
-                    if let Err(err) =
-                        interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target)
-                    {
+                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
                         return Self::handle_change_cwd_err(interp, cmd, err, &target);
                     }
                 }
@@ -80,11 +76,9 @@ impl Cd {
                 cmd,
                 format_args!("not a directory: {}\n", bstr::BStr::new(new_cwd)),
             ),
-            E::ENAMETOOLONG => Self::write_stderr_non_blocking(
-                interp,
-                cmd,
-                format_args!("file name too long\n"),
-            ),
+            E::ENAMETOOLONG => {
+                Self::write_stderr_non_blocking(interp, cmd, format_args!("file name too long\n"))
+            }
             _ => {
                 let errmsg = err.msg().unwrap_or_else(|| err.name());
                 Self::write_stderr_non_blocking(
@@ -108,9 +102,12 @@ impl Cd {
         Self::state_mut(interp, cmd).state = State::WaitingIo;
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue_fmt(child, Some(Kind::Cd), args, safeguard);
+            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                child,
+                Some(Kind::Cd),
+                args,
+                safeguard,
+            );
         }
         let buf = Builtin::fmt_error_arena(interp, cmd, Some(Kind::Cd), args).to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);

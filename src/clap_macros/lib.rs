@@ -51,7 +51,11 @@ struct Param {
 
 impl Default for Param {
     fn default() -> Self {
-        Self { id: Help::default(), names: Names::default(), takes_value: Values::None }
+        Self {
+            id: Help::default(),
+            names: Names::default(),
+            takes_value: Values::None,
+        }
     }
 }
 
@@ -183,7 +187,10 @@ fn parse_long_names(param_str: &[u8]) -> Names {
 
     if alias_count == 0 {
         if param_str.starts_with(b"--") {
-            return Names { long: Some(to_string(&param_str[2..])), ..Default::default() };
+            return Names {
+                long: Some(to_string(&param_str[2..])),
+                ..Default::default()
+            };
         }
         return Names::default();
     }
@@ -201,7 +208,11 @@ fn parse_long_names(param_str: &[u8]) -> Names {
         }
     }
 
-    Names { long: primary, long_aliases: aliases, ..Default::default() }
+    Names {
+        long: primary,
+        long_aliases: aliases,
+        ..Default::default()
+    }
 }
 
 fn parse_param_rest(line: &[u8]) -> Param {
@@ -215,8 +226,7 @@ fn parse_param_rest(line: &[u8]) -> Param {
         let after = &line[len + 1..];
         let takes_many = after.starts_with(b"...");
         let takes_one_optional = after.starts_with(b"?");
-        let help_start =
-            len + 1 + 3 * (takes_many as usize) + (takes_one_optional as usize);
+        let help_start = len + 1 + 3 * (takes_many as usize) + (takes_one_optional as usize);
         return Param {
             takes_value: if takes_many {
                 Values::Many
@@ -234,7 +244,10 @@ fn parse_param_rest(line: &[u8]) -> Param {
     }
 
     Param {
-        id: Help { msg: to_string(trim(line)), ..Default::default() },
+        id: Help {
+            msg: to_string(trim(line)),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }

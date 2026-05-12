@@ -11,10 +11,10 @@ use bun_collections::StringArrayHashMap;
 // type here forced a deep-convert at every boundary and broke type unification
 // with `WorkspacePackageJSONCache.root`. Use the lower crate directly; the
 // only T4 hop is the final `print_json` call, which lifts via `.into()`.
-use bun_ast::{self, self as js_ast, Expr, ExprData, E, G};
+use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
+use bun_core::strings;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
-use bun_core::strings;
 use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;
@@ -24,7 +24,7 @@ use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self, Negatable};
 use crate::resolution::{self, Resolution, TaggedValue};
-use crate::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};
+use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
 // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
 // lockfile.stringBuf()` for the whole function, but in Rust that locks out
@@ -74,8 +74,8 @@ fn index_of_dep_path_suffix(path: &[u8]) -> (Option<usize>, Option<usize>) {
             open += 1;
         } else if open == 0 {
             if strings::starts_with(&path[i + 1..], b"(patch_hash=") {
-                let peers_idx = strings::index_of_char(&path[i + 2..], b'(')
-                    .map(|idx| (idx as usize) + i + 2);
+                let peers_idx =
+                    strings::index_of_char(&path[i + 2..], b'(').map(|idx| (idx as usize) + i + 2);
 
                 return (peers_idx, Some(i + 1));
             }
@@ -199,7 +199,9 @@ fn as_string(expr: &Expr) -> Option<&'static [u8]> {
     // is a Store-backed slice, so the `'static` here is the field's own
     // lifetime — no laundering.
     if let bun_ast::ExprData::EString(s) = &expr.data {
-        if s.is_utf8() { return Some(s.data.slice()); }
+        if s.is_utf8() {
+            return Some(s.data.slice());
+        }
     }
     None
 }
@@ -380,7 +382,10 @@ pub fn migrate_pnpm_lockfile<'a>(
         }
         impl Default for Patch {
             fn default() -> Self {
-                Self { path: String::default(), dep_name: Box::from(b"" as &[u8]) }
+                Self {
+                    path: String::default(),
+                    dep_name: Box::from(b"" as &[u8]),
+                }
             }
         }
         let mut patches: StringArrayHashMap<Patch> = StringArrayHashMap::new();
@@ -426,7 +431,9 @@ pub fn migrate_pnpm_lockfile<'a>(
         let mut has_root_pkg_expr: Option<Expr> = None;
 
         for prop in e_object(&importers_obj).properties.slice() {
-            let Some(importer_path) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+            let Some(importer_path) =
+                as_string(prop.key.as_ref().expect("infallible: prop has key"))
+            else {
                 return Err(invalid_pnpm_lockfile());
             };
             let value = prop.value.as_ref().expect("infallible: prop has value");
@@ -543,8 +550,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let workspace_pkgs_off = lockfile.packages.len();
 
-        let workspace_paths_snapshot: Vec<String> =
-            lockfile.workspace_paths.values().to_vec();
+        let workspace_paths_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
 
         'workspaces: for workspace_path in &workspace_paths_snapshot {
             for prop in e_object(&importers_obj).properties.slice() {
@@ -558,9 +564,8 @@ pub fn migrate_pnpm_lockfile<'a>(
 
                 let mut pkg = lockfile::Package::default();
 
-                pkg.resolution = Resolution::init(TaggedValue::Workspace(
-                    sbuf!(lockfile).append(path)?,
-                ));
+                pkg.resolution =
+                    Resolution::init(TaggedValue::Workspace(sbuf!(lockfile).append(path)?));
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -727,14 +732,12 @@ pub fn migrate_pnpm_lockfile<'a>(
                                 continue;
                             }
 
-                            *pkg_entry.value_ptr =
-                                lockfile.append_package_dedupe(&mut pkg)?;
+                            *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
                         }
                     }
                     dependency::VersionTag::Symlink => {
                         if !strings::is_npm_package_name(
-                            dep.version.symlink()
-                                .slice(string_bytes!(lockfile)),
+                            dep.version.symlink().slice(string_bytes!(lockfile)),
                         ) {
                             log.add_warning_fmt(
                                 None,
@@ -776,8 +779,14 @@ pub fn migrate_pnpm_lockfile<'a>(
             };
 
             for snapshot_prop in e_object(&snapshots_obj).properties.slice() {
-                let key = snapshot_prop.key.as_ref().expect("infallible: prop has key");
-                let value = snapshot_prop.value.as_ref().expect("infallible: prop has value");
+                let key = snapshot_prop
+                    .key
+                    .as_ref()
+                    .expect("infallible: prop has key");
+                let value = snapshot_prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value");
 
                 let Some(key_str) = as_string(key) else {
                     return Err(invalid_pnpm_lockfile());
@@ -842,8 +851,14 @@ pub fn migrate_pnpm_lockfile<'a>(
             }
 
             for packages_prop in e_object(&packages_obj).properties.slice() {
-                let key = packages_prop.key.as_ref().expect("infallible: prop has key");
-                let package_obj = packages_prop.value.as_ref().expect("infallible: prop has value");
+                let key = packages_prop
+                    .key
+                    .as_ref()
+                    .expect("infallible: prop has key");
+                let package_obj = packages_prop
+                    .value
+                    .as_ref()
+                    .expect("infallible: prop has value");
 
                 let Some(key_str) = as_string(key) else {
                     return Err(invalid_pnpm_lockfile());
@@ -879,9 +894,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     let scope = manager.scope_for_package_name(name_str);
                     let url = crate::extract_tarball::build_url(
                         scope.url.href(),
-                        &strings::StringOrTinyString::init(
-                            name.slice(string_bytes!(lockfile)),
-                        ),
+                        &strings::StringOrTinyString::init(name.slice(string_bytes!(lockfile))),
                         res.npm().version,
                         string_bytes!(lockfile),
                     )?;
@@ -916,12 +929,8 @@ pub fn migrate_pnpm_lockfile<'a>(
                 }
                 // TODO: libc
 
-                let (off, len) = parse_append_package_dependencies(
-                    lockfile,
-                    package_obj,
-                    &snapshot_obj,
-                    log,
-                )?;
+                let (off, len) =
+                    parse_append_package_dependencies(lockfile, package_obj, &snapshot_obj, log)?;
 
                 pkg.dependencies = ExternalSlice::new(off, len);
                 pkg.resolutions = ExternalSlice::new(off, len);
@@ -998,7 +1007,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) =
+                dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
@@ -1062,7 +1072,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) =
+                dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
@@ -1105,7 +1116,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) =
+                dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             match dep.version.tag {
@@ -1309,7 +1321,9 @@ fn parse_append_package_dependencies(
                 }
 
                 for peer_prop in e_object(&peers).properties.slice() {
-                    let Some(peer_name_str) = as_string(peer_prop.key.as_ref().expect("infallible: prop has key")) else {
+                    let Some(peer_name_str) =
+                        as_string(peer_prop.key.as_ref().expect("infallible: prop has key"))
+                    else {
                         return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                     };
 
@@ -1322,16 +1336,20 @@ fn parse_append_package_dependencies(
                             }
 
                             for peer_meta_prop in e_object(&peers_meta).properties.slice() {
-                                let Some(peer_meta_name_str) =
-                                    as_string(peer_meta_prop.key.as_ref().expect("infallible: prop has key"))
-                                else {
-                                    return Err(
-                                        ParseAppendDependenciesError::InvalidPnpmLockfile,
-                                    );
+                                let Some(peer_meta_name_str) = as_string(
+                                    peer_meta_prop
+                                        .key
+                                        .as_ref()
+                                        .expect("infallible: prop has key"),
+                                ) else {
+                                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                                 };
 
                                 if strings::eql_long(name_str, peer_meta_name_str, true) {
-                                    let meta_obj = peer_meta_prop.value.as_ref().expect("infallible: prop has value");
+                                    let meta_obj = peer_meta_prop
+                                        .value
+                                        .as_ref()
+                                        .expect("infallible: prop has value");
                                     if !meta_obj.is_object() {
                                         return Err(
                                             ParseAppendDependenciesError::InvalidPnpmLockfile,
@@ -1362,9 +1380,7 @@ fn parse_append_package_dependencies(
                             ) {
                                 Some(v) => v,
                                 None => {
-                                    return Err(
-                                        ParseAppendDependenciesError::InvalidPnpmLockfile,
-                                    )
+                                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                                 }
                             },
                         };
@@ -1464,9 +1480,7 @@ fn parse_append_importer_dependencies(
                             bstr::BStr::new(name_str)
                         ),
                     );
-                    return Err(
-                        ParseAppendDependenciesError::PnpmLockfileMissingDependencyVersion,
-                    );
+                    return Err(ParseAppendDependenciesError::PnpmLockfileMissingDependencyVersion);
                 };
 
                 let Some(version_str) = as_string(&version_expr) else {
@@ -1545,8 +1559,7 @@ fn parse_append_importer_dependencies(
     }
 
     if is_root {
-        let workspace_paths_snapshot: Vec<String> =
-            lockfile.workspace_paths.values().to_vec();
+        let workspace_paths_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_paths_snapshot {
             for prop in e_object(importers_obj).properties.slice() {
                 let key = prop.key.as_ref().expect("infallible: prop has key");
@@ -1652,10 +1665,16 @@ fn update_package_json_after_migration(
                         if existing_prop.expr.is_object() {
                             let existing_overrides = e_object_mut(&mut existing_prop.expr);
                             for prop in e_object(&overrides_field).properties.slice() {
-                                let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                                let Some(key) =
+                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                                else {
                                     continue;
                                 };
-                                existing_overrides.put(&bump, key, prop.value.expect("infallible: prop has value"))?;
+                                existing_overrides.put(
+                                    &bump,
+                                    key,
+                                    prop.value.expect("infallible: prop has value"),
+                                )?;
                             }
                         }
                     } else {
@@ -1672,14 +1691,24 @@ fn update_package_json_after_migration(
                         if existing_prop.expr.is_object() {
                             let existing_patches = e_object_mut(&mut existing_prop.expr);
                             for prop in e_object(&patched_field).properties.slice() {
-                                let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                                let Some(key) =
+                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                                else {
                                     continue;
                                 };
-                                existing_patches.put(&bump, key, prop.value.expect("infallible: prop has value"))?;
+                                existing_patches.put(
+                                    &bump,
+                                    key,
+                                    prop.value.expect("infallible: prop has value"),
+                                )?;
                             }
                         }
                     } else {
-                        e_object_mut(&mut json).put(&bump, b"patchedDependencies", patched_field)?;
+                        e_object_mut(&mut json).put(
+                            &bump,
+                            b"patchedDependencies",
+                            patched_field,
+                        )?;
                     }
                     moved_patched_deps = true;
                     needs_update = true;
@@ -1689,7 +1718,8 @@ fn update_package_json_after_migration(
             if moved_overrides || moved_patched_deps {
                 let mut remaining_count: usize = 0;
                 for prop in pnpm_obj.properties.slice() {
-                    let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                    let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                    else {
                         remaining_count += 1;
                         continue;
                     };
@@ -1705,7 +1735,9 @@ fn update_package_json_after_migration(
                 if remaining_count == 0 {
                     let mut new_root_count: usize = 0;
                     for prop in e_object(&json).properties.slice() {
-                        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                        let Some(key) =
+                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                        else {
                             new_root_count += 1;
                             continue;
                         };
@@ -1716,7 +1748,9 @@ fn update_package_json_after_migration(
 
                     let mut new_root_props = G::PropertyList::init_capacity(new_root_count);
                     for prop in e_object(&json).properties.slice() {
-                        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                        let Some(key) =
+                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                        else {
                             VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
                             continue;
                         };
@@ -1729,7 +1763,9 @@ fn update_package_json_after_migration(
                 } else {
                     let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count);
                     for prop in pnpm_obj.properties.slice() {
-                        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                        let Some(key) =
+                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                        else {
                             VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
                             continue;
                         };
@@ -1771,8 +1807,7 @@ fn update_package_json_after_migration(
             // `Expr` nodes — arena ownership, not a leak (bulk-freed on
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
-            let yaml_source =
-                bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
+            let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let arena = bun_alloc::Arena::new();
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, &arena) else {
                 break 'read_pnpm_workspace_yaml;
@@ -1832,12 +1867,18 @@ fn update_package_json_after_migration(
             let paths = workspace_paths.as_ref().unwrap();
             let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
             for path in paths {
-                VecExt::append(&mut items, Expr::init(
-                    E::EString::init(path),
-                    bun_ast::Loc::EMPTY,
-                ));
+                VecExt::append(
+                    &mut items,
+                    Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
+                );
             }
-            let array = Expr::init(E::Array { items, ..Default::default() }, bun_ast::Loc::EMPTY);
+            let array = Expr::init(
+                E::Array {
+                    items,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
             e_object_mut(&mut json).put(&bump, b"workspaces", array)?;
             needs_update = true;
         } else if is_object_workspaces {
@@ -1848,13 +1889,18 @@ fn update_package_json_after_migration(
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
                     for path in paths {
-                        VecExt::append(&mut items, Expr::init(
-                            E::EString::init(path),
-                            bun_ast::Loc::EMPTY,
-                        ));
+                        VecExt::append(
+                            &mut items,
+                            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
+                        );
                     }
-                    let array =
-                        Expr::init(E::Array { items, ..Default::default() }, bun_ast::Loc::EMPTY);
+                    let array = Expr::init(
+                        E::Array {
+                            items,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
                     ws_obj.put(&bump, b"packages", array)?;
 
                     needs_update = true;
@@ -1877,40 +1923,53 @@ fn update_package_json_after_migration(
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
                     for path in paths {
-                        VecExt::append(&mut items, Expr::init(
-                            E::EString::init(path),
-                            bun_ast::Loc::EMPTY,
-                        ));
+                        VecExt::append(
+                            &mut items,
+                            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
+                        );
                     }
-                    let value =
-                        Expr::init(E::Array { items, ..Default::default() }, bun_ast::Loc::EMPTY);
-                    let key =
-                        Expr::init(E::EString::init(b"packages"), bun_ast::Loc::EMPTY);
+                    let value = Expr::init(
+                        E::Array {
+                            items,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let key = Expr::init(E::EString::init(b"packages"), bun_ast::Loc::EMPTY);
 
-                    VecExt::append(&mut ws_props, G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    });
+                    VecExt::append(
+                        &mut ws_props,
+                        G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        },
+                    );
                 }
             }
 
             if let Some(catalog) = catalog_obj {
                 let key = Expr::init(E::EString::init(b"catalog"), bun_ast::Loc::EMPTY);
-                VecExt::append(&mut ws_props, G::Property {
-                    key: Some(key),
-                    value: Some(catalog),
-                    ..Default::default()
-                });
+                VecExt::append(
+                    &mut ws_props,
+                    G::Property {
+                        key: Some(key),
+                        value: Some(catalog),
+                        ..Default::default()
+                    },
+                );
             }
 
             if let Some(catalogs) = catalogs_obj {
                 let key = Expr::init(E::EString::init(b"catalogs"), bun_ast::Loc::EMPTY);
-                VecExt::append(&mut ws_props, G::Property {
-                    key: Some(key),
-                    value: Some(catalogs),
-                    ..Default::default()
-                });
+                VecExt::append(
+                    &mut ws_props,
+                    G::Property {
+                        key: Some(key),
+                        value: Some(catalogs),
+                        ..Default::default()
+                    },
+                );
             }
 
             if ws_props.len_u32() > 0 {
@@ -1934,10 +1993,16 @@ fn update_package_json_after_migration(
                 if existing_prop.expr.is_object() {
                     let existing_overrides = e_object_mut(&mut existing_prop.expr);
                     for prop in e_object(ws_overrides).properties.slice() {
-                        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                        let Some(key) =
+                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                        else {
                             continue;
                         };
-                        existing_overrides.put(&bump, key, prop.value.expect("infallible: prop has value"))?;
+                        existing_overrides.put(
+                            &bump,
+                            key,
+                            prop.value.expect("infallible: prop has value"),
+                        )?;
                     }
                 }
             } else {
@@ -1956,7 +2021,8 @@ fn update_package_json_after_migration(
             for prop_i in 0..props_len {
                 // convert keys to expected "name@version" instead of only "name"
                 let prop = &mut e_object_mut(ws_patched).properties.slice_mut()[prop_i];
-                let Some(key_str) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                let Some(key_str) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                else {
                     continue;
                 };
                 let Some(res_str) = patches.get(key_str) else {
@@ -1983,10 +2049,16 @@ fn update_package_json_after_migration(
                 if existing_prop.expr.is_object() {
                     let existing_patches = e_object_mut(&mut existing_prop.expr);
                     for prop in e_object(ws_patched).properties.slice() {
-                        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+                        let Some(key) =
+                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                        else {
                             continue;
                         };
-                        existing_patches.put(&bump, key, prop.value.expect("infallible: prop has value"))?;
+                        existing_patches.put(
+                            &bump,
+                            key,
+                            prop.value.expect("infallible: prop has value"),
+                        )?;
                     }
                 }
             } else {
@@ -2022,11 +2094,18 @@ fn update_package_json_after_migration(
         }
 
         root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer.ctx.written_without_trailing_zero().to_vec(),
+            package_json_writer
+                .ctx
+                .written_without_trailing_zero()
+                .to_vec(),
         );
 
         // Write the updated package.json
-        let _ = sys::File::write_file(dir, bun_core::zstr!("package.json"), root_pkg_json.source.contents());
+        let _ = sys::File::write_file(
+            dir,
+            bun_core::zstr!("package.json"),
+            root_pkg_json.source.contents(),
+        );
     }
 
     Ok(())

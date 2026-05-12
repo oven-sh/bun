@@ -3,37 +3,37 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
+pub mod visit_binary;
 pub mod visit_expr;
 pub mod visit_stmt;
-pub mod visit_binary;
 
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::VecExt;
-use bun_ast as js_ast;
-use bun_ast::{
-    AssignTarget, Binding, BindingNodeIndex, Expr, ExprData, ExprNodeList, LocRef, Scope, Stmt,
-    StmtData, StmtNodeIndex, Symbol, B, E, G, S,
-};
-use bun_ast::b::B as BData;
-use bun_ast::G::{Arg, Decl, Property, PropertyKind};
+use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
-use bun_ast::s::Kind as LocalKind;
+use crate::parser::{
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, JsxT,
+    PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind,
+    StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts, is_eval_or_arguments,
+};
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast as js_ast;
+use bun_ast::G::{Arg, Decl, Property, PropertyKind};
 use bun_ast::OpCode;
+use bun_ast::b::B as BData;
+use bun_ast::flags;
+use bun_ast::s::Kind as LocalKind;
 use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
-use bun_ast::flags;
-use crate::lexer as js_lexer;
-use crate::parser::{
-    is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
-    JsxT, PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind,
-    StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts,
+use bun_ast::{
+    AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
+    Scope, Stmt, StmtData, StmtNodeIndex, Symbol,
 };
+use bun_collections::VecExt;
 // PORT NOTE: `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
+use bun_ast::StrictModeKind;
 use bun_collections::HashMap;
 use core::ptr::NonNull;
-use bun_ast::StrictModeKind;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
@@ -188,7 +188,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
-        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<'static, StringVoidMap>> = None;
+        let mut duplicate_args_check: Option<
+            bun_collections::pool::PoolGuard<'static, StringVoidMap>,
+        > = None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
@@ -220,8 +222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // PORT NOTE: reborrow per-iter (Zig passes the same pointer each time).
-            let dup: Option<&mut StringVoidMap> =
-                duplicate_args_check.as_mut().map(|g| &mut **g);
+            let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_mut().map(|g| &mut **g);
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
                 self.visit_expr(default);
@@ -265,7 +266,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
                 // during the visit pass, so the entry strictly outlives this loop body.
-                let mut replacement: Option<bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>> = None;
+                let mut replacement: Option<
+                    bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
+                > = None;
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
@@ -330,10 +333,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     .as_mut()
                                     .unwrap()
                                     .hasher;
-                                decl.binding.data.write_to_hasher(
-                                    hasher,
-                                    self.symbols.as_mut_slice(),
-                                );
+                                decl.binding
+                                    .data
+                                    .write_to_hasher(hasher, self.symbols.as_mut_slice());
                             }
                         }
                     }
@@ -459,7 +461,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         }
                                         _ => {
                                             if self.options.features.inlining {
-                                                if let BData::BIdentifier(id) = property.value.data {
+                                                if let BData::BIdentifier(id) = property.value.data
+                                                {
                                                     self.const_values
                                                         .put(id.r#ref, query.expr)
                                                         .expect("oom");
@@ -471,8 +474,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     // SAFETY: both indices < object.properties.len; G::Property
                                     // has no Drop; src/dst may alias when end == query.i.
                                     unsafe {
-                                        let props_ptr =
-                                            object.properties.slice_mut().as_mut_ptr();
+                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
                                         core::ptr::copy(
                                             props_ptr.add(query.i as usize),
                                             props_ptr.add(end as usize),
@@ -538,8 +540,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                let original_name: &'a [u8] =
-                    self.symbols[id_ref.inner_index() as usize].original_name.slice();
+                let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
+                    .original_name
+                    .slice();
                 decl.value = Some(self.maybe_keep_expr_symbol_name(
                     decl.value.unwrap(),
                     original_name,
@@ -602,8 +605,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                let name: &'a [u8] =
-                    self.symbols[bind.r#ref.inner_index() as usize].original_name.slice();
+                let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
+                    .original_name
+                    .slice();
                 if is_eval_or_arguments(name) {
                     self.mark_strict_mode_feature(
                         StrictModeFeature::EvalOrArguments,
@@ -614,15 +618,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 if let Some(dup) = duplicate_arg_check {
                     if dup.get_or_put_contains(name) {
-                        self.log()
-                            .add_range_error_fmt(
-                                Some(self.source),
-                                js_lexer::range_of_identifier(self.source, binding.loc),
-                                format_args!(
-                                    "\"{}\" cannot be bound multiple times in the same parameter list",
-                                    bstr::BStr::new(name)
-                                ),
-                            );
+                        self.log().add_range_error_fmt(
+                            Some(self.source),
+                            js_lexer::range_of_identifier(self.source, binding.loc),
+                            format_args!(
+                                "\"{}\" cannot be bound multiple times in the same parameter list",
+                                bstr::BStr::new(name)
+                            ),
+                        );
                     }
                 }
             }
@@ -649,8 +652,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         if let BData::BIdentifier(bind_) = item.binding.data {
                             let bind_ = bind_.get();
-                            let name: &'a [u8] =
-                                self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
+                            let name: &'a [u8] = self.symbols[bind_.r#ref.inner_index() as usize]
+                                .original_name
+                                .slice();
                             item.default_value = Some(self.maybe_keep_expr_symbol_name(
                                 item.default_value.expect("unreachable"),
                                 name,
@@ -687,8 +691,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         if let BData::BIdentifier(bind_) = property.value.data {
                             let bind_ = bind_.get();
-                            let name: &'a [u8] =
-                                self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
+                            let name: &'a [u8] = self.symbols[bind_.r#ref.inner_index() as usize]
+                                .original_name
+                                .slice();
                             property.default_value = Some(self.maybe_keep_expr_symbol_name(
                                 property.default_value.expect("unreachable"),
                                 name,
@@ -705,7 +710,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // S::Block Default). Inline a local copy until that un-gates.
     fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
-            return Stmt { data: StmtData::SEmpty(S::Empty {}), loc };
+            return Stmt {
+                data: StmtData::SEmpty(S::Empty {}),
+                loc,
+            };
         }
 
         if stmts.len() == 1 && !crate::parser::statement_cares_about_scope(&stmts[0]) {
@@ -714,7 +722,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         self.s(
-            S::Block { stmts: bun_ast::StoreSlice::new_mut(stmts), close_brace_loc: bun_ast::Loc::EMPTY },
+            S::Block {
+                stmts: bun_ast::StoreSlice::new_mut(stmts),
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
             loc,
         )
     }
@@ -822,7 +833,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(name) = class.class_name {
             let name_ref = name.ref_.expect("infallible: ref bound");
             shadow_ref.set(name_ref);
-            let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize].original_name.slice();
+            let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
+                .original_name
+                .slice();
             self.vis_scope()
                 .members
                 .put(
@@ -885,7 +898,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let csb_stmts = csb.stmts.slice();
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
-                    self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
+                    self.visit_stmts(&mut list, StmtsKind::FnBody)
+                        .expect("unreachable");
                     csb.stmts = Vec::from_bump_vec(list);
                     self.pop_scope();
 
@@ -1063,10 +1077,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if to_add > 0 {
                         // to match typescript behavior, we also must prepend to the class body
                         let old_body: &[Stmt] = constructor.func.body.stmts.slice();
-                        let mut stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_body.len() + to_add,
-                            self.arena,
-                        );
+                        let mut stmts =
+                            BumpVec::<Stmt>::with_capacity_in(old_body.len() + to_add, self.arena);
                         stmts.extend_from_slice(old_body);
 
                         let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
@@ -1104,9 +1116,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             };
 
                             // SAFETY: original_name is an arena-owned slice valid for 'a.
-                            let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize].original_name.slice();
+                            let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
+                                .original_name
+                                .slice();
                             let arg_ident = self.new_expr(
-                                E::Identifier { ref_: id_ref, ..Default::default() },
+                                E::Identifier {
+                                    ref_: id_ref,
+                                    ..Default::default()
+                                },
                                 bind_loc,
                             );
                             let this_target = self.new_expr(E::This {}, bind_loc);
@@ -1145,7 +1162,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             );
                             class_body.insert(
                                 j,
-                                G::Property { key: Some(field_ident), ..Default::default() },
+                                G::Property {
+                                    key: Some(field_ident),
+                                    ..Default::default()
+                                },
                             );
                             j += 1;
                         }
@@ -1217,8 +1237,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
-            let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> =
-                ListManaged::new_in(p.arena);
+            let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> = ListManaged::new_in(p.arena);
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, StmtData::SEnum(_)) {
@@ -1281,9 +1300,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // Annex B of the JavaScript standard.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if !p.current_scope().kind_stops_hoisting()
-                                && p.symbols
-                                    [data.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
-                                .kind
+                                && p.symbols[data
+                                    .func
+                                    .name
+                                    .unwrap()
+                                    .ref_
+                                    .expect("infallible: ref bound")
+                                    .inner_index()
+                                    as usize]
+                                    .kind
                                     == SymbolKind::HoistedFunction
                             {
                                 break 'list_getter &mut before;
@@ -1297,8 +1322,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let enum_scope_count =
                                 scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc).len();
                             // Zig: `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
-                            p.scope_order_to_visit =
-                                &p.scope_order_to_visit[enum_scope_count..];
+                            p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                             continue 'stmt_loop;
                         }
                         _ => {}
@@ -1335,7 +1359,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {
                                     // Merge the two identifiers back into a single one
-                                    p.symbols[hoisted_ref.inner_index() as usize].link.set(name_ref);
+                                    p.symbols[hoisted_ref.inner_index() as usize]
+                                        .link
+                                        .set(name_ref);
                                 }
                                 non_fn_stmts.push(stmt);
                                 continue;
@@ -1357,7 +1383,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 {
                                     p.record_usage(name_ref);
                                     let value = p.new_expr(
-                                        E::Identifier { ref_: name_ref, ..Default::default() },
+                                        E::Identifier {
+                                            ref_: name_ref,
+                                            ..Default::default()
+                                        },
                                         name.loc,
                                     );
                                     var_decls.push(G::Decl {
@@ -1390,28 +1419,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if let_decls.len() > 0 {
-                    let decls =
-                        G::DeclList::from_bump_vec(let_decls);
+                    let decls = G::DeclList::from_bump_vec(let_decls);
                     let loc = decls.at(0).value.unwrap().loc;
                     before.push(p.s(
-                        S::Local { kind: LocalKind::KLet, decls, ..Default::default() },
+                        S::Local {
+                            kind: LocalKind::KLet,
+                            decls,
+                            ..Default::default()
+                        },
                         loc,
                     ));
                 }
 
                 if var_decls.len() > 0 {
-                    let relocated = p
-                        .maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
+                    let relocated =
+                        p.maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
                     if relocated.ok {
                         if let Some(new) = relocated.stmt {
                             before.push(new);
                         }
                     } else {
-                        let decls =
-                            G::DeclList::from_bump_vec(var_decls);
+                        let decls = G::DeclList::from_bump_vec(var_decls);
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(
-                            S::Local { kind: LocalKind::KVar, decls, ..Default::default() },
+                            S::Local {
+                                kind: LocalKind::KVar,
+                                decls,
+                                ..Default::default()
+                            },
                             loc,
                         ));
                     }
@@ -1462,8 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // dropping the old `Vec<_, &MimallocArena>` would `mi_free` it
             // and leave the S.Try body dangling.
             let arena = p.arena;
-            let raw =
-                core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
+            let raw = core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
             *stmts = ctx.finalize(p, raw, parent_is_none);
@@ -1478,9 +1512,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // SAFETY: current_scope is a valid arena ptr for the parse.
-        if p.current_scope().parent.is_some()
-            && !p.current_scope().contains_direct_eval
-        {
+        if p.current_scope().parent.is_some() && !p.current_scope().contains_direct_eval {
             // Remove inlined constants now that we know whether any of these statements
             // contained a direct eval() or not. This can't be done earlier when we
             // encounter the constant because we haven't encountered the eval() yet.
@@ -1505,8 +1537,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 continue;
                             }
                             if !local.is_export && !local.was_commonjs_export {
-                                let mut any_decl_in_const_values =
-                                    local.kind == LocalKind::KConst;
+                                let mut any_decl_in_const_values = local.kind == LocalKind::KConst;
                                 let decls: &mut [Decl] = local.decls.slice_mut();
                                 let mut end: usize = 0;
                                 for idx in 0..decls.len() {
@@ -1514,8 +1545,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         let id_ref = id_ptr.r#ref;
                                         if p.const_values.contains(&id_ref) {
                                             any_decl_in_const_values = true;
-                                            let symbol =
-                                                &p.symbols[id_ref.inner_index() as usize];
+                                            let symbol = &p.symbols[id_ref.inner_index() as usize];
                                             if symbol.use_count_estimate == 0 {
                                                 // Skip declarations that are constants with zero usage
                                                 continue;
@@ -1547,8 +1577,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut is_control_flow_dead = false;
 
-        let mut output: ListManaged<'a, Stmt> =
-            ListManaged::with_capacity_in(stmts.len(), p.arena);
+        let mut output: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(stmts.len(), p.arena);
 
         let dead_code_elimination = p.options.features.dead_code_elimination;
         for stmt in stmts.iter().copied() {
@@ -1578,9 +1607,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope
-                && !p.current_scope().contains_direct_eval
-            {
+            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //
@@ -1627,7 +1654,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Ignore destructuring bindings since that's not the simple case.
                     // Destructuring bindings could potentially execute side-effecting
                     // code which would invalidate reordering.
-                    let BData::BIdentifier(ident_ptr) = last.binding.data else { break };
+                    let BData::BIdentifier(ident_ptr) = last.binding.data else {
+                        break;
+                    };
                     let id = ident_ptr.r#ref;
 
                     let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
@@ -1755,8 +1784,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 StmtData::SSwitch(mut s_switch) => {
                     // Absorb a previous expression statement
-                    if output.len() > 0
-                        && p.options.runtime_merge_adjacent_expression_statements()
+                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
                     {
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
@@ -1771,15 +1799,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 StmtData::SIf(mut s_if) => {
                     // Absorb a previous expression statement
-                    if output.len() > 0
-                        && p.options.runtime_merge_adjacent_expression_statements()
+                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
                     {
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1817,8 +1843,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 StmtData::SThrow(s_throw) => {
                     // Merge throw statements with the previous expression statement
-                    if output.len() > 0
-                        && p.options.runtime_merge_adjacent_expression_statements()
+                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
                     {
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];

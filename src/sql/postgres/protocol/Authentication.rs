@@ -1,6 +1,6 @@
-use crate::shared::Data;
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
+use crate::shared::Data;
 use bun_ptr::RawSlice;
 
 bun_core::declare_scope!(Postgres, hidden);
@@ -8,21 +8,15 @@ bun_core::declare_scope!(Postgres, hidden);
 pub enum Authentication {
     Ok,
     ClearTextPassword,
-    MD5Password {
-        salt: [u8; 4],
-    },
+    MD5Password { salt: [u8; 4] },
     KerberosV5,
     SCMCredential,
     GSS,
-    GSSContinue {
-        data: Data,
-    },
+    GSSContinue { data: Data },
     SSPI,
     SASL,
     SASLContinue(SASLContinue),
-    SASLFinal {
-        data: Data,
-    },
+    SASLFinal { data: Data },
     Unknown,
 }
 
@@ -92,9 +86,7 @@ impl Authentication {
                 }
                 let salt_data = reader.bytes(4)?;
                 // `defer salt_data.deinit()` — handled by Drop on `Data` at scope exit.
-                let salt: [u8; 4] = salt_data.slice()[0..4]
-                    .try_into()
-                    .expect("unreachable");
+                let salt: [u8; 4] = salt_data.slice()[0..4].try_into().expect("unreachable");
                 Ok(Authentication::MD5Password { salt })
             }
             7 => {

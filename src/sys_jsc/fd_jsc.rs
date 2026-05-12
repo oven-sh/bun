@@ -2,9 +2,9 @@
 
 use core::ffi::c_int;
 
-use bun_sys::{Fd, FdExt};
 #[cfg(windows)]
 use bun_sys::FdKind;
+use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
 

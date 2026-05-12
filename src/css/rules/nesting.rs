@@ -1,5 +1,5 @@
-use crate::css_rules::style::StyleRule;
 use crate::css_rules::Location;
+use crate::css_rules::style::StyleRule;
 use crate::{PrintErr, Printer};
 
 /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
@@ -29,7 +29,10 @@ impl<R> NestingRule<R> {
         R: crate::generics::DeepClone<'bump>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self { style: self.style.deep_clone(bump), loc: self.loc }
+        Self {
+            style: self.style.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

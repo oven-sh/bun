@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollRef, Owner, PollTag, FilePollFlag, FilePollKind};
+use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -23,20 +23,19 @@ pub type Loop = bun_sys::windows::libuv::Loop;
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
-
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
 
 #[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
 use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
 
 // PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
@@ -99,7 +98,10 @@ pub trait BufferedReaderParent {
 
 impl BufferedReaderVTable {
     pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
-        BufferedReaderVTable { parent: core::ptr::null_mut(), kind: T::KIND }
+        BufferedReaderVTable {
+            parent: core::ptr::null_mut(),
+            kind: T::KIND,
+        }
     }
 
     #[inline]
@@ -230,7 +232,8 @@ impl PosixBufferedReader {
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        self.handle
+            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -240,7 +243,8 @@ impl PosixBufferedReader {
         self.vtable.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        self.handle
+            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -335,7 +339,10 @@ impl PosixBufferedReader {
                 if let Err(err) = result {
                     // TODO(b2-blocked): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(&format_args!("error reading from memfd\n{}", err));
+                    bun_core::output::debug_warn(&format_args!(
+                        "error reading from memfd\n{}",
+                        err
+                    ));
                     return self.buffer();
                 }
             }
@@ -379,9 +386,7 @@ impl PosixBufferedReader {
             self.handle.close(
                 Some(owner),
                 // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
-                Some(|ctx: *mut c_void| unsafe {
-                    (*ctx.cast::<PosixBufferedReader>()).done()
-                }),
+                Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<PosixBufferedReader>()).done() }),
             );
         }
     }
@@ -414,7 +419,11 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::new(PollTag::BufferedReader, owner_ptr.cast())));
+            self.handle = PollOrFd::Poll(FilePollRef::init(
+                ev,
+                fd,
+                Owner::new(PollTag::BufferedReader, owner_ptr.cast()),
+            ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
@@ -559,7 +568,14 @@ impl PosixBufferedReader {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
         }
         if parent.flags.contains(PosixFlags::USE_PREAD) {
-            Self::read_with_fn(parent, FileType::File, fd, size_hint, received_hup, pread_fn);
+            Self::read_with_fn(
+                parent,
+                FileType::File,
+                fd,
+                size_hint,
+                received_hup,
+                pread_fn,
+            );
         } else {
             Self::read_with_fn(
                 parent,
@@ -573,9 +589,14 @@ impl PosixBufferedReader {
     }
 
     fn read_socket(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn(parent, FileType::Socket, fd, size_hint, received_hup, |fd, buf, _| {
-            sys::recv_non_block(fd, buf)
-        });
+        Self::read_with_fn(
+            parent,
+            FileType::Socket,
+            fd,
+            size_hint,
+            received_hup,
+            |fd, buf, _| sys::recv_non_block(fd, buf),
+        );
     }
 
     fn read_pipe(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
@@ -659,7 +680,9 @@ impl PosixBufferedReader {
                                 },
                             );
                         } else {
-                            parent._buffer.extend_from_slice(&stack_buffer[..bytes_read]);
+                            parent
+                                ._buffer
+                                .extend_from_slice(&stack_buffer[..bytes_read]);
                         }
                     }
                     sys::Result::Err(err) => {
@@ -878,7 +901,9 @@ impl PosixBufferedReader {
                         sys::Result::Err(err) => {
                             if err.is_retry() {
                                 if file_type == FileType::File {
-                                    bun_core::output::debug_warn("Received EAGAIN while reading from a file. This is a bug.");
+                                    bun_core::output::debug_warn(
+                                        "Received EAGAIN while reading from a file. This is a bug.",
+                                    );
                                 } else {
                                     parent.register_poll();
                                 }
@@ -934,7 +959,9 @@ impl PosixBufferedReader {
             match sys_fn(fd, stack_buffer, 0) {
                 sys::Result::Ok(bytes_read) => {
                     if bytes_read > 0 {
-                        parent._buffer.extend_from_slice(&stack_buffer[..bytes_read]);
+                        parent
+                            ._buffer
+                            .extend_from_slice(&stack_buffer[..bytes_read]);
                     }
                     if let Some(l) = parent.maxbuf {
                         if MaxBuf::on_read_bytes(l, bytes_read as u64) {
@@ -955,7 +982,9 @@ impl PosixBufferedReader {
                 sys::Result::Err(err) => {
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn("Received EAGAIN while reading from a file. This is a bug.");
+                            bun_core::output::debug_warn(
+                                "Received EAGAIN while reading from a file. This is a bug.",
+                            );
                         } else {
                             parent.register_poll();
                         }
@@ -1020,7 +1049,9 @@ impl PosixBufferedReader {
 
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn("Received EAGAIN while reading from a file. This is a bug.");
+                            bun_core::output::debug_warn(
+                                "Received EAGAIN while reading from a file. This is a bug.",
+                            );
                         } else {
                             parent.register_poll();
                         }
@@ -1220,7 +1251,9 @@ impl WindowsBufferedReader {
             return false;
         };
         match source {
-            Source::File(file) | Source::SyncFile(file) => file.state != crate::source::FileState::Deinitialized,
+            Source::File(file) | Source::SyncFile(file) => {
+                file.state != crate::source::FileState::Deinitialized
+            }
             _ => false,
         }
     }
@@ -1286,7 +1319,10 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_error(err);
     }
 
-    pub fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
+    pub fn get_read_buffer_with_stable_memory_address(
+        &mut self,
+        suggested_size: usize,
+    ) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
@@ -1373,7 +1409,11 @@ impl WindowsBufferedReader {
 
         let nread_int = nread.int();
 
-        bun_sys::syslog!("onStreamRead(0x{}) = {}", core::ptr::from_mut(this) as usize, nread_int);
+        bun_sys::syslog!(
+            "onStreamRead(0x{}) = {}",
+            core::ptr::from_mut(this) as usize,
+            nread_int
+        );
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         match nread_int {
@@ -1527,8 +1567,7 @@ impl WindowsBufferedReader {
                         if file.can_start() {
                             file.fs.data = this_ptr;
                             file.prepare();
-                            let buf =
-                                this.get_read_buffer_with_stable_memory_address(64 * 1024);
+                            let buf = this.get_read_buffer_with_stable_memory_address(64 * 1024);
                             file.iov = uv::uv_buf_t::init(buf);
                             this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
@@ -1560,11 +1599,7 @@ impl WindowsBufferedReader {
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                                 this.flags.insert(WindowsFlags::IS_PAUSED);
                                 // we should inform the error if we are unable to keep reading
-                                this.on_read(
-                                    sys::Result::Err(err),
-                                    &mut [],
-                                    ReadState::Progress,
-                                );
+                                this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
                             }
                         }
                     }
@@ -1855,10 +1890,7 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue
-            && has_more != ReadState::Eof
-            && self.vtable.is_streaming_enabled()
-        {
+        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 

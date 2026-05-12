@@ -1,7 +1,7 @@
 // OK Packet
-use crate::shared::Data;
 use crate::mysql::StatusFlags;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
+use crate::shared::Data;
 
 pub struct OKPacket {
     pub header: u8,

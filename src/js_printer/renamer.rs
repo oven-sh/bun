@@ -4,18 +4,18 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 
-use bun_options_types::Format;
-use bun_collections::hive_array::Fallback as HiveArrayFallback;
-use bun_collections::{HashMap, StringHashMap, VecExt};
-use bun_core::Output;
 use bun_ast as js_ast;
-use bun_ast::symbol;
-use bun_ast::symbol::{SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
 use bun_ast::lexer_tables::{
     self as js_lexer, KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
 };
+use bun_ast::symbol;
+use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace};
 use bun_ast::{Ref, Symbol};
-use bun_core::{immutable as strings, MutableString};
+use bun_collections::hive_array::Fallback as HiveArrayFallback;
+use bun_collections::{HashMap, StringHashMap, VecExt};
+use bun_core::Output;
+use bun_core::{MutableString, immutable as strings};
+use bun_options_types::Format;
 use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
@@ -68,8 +68,8 @@ impl<'a> NoOpRenamer<'a> {
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
-            return &self.source.contents
-                [ref_.source_index() as usize..(ref_.source_index() + ref_.inner_index()) as usize];
+            return &self.source.contents[ref_.source_index() as usize
+                ..(ref_.source_index() + ref_.inner_index()) as usize];
         }
 
         let resolved = self.symbols.follow(ref_);
@@ -467,8 +467,7 @@ pub fn assign_nested_scope_slots(
     // Then set the nested scope slots of top-level symbols back to zero. Top-
     // level symbols are not supposed to have nested scope slots.
     for member in module_scope.members.values() {
-        symbols[member.ref_.inner_index() as usize].nested_scope_slot =
-            INVALID_NESTED_SCOPE_SLOT;
+        symbols[member.ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
     }
     for ref_ in module_scope.generated.slice() {
         symbols[ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
@@ -498,8 +497,7 @@ pub fn assign_nested_scope_slots_helper(
         for &inner_index in sorted_members_buf.iter() {
             let symbol = &mut symbols[inner_index as usize];
             let ns = symbol.slot_namespace();
-            if ns != symbol::SlotNamespace::MustNotBeRenamed
-                && symbol.nested_scope_slot().is_none()
+            if ns != symbol::SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none()
             {
                 symbol.nested_scope_slot = slot.slots[ns];
                 slot.slots[ns] += 1;
@@ -510,9 +508,7 @@ pub fn assign_nested_scope_slots_helper(
     for ref_ in scope.generated.slice() {
         let symbol = &mut symbols[ref_.inner_index() as usize];
         let ns = symbol.slot_namespace();
-        if ns != symbol::SlotNamespace::MustNotBeRenamed
-            && symbol.nested_scope_slot().is_none()
-        {
+        if ns != symbol::SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none() {
             symbol.nested_scope_slot = slot.slots[ns];
             slot.slots[ns] += 1;
         }
@@ -617,7 +613,11 @@ impl NumberRenamer {
 
         let resolved = self.symbols.follow(ref_);
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols.get_const(resolved).unwrap().original_name.slice()
+        self.symbols
+            .get_const(resolved)
+            .unwrap()
+            .original_name
+            .slice()
     }
 
     pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
@@ -625,7 +625,8 @@ impl NumberRenamer {
 
         // Don't rename the same symbol more than once
         let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
-        if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0 {
+        if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
+        {
             return;
         }
 
@@ -722,7 +723,11 @@ impl NumberRenamer {
             for &inner_index in sorted.iter() {
                 self.assign_name(
                     s,
-                    Ref::init(u32::try_from(inner_index).expect("int cast"), source_index, false),
+                    Ref::init(
+                        u32::try_from(inner_index).expect("int cast"),
+                        source_index,
+                        false,
+                    ),
                 );
             }
         }
@@ -797,11 +802,9 @@ impl NumberRenamer {
         &mut self,
         declared_symbols: &mut js_ast::DeclaredSymbolList,
     ) {
-        js_ast::DeclaredSymbol::for_each_top_level_symbol(
-            declared_symbols,
-            self,
-            |r, ref_| r.add_top_level_symbol(ref_),
-        );
+        js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
+            r.add_top_level_symbol(ref_)
+        });
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
@@ -827,7 +830,9 @@ impl NumberRenamer {
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols.symbols_for_source[source_index as usize][inner_index as usize].original_name.slice()
+        self.symbols.symbols_for_source[source_index as usize][inner_index as usize]
+            .original_name
+            .slice()
     }
 }
 
@@ -892,7 +897,9 @@ pub enum UnusedName {
 /// almost always satisfies this).
 #[inline]
 fn is_simple_ascii_identifier(s: &[u8]) -> bool {
-    let Some((&first, rest)) = s.split_first() else { return false };
+    let Some((&first, rest)) = s.split_first() else {
+        return false;
+    };
     if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
         return false;
     }
@@ -921,8 +928,7 @@ impl NumberScope {
         {
             input_name
         } else {
-            owned_name =
-                MutableString::ensure_valid_identifier(input_name).expect("unreachable");
+            owned_name = MutableString::ensure_valid_identifier(input_name).expect("unreachable");
             &owned_name
         };
         // PORT NOTE: hoisted from inside the match arm so `name` (which may borrow
@@ -964,10 +970,8 @@ impl NumberScope {
                             // PORT NOTE: `StringHashMap::get_or_put` owns a boxed
                             // copy of `prefix` on insert, so the Zig key-dupe dance
                             // is unnecessary here.
-                            let existing = self
-                                .name_counts
-                                .get_or_put(prefix)
-                                .expect("unreachable");
+                            let existing =
+                                self.name_counts.get_or_put(prefix).expect("unreachable");
                             *existing.value_ptr = tries;
                         }
                         name = mutable_name.slice();
@@ -982,10 +986,8 @@ impl NumberScope {
                             NameUse::Unused => {
                                 if matches!(cur_use, NameUse::SameScope(_)) {
                                     // PORT NOTE: as above — map owns its key copy.
-                                    let existing = self
-                                        .name_counts
-                                        .get_or_put(prefix)
-                                        .expect("unreachable");
+                                    let existing =
+                                        self.name_counts.get_or_put(prefix).expect("unreachable");
                                     *existing.value_ptr = tries;
                                 }
 
@@ -1116,10 +1118,7 @@ pub fn compute_initial_reserved_names(
 
     names.ensure_total_capacity(
         cjs_names_len as usize
-            + (Keywords.len()
-                + StrictModeReservedWords.len()
-                + 1
-                + EXTRAS.len()),
+            + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
     )?;
 
     for keyword in Keywords.keys() {

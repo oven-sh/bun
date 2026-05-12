@@ -5,8 +5,8 @@
 use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
-use bun_uws::quic::header::Class as QpackClass;
 use bun_uws::quic::Qpack;
+use bun_uws::quic::header::Class as QpackClass;
 
 use super::client_session::ClientSession;
 use super::stream::Stream;
@@ -36,7 +36,10 @@ pub fn write_request(
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.state.original_request_body.len();
     let is_streaming = client.state.original_request_body.is_stream();
-    let is_bytes = matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_));
+    let is_bytes = matches!(
+        client.state.original_request_body,
+        HTTPRequestBody::Bytes(_)
+    );
 
     let request = client.build_request(body_len);
     if verbose != HTTPVerboseLevel::None {
@@ -95,7 +98,11 @@ pub fn write_request(
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
     headers[3] = quic::Header::init(
         b":path",
-        if !request.path.is_empty() { request.path } else { b"/" },
+        if !request.path.is_empty() {
+            request.path
+        } else {
+            b"/"
+        },
         Some(Qpack::Path),
     );
 
@@ -193,7 +200,8 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         if w <= 0 {
             break;
         }
-        remaining = bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
+        remaining =
+            bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
     }
     stream.pending_body = remaining;
     if remaining.is_empty() {

@@ -1,12 +1,12 @@
+use crate::compat::Feature;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
+use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
-use crate::targets::Browsers;
-use crate::compat::Feature;
 
 use bun_core::strings;
 use core::cmp::Ordering;
@@ -331,12 +331,16 @@ impl LengthValue {
     }
 
     pub fn is_sign_negative(&self) -> bool {
-        let Some(s) = self.try_sign() else { return false };
+        let Some(s) = self.try_sign() else {
+            return false;
+        };
         s.is_sign_negative()
     }
 
     pub fn is_sign_positive(&self) -> bool {
-        let Some(s) = self.try_sign() else { return false };
+        let Some(s) = self.try_sign() else {
+            return false;
+        };
         s.is_sign_positive()
     }
 
@@ -676,12 +680,16 @@ impl Length {
     }
 
     pub fn is_sign_negative(&self) -> bool {
-        let Some(s) = self.try_sign() else { return false };
+        let Some(s) = self.try_sign() else {
+            return false;
+        };
         s.is_sign_negative()
     }
 
     pub fn is_sign_positive(&self) -> bool {
-        let Some(s) = self.try_sign() else { return false };
+        let Some(s) = self.try_sign() else {
+            return false;
+        };
         s.is_sign_positive()
     }
 
@@ -703,11 +711,7 @@ impl Length {
         }
     }
 
-    pub fn try_op(
-        &self,
-        other: &Length,
-        op_fn: impl Fn(f32, f32) -> f32,
-    ) -> Option<Length> {
+    pub fn try_op(&self, other: &Length, op_fn: impl Fn(f32, f32) -> f32) -> Option<Length> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             if let Some(val) = a.try_op(b, op_fn) {
                 return Some(Self::Value(val));
@@ -717,11 +721,7 @@ impl Length {
         None
     }
 
-    pub fn try_op_to<R>(
-        &self,
-        other: &Length,
-        op_fn: impl FnOnce(f32, f32) -> R,
-    ) -> Option<R> {
+    pub fn try_op_to<R>(&self, other: &Length, op_fn: impl FnOnce(f32, f32) -> R) -> Option<R> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             return a.try_op_to(b, op_fn);
         }
@@ -750,23 +750,44 @@ impl Length {
 // `crate::generics::parse_tocss_numeric_gated` un-gates these collapse into
 // blanket impls there.
 impl protocol::Zero for LengthValue {
-    #[inline] fn zero() -> Self { LengthValue::zero() }
-    #[inline] fn is_zero(&self) -> bool { LengthValue::is_zero(self) }
+    #[inline]
+    fn zero() -> Self {
+        LengthValue::zero()
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        LengthValue::is_zero(self)
+    }
 }
 impl protocol::MulF32 for LengthValue {
-    #[inline] fn mul_f32(self, rhs: f32) -> Self { LengthValue::mul_f32(self, rhs) }
+    #[inline]
+    fn mul_f32(self, rhs: f32) -> Self {
+        LengthValue::mul_f32(self, rhs)
+    }
 }
 impl protocol::TryAdd for LengthValue {
-    #[inline] fn try_add(&self, rhs: &Self) -> Option<Self> { LengthValue::try_add(self, rhs) }
+    #[inline]
+    fn try_add(&self, rhs: &Self) -> Option<Self> {
+        LengthValue::try_add(self, rhs)
+    }
 }
 impl protocol::TryFromAngle for LengthValue {
-    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline]
+    fn try_from_angle(_: Angle) -> Option<Self> {
+        None
+    }
 }
 impl protocol::TrySign for LengthValue {
-    #[inline] fn try_sign(&self) -> Option<f32> { LengthValue::try_sign(self) }
+    #[inline]
+    fn try_sign(&self) -> Option<f32> {
+        LengthValue::try_sign(self)
+    }
 }
 impl protocol::TryMap for LengthValue {
-    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map_value(f)) }
+    #[inline]
+    fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> {
+        Some(self.map_value(f))
+    }
 }
 impl protocol::TryOp for LengthValue {
     #[inline]
@@ -803,37 +824,70 @@ impl protocol::TryOpTo for LengthValue {
     }
 }
 impl protocol::PartialCmp for LengthValue {
-    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { LengthValue::partial_cmp(self, rhs) }
+    #[inline]
+    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+        LengthValue::partial_cmp(self, rhs)
+    }
 }
 impl protocol::Parse for LengthValue {
-    #[inline] fn parse(input: &mut Parser) -> CssResult<Self> { LengthValue::parse(input) }
+    #[inline]
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        LengthValue::parse(input)
+    }
 }
 impl protocol::ToCss for LengthValue {
-    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { LengthValue::to_css(self, dest) }
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        LengthValue::to_css(self, dest)
+    }
 }
 impl protocol::IsCompatible for LengthValue {
-    #[inline] fn is_compatible(&self, browsers: Browsers) -> bool { LengthValue::is_compatible(self, browsers) }
+    #[inline]
+    fn is_compatible(&self, browsers: Browsers) -> bool {
+        LengthValue::is_compatible(self, browsers)
+    }
 }
 
 // Angle protocol impls (needed for `DimensionPercentage<Angle>` = AnglePercentage).
 impl protocol::Zero for Angle {
-    #[inline] fn zero() -> Self { Angle::zero() }
-    #[inline] fn is_zero(&self) -> bool { Angle::is_zero(self) }
+    #[inline]
+    fn zero() -> Self {
+        Angle::zero()
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        Angle::is_zero(self)
+    }
 }
 impl protocol::MulF32 for Angle {
-    #[inline] fn mul_f32(self, rhs: f32) -> Self { Angle::mul_f32(self, rhs) }
+    #[inline]
+    fn mul_f32(self, rhs: f32) -> Self {
+        Angle::mul_f32(self, rhs)
+    }
 }
 impl protocol::TryAdd for Angle {
-    #[inline] fn try_add(&self, rhs: &Self) -> Option<Self> { Angle::try_add(self, rhs) }
+    #[inline]
+    fn try_add(&self, rhs: &Self) -> Option<Self> {
+        Angle::try_add(self, rhs)
+    }
 }
 impl protocol::TryFromAngle for Angle {
-    #[inline] fn try_from_angle(a: Angle) -> Option<Self> { Some(a) }
+    #[inline]
+    fn try_from_angle(a: Angle) -> Option<Self> {
+        Some(a)
+    }
 }
 impl protocol::TrySign for Angle {
-    #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
+    #[inline]
+    fn try_sign(&self) -> Option<f32> {
+        Some(self.sign())
+    }
 }
 impl protocol::TryMap for Angle {
-    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map(f)) }
+    #[inline]
+    fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> {
+        Some(self.map(f))
+    }
 }
 impl protocol::TryOp for Angle {
     #[inline]
@@ -863,16 +917,28 @@ impl protocol::TryOpTo for Angle {
     }
 }
 impl protocol::PartialCmp for Angle {
-    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { Angle::partial_cmp(self, rhs) }
+    #[inline]
+    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+        Angle::partial_cmp(self, rhs)
+    }
 }
 impl protocol::Parse for Angle {
-    #[inline] fn parse(input: &mut Parser) -> CssResult<Self> { Angle::parse(input) }
+    #[inline]
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        Angle::parse(input)
+    }
 }
 impl protocol::ToCss for Angle {
-    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Angle::to_css(self, dest) }
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        Angle::to_css(self, dest)
+    }
 }
 impl protocol::IsCompatible for Angle {
-    #[inline] fn is_compatible(&self, _: Browsers) -> bool { true }
+    #[inline]
+    fn is_compatible(&self, _: Browsers) -> bool {
+        true
+    }
 }
 
 // ported from: src/css/values/length.zig

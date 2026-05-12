@@ -60,7 +60,10 @@ impl Compact {
     pub fn to_mime_type(self) -> MimeType {
         #[cfg(feature = "ci_assert")]
         {
-            if !strings::eql(self.value.slice(), <&'static str>::from(self.value).as_bytes()) {
+            if !strings::eql(
+                self.value.slice(),
+                <&'static str>::from(self.value).as_bytes(),
+            ) {
                 bun_core::Output::panic(format_args!(
                     "{} != {}. Code generation is broken.",
                     bstr::BStr::new(self.value.slice()),
@@ -82,7 +85,8 @@ impl Compact {
             return JSON;
         }
         if v == t!("application/x-www-form-urlencoded") {
-            return Compact::from(t!("application/x-www-form-urlencoded;charset=UTF-8")).to_mime_type();
+            return Compact::from(t!("application/x-www-form-urlencoded;charset=UTF-8"))
+                .to_mime_type();
         }
         if v == t!("image/vnd.microsoft.icon") {
             return ICO;
@@ -343,11 +347,13 @@ impl Category {
 pub const NONE: MimeType = MimeType::init_comptime(b"", Category::None);
 pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream", Category::Other);
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
-pub const JAVASCRIPT: MimeType = MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
+pub const JAVASCRIPT: MimeType =
+    MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
 pub const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
-pub const JSON: MimeType = MimeType::init_comptime(b"application/json;charset=utf-8", Category::Json);
+pub const JSON: MimeType =
+    MimeType::init_comptime(b"application/json;charset=utf-8", Category::Json);
 pub const TRANSPILED_JSON: MimeType = JAVASCRIPT;
 pub const TEXT: MimeType = MimeType::init_comptime(b"text/plain;charset=utf-8", Category::Html);
 pub const WASM: MimeType = MimeType::init_comptime(b"application/wasm", Category::Wasm);
@@ -1741,7 +1747,10 @@ const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x49, 0x49, 0x2a, 0x00], t!("image/tiff")),
     (&[0x4d, 0x4d, 0x00, 0x2a], t!("image/tiff")),
     (&[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], t!("image/gif")),
-    (&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], t!("image/png")),
+    (
+        &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        t!("image/png"),
+    ),
 ];
 
 pub fn sniff(bytes: &[u8]) -> Option<MimeType> {

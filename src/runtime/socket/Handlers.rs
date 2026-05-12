@@ -1,18 +1,22 @@
 use core::cell::Cell;
 use core::mem::offset_of;
 
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional as Strong};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
 use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::generated::{
+    SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
+};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional as Strong,
+};
 use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener as SocketListener;
+use super::SocketMode;
 use super::listener::ListenerType;
 use super::{SSLConfig, SSLConfigFromJs};
-use super::SocketMode;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
@@ -92,22 +96,50 @@ pub struct Handlers {
 /// Mirrors Zig `inline for (callback_fields) |field| { @field(x, field) ... }`.
 macro_rules! for_each_callback_field {
     ($self:expr, |$f:ident| $body:block) => {{
-        { let $f = &mut $self.on_open;          $body }
-        { let $f = &mut $self.on_close;         $body }
-        { let $f = &mut $self.on_data;          $body }
-        { let $f = &mut $self.on_writable;      $body }
-        { let $f = &mut $self.on_timeout;       $body }
-        { let $f = &mut $self.on_connect_error; $body }
-        { let $f = &mut $self.on_end;           $body }
-        { let $f = &mut $self.on_error;         $body }
-        { let $f = &mut $self.on_handshake;     $body }
+        {
+            let $f = &mut $self.on_open;
+            $body
+        }
+        {
+            let $f = &mut $self.on_close;
+            $body
+        }
+        {
+            let $f = &mut $self.on_data;
+            $body
+        }
+        {
+            let $f = &mut $self.on_writable;
+            $body
+        }
+        {
+            let $f = &mut $self.on_timeout;
+            $body
+        }
+        {
+            let $f = &mut $self.on_connect_error;
+            $body
+        }
+        {
+            let $f = &mut $self.on_end;
+            $body
+        }
+        {
+            let $f = &mut $self.on_error;
+            $body
+        }
+        {
+            let $f = &mut $self.on_handshake;
+            $body
+        }
     }};
 }
 
 impl Handlers {
     pub fn mark_active(&self) {
         bun_output::scoped_log!(Listener, "markActive");
-        self.active_connections.set(self.active_connections.get() + 1);
+        self.active_connections
+            .set(self.active_connections.get() + 1);
     }
 
     /// Bumps `active_connections`, enters the JS event-loop scope, and returns
@@ -154,8 +186,12 @@ impl Handlers {
             return Ok(());
         }
 
-        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else { return Ok(()) };
-        let Some(any_promise) = promise.as_any_promise() else { return Ok(()) };
+        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else {
+            return Ok(());
+        };
+        let Some(any_promise) = promise.as_any_promise() else {
+            return Ok(());
+        };
         any_promise.resolve(&self.global_object, value)?;
         Ok(())
     }
@@ -167,8 +203,12 @@ impl Handlers {
             return Ok(true);
         }
 
-        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else { return Ok(false) };
-        let Some(any_promise) = promise.as_any_promise() else { return Ok(false) };
+        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else {
+            return Ok(false);
+        };
+        let Some(any_promise) = promise.as_any_promise() else {
+            return Ok(false);
+        };
         any_promise.reject(&self.global_object, value)?;
         Ok(true)
     }
@@ -211,12 +251,13 @@ impl Handlers {
                 // inner `Handlers` address; `from_field_ptr!` arithmetic is
                 // unchanged. Deref as shared (`&*`) — celled fields below
                 // take `&self`.
-                let listen_socket: &SocketListener = unsafe {
-                    &*bun_core::from_field_ptr!(SocketListener, handlers, this)
-                };
+                let listen_socket: &SocketListener =
+                    unsafe { &*bun_core::from_field_ptr!(SocketListener, handlers, this) };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener.get(), ListenerType::None) {
-                    listen_socket.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                    listen_socket
+                        .poll_ref
+                        .with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                     listen_socket.strong_self.with_mut(|s| s.deinit());
                     // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }
@@ -249,8 +290,11 @@ impl Handlers {
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ = global_object.bun_vm().as_mut()
-                .uncaught_exception(&global_object, args[1], false);
+            let _ =
+                global_object
+                    .bun_vm()
+                    .as_mut()
+                    .uncaught_exception(&global_object, args[1], false);
             return false;
         }
 
@@ -296,7 +340,11 @@ impl Handlers {
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
             active_connections: Cell::new(0),
-            mode: if is_server { SocketMode::Server } else { SocketMode::Client },
+            mode: if is_server {
+                SocketMode::Server
+            } else {
+                SocketMode::Client
+            },
             promise: JsCell::new(Strong::empty()),
             #[cfg(debug_assertions)]
             protection_count: 0,
@@ -308,9 +356,10 @@ impl Handlers {
                 let value = generated.$field;
                 if value.is_undefined_or_null() {
                 } else if !value.is_callable() {
-                    return Err(global_object.throw_invalid_arguments(
-                        format_args!("Expected \"{}\" callback to be a function", $name),
-                    ));
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected \"{}\" callback to be a function",
+                        $name
+                    )));
                 } else {
                     result.$field = value;
                 }
@@ -327,9 +376,9 @@ impl Handlers {
         assign_callback!(on_handshake, "onHandshake");
 
         if result.on_data.is_empty() && result.on_writable.is_empty() {
-            return Err(global_object.throw_invalid_arguments(
-                format_args!("Expected at least \"data\" or \"drain\" callback"),
-            ));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected at least \"data\" or \"drain\" callback"
+            )));
         }
         result.with_async_context_if_needed(global_object);
         result.protect();
@@ -479,7 +528,13 @@ impl SocketConfig {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
                 GeneratedTls::None => None,
-                GeneratedTls::Boolean(b) => if *b { Some(SSLConfig::zero()) } else { None },
+                GeneratedTls::Boolean(b) => {
+                    if *b {
+                        Some(SSLConfig::zero())
+                    } else {
+                        None
+                    }
+                }
                 GeneratedTls::Object(ssl) => {
                     // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single
                     // JS thread, no aliasing `&mut VirtualMachine` outlives this call.
@@ -494,7 +549,11 @@ impl SocketConfig {
                 fd: generated.fd.map(Fd::from_uv),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, is_server)?,
-                default_data: if generated.data.is_undefined() { JSValue::ZERO } else { generated.data },
+                default_data: if generated.data.is_undefined() {
+                    JSValue::ZERO
+                } else {
+                    generated.data
+                },
                 exclusive: false,
                 allow_half_open: false,
                 reuse_port: false,
@@ -507,7 +566,8 @@ impl SocketConfig {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_.get() {
             if unix.length() == 0 {
-                return Err(global.throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
             result.hostname_or_unix = unix.to_utf8();
             let slice = result.hostname_or_unix.slice();
@@ -521,7 +581,8 @@ impl SocketConfig {
             }
         } else if let Some(hostname) = generated.hostname.get() {
             if hostname.length() == 0 {
-                return Err(global.throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();
@@ -531,7 +592,9 @@ impl SocketConfig {
                     // TODO(port): bun.URL.parse — confirm crate path
                     Some(p) => p,
                     None => {
-                        return Err(global.throw_invalid_arguments(format_args!("Missing \"port\"")));
+                        return Err(
+                            global.throw_invalid_arguments(format_args!("Missing \"port\""))
+                        );
                     }
                 },
             });
@@ -540,7 +603,9 @@ impl SocketConfig {
             result.reuse_port = generated.reuse_port;
             result.ipv6_only = generated.ipv6_only;
         } else {
-            return Err(global.throw_invalid_arguments(format_args!("Expected either \"hostname\" or \"unix\"")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected either \"hostname\" or \"unix\""
+            )));
         }
         Ok(result)
     }

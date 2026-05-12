@@ -1,9 +1,8 @@
-
-use bun_ast as js_ast;
+use crate::js_lexer;
 use crate::p::P;
 use crate::parser::{FindSymbolResult, JsxT};
+use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
-use crate::js_lexer;
 
 // PORT NOTE: Zig's `fn Symbols(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // is the file-split mixin pattern: a fieldless namespace whose associated fns all take `*P` as the
@@ -52,12 +51,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Forbid referencing "arguments" inside class bodies
                 if scope.forbid_arguments && !did_forbid_arguments && name == b"arguments" {
                     let r = js_lexer::range_of_identifier(self.source, loc);
-                    self.log()
-                        .add_range_error_fmt(
-                            Some(self.source),
-                            r,
-                            format_args!("Cannot access \"{}\" here", bstr::BStr::new(name)),
-                        );
+                    self.log().add_range_error_fmt(
+                        Some(self.source),
+                        r,
+                        format_args!("Cannot access \"{}\" here", bstr::BStr::new(name)),
+                    );
                     did_forbid_arguments = true;
                 }
 
@@ -112,7 +110,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 });
             }
 
-            let gpe = self.module_scope_mut().get_or_put_member_with_hash(name, hash);
+            let gpe = self
+                .module_scope_mut()
+                .get_or_put_member_with_hash(name, hash);
 
             // I don't think this happens?
             if gpe.found_existing {
@@ -128,7 +128,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .new_symbol(js_ast::symbol::Kind::Unbound, name)
                 .expect("unreachable");
 
-            *self.module_scope_mut()
+            *self
+                .module_scope_mut()
                 .get_or_put_member_with_hash(name, hash)
                 .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
             // TODO(port): the line above conflates key_ptr/value_ptr writes from Zig's
@@ -153,7 +154,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self.record_usage(ref_);
         }
 
-        Ok(FindSymbolResult { r#ref: ref_, declare_loc: Some(declare_loc), is_inside_with_scope })
+        Ok(FindSymbolResult {
+            r#ref: ref_,
+            declare_loc: Some(declare_loc),
+            is_inside_with_scope,
+        })
     }
 }
 

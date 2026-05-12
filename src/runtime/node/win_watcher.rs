@@ -9,20 +9,20 @@ use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
+use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
-use bun_core::{strings, String as BunString, ZStr};
-use bun_sys::{self as sys, windows};
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
-use bun_sys::ReturnCodeExt as _;
+use bun_sys::{self as sys, windows};
 use bun_threading::Mutex;
 
 use super::path_watcher::EventType;
 // Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
 // the callbacks are *associated functions* on `FSWatcher`, not free fns.
 // lower_snake names mirror the Zig `onPathUpdateFn`/`onUpdateEndFn` decls.
-use crate::node::node_fs_watcher::{FSWatcher, Event, StringOrBytesToDecode};
+use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
 #[allow(non_upper_case_globals)]
@@ -79,12 +79,7 @@ impl PathWatcherManager {
 
     /// unregister is always called from main thread
     fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
-        if let Some(index) = self
-            .watchers
-            .values()
-            .iter()
-            .position(|&w| w == watcher)
-        {
+        if let Some(index) = self.watchers.values().iter().position(|&w| w == watcher) {
             #[cfg(debug_assertions)]
             {
                 if !path.as_bytes().is_empty() {
@@ -161,7 +156,11 @@ pub struct ChangeEvent {
 impl Default for ChangeEvent {
     fn default() -> Self {
         // Match Zig field defaults: `hash = 0`, `event_type = .change`, `timestamp = 0`.
-        Self { hash: 0, event_type: EventType::Change, timestamp: 0 }
+        Self {
+            hash: 0,
+            event_type: EventType::Change,
+            timestamp: 0,
+        }
     }
 }
 
@@ -204,9 +203,8 @@ impl PathWatcher {
             return;
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
-        let this: *mut PathWatcher = unsafe {
-            bun_core::from_field_ptr!(PathWatcher, handle, event)
-        };
+        let this: *mut PathWatcher =
+            unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) };
         // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
         // This is the *only* live `&mut` covering the embedded handle for the rest of this fn.
         let this = unsafe { &mut *this };
@@ -238,7 +236,9 @@ impl PathWatcher {
             None
         } else {
             // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) }))
+            Some(ZStr::from_cstr(unsafe {
+                core::ffi::CStr::from_ptr(filename)
+            }))
         }) else {
             return;
         };
@@ -376,7 +376,11 @@ impl PathWatcher {
                 ptr::addr_of_mut!((*this).handle),
                 Some(PathWatcher::uv_event_callback),
                 event_path.as_ptr().cast::<c_char>(),
-                if recursive { uv::UV_FS_EVENT_RECURSIVE as u32 } else { 0 },
+                if recursive {
+                    uv::UV_FS_EVENT_RECURSIVE as u32
+                } else {
+                    0
+                },
             )
         };
         if let Some(err) = start_rc.to_error(sys::Tag::watch) {
@@ -398,9 +402,7 @@ impl PathWatcher {
 
         // Owned key: dupe of event_path bytes (Zig: `dupeZ` — the sentinel NUL is not part of the
         // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
-        manager
-            .watchers
-            .insert(event_path.as_bytes(), this);
+        manager.watchers.insert(event_path.as_bytes(), this);
 
         sys::Result::Ok(this)
     }
@@ -524,9 +526,7 @@ pub fn watch(
     };
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe {
-        (*watcher)
-            .handlers
-            .insert(ctx, ChangeEvent::default());
+        (*watcher).handlers.insert(ctx, ChangeEvent::default());
     }
     sys::Result::Ok(watcher)
 }

@@ -9,11 +9,11 @@
 //! `emit_handle_ipc_message` for JS2Native) are link-time symbols, so which
 //! crate defines them is irrelevant to the C++ side.
 
+use bun_core::String as BunString;
 use bun_jsc::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_core::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -98,7 +98,10 @@ pub fn do_send(
             }
         };
         let ex = global_object
-            .err(bun_jsc::ErrorCode::IPC_CHANNEL_CLOSED, format_args!("{}", msg))
+            .err(
+                bun_jsc::ErrorCode::IPC_CHANNEL_CLOSED,
+                format_args!("{}", msg),
+            )
             .to_js();
         return do_send_err(global_object, callback, ex, from);
     }
@@ -191,7 +194,9 @@ pub fn emit_handle_ipc_message(
     if target.is_null() {
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
         let vm = global_this.bun_vm().as_mut();
-        let Some(ipc) = vm.get_ipc_instance() else { return Ok(JSValue::UNDEFINED) };
+        let Some(ipc) = vm.get_ipc_instance() else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
         unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
     } else {

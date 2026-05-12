@@ -1,35 +1,35 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
+use crate::cli::ci_info as ci;
 use bun_alloc::AllocError;
-use bun_core::{err, Environment, Error, Global, Output};
+use bun_ast::{E, Expr, G};
+use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::{strings, ZStr};
-use bun_paths::{self as path, PathBuffer};
-use bun_sys::{self, Fd, File, FileKind};
+use bun_core::{Environment, Error, Global, Output, err};
+use bun_core::{ZStr, strings};
+use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_http::HeaderBuilder;
-use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
-use bun_resolver::fs::FileSystem;
-use bun_dotenv as dotenv;
-use bun_sha_hmac as sha;
 use bun_parsers::json as json_mod;
-use bun_url::URL;
-use bun_core::MutableString;
-use bun_ast::{Expr, E, G};
-use crate::cli::ci_info as ci;
-use bun_simdutf_sys::simdutf as simdutf;
-use bun_sys::dir_iterator as DirIterator;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
+use bun_paths::{self as path, PathBuffer};
+use bun_resolver::fs::FileSystem;
+use bun_sha_hmac as sha;
+use bun_simdutf_sys::simdutf;
+use bun_sys::dir_iterator as DirIterator;
+use bun_sys::{self, Fd, File, FileKind};
+use bun_url::URL;
 // `LogLevel`/`AuthType`/`Access` from `bun_install::PackageManagerOptions`.
-use bun_install::{AuthType, LogLevel};
-pub use bun_install::Access;
-use bun_install::dependency;
-use bun_sys::FdExt as _;
 use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
+pub use bun_install::Access;
+use bun_install::dependency;
+use bun_install::{AuthType, LogLevel};
+use bun_sys::FdExt as _;
 
 use crate::api::bun_process::sync as spawn_sync;
 
@@ -54,9 +54,14 @@ fn json_get_string_cloned<'b>(
 #[inline]
 fn sep_chars() -> &'static [OSPathChar] {
     #[cfg(windows)]
-    { const SEPS: [u16; 2] = [b'/' as u16, b'\\' as u16]; &SEPS }
+    {
+        const SEPS: [u16; 2] = [b'/' as u16, b'\\' as u16];
+        &SEPS
+    }
     #[cfg(not(windows))]
-    { b"/\\" }
+    {
+        b"/\\"
+    }
 }
 
 use crate::Command;
@@ -91,9 +96,9 @@ fn is_readme_os_path(name: &[OSPathChar]) -> bool {
     is_readme_filename_t(name)
 }
 
-use crate::run_command::RunCommand as Run;
 use crate::cli::init_command::InitCommand;
 use crate::cli::open;
+use crate::run_command::RunCommand as Run;
 
 // TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
 // `inherent_associated_types`; mirror pack_command.rs and spell the array out.
@@ -169,7 +174,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
             Ok(b) => b,
             Err(e) => {
-                Output::err(e, "failed to read tarball: '{}'", (bstr::BStr::new(tarball_path),));
+                Output::err(
+                    e,
+                    "failed to read tarball: '{}'",
+                    (bstr::BStr::new(tarball_path),),
+                );
                 Global::crash();
             }
         };
@@ -233,7 +242,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(usize::try_from(size.max(0)).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(
+                        usize::try_from(size.max(0)).expect("int cast"),
+                        bun_fmt::SizeFormatterOptions {
+                            space_between_number_and_unit: false
+                        }
+                    ),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
                 ));
 
@@ -289,7 +303,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             } else {
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(usize::try_from(size.max(0)).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(
+                        usize::try_from(size.max(0)).expect("int cast"),
+                        bun_fmt::SizeFormatterOptions {
+                            space_between_number_and_unit: false
+                        }
+                    ),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
                 ));
             }
@@ -315,8 +334,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // PORT NOTE: adopt `package_json_contents` (already an owned `Box<[u8]>`)
         // into the process-lifetime side-table so the `Source` borrow stays
         // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
-        let package_json_contents: &'static [u8] =
-            crate::cli::cli_adopt(package_json_contents);
+        let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
@@ -486,7 +504,10 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
                     }
                     LoadStep::Migrating => {
-                        Output::err_generic("failed to migrate lockfile: {}", (cause.value.name(),));
+                        Output::err_generic(
+                            "failed to migrate lockfile: {}",
+                            (cause.value.name(),),
+                        );
                     }
                 }
 
@@ -501,8 +522,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // PORT NOTE: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
         // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
-        let abs_pkg_json =
-            bun_core::ZBox::from_bytes(unsafe { &*manager_ptr }.original_package_json_path.as_bytes());
+        let abs_pkg_json = bun_core::ZBox::from_bytes(
+            unsafe { &*manager_ptr }
+                .original_package_json_path
+                .as_bytes(),
+        );
 
         let mut pack_ctx = pack::Context {
             // SAFETY: `manager_ptr` came from `&'a mut PackageManager`; the
@@ -532,23 +556,28 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
-            Ok(v) => v,
-            Err(err) => {
-                if !cli.silent {
-                    if err == bun_core::err!("MissingPackageJSON") {
-                        Output::err_generic("missing package.json, nothing to publish", ());
+        let (manager, original_cwd) =
+            match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
+                Ok(v) => v,
+                Err(err) => {
+                    if !cli.silent {
+                        if err == bun_core::err!("MissingPackageJSON") {
+                            Output::err_generic("missing package.json, nothing to publish", ());
+                        }
+                        Output::err_generic("failed to initialize bun install: {}", (err.name(),));
                     }
-                    Output::err_generic("failed to initialize bun install: {}", (err.name(),));
+                    Global::crash();
                 }
-                Global::crash();
-            }
-        };
+            };
         drop(original_cwd);
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
-            let context = match Context::<false>::from_tarball_path(ctx, manager, &cli.positionals[1]) {
+            let context = match Context::<false>::from_tarball_path(
+                ctx,
+                manager,
+                &cli.positionals[1],
+            ) {
                 Ok(c) => c,
                 Err(err) => {
                     match err {
@@ -559,8 +588,12 @@ impl PublishCommand {
                         FromTarballError::MissingPackageVersion => {
                             Output::err_generic("missing `version` string in package.json", ());
                         }
-                        FromTarballError::InvalidPackageName | FromTarballError::InvalidPackageVersion => {
-                            Output::err_generic("package.json `name` and `version` fields must be non-empty strings", ());
+                        FromTarballError::InvalidPackageName
+                        | FromTarballError::InvalidPackageVersion => {
+                            Output::err_generic(
+                                "package.json `name` and `version` fields must be non-empty strings",
+                                (),
+                            );
                         }
                         FromTarballError::MissingPackageJSON => {
                             Output::err_generic(
@@ -570,14 +603,18 @@ impl PublishCommand {
                         }
                         FromTarballError::InvalidPackageJSON => {
                             // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }.print(std::ptr::from_mut(Output::error_writer()));
+                            let _ = unsafe { &mut *(*manager_ptr).log }
+                                .print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
                         FromTarballError::PrivatePackage => {
                             Output::err_generic("attempted to publish a private package", ());
                         }
                         FromTarballError::RestrictedUnscopedPackage => {
-                            Output::err_generic("unable to restrict access to unscoped package", ());
+                            Output::err_generic(
+                                "unable to restrict access to unscoped package",
+                                (),
+                            );
                         }
                     }
                     Global::crash();
@@ -588,7 +625,10 @@ impl PublishCommand {
                 match err {
                     PublishError::OutOfMemory => bun_core::out_of_memory(),
                     PublishError::NeedAuth => {
-                        Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                        Output::err_generic(
+                            "missing authentication (run <cyan>`bunx npm login`<r>)",
+                            (),
+                        );
                         Global::crash();
                     }
                 }
@@ -598,7 +638,11 @@ impl PublishCommand {
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-                if PackageManager::get().options.dry_run { " (dry-run)" } else { "" },
+                if PackageManager::get().options.dry_run {
+                    " (dry-run)"
+                } else {
+                    ""
+                },
             ));
 
             return Ok(());
@@ -617,7 +661,10 @@ impl PublishCommand {
                         Output::err_generic("missing `version` string in package.json", ());
                     }
                     PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
-                        Output::err_generic("package.json `name` and `version` fields must be non-empty strings", ());
+                        Output::err_generic(
+                            "package.json `name` and `version` fields must be non-empty strings",
+                            (),
+                        );
                     }
                     PackError::MissingPackageJSON => {
                         Output::err_generic(
@@ -643,7 +690,10 @@ impl PublishCommand {
             match err {
                 PublishError::OutOfMemory => bun_core::out_of_memory(),
                 PublishError::NeedAuth => {
-                    Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                    Output::err_generic(
+                        "missing authentication (run <cyan>`bunx npm login`<r>)",
+                        (),
+                    );
                     Global::crash();
                 }
             }
@@ -653,17 +703,27 @@ impl PublishCommand {
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-            if PackageManager::get().options.dry_run { " (dry-run)" } else { "" },
+            if PackageManager::get().options.dry_run {
+                " (dry-run)"
+            } else {
+                ""
+            },
         ));
 
-        if PackageManager::get().options.do_.contains(install::PackageManagerDoStub::RUN_SCRIPTS) {
-            let abs_workspace_path: Box<[u8]> = strings::without_trailing_slash(
-                strings::without_suffix_comptime(
+        if PackageManager::get()
+            .options
+            .do_
+            .contains(install::PackageManagerDoStub::RUN_SCRIPTS)
+        {
+            let abs_workspace_path: Box<[u8]> =
+                strings::without_trailing_slash(strings::without_suffix_comptime(
                     PackageManager::get().original_package_json_path.as_bytes(),
                     b"package.json",
-                ),
-            ).into();
-            let script_env = context.script_env.expect("DIRECTORY_PUBLISH=true sets script_env");
+                ))
+                .into();
+            let script_env = context
+                .script_env
+                .expect("DIRECTORY_PUBLISH=true sets script_env");
             script_env
                 .map
                 .put(b"npm_command", b"publish")
@@ -689,7 +749,10 @@ impl PublishCommand {
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
-                        Output::err_generic("failed to find shell executable to run publish script", ());
+                        Output::err_generic(
+                            "failed to find shell executable to run publish script",
+                            (),
+                        );
                         Global::crash();
                     }
                     return Err(e);
@@ -710,7 +773,10 @@ impl PublishCommand {
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
-                        Output::err_generic("failed to find shell executable to run postpublish script", ());
+                        Output::err_generic(
+                            "failed to find shell executable to run postpublish script",
+                            (),
+                        );
                         Global::crash();
                     }
                     return Err(e);
@@ -731,7 +797,14 @@ impl PublishCommand {
         let encoded_name = bun_fmt::dependency_url(package_name);
 
         // Try to get package metadata to check if version exists
-        if write!(&mut url_buf, "{}/{}", bstr::BStr::new(registry_url), encoded_name).is_err() {
+        if write!(
+            &mut url_buf,
+            "{}/{}",
+            bstr::BStr::new(registry_url),
+            encoded_name
+        )
+        .is_err()
+        {
             return false;
         }
 
@@ -823,7 +896,9 @@ impl PublishCommand {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
-        if registry.token.is_empty() && (registry_url.password.is_empty() || registry_url.username.is_empty()) {
+        if registry.token.is_empty()
+            && (registry_url.password.is_empty() || registry_url.username.is_empty())
+        {
             return Err(PublishError::NeedAuth);
         }
 
@@ -896,7 +971,8 @@ impl PublishCommand {
             "{}/{}",
             bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
             bun_fmt::dependency_url(&ctx.package_name),
-        ).map_err(|_| AllocError)?;
+        )
+        .map_err(|_| AllocError)?;
         // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
         // arena so the URL outlives `print_buf.clear()` below (Zig's
         // `allocPrint` owned its buffer).
@@ -938,7 +1014,10 @@ impl PublishCommand {
                         while let Some(part) = iter.next() {
                             let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);
                             if strings::eql_case_insensitive_ascii(trimmed, b"ipaddress", true) {
-                                Output::err_generic("login is not allowed from your IP address", ());
+                                Output::err_generic(
+                                    "login is not allowed from your IP address",
+                                    (),
+                                );
                                 Global::crash();
                             } else if strings::eql_case_insensitive_ascii(trimmed, b"otp", true) {
                                 break 'prompt_for_otp true;
@@ -970,13 +1049,21 @@ impl PublishCommand {
 
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                 // ignore if x-local-cache exists
-                if let Some(notice) = res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
+                if let Some(notice) = res
+                    .headers
+                    .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                {
                     Output::print_error(format_args!("\n"));
                     Output::note(format_args!("{}", bstr::BStr::new(notice)));
                     Output::flush();
                 }
 
-                let otp = Self::get_otp::<DIRECTORY_PUBLISH>(ctx, registry, &mut response_buf, &mut print_buf)?;
+                let otp = Self::get_otp::<DIRECTORY_PUBLISH>(
+                    ctx,
+                    registry,
+                    &mut response_buf,
+                    &mut print_buf,
+                )?;
 
                 let otp_headers = Self::construct_publish_headers(
                     &mut print_buf,
@@ -1024,7 +1111,10 @@ impl PublishCommand {
                     _ => {
                         // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                         // ignore if x-local-cache exists
-                        if let Some(notice) = otp_res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
+                        if let Some(notice) = otp_res
+                            .headers
+                            .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                        {
                             Output::print_error(format_args!("\n"));
                             Output::note(format_args!("{}", bstr::BStr::new(notice)));
                             Output::flush();
@@ -1042,12 +1132,11 @@ impl PublishCommand {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let _stdin_mode = bun_sys::windows::StdinModeGuard::set(
-            bun_sys::windows::UpdateStdioModeFlagsOpts {
+        let _stdin_mode =
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                 ..Default::default()
-            },
-        );
+            });
 
         loop {
             // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded
@@ -1124,39 +1213,86 @@ impl PublishCommand {
                 const OFFSET: usize = 0;
                 const PADDING: usize = 1;
 
-                let horizontal = if Output::enable_ansi_colors_stdout() { "─" } else { "-" };
-                let vertical = if Output::enable_ansi_colors_stdout() { "│" } else { "|" };
-                let top_left = if Output::enable_ansi_colors_stdout() { "┌" } else { "|" };
-                let top_right = if Output::enable_ansi_colors_stdout() { "┐" } else { "|" };
-                let bottom_left = if Output::enable_ansi_colors_stdout() { "└" } else { "|" };
-                let bottom_right = if Output::enable_ansi_colors_stdout() { "┘" } else { "|" };
+                let horizontal = if Output::enable_ansi_colors_stdout() {
+                    "─"
+                } else {
+                    "-"
+                };
+                let vertical = if Output::enable_ansi_colors_stdout() {
+                    "│"
+                } else {
+                    "|"
+                };
+                let top_left = if Output::enable_ansi_colors_stdout() {
+                    "┌"
+                } else {
+                    "|"
+                };
+                let top_right = if Output::enable_ansi_colors_stdout() {
+                    "┐"
+                } else {
+                    "|"
+                };
+                let bottom_left = if Output::enable_ansi_colors_stdout() {
+                    "└"
+                } else {
+                    "|"
+                };
+                let bottom_right = if Output::enable_ansi_colors_stdout() {
+                    "┘"
+                } else {
+                    "|"
+                };
 
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                for _ in 0..OFFSET { Output::print(format_args!(" ")); }
+                for _ in 0..OFFSET {
+                    Output::print(format_args!(" "));
+                }
                 Output::print(format_args!("{}", top_left));
-                for _ in 0..width { Output::print(format_args!("{}", horizontal)); }
+                for _ in 0..width {
+                    Output::print(format_args!("{}", horizontal));
+                }
                 Output::print(format_args!("{}\n", top_right));
 
-                for _ in 0..OFFSET { Output::print(format_args!(" ")); }
+                for _ in 0..OFFSET {
+                    Output::print(format_args!(" "));
+                }
                 Output::print(format_args!("{}", vertical));
-                for _ in 0..PADDING { Output::print(format_args!(" ")); }
-                Output::pretty(format_args!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes())));
-                for _ in 0..PADDING { Output::print(format_args!(" ")); }
+                for _ in 0..PADDING {
+                    Output::print(format_args!(" "));
+                }
+                Output::pretty(format_args!(
+                    "<b>{}<r>",
+                    bstr::BStr::new(auth_url_str.as_bytes())
+                ));
+                for _ in 0..PADDING {
+                    Output::print(format_args!(" "));
+                }
                 Output::print(format_args!("{}\n", vertical));
 
-                for _ in 0..OFFSET { Output::print(format_args!(" ")); }
+                for _ in 0..OFFSET {
+                    Output::print(format_args!(" "));
+                }
                 Output::print(format_args!("{}", bottom_left));
-                for _ in 0..width { Output::print(format_args!("{}", horizontal)); }
+                for _ in 0..width {
+                    Output::print(format_args!("{}", horizontal));
+                }
                 Output::print(format_args!("{}\n", bottom_right));
                 Output::flush();
 
                 // on another thread because pressing enter is not required
                 // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
-                match std::thread::Builder::new().spawn(move || Self::press_enter_to_open_in_browser(auth_url_str)) {
+                match std::thread::Builder::new()
+                    .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
+                {
                     Ok(_t) => { /* JoinHandle dropped → detached */ }
                     Err(_e) => {
-                        Output::err("ThreadSpawn", "failed to spawn thread for opening auth url", ());
+                        Output::err(
+                            "ThreadSpawn",
+                            "failed to spawn thread for opening auth url",
+                            (),
+                        );
                         Global::crash();
                     }
                 }
@@ -1204,10 +1340,12 @@ impl PublishCommand {
                             let nanoseconds: u64 = 'nanoseconds: {
                                 if let Some(retry) = res.headers.get(b"retry-after") {
                                     'default: {
-                                        let trimmed = strings::trim(retry, &strings::WHITESPACE_CHARS);
+                                        let trimmed =
+                                            strings::trim(retry, &strings::WHITESPACE_CHARS);
                                         // PORT NOTE: std.fmt.parseInt(u32, _, 10) — header value is bytes,
                                         // not UTF-8; use the byte-slice parser per PORTING.md.
-                                        let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10) else {
+                                        let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10)
+                                        else {
                                             break 'default;
                                         };
                                         break 'nanoseconds (seconds as u64) * 1_000_000_000;
@@ -1223,8 +1361,15 @@ impl PublishCommand {
                         200 => {
                             // login successful
                             let done_bump = bun_alloc::Arena::new();
-                            let otp_done_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
-                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, manager_log, &done_bump) {
+                            let otp_done_source = bun_ast::Source::init_path_string(
+                                b"???",
+                                response_buf.list.as_slice(),
+                            );
+                            let otp_done_json = match json_mod::parse_utf8(
+                                &otp_done_source,
+                                manager_log,
+                                &done_bump,
+                            ) {
                                 Ok(j) => j,
                                 Err(e) => {
                                     if e == err!(OutOfMemory) {
@@ -1235,14 +1380,23 @@ impl PublishCommand {
                                 }
                             };
 
-                            let token = json_get_string_cloned(&otp_done_json, &done_bump, b"token")?.unwrap_or_else(|| {
-                                Output::err("WebLogin", "missing `token` field in reponse json", ());
-                                Global::crash();
-                            });
+                            let token =
+                                json_get_string_cloned(&otp_done_json, &done_bump, b"token")?
+                                    .unwrap_or_else(|| {
+                                        Output::err(
+                                            "WebLogin",
+                                            "missing `token` field in reponse json",
+                                            (),
+                                        );
+                                        Global::crash();
+                                    });
 
                             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                             // ignore if x-local-cache exists
-                            if let Some(notice) = res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
+                            if let Some(notice) = res
+                                .headers
+                                .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                            {
                                 Output::print_error(format_args!("\n"));
                                 Output::note(format_args!("{}", bstr::BStr::new(notice)));
                                 Output::flush();
@@ -1264,7 +1418,10 @@ impl PublishCommand {
         }
 
         // classic
-        match InitCommand::prompt("\nThis operation requires a one-time password.\nEnter OTP: ", b"") {
+        match InitCommand::prompt(
+            "\nThis operation requires a one-time password.\nEnter OTP: ",
+            b"",
+        ) {
             Ok(v) => Ok(v.into()),
             Err(e) => {
                 if e == err!(OutOfMemory) {
@@ -1313,13 +1470,29 @@ impl PublishCommand {
             leak!(v)
         };
 
-        Expr::set_string(json, &bump, b"_id", leak!({
-            let mut v = Vec::new();
-            write!(&mut v, "{}@{}", bstr::BStr::new(package_name), bstr::BStr::new(version_without_build_tag)).map_err(|_| AllocError)?;
-            v
-        }))?;
+        Expr::set_string(
+            json,
+            &bump,
+            b"_id",
+            leak!({
+                let mut v = Vec::new();
+                write!(
+                    &mut v,
+                    "{}@{}",
+                    bstr::BStr::new(package_name),
+                    bstr::BStr::new(version_without_build_tag)
+                )
+                .map_err(|_| AllocError)?;
+                v
+            }),
+        )?;
         Expr::set_string(json, &bump, b"_integrity", integrity_fmt)?;
-        Expr::set_string(json, &bump, b"_nodeVersion", Environment::REPORTED_NODEJS_VERSION.as_bytes())?;
+        Expr::set_string(
+            json,
+            &bump,
+            b"_nodeVersion",
+            Environment::REPORTED_NODEJS_VERSION.as_bytes(),
+        )?;
         // TODO: npm version
         Expr::set_string(json, &bump, b"_npmVersion", b"10.8.3")?;
         Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
@@ -1337,8 +1510,14 @@ impl PublishCommand {
 
         let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"integrity"), bun_ast::Loc::EMPTY)),
-            value: Some(Expr::init(E::String::init(integrity_fmt), bun_ast::Loc::EMPTY)),
+            key: Some(Expr::init(
+                E::String::init(b"integrity"),
+                bun_ast::Loc::EMPTY,
+            )),
+            value: Some(Expr::init(
+                E::String::init(integrity_fmt),
+                bun_ast::Loc::EMPTY,
+            )),
             ..Default::default()
         });
         dist_props.push(G::Property {
@@ -1356,12 +1535,18 @@ impl PublishCommand {
                         "http://{}/{}/-/{}",
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
-                        bstr::BStr::new(strings::without_trailing_slash(
-                            strings::without_prefix(registry.url.href(), b"https://"),
-                        )),
+                        bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
+                            registry.url.href(),
+                            b"https://"
+                        ),)),
                         bstr::BStr::new(package_name),
-                        pack::fmt_tarball_filename(package_name, package_version, pack::TarballNameStyle::Raw),
-                    ).map_err(|_| AllocError)?;
+                        pack::fmt_tarball_filename(
+                            package_name,
+                            package_version,
+                            pack::TarballNameStyle::Raw
+                        ),
+                    )
+                    .map_err(|_| AllocError)?;
                     v
                 })),
                 bun_ast::Loc::EMPTY,
@@ -1369,17 +1554,24 @@ impl PublishCommand {
             ..Default::default()
         });
 
-        json.set(&bump, b"dist", Expr::init(
-            E::Object {
-                properties: G::PropertyList::move_from_list(dist_props),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        ))?;
+        json.set(
+            &bump,
+            b"dist",
+            Expr::init(
+                E::Object {
+                    properties: G::PropertyList::move_from_list(dist_props),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ),
+        )?;
 
         {
             let workspace_root = match bun_sys::open_a(
-                strings::without_suffix_comptime(manager.original_package_json_path.as_bytes(), b"package.json"),
+                strings::without_suffix_comptime(
+                    manager.original_package_json_path.as_bytes(),
+                    b"package.json",
+                ),
                 bun_sys::O::DIRECTORY,
                 0,
             ) {
@@ -1389,14 +1581,11 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard(workspace_root, |fd| { let _ = fd.close(); });
+            let _close = scopeguard::guard(workspace_root, |fd| {
+                let _ = fd.close();
+            });
 
-            Self::normalize_bin(
-                json,
-                &bump,
-                package_name,
-                workspace_root,
-            )?;
+            Self::normalize_bin(json, &bump, package_name, workspace_root)?;
         }
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -1417,10 +1606,7 @@ impl PublishCommand {
                 if e == err!(OutOfMemory) {
                     return Err(AllocError);
                 }
-                Output::err_generic(
-                    "failed to print normalized package.json: {}",
-                    (e.name(),),
-                );
+                Output::err_generic("failed to print normalized package.json: {}", (e.name(),));
                 Global::crash();
             }
         };
@@ -1495,13 +1681,24 @@ impl PublishCommand {
                     }
 
                     bin_props.push(G::Property {
-                        key: Some(Expr::init(E::String::init(leak!(package_name)), bun_ast::Loc::EMPTY)),
-                        value: Some(Expr::init(E::String::init(leak!(normalized.as_bytes())), bun_ast::Loc::EMPTY)),
+                        key: Some(Expr::init(
+                            E::String::init(leak!(package_name)),
+                            bun_ast::Loc::EMPTY,
+                        )),
+                        value: Some(Expr::init(
+                            E::String::init(leak!(normalized.as_bytes())),
+                            bun_ast::Loc::EMPTY,
+                        )),
                         ..Default::default()
                     });
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
+                    json.data
+                        .e_object_mut()
+                        .expect("infallible: variant checked")
+                        .properties
+                        .slice_mut()[bin_query.i as usize]
+                        .value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
@@ -1569,14 +1766,25 @@ impl PublishCommand {
                         }
 
                         bin_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(crate::cli::cli_dupe(&key)), bun_ast::Loc::EMPTY)),
-                            value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), bun_ast::Loc::EMPTY)),
+                            key: Some(Expr::init(
+                                E::String::init(crate::cli::cli_dupe(&key)),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            value: Some(Expr::init(
+                                E::String::init(leak!(value.as_bytes())),
+                                bun_ast::Loc::EMPTY,
+                            )),
                             ..Default::default()
                         });
                     }
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
+                    json.data
+                        .e_object_mut()
+                        .expect("infallible: variant checked")
+                        .properties
+                        .slice_mut()[bin_query.i as usize]
+                        .value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
@@ -1593,22 +1801,22 @@ impl PublishCommand {
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(
-                    strings::without_trailing_slash(
-                        strings::without_prefix(
-                            normalize_buf::<path::platform::Posix>(
-                                bin_dir_str,
-                                &mut *path_buf,
-                            ),
-                            b"./",
-                        ),
-                    ),
+                    strings::without_trailing_slash(strings::without_prefix(
+                        normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
+                        b"./",
+                    )),
                 );
 
                 if normalized_bin_dir.is_empty() {
                     return Ok(());
                 }
 
-                let bin_dir = match bun_sys::openat(workspace_root, &normalized_bin_dir, bun_sys::O::DIRECTORY, 0) {
+                let bin_dir = match bun_sys::openat(
+                    workspace_root,
+                    &normalized_bin_dir,
+                    bun_sys::O::DIRECTORY,
+                    0,
+                ) {
                     Ok(fd) => fd,
                     Err(e) => {
                         if e.get_errno() == bun_sys::E::ENOENT {
@@ -1654,7 +1862,8 @@ impl PublishCommand {
                                 // only using posix separators
                                 if dir_subpath.is_empty() { "" } else { "/" },
                                 bstr::BStr::new(strings::without_trailing_slash(name)),
-                            ).map_err(|_| AllocError)?;
+                            )
+                            .map_err(|_| AllocError)?;
                             join.push(0);
                             let join_len = join.len() - 1;
                             // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
@@ -1664,29 +1873,39 @@ impl PublishCommand {
                             let join_z = ZStr::from_buf(&interned[..], join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
-                            let name_z = unsafe { ZStr::from_raw(interned.as_ptr().add(name_slice_start), name.len()) };
+                            let name_z = unsafe {
+                                ZStr::from_raw(interned.as_ptr().add(name_slice_start), name.len())
+                            };
                             (name_z, join_z)
                         };
 
                         if name.is_empty()
                             || (name.len() == 1 && name.as_bytes()[0] == b'.')
-                            || (name.len() == 2 && name.as_bytes()[0] == b'.' && name.as_bytes()[1] == b'.')
+                            || (name.len() == 2
+                                && name.as_bytes()[0] == b'.'
+                                && name.as_bytes()[1] == b'.')
                         {
                             continue;
                         }
 
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
-                                E::String::init(leak!(bun_paths::basename_posix(subpath.as_bytes()))),
+                                E::String::init(leak!(bun_paths::basename_posix(
+                                    subpath.as_bytes()
+                                ))),
                                 bun_ast::Loc::EMPTY,
                             )),
-                            value: Some(Expr::init(E::String::init(subpath.as_bytes()), bun_ast::Loc::EMPTY)),
+                            value: Some(Expr::init(
+                                E::String::init(subpath.as_bytes()),
+                                bun_ast::Loc::EMPTY,
+                            )),
                             ..Default::default()
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
                             // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
-                            let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
+                            let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
+                            else {
                                 continue;
                             };
                             dirs.push((subdir, subpath.as_bytes().into(), true));
@@ -1694,13 +1913,17 @@ impl PublishCommand {
                     }
                 }
 
-                json.set(bump, b"bin", Expr::init(
-                    E::Object {
-                        properties: G::PropertyList::move_from_list(bin_props),
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                ))?;
+                json.set(
+                    bump,
+                    b"bin",
+                    Expr::init(
+                        E::Object {
+                            properties: G::PropertyList::move_from_list(bin_props),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
+                )?;
             }
         }
 
@@ -1762,7 +1985,8 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            ).ok();
+            )
+            .ok();
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -1813,7 +2037,8 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            ).ok();
+            )
+            .ok();
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -1840,8 +2065,10 @@ impl PublishCommand {
             b"latest"
         };
 
-        let encoded_tarball_len = bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
-        let version_without_build_tag = install::dependency::without_build_tag(&ctx.package_version);
+        let encoded_tarball_len =
+            bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
+        let version_without_build_tag =
+            install::dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(
             ctx.package_name.len() * 5
@@ -1855,14 +2082,16 @@ impl PublishCommand {
             "{{\"_id\":\"{}\",\"name\":\"{}\"",
             bstr::BStr::new(&ctx.package_name),
             bstr::BStr::new(&ctx.package_name),
-        ).ok();
+        )
+        .ok();
 
         write!(
             &mut buf,
             ",\"dist-tags\":{{\"{}\":\"{}\"}}",
             bstr::BStr::new(tag),
             bstr::BStr::new(version_without_build_tag),
-        ).ok();
+        )
+        .ok();
 
         // "versions"
         {
@@ -1871,7 +2100,8 @@ impl PublishCommand {
                 ",\"versions\":{{\"{}\":{}}}",
                 bstr::BStr::new(version_without_build_tag),
                 bstr::BStr::new(&ctx.normalized_pkg_info),
-            ).ok();
+            )
+            .ok();
         }
 
         if let Some(access) = ctx.manager.options.publish_config.access {
@@ -1885,26 +2115,28 @@ impl PublishCommand {
             write!(
                 &mut buf,
                 ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
-                pack::fmt_tarball_filename(&ctx.package_name, &ctx.package_version, pack::TarballNameStyle::Raw),
+                pack::fmt_tarball_filename(
+                    &ctx.package_name,
+                    &ctx.package_version,
+                    pack::TarballNameStyle::Raw
+                ),
                 "application/octet-stream",
-            ).ok();
+            )
+            .ok();
 
             // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
             // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
             // reserved spare capacity; `fill_spare` commits exactly that count.
             let count = unsafe {
                 bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                    let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
+                    let n =
+                        simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
                     (n, n)
                 })
             };
             debug_assert!(count == encoded_tarball_len);
 
-            write!(
-                &mut buf,
-                "\",\"length\":{}}}}}}}",
-                ctx.tarball_bytes.len(),
-            ).ok();
+            write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len(),).ok();
         }
 
         Ok(buf.into_boxed_slice())

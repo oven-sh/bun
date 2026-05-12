@@ -1,19 +1,19 @@
 use std::ffi::CString;
 use std::io::Write as _;
 
-use bun_collections::{VecExt, StringHashMap};
+use bun_collections::{StringHashMap, VecExt};
 use bun_core::strings;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
-pub use http_method::{Method, Optional as MethodOptional};
 use bun_url::URL;
+pub use http_method::{Method, Optional as MethodOptional};
 
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
+use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
@@ -103,7 +103,10 @@ impl Default for ServerConfig {
 }
 
 pub enum Address {
-    Tcp { port: u16, hostname: Option<CString> },
+    Tcp {
+        port: u16,
+        hostname: Option<CString>,
+    },
     /// Zig `[:0]const u8` — leading NUL is valid (Linux abstract sockets).
     Unix(bun_core::ZBox),
 }
@@ -233,8 +236,7 @@ impl ServerConfig {
             hasher.final_()
         }
 
-        let mut static_routes_dedupe_list: Vec<u64> =
-            Vec::with_capacity(self.static_routes.len());
+        let mut static_routes_dedupe_list: Vec<u64> = Vec::with_capacity(self.static_routes.len());
 
         // Iterate through the list of static routes backwards
         // Later ones added override earlier ones
@@ -290,10 +292,10 @@ impl ServerConfig {
             sni: self.sni.take(),
             max_request_body_size: self.max_request_body_size,
             development: self.development,
-            broadcast_console_log_from_browser_to_server_for_bake:
-                self.broadcast_console_log_from_browser_to_server_for_bake,
-            enable_chrome_devtools_automatic_workspace_folders:
-                self.enable_chrome_devtools_automatic_workspace_folders,
+            broadcast_console_log_from_browser_to_server_for_bake: self
+                .broadcast_console_log_from_browser_to_server_for_bake,
+            enable_chrome_devtools_automatic_workspace_folders: self
+                .enable_chrome_devtools_automatic_workspace_folders,
             on_error: self.on_error.take(),
             on_request: self.on_request.take(),
             on_node_http_request: self.on_node_http_request.take(),
@@ -404,7 +406,6 @@ pub fn apply_static_route<const SSL: bool, T>(
     }
 }
 
-
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
@@ -424,7 +425,11 @@ pub fn apply_static_route_h3<T>(
     ) {
         // SAFETY: `route` is the `entry` userdata kept alive by the route table.
         unsafe {
-            T::on_request(route, bun_uws_sys::AnyRequest::H3(req), bun_uws_sys::AnyResponse::H3(resp))
+            T::on_request(
+                route,
+                bun_uws_sys::AnyRequest::H3(req),
+                bun_uws_sys::AnyResponse::H3(resp),
+            )
         };
     }
     fn head<T: StaticRouteLike<false>>(
@@ -434,7 +439,11 @@ pub fn apply_static_route_h3<T>(
     ) {
         // SAFETY: see `handler` above.
         unsafe {
-            T::on_head_request(route, bun_uws_sys::AnyRequest::H3(req), bun_uws_sys::AnyResponse::H3(resp))
+            T::on_head_request(
+                route,
+                bun_uws_sys::AnyRequest::H3(req),
+                bun_uws_sys::AnyResponse::H3(resp),
+            )
         };
     }
 
@@ -460,9 +469,17 @@ pub trait StaticRouteLike<const SSL: bool>: 'static {
     unsafe fn set_server(this: *mut Self, server: AnyServer);
     /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles
     /// valid for the duration of the uWS callback.
-    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse);
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    );
     /// SAFETY: see `on_request`.
-    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse);
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    );
 }
 
 // PORT NOTE (layering): the Phase-A `RequestUnion`/`ResponseUnion` placeholders
@@ -478,11 +495,19 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
         // is not required.
         unsafe { (*this).server.set(Some(server)) };
     }
-    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
         unsafe { Self::on_request(this, req, resp) }
     }
-    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
         unsafe { Self::on_head_request(this, req, resp) }
     }
@@ -493,10 +518,18 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
         // SAFETY: caller guarantees `this` is live.
         unsafe { (*this).set_server(Some(server)) };
     }
-    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -506,10 +539,18 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
         // SAFETY: caller guarantees `this` is live.
         unsafe { (*this).server.set(Some(server)) };
     }
-    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -883,9 +924,7 @@ impl ServerConfig {
                     let mut found = false;
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
-                        if let Some(function) =
-                            value.get_own(global, &method_name)?
-                        {
+                        if let Some(function) = value.get_own(global, &method_name)? {
                             if !found {
                                 validate_route_name(global, &path)?;
                             }
@@ -995,12 +1034,9 @@ impl ServerConfig {
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
-                    let resolver =
-                        &mut global.bun_vm().as_mut().transpiler.resolver;
+                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| {
-                            global.throw_error(e, "Framework::auto")
-                        })?;
+                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,
@@ -1024,20 +1060,14 @@ impl ServerConfig {
                             user_options.bundler_options.client.env_prefix = o
                                 .serve_env_prefix
                                 .as_deref()
-                                .map(|p| {
-                                    bb::arena_dupe_z(&user_options.arena, p)
-                                        .as_bytes()
-                                });
-                            user_options.bundler_options.client.env =
-                                DotEnvBehavior::prefix;
+                                .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
+                            user_options.bundler_options.client.env = DotEnvBehavior::prefix;
                         }
                         DotEnvBehavior::load_all => {
-                            user_options.bundler_options.client.env =
-                                DotEnvBehavior::load_all;
+                            user_options.bundler_options.client.env = DotEnvBehavior::load_all;
                         }
                         DotEnvBehavior::disable => {
-                            user_options.bundler_options.client.env =
-                                DotEnvBehavior::disable;
+                            user_options.bundler_options.client.env = DotEnvBehavior::disable;
                         }
                         _ => {}
                     }
@@ -1101,7 +1131,10 @@ impl ServerConfig {
             }
 
             // errdefer ssl_config.deinit() — drops with args on error
-            args.websocket = Some(super::web_socket_server_context::on_create(global, websocket_object)?);
+            args.websocket = Some(super::web_socket_server_context::on_create(
+                global,
+                websocket_object,
+            )?);
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1109,7 +1142,9 @@ impl ServerConfig {
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let p = u16::try_from(
-                (port_.coerce::<i32>(global)?).max(0).min(i32::from(u16::MAX)),
+                (port_.coerce::<i32>(global)?)
+                    .max(0)
+                    .min(i32::from(u16::MAX)),
             )
             .unwrap();
             if let Address::Tcp { port: tp, .. } = &mut args.address {
@@ -1241,8 +1276,8 @@ impl ServerConfig {
 
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
             if max_request_body_size.is_number() {
-                args.max_request_body_size =
-                    u64::try_from(max_request_body_size.to_int64().max(0)).expect("int cast") as usize;
+                args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
+                    .expect("int cast") as usize;
             }
         }
         if global.has_exception() {
@@ -1251,8 +1286,9 @@ impl ServerConfig {
 
         if let Some(on_error) = arg.get_truthy(global, "error")? {
             if !on_error.is_callable() {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected error to be a function")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected error to be a function"))
+                );
             }
             let on_error_snapshot = on_error.with_async_context_if_needed(global);
             args.on_error = Some(Strong::create(on_error_snapshot, global));
@@ -1371,8 +1407,9 @@ impl ServerConfig {
 
         if args.h3 {
             if args.ssl_config.is_none() {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+                );
             }
         } else if !args.h1 {
             return Err(global
@@ -1389,8 +1426,9 @@ impl ServerConfig {
             let base_url = URL::parse(&args.base_uri);
             if base_url.hostname.is_empty() {
                 args.base_uri = Box::default();
-                return Err(global
-                    .throw_invalid_arguments(format_args!("baseURI must have a hostname")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
+                );
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
@@ -1532,7 +1570,9 @@ impl ServerConfig {
         let base_url = URL::parse(&args.base_uri);
         if base_url.hostname.is_empty() {
             args.base_uri = Box::default();
-            return Err(global.throw_invalid_arguments(format_args!("baseURI must have a hostname")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
+            );
         }
 
         if !base_url.username.is_empty() || !base_url.password.is_empty() {

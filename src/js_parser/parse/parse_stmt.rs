@@ -1,26 +1,32 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    clippy::single_match
+)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{self, err};
+use bun_collections::VecExt;
 use bun_core::strings;
+use bun_core::{self, err};
 
-use bun_ast as js_ast;
-use crate::p::P;
 use crate::lexer as js_lexer;
+use crate::p::P;
+use bun_ast as js_ast;
 
-use js_ast::{Binding, Expr, LocRef, Stmt, Symbol, G, S};
 use js_ast::op::Level;
+use js_ast::{Binding, Expr, G, LocRef, S, Stmt, Symbol};
 use js_lexer::T;
 
+use crate::parser::fs;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, JsxT, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
     StmtList,
 };
 use crate::typescript;
-use crate::parser::fs;
-use js_ast::expr::EFlags;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
+use js_ast::expr::EFlags;
 
 // TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;
@@ -78,8 +84,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
             // laundering (forbidden per PORTING.md §Forbidden patterns).
-            let ts_decorators_slice: &'a [Expr] =
-                p.arena.alloc_slice_copy(ts_decorators.slice());
+            let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
                 values: ts_decorators_slice,
                 scope_index,
@@ -176,11 +181,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
-    fn t_if(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
         // PORT NOTE: `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
@@ -252,11 +253,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
-    fn t_do(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
@@ -273,11 +270,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::DoWhile { body, test_ }, loc))
     }
 
-    fn t_while(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_while(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
@@ -290,11 +283,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::While { body, test_ }, loc))
     }
 
-    fn t_with(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect(T::TOpenParen)?;
         let test_ = p.parse_expr(Level::Lowest)?;
@@ -319,11 +308,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
-    fn t_switch(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_switch(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
@@ -397,11 +382,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         result
     }
 
-    fn t_try(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_try(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TOpenBrace)?;
@@ -483,238 +464,230 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
-    fn t_for(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
-        p.lexer.next()?;
-
-        // "for await (let x of y) {}"
-        let mut is_for_await = p.lexer.is_contextual_keyword(b"await");
-        if is_for_await {
-            let await_range = p.lexer.range();
-            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
-                p.log().add_range_error(
-                    Some(p.source),
-                    await_range,
-                    b"Cannot use \"await\" outside an async function",
-                );
-                is_for_await = false;
-            } else {
-                // TODO: improve error handling here
-                //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                if p.fn_or_arrow_data_parse.is_top_level {
-                    p.top_level_await_keyword = await_range;
-                    // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
-                }
-            }
             p.lexer.next()?;
-        }
 
-        p.lexer.expect(T::TOpenParen)?;
-
-        let mut init_: Option<Stmt> = None;
-        let mut test_: Option<Expr> = None;
-        let mut update: Option<Expr> = None;
-
-        // "in" expressions aren't allowed here
-        p.allow_in = false;
-
-        let mut bad_let_range: Option<bun_ast::Range> = None;
-        if p.lexer.is_contextual_keyword(b"let") {
-            bad_let_range = Some(p.lexer.range());
-        }
-
-        // Track the decl slice separately so we can reference it after `decls` is moved into
-        // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
-        // arena outlives this fn, so the lifetime-erased view remains valid.
-        let mut decls_ptr: bun_ast::StoreSlice<G::Decl> = bun_ast::StoreSlice::EMPTY;
-        let init_loc = p.lexer.loc();
-        let mut is_var = false;
-        match p.lexer.token {
-            // for (var )
-            T::TVar => {
-                is_var = true;
-                p.lexer.next()?;
-                let mut stmt_opts = ParseStatementOptions::default();
-                let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                decls_ptr = bun_ast::StoreSlice::new(decls.slice());
-                init_ = Some(p.s(
-                    S::Local {
-                        kind: js_ast::s::Kind::KVar,
-                        decls,
-                        ..Default::default()
-                    },
-                    init_loc,
-                ));
-            }
-            // for (const )
-            T::TConst => {
-                p.lexer.next()?;
-                let mut stmt_opts = ParseStatementOptions::default();
-                let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
-                decls_ptr = bun_ast::StoreSlice::new(decls.slice());
-                init_ = Some(p.s(
-                    S::Local {
-                        kind: js_ast::s::Kind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    init_loc,
-                ));
-            }
-            // for (;)
-            T::TSemicolon => {}
-            _ => {
-                let mut stmt_opts = ParseStatementOptions {
-                    lexical_decl: LexicalDecl::AllowAll,
-                    is_for_loop_init: true,
-                    ..Default::default()
-                };
-
-                let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
-                match res.stmt_or_expr {
-                    js_ast::StmtOrExpr::Stmt(stmt) => {
-                        bad_let_range = None;
-                        init_ = Some(stmt);
+            // "for await (let x of y) {}"
+            let mut is_for_await = p.lexer.is_contextual_keyword(b"await");
+            if is_for_await {
+                let await_range = p.lexer.range();
+                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        await_range,
+                        b"Cannot use \"await\" outside an async function",
+                    );
+                    is_for_await = false;
+                } else {
+                    // TODO: improve error handling here
+                    //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
+                    if p.fn_or_arrow_data_parse.is_top_level {
+                        p.top_level_await_keyword = await_range;
+                        // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                     }
-                    js_ast::StmtOrExpr::Expr(expr) => {
-                        init_ = Some(p.s(S::SExpr { value: expr, ..Default::default() }, init_loc));
+                }
+                p.lexer.next()?;
+            }
+
+            p.lexer.expect(T::TOpenParen)?;
+
+            let mut init_: Option<Stmt> = None;
+            let mut test_: Option<Expr> = None;
+            let mut update: Option<Expr> = None;
+
+            // "in" expressions aren't allowed here
+            p.allow_in = false;
+
+            let mut bad_let_range: Option<bun_ast::Range> = None;
+            if p.lexer.is_contextual_keyword(b"let") {
+                bad_let_range = Some(p.lexer.range());
+            }
+
+            // Track the decl slice separately so we can reference it after `decls` is moved into
+            // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
+            // arena outlives this fn, so the lifetime-erased view remains valid.
+            let mut decls_ptr: bun_ast::StoreSlice<G::Decl> = bun_ast::StoreSlice::EMPTY;
+            let init_loc = p.lexer.loc();
+            let mut is_var = false;
+            match p.lexer.token {
+                // for (var )
+                T::TVar => {
+                    is_var = true;
+                    p.lexer.next()?;
+                    let mut stmt_opts = ParseStatementOptions::default();
+                    let decls =
+                        p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
+                    decls_ptr = bun_ast::StoreSlice::new(decls.slice());
+                    init_ = Some(p.s(
+                        S::Local {
+                            kind: js_ast::s::Kind::KVar,
+                            decls,
+                            ..Default::default()
+                        },
+                        init_loc,
+                    ));
+                }
+                // for (const )
+                T::TConst => {
+                    p.lexer.next()?;
+                    let mut stmt_opts = ParseStatementOptions::default();
+                    let decls =
+                        p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
+                    decls_ptr = bun_ast::StoreSlice::new(decls.slice());
+                    init_ = Some(p.s(
+                        S::Local {
+                            kind: js_ast::s::Kind::KConst,
+                            decls,
+                            ..Default::default()
+                        },
+                        init_loc,
+                    ));
+                }
+                // for (;)
+                T::TSemicolon => {}
+                _ => {
+                    let mut stmt_opts = ParseStatementOptions {
+                        lexical_decl: LexicalDecl::AllowAll,
+                        is_for_loop_init: true,
+                        ..Default::default()
+                    };
+
+                    let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
+                    match res.stmt_or_expr {
+                        js_ast::StmtOrExpr::Stmt(stmt) => {
+                            bad_let_range = None;
+                            init_ = Some(stmt);
+                        }
+                        js_ast::StmtOrExpr::Expr(expr) => {
+                            init_ = Some(p.s(
+                                S::SExpr {
+                                    value: expr,
+                                    ..Default::default()
+                                },
+                                init_loc,
+                            ));
+                        }
                     }
                 }
             }
-        }
 
-        // "in" expressions are allowed again
-        p.allow_in = true;
+            // "in" expressions are allowed again
+            p.allow_in = true;
 
-        // Detect for-of loops
-        if p.lexer.is_contextual_keyword(b"of") || is_for_await {
-            if let Some(r) = bad_let_range {
-                p.log().add_range_error(
-                    Some(p.source),
-                    r,
-                    b"\"let\" must be wrapped in parentheses to be used as an expression here",
-                );
-                return Err(err!("SyntaxError"));
-            }
-
-            if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
-                if init_.is_some() {
-                    p.lexer.expected_string(b"\"of\"")?;
-                } else {
-                    p.lexer.unexpected()?;
+            // Detect for-of loops
+            if p.lexer.is_contextual_keyword(b"of") || is_for_await {
+                if let Some(r) = bad_let_range {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        r,
+                        b"\"let\" must be wrapped in parentheses to be used as an expression here",
+                    );
                     return Err(err!("SyntaxError"));
                 }
-            }
 
-            p.forbid_initializers(decls_ptr.slice(), "of", false)?;
-            p.lexer.next()?;
-            let value = p.parse_expr(Level::Comma)?;
-            p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions::default();
-            let body = p.parse_stmt(&mut stmt_opts)?;
-            return Ok(p.s(
-                S::ForOf {
-                    is_await: is_for_await,
-                    init: init_.unwrap(),
-                    value,
-                    body,
-                },
-                loc,
-            ));
-        }
-
-        // Detect for-in loops
-        if p.lexer.token == T::TIn {
-            p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
-            p.lexer.next()?;
-            let value = p.parse_expr(Level::Lowest)?;
-            p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions::default();
-            let body = p.parse_stmt(&mut stmt_opts)?;
-            return Ok(p.s(
-                S::ForIn {
-                    init: init_.unwrap(),
-                    value,
-                    body,
-                },
-                loc,
-            ));
-        }
-
-        // Only require "const" statement initializers when we know we're a normal for loop
-        if let Some(init_stmt) = &init_ {
-            match &init_stmt.data {
-                js_ast::StmtData::SLocal(local) => {
-                    if local.kind == js_ast::s::Kind::KConst {
-                        p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
+                if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
+                    if init_.is_some() {
+                        p.lexer.expected_string(b"\"of\"")?;
+                    } else {
+                        p.lexer.unexpected()?;
+                        return Err(err!("SyntaxError"));
                     }
                 }
-                _ => {}
+
+                p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                p.lexer.next()?;
+                let value = p.parse_expr(Level::Comma)?;
+                p.lexer.expect(T::TCloseParen)?;
+                let mut stmt_opts = ParseStatementOptions::default();
+                let body = p.parse_stmt(&mut stmt_opts)?;
+                return Ok(p.s(
+                    S::ForOf {
+                        is_await: is_for_await,
+                        init: init_.unwrap(),
+                        value,
+                        body,
+                    },
+                    loc,
+                ));
             }
-        }
 
-        p.lexer.expect(T::TSemicolon)?;
-        if p.lexer.token != T::TSemicolon {
-            test_ = Some(p.parse_expr(Level::Lowest)?);
-        }
+            // Detect for-in loops
+            if p.lexer.token == T::TIn {
+                p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
+                p.lexer.next()?;
+                let value = p.parse_expr(Level::Lowest)?;
+                p.lexer.expect(T::TCloseParen)?;
+                let mut stmt_opts = ParseStatementOptions::default();
+                let body = p.parse_stmt(&mut stmt_opts)?;
+                return Ok(p.s(
+                    S::ForIn {
+                        init: init_.unwrap(),
+                        value,
+                        body,
+                    },
+                    loc,
+                ));
+            }
 
-        p.lexer.expect(T::TSemicolon)?;
+            // Only require "const" statement initializers when we know we're a normal for loop
+            if let Some(init_stmt) = &init_ {
+                match &init_stmt.data {
+                    js_ast::StmtData::SLocal(local) => {
+                        if local.kind == js_ast::s::Kind::KConst {
+                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
 
-        if p.lexer.token != T::TCloseParen {
-            update = Some(p.parse_expr(Level::Lowest)?);
-        }
+            p.lexer.expect(T::TSemicolon)?;
+            if p.lexer.token != T::TSemicolon {
+                test_ = Some(p.parse_expr(Level::Lowest)?);
+            }
 
-        p.lexer.expect(T::TCloseParen)?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
-        Ok(p.s(
-            S::For {
-                init: init_,
-                test_,
-                update,
-                body,
-            },
-            loc,
-        ))
+            p.lexer.expect(T::TSemicolon)?;
+
+            if p.lexer.token != T::TCloseParen {
+                update = Some(p.parse_expr(Level::Lowest)?);
+            }
+
+            p.lexer.expect(T::TCloseParen)?;
+            let mut stmt_opts = ParseStatementOptions::default();
+            let body = p.parse_stmt(&mut stmt_opts)?;
+            Ok(p.s(
+                S::For {
+                    init: init_,
+                    test_,
+                    update,
+                    body,
+                },
+                loc,
+            ))
         })();
         p.pop_scope();
         result
     }
 
-    fn t_break(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_break(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::Break { label: name }, loc))
     }
 
-    fn t_continue(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_continue(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::Continue { label: name }, loc))
     }
 
-    fn t_return(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_return(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         if p.fn_or_arrow_data_parse.is_return_disallowed {
             p.log().add_range_error(
                 Some(p.source),
@@ -737,16 +710,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Return { value }, loc))
     }
 
-    fn t_throw(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_throw(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         if p.lexer.has_newline_before {
             p.log().add_error(
                 Some(p.source),
-                bun_ast::Loc { start: loc.start + 5 },
+                bun_ast::Loc {
+                    start: loc.start + 5,
+                },
                 b"Unexpected newline after \"throw\"",
             );
             return Err(err!("SyntaxError"));
@@ -756,11 +727,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Throw { value: expr }, loc))
     }
 
-    fn t_debugger(
-        p: &mut Self,
-        _: &mut ParseStatementOptions,
-        loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn t_debugger(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::Debugger {}, loc))
@@ -831,7 +798,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             T::TImport => {
                 // "export import foo = bar"
-                if Self::IS_TYPESCRIPT_ENABLED && (opts.is_module_scope || opts.is_namespace_scope) {
+                if Self::IS_TYPESCRIPT_ENABLED && (opts.is_module_scope || opts.is_namespace_scope)
+                {
                     opts.is_export = true;
                     return p.parse_stmt(opts);
                 }
@@ -935,7 +903,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             T::TDefault => {
-                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -972,7 +941,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let default_name = if let Some(func) = stmt.data.s_function() {
                             if let Some(name) = func.func.name {
-                                LocRef { loc: name.loc, ref_: name.ref_ }
+                                LocRef {
+                                    loc: name.loc,
+                                    ref_: name.ref_,
+                                }
                             } else {
                                 p.create_default_name(default_loc)?
                             }
@@ -982,7 +954,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let value = js_ast::StmtOrExpr::Stmt(stmt);
                         return Ok(p.s(
-                            S::ExportDefault { default_name, value },
+                            S::ExportDefault {
+                                default_name,
+                                value,
+                            },
                             loc,
                         ));
                     }
@@ -995,7 +970,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let value = js_ast::StmtOrExpr::Expr(expr);
                     p.has_export_default = true;
                     return Ok(p.s(
-                        S::ExportDefault { default_name, value },
+                        S::ExportDefault {
+                            default_name,
+                            value,
+                        },
                         loc,
                     ));
                 }
@@ -1128,7 +1106,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 ))
             }
             T::TAsterisk => {
-                if !opts.is_module_scope && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1162,7 +1141,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         use std::io::Write as _;
                         let base = fs::PathName::init(path.text).non_unique_name_string_base();
                         let mut buf: Vec<u8> = Vec::new();
-                        write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+                        write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base))
+                            .expect("unreachable");
                         p.arena.alloc_slice_copy(&buf)
                     };
                     namespace_ref = p.store_name_in_ref(name)?;
@@ -1177,8 +1157,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if path.is_macro {
-                    p.log()
-                        .add_error(Some(p.source), path.loc, b"cannot use macro in export statement");
+                    p.log().add_error(
+                        Some(p.source),
+                        path.loc,
+                        b"cannot use macro in export statement",
+                    );
                 } else if path.import_tag != ImportRecordTag::None {
                     p.log().add_error(
                         Some(p.source),
@@ -1206,7 +1189,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 ))
             }
             T::TOpenBrace => {
-                if !opts.is_module_scope && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1352,11 +1336,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let mut expr = p.parse_import_expr(loc, Level::Lowest)?;
                 p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
                 p.lexer.expect_or_insert_semicolon()?;
-                return Ok(p.s(S::SExpr { value: expr, ..Default::default() }, loc));
+                return Ok(p.s(
+                    S::SExpr {
+                        value: expr,
+                        ..Default::default()
+                    },
+                    loc,
+                ));
             }
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
                 // "import 'path'"
-                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1365,7 +1356,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             T::TAsterisk => {
                 // "import * as ns from 'path'"
-                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1384,7 +1376,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             T::TOpenBrace => {
                 // "import {item1, item2} from 'path'"
-                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                if !opts.is_module_scope
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1583,7 +1576,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Parse a labeled statement
                         p.lexer.next()?;
 
-                        let _name = LocRef { loc: expr.loc, ref_: Some(ident.ref_) };
+                        let _name = LocRef {
+                            loc: expr.loc,
+                            ref_: Some(ident.ref_),
+                        };
                         let mut nested_opts = ParseStatementOptions::default();
 
                         match opts.lexical_decl {
@@ -1746,7 +1742,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
         // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
         p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::SExpr { value: expr, ..Default::default() }, loc))
+        Ok(p.s(
+            S::SExpr {
+                value: expr,
+                ..Default::default()
+            },
+            loc,
+        ))
     }
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {

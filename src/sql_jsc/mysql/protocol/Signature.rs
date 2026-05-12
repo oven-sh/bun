@@ -80,12 +80,9 @@ impl Signature {
                 continue;
             }
             let mut unsigned = false;
-            let tag = crate::mysql::my_sql_value::field_type_from_js(
-                global_object,
-                value,
-                &mut unsigned,
-            )
-            .map_err(js_error_to_mysql)?;
+            let tag =
+                crate::mysql::my_sql_value::field_type_from_js(global_object, value, &mut unsigned)
+                    .map_err(js_error_to_mysql)?;
             if unsigned {
                 // 128 is more than enought right now
                 // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
@@ -100,7 +97,11 @@ impl Signature {
             // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
             fields.push(Param {
                 r#type: tag,
-                flags: if unsigned { ColumnFlags::UNSIGNED } else { ColumnFlags::empty() },
+                flags: if unsigned {
+                    ColumnFlags::UNSIGNED
+                } else {
+                    ColumnFlags::empty()
+                },
             });
         }
 

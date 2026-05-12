@@ -61,7 +61,10 @@ impl<C: WriterContext> NewWriterWrap<C> {
         bun_core::scoped_log!(NewWriter, "starting packet: {}", o);
         self.write(&[0u8; PacketHeader::SIZE])?;
         Ok(Packet {
-            header: PacketHeader { sequence_id, length: 0 },
+            header: PacketHeader {
+                sequence_id,
+                length: 0,
+            },
             offset: o,
             ctx: self,
         })

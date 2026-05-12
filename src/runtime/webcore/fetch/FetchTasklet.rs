@@ -1,18 +1,27 @@
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
-use bun_core::{err, Error as BunError};
-use bun_event_loop::{ConcurrentTask::{AutoDeinit, ConcurrentTask}, AnyTask::AnyTask, Task, Taskable};
+use bun_core::{Error as BunError, err};
+use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_event_loop::{
+    AnyTask::AnyTask,
+    ConcurrentTask::{AutoDeinit, ConcurrentTask},
+    Task, Taskable,
+};
 use bun_http as http;
-use bun_http::{AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers, Signals, ThreadSafeStreamBuffer};
 use bun_http::Method;
+use bun_http::{
+    AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers,
+    Signals, ThreadSafeStreamBuffer,
+};
+use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
-use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_jsc::{
+    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
+};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -24,14 +33,16 @@ use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableSt
 use crate::webcore::response::HeadersRef;
 use crate::webcore::resumable_sink::ResumableFetchSink;
 use crate::webcore::streams::{StreamError, StreamResult};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure};
+use crate::webcore::{
+    AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure,
+};
 
 use bun_jsc::JsTerminatedResult;
 // PORT NOTE: `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
-use boringssl::c::{d2i_X509, X509_free};
+use boringssl::c::{X509_free, d2i_X509};
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
@@ -168,7 +179,10 @@ impl HTTPRequestBody {
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
         {
             return Err(global_this
-                .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("body already used"))
+                .err(
+                    jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!("body already used"),
+                )
                 .throw());
         }
         if let BodyValue::Locked(locked) = &mut body_value {
@@ -300,7 +314,11 @@ impl FetchTasklet {
         // See INVARIANT above. `RawSlice` is non-owning; backing buffer
         // outlives the synchronous `on_data` call.
         let v = bun_ptr::RawSlice::new(chunk);
-        if done { StreamResult::TemporaryAndDone(v) } else { StreamResult::Temporary(v) }
+        if done {
+            StreamResult::TemporaryAndDone(v)
+        } else {
+            StreamResult::Temporary(v)
+        }
     }
 
     /// `Some(&AbortSignal)` while we hold a strong ref on the C++-owned
@@ -496,7 +514,10 @@ impl FetchTasklet {
 
     pub fn start_request_stream(&mut self) {
         self.is_waiting_request_stream_start = false;
-        debug_assert!(matches!(self.request_body, HTTPRequestBody::ReadableStream(_)));
+        debug_assert!(matches!(
+            self.request_body,
+            HTTPRequestBody::ReadableStream(_)
+        ));
         let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
             return;
         };
@@ -509,7 +530,8 @@ impl FetchTasklet {
             let global_this = self.global_this;
             self.ref_(); // lets only unref when sink is done
             // +1 because the task refs the sink
-            let sink = ResumableSink::init_exact_refs(&global_this, stream, std::ptr::from_mut(self), 2);
+            let sink =
+                ResumableSink::init_exact_refs(&global_this, stream, std::ptr::from_mut(self), 2);
             self.sink = Some(sink);
         }
     }
@@ -519,7 +541,12 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         let buffer_reset = core::cell::Cell::new(true);
-        bun_output::scoped_log!(FetchTasklet, "onBodyReceived success={} has_more={}", success, self.result.has_more);
+        bun_output::scoped_log!(
+            FetchTasklet,
+            "onBodyReceived success={} has_more={}",
+            success,
+            self.result.has_more
+        );
         // PORT NOTE: Zig `defer { if (buffer_reset) ...reset() }` runs on `try` failure paths too.
         // Capture a raw ptr so the defer can reset on every exit (incl. `?`) without holding a
         // long-lived &mut borrow of self.
@@ -595,7 +622,10 @@ impl FetchTasklet {
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
             if let Some(readable) = response.get_body_readable_stream(&global_this) {
-                bun_output::scoped_log!(FetchTasklet, "onBodyReceived CurrentResponse BodyReadableStream");
+                bun_output::scoped_log!(
+                    FetchTasklet,
+                    "onBodyReceived CurrentResponse BodyReadableStream"
+                );
                 if let Some(bytes) = readable.ptr.bytes() {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
@@ -614,7 +644,8 @@ impl FetchTasklet {
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset.set(false);
             if !self.result.has_more {
-                let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer.list);
+                let scheduled_response_buffer =
+                    core::mem::take(&mut self.scheduled_response_buffer.list);
                 // PORT NOTE: `body` (&mut response.body.value) and `get_fetch_headers()`
                 // (&response.init.headers) are disjoint fields, but borrowck can't see
                 // through the accessor methods. Hold `body` as a raw ptr (Zig pattern).
@@ -913,8 +944,14 @@ impl FetchTasklet {
         }));
         // SAFETY: holder is valid until consumed by resolve/reject
         unsafe {
-            (*holder).task =
-                AnyTask::from_typed(holder, if success { resolve_erased } else { reject_erased });
+            (*holder).task = AnyTask::from_typed(
+                holder,
+                if success {
+                    resolve_erased
+                } else {
+                    reject_erased
+                },
+            );
             (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
         }
 
@@ -965,7 +1002,8 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let hostname = OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
+                    let hostname =
+                        OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
                     let js_hostname: JSValue = match hostname.to_js(&global_object) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1104,78 +1142,190 @@ impl FetchTasklet {
         };
 
         let message = match fail {
-            e if e == err!("ConnectionClosed") => BunString::static_("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
-            e if e == err!("FailedToOpenSocket") => BunString::static_("Was there a typo in the url or port?"),
-            e if e == err!("TooManyRedirects") => BunString::static_("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
-            e if e == err!("ConnectionRefused") => BunString::static_("Unable to connect. Is the computer able to access the url?"),
-            e if e == err!("RedirectURLInvalid") => BunString::static_("Redirect URL in Location header is invalid."),
+            e if e == err!("ConnectionClosed") => BunString::static_(
+                "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+            ),
+            e if e == err!("FailedToOpenSocket") => {
+                BunString::static_("Was there a typo in the url or port?")
+            }
+            e if e == err!("TooManyRedirects") => BunString::static_(
+                "The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+            ),
+            e if e == err!("ConnectionRefused") => {
+                BunString::static_("Unable to connect. Is the computer able to access the url?")
+            }
+            e if e == err!("RedirectURLInvalid") => {
+                BunString::static_("Redirect URL in Location header is invalid.")
+            }
 
-            e if e == err!("UNABLE_TO_GET_ISSUER_CERT") => BunString::static_("unable to get issuer certificate"),
-            e if e == err!("UNABLE_TO_GET_CRL") => BunString::static_("unable to get certificate CRL"),
-            e if e == err!("UNABLE_TO_DECRYPT_CERT_SIGNATURE") => BunString::static_("unable to decrypt certificate's signature"),
-            e if e == err!("UNABLE_TO_DECRYPT_CRL_SIGNATURE") => BunString::static_("unable to decrypt CRL's signature"),
-            e if e == err!("UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY") => BunString::static_("unable to decode issuer public key"),
-            e if e == err!("CERT_SIGNATURE_FAILURE") => BunString::static_("certificate signature failure"),
+            e if e == err!("UNABLE_TO_GET_ISSUER_CERT") => {
+                BunString::static_("unable to get issuer certificate")
+            }
+            e if e == err!("UNABLE_TO_GET_CRL") => {
+                BunString::static_("unable to get certificate CRL")
+            }
+            e if e == err!("UNABLE_TO_DECRYPT_CERT_SIGNATURE") => {
+                BunString::static_("unable to decrypt certificate's signature")
+            }
+            e if e == err!("UNABLE_TO_DECRYPT_CRL_SIGNATURE") => {
+                BunString::static_("unable to decrypt CRL's signature")
+            }
+            e if e == err!("UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY") => {
+                BunString::static_("unable to decode issuer public key")
+            }
+            e if e == err!("CERT_SIGNATURE_FAILURE") => {
+                BunString::static_("certificate signature failure")
+            }
             e if e == err!("CRL_SIGNATURE_FAILURE") => BunString::static_("CRL signature failure"),
-            e if e == err!("CERT_NOT_YET_VALID") => BunString::static_("certificate is not yet valid"),
+            e if e == err!("CERT_NOT_YET_VALID") => {
+                BunString::static_("certificate is not yet valid")
+            }
             e if e == err!("CRL_NOT_YET_VALID") => BunString::static_("CRL is not yet valid"),
             e if e == err!("CERT_HAS_EXPIRED") => BunString::static_("certificate has expired"),
             e if e == err!("CRL_HAS_EXPIRED") => BunString::static_("CRL has expired"),
-            e if e == err!("ERROR_IN_CERT_NOT_BEFORE_FIELD") => BunString::static_("format error in certificate's notBefore field"),
-            e if e == err!("ERROR_IN_CERT_NOT_AFTER_FIELD") => BunString::static_("format error in certificate's notAfter field"),
-            e if e == err!("ERROR_IN_CRL_LAST_UPDATE_FIELD") => BunString::static_("format error in CRL's lastUpdate field"),
-            e if e == err!("ERROR_IN_CRL_NEXT_UPDATE_FIELD") => BunString::static_("format error in CRL's nextUpdate field"),
+            e if e == err!("ERROR_IN_CERT_NOT_BEFORE_FIELD") => {
+                BunString::static_("format error in certificate's notBefore field")
+            }
+            e if e == err!("ERROR_IN_CERT_NOT_AFTER_FIELD") => {
+                BunString::static_("format error in certificate's notAfter field")
+            }
+            e if e == err!("ERROR_IN_CRL_LAST_UPDATE_FIELD") => {
+                BunString::static_("format error in CRL's lastUpdate field")
+            }
+            e if e == err!("ERROR_IN_CRL_NEXT_UPDATE_FIELD") => {
+                BunString::static_("format error in CRL's nextUpdate field")
+            }
             e if e == err!("OUT_OF_MEM") => BunString::static_("out of memory"),
-            e if e == err!("DEPTH_ZERO_SELF_SIGNED_CERT") => BunString::static_("self signed certificate"),
-            e if e == err!("SELF_SIGNED_CERT_IN_CHAIN") => BunString::static_("self signed certificate in certificate chain"),
-            e if e == err!("UNABLE_TO_GET_ISSUER_CERT_LOCALLY") => BunString::static_("unable to get local issuer certificate"),
-            e if e == err!("UNABLE_TO_VERIFY_LEAF_SIGNATURE") => BunString::static_("unable to verify the first certificate"),
-            e if e == err!("CERT_CHAIN_TOO_LONG") => BunString::static_("certificate chain too long"),
+            e if e == err!("DEPTH_ZERO_SELF_SIGNED_CERT") => {
+                BunString::static_("self signed certificate")
+            }
+            e if e == err!("SELF_SIGNED_CERT_IN_CHAIN") => {
+                BunString::static_("self signed certificate in certificate chain")
+            }
+            e if e == err!("UNABLE_TO_GET_ISSUER_CERT_LOCALLY") => {
+                BunString::static_("unable to get local issuer certificate")
+            }
+            e if e == err!("UNABLE_TO_VERIFY_LEAF_SIGNATURE") => {
+                BunString::static_("unable to verify the first certificate")
+            }
+            e if e == err!("CERT_CHAIN_TOO_LONG") => {
+                BunString::static_("certificate chain too long")
+            }
             e if e == err!("CERT_REVOKED") => BunString::static_("certificate revoked"),
             e if e == err!("INVALID_CA") => BunString::static_("invalid CA certificate"),
-            e if e == err!("INVALID_NON_CA") => BunString::static_("invalid non-CA certificate (has CA markings)"),
-            e if e == err!("PATH_LENGTH_EXCEEDED") => BunString::static_("path length constraint exceeded"),
-            e if e == err!("PROXY_PATH_LENGTH_EXCEEDED") => BunString::static_("proxy path length constraint exceeded"),
-            e if e == err!("PROXY_CERTIFICATES_NOT_ALLOWED") => BunString::static_("proxy certificates not allowed, please set the appropriate flag"),
-            e if e == err!("INVALID_PURPOSE") => BunString::static_("unsupported certificate purpose"),
+            e if e == err!("INVALID_NON_CA") => {
+                BunString::static_("invalid non-CA certificate (has CA markings)")
+            }
+            e if e == err!("PATH_LENGTH_EXCEEDED") => {
+                BunString::static_("path length constraint exceeded")
+            }
+            e if e == err!("PROXY_PATH_LENGTH_EXCEEDED") => {
+                BunString::static_("proxy path length constraint exceeded")
+            }
+            e if e == err!("PROXY_CERTIFICATES_NOT_ALLOWED") => BunString::static_(
+                "proxy certificates not allowed, please set the appropriate flag",
+            ),
+            e if e == err!("INVALID_PURPOSE") => {
+                BunString::static_("unsupported certificate purpose")
+            }
             e if e == err!("CERT_UNTRUSTED") => BunString::static_("certificate not trusted"),
             e if e == err!("CERT_REJECTED") => BunString::static_("certificate rejected"),
-            e if e == err!("APPLICATION_VERIFICATION") => BunString::static_("application verification failure"),
-            e if e == err!("SUBJECT_ISSUER_MISMATCH") => BunString::static_("subject issuer mismatch"),
-            e if e == err!("AKID_SKID_MISMATCH") => BunString::static_("authority and subject key identifier mismatch"),
-            e if e == err!("AKID_ISSUER_SERIAL_MISMATCH") => BunString::static_("authority and issuer serial number mismatch"),
-            e if e == err!("KEYUSAGE_NO_CERTSIGN") => BunString::static_("key usage does not include certificate signing"),
-            e if e == err!("UNABLE_TO_GET_CRL_ISSUER") => BunString::static_("unable to get CRL issuer certificate"),
-            e if e == err!("UNHANDLED_CRITICAL_EXTENSION") => BunString::static_("unhandled critical extension"),
-            e if e == err!("KEYUSAGE_NO_CRL_SIGN") => BunString::static_("key usage does not include CRL signing"),
-            e if e == err!("KEYUSAGE_NO_DIGITAL_SIGNATURE") => BunString::static_("key usage does not include digital signature"),
-            e if e == err!("UNHANDLED_CRITICAL_CRL_EXTENSION") => BunString::static_("unhandled critical CRL extension"),
-            e if e == err!("INVALID_EXTENSION") => BunString::static_("invalid or inconsistent certificate extension"),
-            e if e == err!("INVALID_POLICY_EXTENSION") => BunString::static_("invalid or inconsistent certificate policy extension"),
+            e if e == err!("APPLICATION_VERIFICATION") => {
+                BunString::static_("application verification failure")
+            }
+            e if e == err!("SUBJECT_ISSUER_MISMATCH") => {
+                BunString::static_("subject issuer mismatch")
+            }
+            e if e == err!("AKID_SKID_MISMATCH") => {
+                BunString::static_("authority and subject key identifier mismatch")
+            }
+            e if e == err!("AKID_ISSUER_SERIAL_MISMATCH") => {
+                BunString::static_("authority and issuer serial number mismatch")
+            }
+            e if e == err!("KEYUSAGE_NO_CERTSIGN") => {
+                BunString::static_("key usage does not include certificate signing")
+            }
+            e if e == err!("UNABLE_TO_GET_CRL_ISSUER") => {
+                BunString::static_("unable to get CRL issuer certificate")
+            }
+            e if e == err!("UNHANDLED_CRITICAL_EXTENSION") => {
+                BunString::static_("unhandled critical extension")
+            }
+            e if e == err!("KEYUSAGE_NO_CRL_SIGN") => {
+                BunString::static_("key usage does not include CRL signing")
+            }
+            e if e == err!("KEYUSAGE_NO_DIGITAL_SIGNATURE") => {
+                BunString::static_("key usage does not include digital signature")
+            }
+            e if e == err!("UNHANDLED_CRITICAL_CRL_EXTENSION") => {
+                BunString::static_("unhandled critical CRL extension")
+            }
+            e if e == err!("INVALID_EXTENSION") => {
+                BunString::static_("invalid or inconsistent certificate extension")
+            }
+            e if e == err!("INVALID_POLICY_EXTENSION") => {
+                BunString::static_("invalid or inconsistent certificate policy extension")
+            }
             e if e == err!("NO_EXPLICIT_POLICY") => BunString::static_("no explicit policy"),
             e if e == err!("DIFFERENT_CRL_SCOPE") => BunString::static_("Different CRL scope"),
-            e if e == err!("UNSUPPORTED_EXTENSION_FEATURE") => BunString::static_("Unsupported extension feature"),
-            e if e == err!("UNNESTED_RESOURCE") => BunString::static_("RFC 3779 resource not subset of parent's resources"),
-            e if e == err!("PERMITTED_VIOLATION") => BunString::static_("permitted subtree violation"),
-            e if e == err!("EXCLUDED_VIOLATION") => BunString::static_("excluded subtree violation"),
-            e if e == err!("SUBTREE_MINMAX") => BunString::static_("name constraints minimum and maximum not supported"),
-            e if e == err!("UNSUPPORTED_CONSTRAINT_TYPE") => BunString::static_("unsupported name constraint type"),
-            e if e == err!("UNSUPPORTED_CONSTRAINT_SYNTAX") => BunString::static_("unsupported or invalid name constraint syntax"),
-            e if e == err!("UNSUPPORTED_NAME_SYNTAX") => BunString::static_("unsupported or invalid name syntax"),
-            e if e == err!("CRL_PATH_VALIDATION_ERROR") => BunString::static_("CRL path validation error"),
-            e if e == err!("SUITE_B_INVALID_VERSION") => BunString::static_("Suite B: certificate version invalid"),
-            e if e == err!("SUITE_B_INVALID_ALGORITHM") => BunString::static_("Suite B: invalid public key algorithm"),
-            e if e == err!("SUITE_B_INVALID_CURVE") => BunString::static_("Suite B: invalid ECC curve"),
-            e if e == err!("SUITE_B_INVALID_SIGNATURE_ALGORITHM") => BunString::static_("Suite B: invalid signature algorithm"),
-            e if e == err!("SUITE_B_LOS_NOT_ALLOWED") => BunString::static_("Suite B: curve not allowed for this LOS"),
-            e if e == err!("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256") => BunString::static_("Suite B: cannot sign P-384 with P-256"),
+            e if e == err!("UNSUPPORTED_EXTENSION_FEATURE") => {
+                BunString::static_("Unsupported extension feature")
+            }
+            e if e == err!("UNNESTED_RESOURCE") => {
+                BunString::static_("RFC 3779 resource not subset of parent's resources")
+            }
+            e if e == err!("PERMITTED_VIOLATION") => {
+                BunString::static_("permitted subtree violation")
+            }
+            e if e == err!("EXCLUDED_VIOLATION") => {
+                BunString::static_("excluded subtree violation")
+            }
+            e if e == err!("SUBTREE_MINMAX") => {
+                BunString::static_("name constraints minimum and maximum not supported")
+            }
+            e if e == err!("UNSUPPORTED_CONSTRAINT_TYPE") => {
+                BunString::static_("unsupported name constraint type")
+            }
+            e if e == err!("UNSUPPORTED_CONSTRAINT_SYNTAX") => {
+                BunString::static_("unsupported or invalid name constraint syntax")
+            }
+            e if e == err!("UNSUPPORTED_NAME_SYNTAX") => {
+                BunString::static_("unsupported or invalid name syntax")
+            }
+            e if e == err!("CRL_PATH_VALIDATION_ERROR") => {
+                BunString::static_("CRL path validation error")
+            }
+            e if e == err!("SUITE_B_INVALID_VERSION") => {
+                BunString::static_("Suite B: certificate version invalid")
+            }
+            e if e == err!("SUITE_B_INVALID_ALGORITHM") => {
+                BunString::static_("Suite B: invalid public key algorithm")
+            }
+            e if e == err!("SUITE_B_INVALID_CURVE") => {
+                BunString::static_("Suite B: invalid ECC curve")
+            }
+            e if e == err!("SUITE_B_INVALID_SIGNATURE_ALGORITHM") => {
+                BunString::static_("Suite B: invalid signature algorithm")
+            }
+            e if e == err!("SUITE_B_LOS_NOT_ALLOWED") => {
+                BunString::static_("Suite B: curve not allowed for this LOS")
+            }
+            e if e == err!("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256") => {
+                BunString::static_("Suite B: cannot sign P-384 with P-256")
+            }
             e if e == err!("HOSTNAME_MISMATCH") => BunString::static_("Hostname mismatch"),
             e if e == err!("EMAIL_MISMATCH") => BunString::static_("Email address mismatch"),
             e if e == err!("IP_ADDRESS_MISMATCH") => BunString::static_("IP address mismatch"),
-            e if e == err!("INVALID_CALL") => BunString::static_("Invalid certificate verification context"),
+            e if e == err!("INVALID_CALL") => {
+                BunString::static_("Invalid certificate verification context")
+            }
             e if e == err!("STORE_LOOKUP") => BunString::static_("Issuer certificate lookup error"),
-            e if e == err!("NAME_CONSTRAINTS_WITHOUT_SANS") => BunString::static_("Issuer has name constraints but leaf has no SANs"),
-            e if e == err!("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") => BunString::static_("unknown certificate verification error"),
+            e if e == err!("NAME_CONSTRAINTS_WITHOUT_SANS") => {
+                BunString::static_("Issuer has name constraints but leaf has no SANs")
+            }
+            e if e == err!("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") => {
+                BunString::static_("unknown certificate verification error")
+            }
 
             e => BunString::create_format(format_args!(
                 "{} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()",
@@ -1200,7 +1350,11 @@ impl FetchTasklet {
         BodyValueError::SystemError(fetch_error)
     }
 
-    pub fn on_readable_stream_available(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream) {
+    pub fn on_readable_stream_available(
+        ctx: *mut c_void,
+        global_this: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
         let this = Self::from_ctx(ctx);
         this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
     }
@@ -1280,7 +1434,8 @@ impl FetchTasklet {
             let mut pending = body::PendingValue::new(&self.global_this);
             pending.size_hint = self.get_size_hint();
             pending.task = Some(std::ptr::from_mut(self).cast::<c_void>());
-            pending.on_start_streaming = Some(FetchTasklet::on_start_streaming_http_response_body_callback);
+            pending.on_start_streaming =
+                Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
             return BodyValue::Locked(pending);
@@ -1459,7 +1614,9 @@ impl FetchTasklet {
                 // `fetch(url, { proxy: "..." })` option.
                 if !env_proxy.href.is_empty() {
                     let old_url_len = url.href.len();
-                    let mut new_buffer = Vec::with_capacity(fetch_tasklet.url_proxy_buffer.len() + env_proxy.href.len());
+                    let mut new_buffer = Vec::with_capacity(
+                        fetch_tasklet.url_proxy_buffer.len() + env_proxy.href.len(),
+                    );
                     new_buffer.extend_from_slice(&fetch_tasklet.url_proxy_buffer);
                     new_buffer.extend_from_slice(env_proxy.href.as_ref());
                     let new_buffer = new_buffer.into_boxed_slice();
@@ -1480,7 +1637,10 @@ impl FetchTasklet {
         }
 
         if fetch_tasklet.check_server_identity.has() && fetch_tasklet.reject_unauthorized {
-            fetch_tasklet.signal_store.cert_errors.store(true, Ordering::Relaxed);
+            fetch_tasklet
+                .signal_store
+                .cert_errors
+                .store(true, Ordering::Relaxed);
         } else {
             fetch_tasklet.signals.cert_errors = None;
         }
@@ -1507,10 +1667,9 @@ impl FetchTasklet {
         // process-lifetime — these should become `RawSlice<u8>` once
         // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
         // owner so the widen is grep-able until then.
-        let headers_buf: &'static [u8] = unsafe {
-            bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice())
-        }
-        .as_bytes();
+        let headers_buf: &'static [u8] =
+            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
+                .as_bytes();
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
         let hostname: Option<&'static [u8]> = fetch_tasklet
@@ -1522,8 +1681,7 @@ impl FetchTasklet {
         // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
         // struct copy → shared backing storage). `MultiArrayList` in Rust owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
-        let header_entries =
-            bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
+        let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
         // PORT NOTE: `url` is moved into `AsyncHTTP::init`; capture the one
         // post-move query (`is_http()`, debug-assert only) up front.
         let url_is_http = url.is_http();
@@ -1556,7 +1714,10 @@ impl FetchTasklet {
             },
         )));
         // enable streaming the write side
-        let is_stream = matches!(fetch_tasklet.request_body, HTTPRequestBody::ReadableStream(_));
+        let is_stream = matches!(
+            fetch_tasklet.request_body,
+            HTTPRequestBody::ReadableStream(_)
+        );
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
         http_client.client.flags.force_http2 = fetch_options.force_http2;
@@ -1586,16 +1747,25 @@ impl FetchTasklet {
         // TODO is this necessary? the http client already sets the redirect type,
         // so manually setting it here seems redundant
         if fetch_options.redirect_type != FetchRedirect::Follow {
-            fetch_tasklet.http.as_mut().unwrap().client.remaining_redirect_count = 0;
+            fetch_tasklet
+                .http
+                .as_mut()
+                .unwrap()
+                .client
+                .remaining_redirect_count = 0;
         }
 
         // we want to return after headers are received
-        fetch_tasklet.signal_store.header_progress.store(true, Ordering::Relaxed);
+        fetch_tasklet
+            .signal_store
+            .header_progress
+            .store(true, Ordering::Relaxed);
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
             debug_assert!(url_is_http);
             debug_assert!(fetch_options.proxy.is_none());
-            fetch_tasklet.http.as_mut().unwrap().request_body = http::HTTPRequestBody::Sendfile(*sendfile);
+            fetch_tasklet.http.as_mut().unwrap().request_body =
+                http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
         if let Some(signal) = fetch_tasklet.signal {
@@ -1732,7 +1902,10 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(self.http.as_mut().unwrap(), http::http_thread::WriteMessageType::Data);
+            http::http_thread().schedule_request_write(
+                self.http.as_mut().unwrap(),
+                http::http_thread::WriteMessageType::Data,
+            );
         }
 
         // pause the stream if we hit the high water mark
@@ -1765,7 +1938,8 @@ impl FetchTasklet {
                     .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             }
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread().schedule_request_write(http_, http::http_thread::WriteMessageType::End);
+                http::http_thread()
+                    .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
             }
         }
         FetchTasklet::deref(this_ptr);
@@ -1802,7 +1976,11 @@ impl FetchTasklet {
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
-    pub fn callback(task: *mut FetchTasklet, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult) {
+    pub fn callback(
+        task: *mut FetchTasklet,
+        async_http: *mut AsyncHTTP<'static>,
+        result: HTTPClientResult,
+    ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         let task_ref = Self::from_raw_mut(task);
@@ -1835,10 +2013,10 @@ impl FetchTasklet {
         // Zig: `task.response_buffer = result.body.?.*` — verify the aliasing invariant
         // that makes that bitwise copy a no-op (see PORT NOTE below at the original site).
         debug_assert!(
-            result
-                .body
-                .as_deref()
-                .map_or(true, |b| core::ptr::eq(b, &raw const task_ref.response_buffer)),
+            result.body.as_deref().map_or(true, |b| core::ptr::eq(
+                b,
+                &raw const task_ref.response_buffer
+            )),
             "HTTPClientResult.body must alias FetchTasklet.response_buffer",
         );
 
@@ -1929,7 +2107,9 @@ impl FetchTasklet {
             }
             return;
         }
-        let ct = task_ref.concurrent_task.from(task, AutoDeinit::ManualDeinit);
+        let ct = task_ref
+            .concurrent_task
+            .from(task, AutoDeinit::ManualDeinit);
         Self::enqueue_concurrent(task_ref.javascript_vm, ct);
 
         task_ref.mutex.unlock();

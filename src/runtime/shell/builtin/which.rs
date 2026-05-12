@@ -91,7 +91,11 @@ impl Which {
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
-            State::MultiArgs { arg_idx, had_not_found, .. } => (*arg_idx, *had_not_found),
+            State::MultiArgs {
+                arg_idx,
+                had_not_found,
+                ..
+            } => (*arg_idx, *had_not_found),
             _ => unreachable!(),
         };
         if arg_idx >= argc {
@@ -105,8 +109,11 @@ impl Which {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
             None => {
-                if let State::MultiArgs { had_not_found, waiting_write, .. } =
-                    &mut Self::state_mut(interp, cmd).state
+                if let State::MultiArgs {
+                    had_not_found,
+                    waiting_write,
+                    ..
+                } = &mut Self::state_mut(interp, cmd).state
                 {
                     *had_not_found = true;
                     *waiting_write = true;
@@ -157,8 +164,11 @@ impl Which {
     }
 
     fn arg_complete(interp: &Interpreter, cmd: NodeId) -> Yield {
-        if let State::MultiArgs { arg_idx, waiting_write, .. } =
-            &mut Self::state_mut(interp, cmd).state
+        if let State::MultiArgs {
+            arg_idx,
+            waiting_write,
+            ..
+        } = &mut Self::state_mut(interp, cmd).state
         {
             *arg_idx += 1;
             *waiting_write = false;

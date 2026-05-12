@@ -1,11 +1,11 @@
-use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_core::{self as bstr, strings, OwnedString, String as BunString, ZigString};
 use bun_core::strings::EncodingNonAscii;
+use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
-use bun_dotenv::env_loader as envloader;
 use crate::node::types::Encoding;
 use crate::node::util::validators;
+use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
 pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -71,7 +71,11 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
 // PERF(port): `encoding` was a comptime parameter (Zig); demoted to runtime
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
-fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -> JsResult<JSValue> {
+fn split(
+    encoding: EncodingNonAscii,
+    global: &JSGlobalObject,
+    str: &BunString,
+) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B.
     // Allocator param dropped (non-AST crate uses global mimalloc).
 
@@ -88,7 +92,10 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
     match encoding {
         EncodingNonAscii::Utf16 => {
             let buffer: &[u16] = str.utf16();
-            let mut it = SplitNewlineIterator { buffer, index: Some(0) };
+            let mut it = SplitNewlineIterator {
+                buffer,
+                index: Some(0),
+            };
             while let Some(line) = it.next() {
                 // errdefer encoded_line.deref() — folded into OwnedString Drop
                 lines.push(OwnedString::new(BunString::borrow_utf16(line)));
@@ -96,7 +103,10 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
         }
         EncodingNonAscii::Utf8 | EncodingNonAscii::Latin1 => {
             let buffer: &[u8] = str.byte_slice();
-            let mut it = SplitNewlineIterator { buffer, index: Some(0) };
+            let mut it = SplitNewlineIterator {
+                buffer,
+                index: Some(0),
+            };
             while let Some(line) = it.next() {
                 let encoded_line = if encoding == EncodingNonAscii::Utf8 {
                     BunString::borrow_utf8(line)

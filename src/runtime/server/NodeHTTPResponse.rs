@@ -7,9 +7,9 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
+use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
-use bun_core::{ZigString, ZigStringSlice};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -59,7 +59,6 @@ pub struct NodeHTTPResponse {
 
     pub auto_flusher: JsCell<AutoFlusher>,
 }
-
 
 // Intrusive refcount methods (`ref_` / `deref`) are hand-rolled below over the
 // `ref_count` field; `deinit` is the destructor invoked when count hits zero.
@@ -276,7 +275,10 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
         1021 => AnyServerTag::DebugHTTPSServer,
         _ => unreachable!("Invalid pointer tag"),
     };
-    AnyServer { tag, ptr: repr.get::<()>() }
+    AnyServer {
+        tag,
+        ptr: repr.get::<()>(),
+    }
 }
 
 /// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors.
@@ -312,7 +314,9 @@ impl NodeHTTPResponse {
 
     pub fn get_this_value(&self) -> JSValue {
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return JSValue::ZERO };
+        let Some(raw) = self.raw_response.get() else {
+            return JSValue::ZERO;
+        };
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
@@ -321,7 +325,9 @@ impl NodeHTTPResponse {
 
     pub fn get_server_socket_value(&self) -> JSValue {
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return JSValue::ZERO };
+        let Some(raw) = self.raw_response.get() else {
+            return JSValue::ZERO;
+        };
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
@@ -331,7 +337,9 @@ impl NodeHTTPResponse {
     pub fn pause_socket(&self) {
         scoped_log!(NodeHTTPResponse, "pauseSocket");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return };
+        let Some(raw) = self.raw_response.get() else {
+            return;
+        };
         if flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::UPGRADED)
             || raw.is_connect_request()
@@ -344,7 +352,9 @@ impl NodeHTTPResponse {
     pub fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return };
+        let Some(raw) = self.raw_response.get() else {
+            return;
+        };
         if flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::UPGRADED)
             || raw.is_connect_request()
@@ -467,7 +477,8 @@ impl NodeHTTPResponse {
         if (flags.contains(Flags::UPGRADED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED))
-            && (self.body_read_ref.get().has || self.body_read_state.get() == BodyReadState::Pending)
+            && (self.body_read_ref.get().has
+                || self.body_read_state.get() == BodyReadState::Pending)
             && (!flags.contains(Flags::HAS_CUSTOM_ON_DATA)
                 || js::on_data_get_cached(this_value).is_none())
         {
@@ -507,8 +518,14 @@ impl NodeHTTPResponse {
         _callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        if self.buffered_request_body_data_during_pause.get().capacity() > 0 {
-            self.buffered_request_body_data_during_pause.with_mut(|b| b.clear_and_free());
+        if self
+            .buffered_request_body_data_during_pause
+            .get()
+            .capacity()
+            > 0
+        {
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
         }
         if !self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             self.clear_on_data_callback(this_value, global_object);
@@ -526,7 +543,8 @@ impl NodeHTTPResponse {
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.upgrade_context.with_mut(|c| c.reset());
 
-        self.buffered_request_body_data_during_pause.with_mut(|b| b.clear_and_free());
+        self.buffered_request_body_data_during_pause
+            .with_mut(|b| b.clear_and_free());
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
@@ -537,7 +555,8 @@ impl NodeHTTPResponse {
     }
 
     fn mark_request_as_done_if_necessary(&self) {
-        if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending() {
+        if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending()
+        {
             self.mark_request_as_done();
         }
     }
@@ -562,7 +581,8 @@ impl NodeHTTPResponse {
             }
         }
         // detach and
-        self.upgrade_context.with_mut(|c| c.preserve_web_socket_headers_if_needed());
+        self.upgrade_context
+            .with_mut(|c| c.preserve_web_socket_headers_if_needed());
     }
 
     pub fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
@@ -591,7 +611,11 @@ impl NodeHTTPResponse {
         if self.buffered_request_body_data_during_pause.get().len() > 0 {
             result |= 1 << 3;
         }
-        if self.flags.get().contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST) {
+        if self
+            .flags
+            .get()
+            .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
             result |= 1 << 2;
         }
 
@@ -611,14 +635,16 @@ impl NodeHTTPResponse {
 
     pub fn js_ref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
-            self.poll_ref.with_mut(|r| r.r#ref(bun_vm_mut(global_object)));
+            self.poll_ref
+                .with_mut(|r| r.r#ref(bun_vm_mut(global_object)));
         }
         JSValue::UNDEFINED
     }
 
     pub fn js_unref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
-            self.poll_ref.with_mut(|r| r.unref(bun_vm_mut(global_object)));
+            self.poll_ref
+                .with_mut(|r| r.unref(bun_vm_mut(global_object)));
         }
         JSValue::UNDEFINED
     }
@@ -626,7 +652,11 @@ impl NodeHTTPResponse {
 
 fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) -> JsResult<()> {
     if !state.is_response_pending() {
-        return err_throw(global_object, ErrorCode::ERR_HTTP_HEADERS_SENT, "Stream is already ended");
+        return err_throw(
+            global_object,
+            ErrorCode::ERR_HTTP_HEADERS_SENT,
+            "Stream is already ended",
+        );
     }
     Ok(())
 }
@@ -640,7 +670,11 @@ impl NodeHTTPResponse {
         let arguments = callframe.arguments_undef::<3>();
 
         if self.is_requested_completed_or_ended() {
-            return err_throw(global_object, ErrorCode::ERR_STREAM_ALREADY_FINISHED, "Stream is already ended");
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
         }
 
         let flags = self.flags.get();
@@ -661,16 +695,18 @@ impl NodeHTTPResponse {
         } else {
             JSValue::UNDEFINED
         };
-        let status_message_value: JSValue = if arguments.len > 1 && arguments.ptr[1] != JSValue::NULL {
-            arguments.ptr[1]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let headers_object_value: JSValue = if arguments.len > 2 && arguments.ptr[2] != JSValue::NULL {
-            arguments.ptr[2]
-        } else {
-            JSValue::UNDEFINED
-        };
+        let status_message_value: JSValue =
+            if arguments.len > 1 && arguments.ptr[1] != JSValue::NULL {
+                arguments.ptr[1]
+            } else {
+                JSValue::UNDEFINED
+            };
+        let headers_object_value: JSValue =
+            if arguments.len > 2 && arguments.ptr[2] != JSValue::NULL {
+                arguments.ptr[2]
+            } else {
+                JSValue::UNDEFINED
+            };
 
         let status_code: i32 = if !status_code_value.is_undefined() {
             global_object.validate_integer_range::<i32>(
@@ -700,7 +736,11 @@ impl NodeHTTPResponse {
         }
 
         if state.is_http_status_called() {
-            return err_throw(global_object, ErrorCode::ERR_HTTP_HEADERS_SENT, "Stream already started");
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_HTTP_HEADERS_SENT,
+                "Stream already started",
+            );
         }
 
         // Validate status message does not contain invalid characters (defense-in-depth
@@ -709,7 +749,11 @@ impl NodeHTTPResponse {
         if status_message_slice.slice().len() > 0 {
             for &c in status_message_slice.slice() {
                 if c != b'\t' && (c < 0x20 || c == 0x7f) {
-                    return err_throw(global_object, ErrorCode::ERR_INVALID_CHAR, "Invalid character in statusMessage");
+                    return err_throw(
+                        global_object,
+                        ErrorCode::ERR_INVALID_CHAR,
+                        "Invalid character in statusMessage",
+                    );
                 }
             }
         }
@@ -737,7 +781,12 @@ impl NodeHTTPResponse {
             let mut status_message: Vec<u8> = Vec::new();
             {
                 use std::io::Write;
-                let _ = write!(&mut status_message, "{} {}", status_code, BStr::new(message));
+                let _ = write!(
+                    &mut status_message,
+                    "{} {}",
+                    status_code,
+                    BStr::new(message)
+                );
             }
             write_head_internal(
                 &raw_response,
@@ -895,7 +944,9 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doPause");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return Ok(JSValue::FALSE) };
+        let Some(raw) = self.raw_response.get() else {
+            return Ok(JSValue::FALSE);
+        };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
@@ -941,7 +992,9 @@ impl NodeHTTPResponse {
             // free-list pointer overwrote the first 8 bytes — test-http-pause.js saw
             // `'�\x01xУ\x02\x00\x00Body from Client'`). Move the Vec out and hand the
             // boxed slice to JSC so the deallocator owns the only free.
-            let bytes = self.buffered_request_body_data_during_pause.replace(Vec::new());
+            let bytes = self
+                .buffered_request_body_data_during_pause
+                .replace(Vec::new());
             return Some(JSValue::create_buffer_from_box(
                 global_object,
                 bytes.into_boxed_slice(),
@@ -953,7 +1006,9 @@ impl NodeHTTPResponse {
     pub fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         scoped_log!(NodeHTTPResponse, "doResume");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return JSValue::FALSE };
+        let Some(raw) = self.raw_response.get() else {
+            return JSValue::FALSE;
+        };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
@@ -995,8 +1050,7 @@ pub fn node_http_request_on_resolve(
     let arguments = callframe.arguments_old::<2>();
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse =
-        arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
@@ -1032,8 +1086,7 @@ pub fn node_http_request_on_reject(
     let err = arguments.ptr[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse =
-        arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
@@ -1117,7 +1170,9 @@ impl NodeHTTPResponse {
         // this makes the behavior aligned with current implementation, but not ideal
         let bytes: JSValue = 'brk: {
             if !chunk.is_empty() && self.buffered_request_body_data_during_pause.get().len() > 0 {
-                let paused = self.buffered_request_body_data_during_pause.replace(Vec::new());
+                let paused = self
+                    .buffered_request_body_data_during_pause
+                    .replace(Vec::new());
                 let paused_len = paused.len();
                 // PORT NOTE: `JSValue::create_buffer_from_length` is gated upstream;
                 // build the contiguous buffer locally then `ArrayBuffer::create_buffer`.
@@ -1154,14 +1209,13 @@ impl NodeHTTPResponse {
         bytes
     }
 
-    fn on_data_or_aborted(
-        &self,
-        chunk: &[u8],
-        last: bool,
-        event: AbortEvent,
-        this_value: JSValue,
-    ) {
-        scoped_log!(NodeHTTPResponse, "onDataOrAborted({}, {})", chunk.len(), last);
+    fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
+        scoped_log!(
+            NodeHTTPResponse,
+            "onDataOrAborted({}, {})",
+            chunk.len(),
+            last
+        );
         if last {
             self.ref_();
             self.body_read_state.set(BodyReadState::Done);
@@ -1261,7 +1315,11 @@ impl NodeHTTPResponse {
         this_value: JSValue,
     ) -> JsResult<JSValue> {
         if self.is_requested_completed_or_ended() {
-            return err_throw(global_object, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "Stream already ended");
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
         }
 
         // Loosely mimicking this code:
@@ -1284,7 +1342,11 @@ impl NodeHTTPResponse {
         // re-enter may clear it).
         let state = self.raw_response.get().unwrap().state();
         if !state.is_response_pending() {
-            return err_throw(global_object, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "Stream already ended");
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
         }
 
         let input_value: JSValue = if arguments.len() > 0 {
@@ -1342,8 +1404,9 @@ impl NodeHTTPResponse {
                 encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
                     Some(e) => e,
                     None => {
-                        return Err(global_object
-                            .throw_invalid_arguments(format_args!("Invalid encoding")));
+                        return Err(
+                            global_object.throw_invalid_arguments(format_args!("Invalid encoding"))
+                        );
                     }
                 };
             }
@@ -1392,14 +1455,23 @@ impl NodeHTTPResponse {
 
             if IS_END {
                 if bytes_written as u64 != content_length {
-                    return err_throw(global_object, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch");
+                    return err_throw(
+                        global_object,
+                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                        "Content-Length mismatch",
+                    );
                 }
             } else if bytes_written as u64 > content_length {
-                return err_throw(global_object, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch");
+                return err_throw(
+                    global_object,
+                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    "Content-Length mismatch",
+                );
             }
             self.bytes_written.set(bytes_written);
         } else {
-            self.bytes_written.set(self.bytes_written.get().saturating_add(bytes.len()));
+            self.bytes_written
+                .set(self.bytes_written.get().saturating_add(bytes.len()));
         }
         if IS_END {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
@@ -1548,12 +1620,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn set_on_data(
-        &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) {
+    pub fn set_on_data(&self, this_value: JSValue, global_object: &JSGlobalObject, value: JSValue) {
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.
@@ -1583,7 +1650,8 @@ impl NodeHTTPResponse {
                 BodyReadState::None => {}
             }
             if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(bun_vm_mut(global_object)));
+                self.body_read_ref
+                    .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
             return;
         }
@@ -1663,11 +1731,7 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    pub fn flush_headers(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn flush_headers(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
@@ -1682,11 +1746,7 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn end(
-        &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn end(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         // We dont wanna a paused socket when we call end, so is important to resume the socket
         self.resume_socket();
@@ -1717,7 +1777,9 @@ fn handle_corked(
 impl NodeHTTPResponse {
     pub fn set_timeout(&self, seconds: u8) {
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return };
+        let Some(raw) = self.raw_response.get() else {
+            return;
+        };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::UPGRADED)
@@ -1728,11 +1790,7 @@ impl NodeHTTPResponse {
         raw.timeout(seconds);
     }
 
-    pub fn cork(
-        &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn cork(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         if arguments.len == 0 {
             return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
@@ -1751,7 +1809,11 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::UPGRADED)
         {
-            return err_throw(global_object, ErrorCode::ERR_STREAM_ALREADY_FINISHED, "Stream is already ended");
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
         }
 
         let mut result: JSValue = JSValue::ZERO;
@@ -1777,10 +1839,20 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see PORT NOTE above).
                 let _escape = this;
-                handle_corked(global_object, arguments.ptr[0], &mut result, &mut is_exception)
+                handle_corked(
+                    global_object,
+                    arguments.ptr[0],
+                    &mut result,
+                    &mut is_exception,
+                )
             });
         } else {
-            handle_corked(global_object, arguments.ptr[0], &mut result, &mut is_exception);
+            handle_corked(
+                global_object,
+                arguments.ptr[0],
+                &mut result,
+                &mut is_exception,
+            );
         }
 
         let ret: JsResult<JSValue> = if is_exception {
@@ -1816,7 +1888,8 @@ impl NodeHTTPResponse {
             flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::REQUEST_HAS_COMPLETED)
         );
 
-        self.buffered_request_body_data_during_pause.with_mut(|b| b.clear_and_free());
+        self.buffered_request_body_data_during_pause
+            .with_mut(|b| b.clear_and_free());
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
@@ -1977,7 +2050,9 @@ impl NodeHTTPResponse {
         }
 
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else { return false };
+        let Some(raw) = self.raw_response.get() else {
+            return false;
+        };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::UPGRADED)

@@ -4,16 +4,16 @@ use core::mem;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::OOM;
 #[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
 // so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
 use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollRef, Owner, PollTag, FilePollFlag, FilePollKind};
+use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
@@ -78,7 +78,11 @@ pub trait PosixPipeWriter {
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF(port): Zig used `switch { inline else }` to monomorphize
         // try_write_with_write_fn per FileType — profile in Phase B.
-        let ft = if !force_sync { self.get_file_type() } else { FileType::File };
+        let ft = if !force_sync {
+            self.get_file_type()
+        } else {
+            FileType::File
+        };
         match ft {
             FileType::NonblockingPipe | FileType::File => {
                 self.try_write_with_write_fn(buf, sys::write)
@@ -184,11 +188,7 @@ pub trait PosixPipeWriter {
     /// `try_write` only needs `&self`, so the shared borrow of the buffer
     /// coexists with it, and the `&mut self` for `on_error` is taken after
     /// the temporary slice borrow has ended — no raw-pointer escape needed.
-    fn drain_buffered_data(
-        &mut self,
-        max_write_size: usize,
-        received_hup: bool,
-    ) -> WriteResult {
+    fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -349,7 +349,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// dispatch goes through `Parent::method(ptr, ..)` which takes `*mut Self`.
     #[inline]
     fn parent(&self) -> *mut Parent {
-        self.parent.map_or(core::ptr::null_mut(), bun_ptr::ParentRef::as_mut_ptr)
+        self.parent
+            .map_or(core::ptr::null_mut(), bun_ptr::ParentRef::as_mut_ptr)
     }
 
     /// Single nonnull-asref dispatch for the set-once `parent` backref.
@@ -399,7 +400,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
-        FilePollRef::init(self.parent_event_loop(), fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()))
+        FilePollRef::init(
+            self.parent_event_loop(),
+            fd,
+            Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+        )
     }
 
     pub fn get_poll(&self) -> Option<FilePollRef> {
@@ -407,7 +412,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn get_file_type(&self) -> FileType {
-        let Some(poll) = self.get_poll() else { return FileType::File };
+        let Some(poll) = self.get_poll() else {
+            return FileType::File;
+        };
         poll.file_type()
     }
 
@@ -484,7 +491,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             return false;
         }
 
-        let Some(poll) = self.get_poll() else { return false };
+        let Some(poll) = self.get_poll() else {
+            return false;
+        };
         poll.can_enable_keeping_process_alive()
     }
 
@@ -550,7 +559,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) };
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        self.handle
+            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
     }
 
     pub fn write(&mut self) {
@@ -747,7 +757,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn get_file_type(&self) -> FileType {
-        let Some(poll) = self.get_poll() else { return FileType::File };
+        let Some(poll) = self.get_poll() else {
+            return FileType::File;
+        };
         poll.file_type()
     }
 
@@ -797,7 +809,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        self.handle
+            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
     }
 
     fn _on_writable(&mut self) {
@@ -1039,7 +1052,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn has_ref(&self) -> bool {
-        let Some(poll) = self.get_poll() else { return false };
+        let Some(poll) = self.get_poll() else {
+            return false;
+        };
         !self.is_done && poll.can_enable_keeping_process_alive()
     }
 
@@ -1102,7 +1117,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                let p = FilePollRef::init(loop_, fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()));
+                let p = FilePollRef::init(
+                    loop_,
+                    fd,
+                    Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+                );
                 self.handle = PollOrFd::Poll(p);
                 p
             }
@@ -1156,7 +1175,9 @@ pub trait BaseWindowsPipeWriter {
     fn on_close_source(&mut self);
 
     fn get_fd(&self) -> Fd {
-        let Some(pipe) = self.source() else { return Fd::INVALID };
+        let Some(pipe) = self.source() else {
+            return Fd::INVALID;
+        };
         pipe.get_fd()
     }
 
@@ -1180,7 +1201,9 @@ pub trait BaseWindowsPipeWriter {
 
     fn close(&mut self) {
         self.set_is_done(true);
-        let Some(source) = self.source_mut().take() else { return };
+        let Some(source) = self.source_mut().take() else {
+            return;
+        };
         // Check for in-flight file write before detaching. detach()
         // nulls fs.data so onFsWriteComplete can't recover the writer
         // to call deref(). We must balance processSend's ref() here.
@@ -1470,13 +1493,27 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
     type Parent = Parent;
     const HAS_CURRENT_PAYLOAD: bool = false;
 
-    fn source(&self) -> &Option<Source> { &self.source }
-    fn source_mut(&mut self) -> &mut Option<Source> { &mut self.source }
-    fn parent_ptr(&self) -> *mut Parent { self.parent }
-    fn set_parent_ptr(&mut self, p: *mut Parent) { self.parent = p; }
-    fn is_done(&self) -> bool { self.is_done }
-    fn set_is_done(&mut self, v: bool) { self.is_done = v; }
-    fn owns_fd(&self) -> bool { self.owns_fd }
+    fn source(&self) -> &Option<Source> {
+        &self.source
+    }
+    fn source_mut(&mut self) -> &mut Option<Source> {
+        &mut self.source
+    }
+    fn parent_ptr(&self) -> *mut Parent {
+        self.parent
+    }
+    fn set_parent_ptr(&mut self, p: *mut Parent) {
+        self.parent = p;
+    }
+    fn is_done(&self) -> bool {
+        self.is_done
+    }
+    fn set_is_done(&mut self, v: bool) {
+        self.is_done = v;
+    }
+    fn owns_fd(&self) -> bool {
+        self.owns_fd
+    }
 
     fn on_close_source(&mut self) {
         if Parent::HAS_ON_CLOSE {
@@ -1578,7 +1615,11 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             Parent::on_write(
                 Self::r(this).parent(),
                 written,
-                if is_done_before && !has_pending_data { WriteStatus::Drained } else { WriteStatus::Pending },
+                if is_done_before && !has_pending_data {
+                    WriteStatus::Drained
+                } else {
+                    WriteStatus::Pending
+                },
             )
         };
         // Re-escape so the trailing `is_done`/`parent`/`close()` cannot reuse
@@ -1957,17 +1998,33 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
 }
 
 #[cfg(windows)]
-impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStreamingWriter<Parent> {
+impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
+    for WindowsStreamingWriter<Parent>
+{
     type Parent = Parent;
     const HAS_CURRENT_PAYLOAD: bool = true;
 
-    fn source(&self) -> &Option<Source> { &self.source }
-    fn source_mut(&mut self) -> &mut Option<Source> { &mut self.source }
-    fn parent_ptr(&self) -> *mut Parent { self.parent }
-    fn set_parent_ptr(&mut self, p: *mut Parent) { self.parent = p; }
-    fn is_done(&self) -> bool { self.is_done }
-    fn set_is_done(&mut self, v: bool) { self.is_done = v; }
-    fn owns_fd(&self) -> bool { self.owns_fd }
+    fn source(&self) -> &Option<Source> {
+        &self.source
+    }
+    fn source_mut(&mut self) -> &mut Option<Source> {
+        &mut self.source
+    }
+    fn parent_ptr(&self) -> *mut Parent {
+        self.parent
+    }
+    fn set_parent_ptr(&mut self, p: *mut Parent) {
+        self.parent = p;
+    }
+    fn is_done(&self) -> bool {
+        self.is_done
+    }
+    fn set_is_done(&mut self, v: bool) {
+        self.is_done = v;
+    }
+    fn owns_fd(&self) -> bool {
+        self.owns_fd
+    }
 
     fn on_close_source(&mut self) {
         self.source = None;
@@ -2113,7 +2170,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         let done = Self::r(this).outgoing.is_empty();
         let was_done = Self::r(this).is_done;
 
-        log!("onWrite({}) ({} left)", written, Self::r(this).outgoing.size());
+        log!(
+            "onWrite({}) ({} left)",
+            written,
+            Self::r(this).outgoing.size()
+        );
 
         if was_done && done {
             // we already call .end lets close the connection
@@ -2128,7 +2189,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         Self::r_on_write(
             this,
             written,
-            if done { WriteStatus::Drained } else { WriteStatus::Pending },
+            if done {
+                WriteStatus::Drained
+            } else {
+                WriteStatus::Pending
+            },
         );
         // Re-escape so `process_send`/`on_writable` and the deferred guard
         // cannot reuse `is_done`/`outgoing`/`parent` spilled from before
@@ -2418,10 +2483,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         if matches!(self.source, Some(Source::SyncFile(_))) {
             let result = (|| {
-                let remain = match self.outgoing.write_or_fallback(None, Some(buffer), WriteKind::Utf16) {
-                    Ok(r) => r,
-                    Err(_) => return WriteResult::Err(oom_err()),
-                };
+                let remain =
+                    match self
+                        .outgoing
+                        .write_or_fallback(None, Some(buffer), WriteKind::Utf16)
+                    {
+                        Ok(r) => r,
+                        Err(_) => return WriteResult::Err(oom_err()),
+                    };
                 let initial_len = remain.len();
                 let mut remain = remain;
                 let fd = Fd::from_uv(match &self.source {
@@ -2561,9 +2630,9 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 #[doc(hidden)]
 pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
-    pub use ::bun_uws_sys::Loop as UwsLoop;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
+    pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
 /// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +

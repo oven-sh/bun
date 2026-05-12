@@ -3,15 +3,15 @@ use bstr::BStr;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena;
-use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
-use bun_core::handle_oom;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
+use bun_core::handle_oom;
 
+use crate::Graph::{Graph, InputFileColumns as _};
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
-use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
 
@@ -137,9 +137,8 @@ pub fn find_imported_files_in_css_order<'a>(
 
             self.visited.push(source_index);
 
-            let Some(repr): Option<&BundlerStyleSheet> = self.css_asts
-                [source_index.get() as usize]
-                .as_deref()
+            let Some(repr): Option<&BundlerStyleSheet> =
+                self.css_asts[source_index.get() as usize].as_deref()
             else {
                 return; // Sanity check
             };
@@ -165,8 +164,8 @@ pub fn find_imported_files_in_css_order<'a>(
             for rule in top_level_rules.v.iter() {
                 if let BundlerCssRule::Import(import_rule) = rule {
                     // `defer import_record_idx += 1;` — increment at end of this arm
-                    let record = self.all_import_records[source_index.get() as usize]
-                        .at(import_record_idx);
+                    let record =
+                        self.all_import_records[source_index.get() as usize].at(import_record_idx);
 
                     // Follow internal dependencies
                     if record.source_index.is_valid() {
@@ -218,8 +217,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     if !record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
                         let mut all_conditions =
                             deep_clone_conditions(wrapping_conditions, self.arena);
-                        let mut all_import_records =
-                            shallow_clone_records(wrapping_import_records);
+                        let mut all_import_records = shallow_clone_records(wrapping_import_records);
                         // If this import has conditions, append it to the list of overall
                         // conditions for this external import. Note that an external import
                         // may actually have multiple sets of conditions that can't be
@@ -316,13 +314,16 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
     // Include all files reachable from any entry point
     for entry_point in entry_points {
-        visitor.visit(*entry_point, &mut wrapping_conditions, &mut wrapping_import_records);
+        visitor.visit(
+            *entry_point,
+            &mut wrapping_conditions,
+            &mut wrapping_import_records,
+        );
     }
 
     let has_external_import = visitor.has_external_import;
     let mut order = visitor.order;
-    let mut wip_order =
-        Vec::<CssImportOrder>::init_capacity(order.len() as usize);
+    let mut wip_order = Vec::<CssImportOrder>::init_capacity(order.len() as usize);
 
     let css_asts: &[crate::bundled_ast::CssCol] = css_asts_slice;
 
@@ -369,8 +370,7 @@ pub fn find_imported_files_in_css_order<'a>(
     // overrides all previous instances of that declaration.
     {
         let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
-        let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> =
-            StringArrayHashMap::new();
+        let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
 
         let mut i: u32 = order.len() as u32;
         // PORT NOTE: reshaped for borrowck — `order.at(i)` and `order.mut_(i)`
@@ -404,10 +404,7 @@ pub fn find_imported_files_in_css_order<'a>(
                             // types until the ungate shadow is removed; cast through
                             // `NonNull` to satisfy `Layers::borrow`.
                             let layer_names_ptr = core::ptr::NonNull::from(
-                                &css_asts[idx.get() as usize]
-                                    .as_deref()
-                                    .unwrap()
-                                    .layer_names,
+                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
                             )
                             .cast::<Vec<LayerName>>();
                             order.mut_(i as usize).kind =
@@ -619,7 +616,9 @@ pub fn find_imported_files_in_css_order<'a>(
                         //
                         // This can be improved by dropping the empty layer. But we can
                         // only do this if there's nothing in between these two rules.
-                        if j == duplicates.len() - 1 && duplicate_index as usize == wip_order.len() - 1 {
+                        if j == duplicates.len() - 1
+                            && duplicate_index as usize == wip_order.len() - 1
+                        {
                             let other = wip_order.at(duplicate_index as usize);
                             if matches!(other.kind, CssImportOrderKind::Layers(_))
                                 && import_conditions_are_equal(
@@ -644,7 +643,10 @@ pub fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            layer_duplicates.mut_(index).indices.push(wip_order.len() as u32);
+            layer_duplicates
+                .mut_(index)
+                .indices
+                .push(wip_order.len() as u32);
             wip_order.push(unsafe { bitwise_copy(entry) });
         }
 
@@ -656,7 +658,11 @@ pub fn find_imported_files_in_css_order<'a>(
 
         memcpy_and_reset(&mut order, &mut wip_order);
     }
-    debug_css_order(this, &order, CssOrderDebugStep::AfterOptimizingRedundantLayerRules);
+    debug_css_order(
+        this,
+        &order,
+        CssOrderDebugStep::AfterOptimizingRedundantLayerRules,
+    );
 
     // Finally, merge adjacent "@layer" rules with identical conditions together.
     {
@@ -680,10 +686,9 @@ pub fn find_imported_files_in_css_order<'a>(
                         &mut wip_order.mut_(prev_index as usize).kind
                     {
                         if let CssImportOrderKind::Layers(entry_layers) = &entry.kind {
-                            
-                                prev_layers
-                                    .to_owned()
-                                    .append_slice(entry_layers.inner().slice_const());
+                            prev_layers
+                                .to_owned()
+                                .append_slice(entry_layers.inner().slice_const());
                         }
                     }
                 }
@@ -691,7 +696,11 @@ pub fn find_imported_files_in_css_order<'a>(
         }
         let _ = did_clone;
     }
-    debug_css_order(this, &order, CssOrderDebugStep::AfterMergingAdjacentLayerRules);
+    debug_css_order(
+        this,
+        &order,
+        CssOrderDebugStep::AfterMergingAdjacentLayerRules,
+    );
 
     order
 }
@@ -705,12 +714,8 @@ pub fn find_imported_files_in_css_order<'a>(
 /// intentional leak, not an arena hand-off. Reserves one extra slot for the
 /// single `append_assume_capacity` each call site performs.
 #[inline]
-fn deep_clone_conditions(
-    list: &Vec<ImportConditions>,
-    arena: &Arena,
-) -> Vec<ImportConditions> {
-    let mut out =
-        Vec::<ImportConditions>::init_capacity_in(arena, list.len() as usize + 1);
+fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
+    let mut out = Vec::<ImportConditions>::init_capacity_in(arena, list.len() as usize + 1);
     for c in list.slice_const() {
         out.append_assume_capacity(c.deep_clone(arena));
     }
@@ -860,11 +865,7 @@ impl CssOrderDebugStep {
     }
 }
 
-fn debug_css_order(
-    this: &LinkerContext,
-    order: &Vec<CssImportOrder>,
-    step: CssOrderDebugStep,
-) {
+fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssOrderDebugStep) {
     // PERF(port): `step` was a comptime enum param; debug-only so demoted to runtime.
     #[cfg(debug_assertions)]
     {
@@ -872,7 +873,9 @@ fn debug_css_order(
         // runtime concat is fine here (debug-only).
         let tag = step.tag_name();
         let env_var = format!("BUN_DEBUG_CSS_ORDER_{}", tag);
-        let enable_all = bun_core::env_var::BUN_DEBUG_CSS_ORDER.get().unwrap_or(false);
+        let enable_all = bun_core::env_var::BUN_DEBUG_CSS_ORDER
+            .get()
+            .unwrap_or(false);
         let enable_step = std::env::var_os(&env_var)
             .map(|v| !v.is_empty() && v != "0" && v != "false")
             .unwrap_or(false);
@@ -905,7 +908,9 @@ fn debug_css_order_impl(
         // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
         let unique_keys: &[&[u8]] = unsafe {
             bun_ptr::boxed_slices_as_borrowed(
-                parse_graph.input_files.items_unique_key_for_additional_file(),
+                parse_graph
+                    .input_files
+                    .items_unique_key_for_additional_file(),
             )
         };
         // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as

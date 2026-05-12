@@ -10,8 +10,8 @@
 use std::io::Write as _;
 
 use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
-use bun_paths::fs::Path as FsPath;
 use bun_core::{OwnedString, String as BunString};
+use bun_paths::fs::Path as FsPath;
 
 use crate::JSGlobalObject;
 use bun_ptr::BackRef;

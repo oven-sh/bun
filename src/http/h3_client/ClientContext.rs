@@ -6,16 +6,16 @@ use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
-use bun_uws::Loop as UwsLoop;
 
 use super::callbacks;
-use super::client_session::{quic_socket_mut, session_mut, ClientSession};
+use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
-use crate::h3_client as H3;
 use crate::HTTPClient;
+use crate::h3_client as H3;
 
 use crate::h3_client::h3_client;
 
@@ -132,14 +132,13 @@ impl ClientContext {
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
-        session_mut(session).registry_index =
-            u32::try_from(self.sessions.len()).expect("int cast");
+        session_mut(session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result = self
-            .qctx_mut()
-            .connect(&host_z, port, &host_z, reject, session.cast::<c_void>());
+        let result =
+            self.qctx_mut()
+                .connect(&host_z, port, &host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);

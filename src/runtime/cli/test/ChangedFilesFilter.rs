@@ -11,27 +11,27 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
 use bun_alloc::{AllocError, Arena};
+use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
-use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, Global, Output, ZBox};
-use bun_which::which;
 use bun_core::PathBuffer as CorePathBuffer;
-use bun_ast::Index;
-use bun_jsc::{self as jsc, EventLoopHandle};
+use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt, getenv_z};
+use bun_core::{PathString, ZStr, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, resolve_path, platform, PathBuffer, SEP};
+use bun_jsc::{self as jsc, EventLoopHandle};
+use bun_paths::{self, PathBuffer, SEP, platform, resolve_path};
 use bun_resolver::fs::RealFS;
-use bun_core::{strings, PathString, ZStr};
 use bun_sys as sys;
+use bun_which::which;
 
-use crate::api::bun_process::sync as spawn_sync;
 use crate::Command;
+use crate::api::bun_process::sync as spawn_sync;
 
 // PORT NOTE: named `Result` in Zig; kept verbatim for side-by-side diffing.
 // `core::result::Result` is fully qualified throughout this file to avoid the
@@ -368,11 +368,7 @@ pub fn init_watch_trigger() {
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
-                setenv(
-                    TRIGGER_FILE_ENV_VAR_Z.as_ptr(),
-                    fresh.as_ptr(),
-                    1,
-                );
+                setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
             }
             fresh
         };
@@ -384,8 +380,7 @@ pub fn init_watch_trigger() {
         // Written once on the main thread before the watcher thread starts;
         // after that only the watcher thread touches these. See doc on
         // `hot_reloader::WATCH_CHANGED_PATHS`.
-        let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
-            .set(arena.alloc(path).as_zstr());
+        let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE.set(arena.alloc(path).as_zstr());
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
             .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
@@ -503,10 +498,7 @@ fn get_changed_files(
                     (BStr::new(strings::trim(&result.stderr, b" \r\n\t")),),
                 );
             } else {
-                Output::err_generic(
-                    "--changed requires running inside a git repository",
-                    (),
-                );
+                Output::err_generic("--changed requires running inside a git repository", ());
             }
             return Err(GitError::GitFailed);
         }
@@ -657,10 +649,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }) {
         Ok(p) => p,
         Err(err) => {
-            Output::err_generic(
-                "--changed: failed to spawn git: {s}",
-                (err.name(),),
-            );
+            Output::err_generic("--changed: failed to spawn git: {s}", (err.name(),));
             return GitResult {
                 ok: false,
                 spawn_failed: true,
@@ -672,7 +661,10 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 
     match proc {
         sys::Result::Err(err) => {
-            Output::err_generic("--changed: failed to spawn git: {f}", format_args!("{}", err));
+            Output::err_generic(
+                "--changed: failed to spawn git: {f}",
+                format_args!("{}", err),
+            );
             GitResult {
                 ok: false,
                 spawn_failed: true,

@@ -35,7 +35,6 @@
 //!   A variant of DynamicBitSet which does not store a pointer to its
 //!   allocator, in order to save space.
 
-
 use core::mem;
 use core::ptr;
 use core::slice;
@@ -105,8 +104,7 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         }
 
         if end_bit > 0 {
-            masks[end_mask_index] = (masks[end_mask_index]
-                & (bool_mask_usize(true) << end_bit))
+            masks[end_mask_index] = (masks[end_mask_index] & (bool_mask_usize(true) << end_bit))
                 | (bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1)));
         }
     }
@@ -172,7 +170,9 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
 
     /// Creates a bit set with all elements present.
     pub const fn init_full() -> Self {
-        Self { mask: Self::FULL_MASK }
+        Self {
+            mask: Self::FULL_MASK,
+        }
     }
 
     /// Returns the number of bits in this bit set
@@ -389,7 +389,11 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         &self,
     ) -> SingleWordIterator<SIZE, DIR_FWD> {
         SingleWordIterator {
-            bits_remain: if KIND_SET { self.mask } else { !self.mask & Self::FULL_MASK },
+            bits_remain: if KIND_SET {
+                self.mask
+            } else {
+                !self.mask & Self::FULL_MASK
+            },
         }
     }
 
@@ -455,19 +459,13 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 // second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize>
-
-
-{
+pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
     pub masks: [usize; NUM_MASKS],
 }
 
-impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
-
-
-{
+impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// The number of items in this bit set
     pub const BIT_LENGTH: usize = SIZE;
 
@@ -480,7 +478,10 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
     // bits in one mask
     const MASK_LEN: u32 = usize::BITS;
     // total number of masks
-    const _ASSERT: () = assert!(NUM_MASKS == num_masks_for(SIZE), "ArrayBitSet: NUM_MASKS must equal num_masks_for(SIZE)");
+    const _ASSERT: () = assert!(
+        NUM_MASKS == num_masks_for(SIZE),
+        "ArrayBitSet: NUM_MASKS must equal num_masks_for(SIZE)"
+    );
     // padding bits in the last mask (may be 0)
     const LAST_PAD_BITS: u32 = (Self::MASK_LEN as usize * NUM_MASKS - SIZE) as u32;
     /// Mask of valid bits in the last mask.
@@ -490,13 +491,17 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
 
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
-        Self { masks: [0usize; NUM_MASKS] }
+        Self {
+            masks: [0usize; NUM_MASKS],
+        }
     }
 
     /// Creates a bit set with all elements present.
     pub const fn init_full() -> Self {
         if NUM_MASKS == 0 {
-            Self { masks: [0usize; NUM_MASKS] }
+            Self {
+                masks: [0usize; NUM_MASKS],
+            }
         } else {
             let mut masks = [usize::MAX; NUM_MASKS];
             masks[NUM_MASKS - 1] = Self::LAST_ITEM_MASK;
@@ -811,7 +816,10 @@ fn empty_masks_ptr() -> *mut usize {
 
 impl Default for DynamicBitSetUnmanaged {
     fn default() -> Self {
-        Self { bit_length: 0, masks: empty_masks_ptr() }
+        Self {
+            bit_length: 0,
+            masks: empty_masks_ptr(),
+        }
     }
 }
 
@@ -1308,8 +1316,7 @@ impl DynamicBitSetList {
             });
         }
 
-        let layout =
-            core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
+        let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
         // SAFETY: `buf_len > 0` so layout has nonzero size.
         let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
         let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
@@ -1320,7 +1327,12 @@ impl DynamicBitSetList {
             unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
         }
 
-        Ok(Self { buf, buf_len, n, bit_length })
+        Ok(Self {
+            buf,
+            buf_len,
+            n,
+            bit_length,
+        })
     }
 
     /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
@@ -1368,8 +1380,7 @@ impl Drop for DynamicBitSetList {
         if self.buf_len == 0 {
             return;
         }
-        let layout =
-            core::alloc::Layout::array::<usize>(self.buf_len).expect("unreachable");
+        let layout = core::alloc::Layout::array::<usize>(self.buf_len).expect("unreachable");
         // SAFETY: `buf` was allocated in `init_empty` with exactly this layout
         // and has not been freed (no other code path deallocates it).
         unsafe { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
@@ -1389,8 +1400,7 @@ unsafe fn dyn_free(base: *mut usize, len: usize) {
         // EMPTY_MASKS_DATA sentinel — nothing to free.
         return;
     }
-    let layout =
-        core::alloc::Layout::array::<usize>(len).expect("unreachable");
+    let layout = core::alloc::Layout::array::<usize>(len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with this layout.
     unsafe { std::alloc::dealloc(base.cast(), layout) };
 }
@@ -1400,8 +1410,7 @@ unsafe fn dyn_realloc(
     old_len: usize,
     new_len: usize,
 ) -> Result<*mut usize, AllocError> {
-    let new_layout =
-        core::alloc::Layout::array::<usize>(new_len).map_err(|_| AllocError)?;
+    let new_layout = core::alloc::Layout::array::<usize>(new_len).map_err(|_| AllocError)?;
     if old_len == 0 {
         // SAFETY: new_layout is nonzero size (caller never passes new_len==0
         // through this path).
@@ -1411,8 +1420,7 @@ unsafe fn dyn_realloc(
         }
         return Ok(p.cast());
     }
-    let old_layout =
-        core::alloc::Layout::array::<usize>(old_len).expect("unreachable");
+    let old_layout = core::alloc::Layout::array::<usize>(old_len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with `old_layout`.
     let p = unsafe { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
     if p.is_null() {
@@ -1426,7 +1434,7 @@ unsafe fn dyn_realloc(
 /// Static arm size: `@bitSizeOf(DynamicBitSetUnmanaged) - 1`.
 pub const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
-pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS, {num_masks_for(AUTO_STATIC_BITS)}>;
+pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
 
 pub enum AutoBitSet {
     Static(AutoBitSetStatic),
@@ -1459,7 +1467,9 @@ impl AutoBitSet {
         if bit_length <= AutoBitSetStatic::BIT_LENGTH {
             Ok(AutoBitSet::Static(AutoBitSetStatic::init_empty()))
         } else {
-            Ok(AutoBitSet::Dynamic(DynamicBitSetUnmanaged::init_empty(bit_length)?))
+            Ok(AutoBitSet::Dynamic(DynamicBitSetUnmanaged::init_empty(
+                bit_length,
+            )?))
         }
     }
 
@@ -1569,7 +1579,9 @@ pub struct DynamicBitSet {
 
 impl Default for DynamicBitSet {
     fn default() -> Self {
-        Self { unmanaged: DynamicBitSetUnmanaged::default() }
+        Self {
+            unmanaged: DynamicBitSetUnmanaged::default(),
+        }
     }
 }
 
@@ -1582,12 +1594,16 @@ impl DynamicBitSet {
 
     /// Creates a bit set with no elements present.
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
-        Ok(Self { unmanaged: DynamicBitSetUnmanaged::init_empty(bit_length)? })
+        Ok(Self {
+            unmanaged: DynamicBitSetUnmanaged::init_empty(bit_length)?,
+        })
     }
 
     /// Creates a bit set with all elements present.
     pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
-        Ok(Self { unmanaged: DynamicBitSetUnmanaged::init_full(bit_length)? })
+        Ok(Self {
+            unmanaged: DynamicBitSetUnmanaged::init_full(bit_length)?,
+        })
     }
 
     /// Resizes to a new length.  If the new length is larger
@@ -1598,7 +1614,9 @@ impl DynamicBitSet {
 
     /// Creates a duplicate of this bit set, using the new allocator.
     pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self { unmanaged: self.unmanaged.clone()? })
+        Ok(Self {
+            unmanaged: self.unmanaged.clone()?,
+        })
     }
 
     /// Returns the number of bits in this bit set
@@ -1776,9 +1794,7 @@ pub struct BitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
     last_word_mask: usize,
 }
 
-impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
-    BitSetIterator<'a, KIND_SET, DIR_FWD>
-{
+impl<'a, const KIND_SET: bool, const DIR_FWD: bool> BitSetIterator<'a, KIND_SET, DIR_FWD> {
     fn init(masks: &'a [usize], last_word_mask: usize) -> Self {
         if masks.is_empty() {
             Self {
@@ -1811,8 +1827,11 @@ impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
                 return None;
             }
             self.next_word::<false>();
-            if DIR_FWD { self.bit_offset += usize::BITS as usize }
-            else { self.bit_offset -= usize::BITS as usize }
+            if DIR_FWD {
+                self.bit_offset += usize::BITS as usize
+            } else {
+                self.bit_offset -= usize::BITS as usize
+            }
         }
 
         if DIR_FWD {
@@ -1833,16 +1852,22 @@ impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
     // don't visit them.
     #[inline(always)]
     fn next_word<const IS_FIRST_WORD: bool>(&mut self) {
-        let mut word = if DIR_FWD { self.words_remain[0] }
-            else { self.words_remain[self.words_remain.len() - 1] };
+        let mut word = if DIR_FWD {
+            self.words_remain[0]
+        } else {
+            self.words_remain[self.words_remain.len() - 1]
+        };
         if !KIND_SET {
             word = !word;
             if (!DIR_FWD && IS_FIRST_WORD) || (DIR_FWD && self.words_remain.len() == 1) {
                 word &= self.last_word_mask;
             }
         }
-        if DIR_FWD { self.words_remain = &self.words_remain[1..]; }
-        else { self.words_remain = &self.words_remain[..self.words_remain.len() - 1]; }
+        if DIR_FWD {
+            self.words_remain = &self.words_remain[1..];
+        } else {
+            self.words_remain = &self.words_remain[..self.words_remain.len() - 1];
+        }
         self.bits_remain = word;
     }
 }

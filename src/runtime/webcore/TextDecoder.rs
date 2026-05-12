@@ -1,13 +1,15 @@
-use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use crate::webcore::EncodingLabel;
+use crate::webcore::jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
+};
 use bun_core::AllocError;
-use bun_core::{strings, OwnedString};
+use bun_core::{OwnedString, strings};
 use core::cell::Cell;
 
-use jsc::text_codec::TextCodec;
-use jsc::zig_string::ZigString;
 use jsc::StringJsc as _;
 use jsc::ZigStringJsc as _;
+use jsc::text_codec::TextCodec;
+use jsc::zig_string::ZigString;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -212,11 +214,7 @@ impl TextDecoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn decode(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn decode(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_buf = callframe.arguments_old::<2>();
         let arguments = arguments_buf.slice();
 
@@ -227,7 +225,9 @@ impl TextDecoder {
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
             if arguments.len() > 1 && arguments[1].is_object() {
-                if let Some(stream_value) = arguments[1].fast_get(global_this, jsc::BuiltinName::stream)? {
+                if let Some(stream_value) =
+                    arguments[1].fast_get(global_this, jsc::BuiltinName::stream)?
+                {
                     break 'stream stream_value.to_boolean();
                 }
             }
@@ -297,22 +297,23 @@ impl TextDecoder {
             }
             EncodingLabel::Utf8 => {
                 // PORT NOTE: reshaped for borrowck — Zig used a labeled tuple-destructuring block.
-                let maybe_without_bom = if !self.ignore_bom
-                    && buffer_slice.starts_with(b"\xef\xbb\xbf")
-                {
-                    &buffer_slice[3..]
-                } else {
-                    buffer_slice
-                };
+                let maybe_without_bom =
+                    if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
+                        &buffer_slice[3..]
+                    } else {
+                        buffer_slice
+                    };
 
                 let (input, deinit): (&[u8], bool);
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
                 if buffered.len > 0 {
                     let buffered_len = buffered.len as usize;
-                    let mut joined = vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
+                    let mut joined =
+                        vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
                     joined[0..buffered_len].copy_from_slice(buffered.slice());
-                    joined[buffered_len..][0..maybe_without_bom.len()].copy_from_slice(maybe_without_bom);
+                    joined[buffered_len..][0..maybe_without_bom.len()]
+                        .copy_from_slice(maybe_without_bom);
                     self.buffered.set(Buffered::default());
                     joined_owned = joined;
                     input = &joined_owned;
@@ -338,7 +339,10 @@ impl TextDecoder {
                         if self.fatal {
                             if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
                                 return Err(global_this
-                                    .err(jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
+                                    .err(
+                                        jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
+                                        format_args!("Invalid byte sequence"),
+                                    )
                                     .throw());
                             }
                         }
@@ -353,7 +357,10 @@ impl TextDecoder {
                     debug_assert!(self.buffered.get().len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
-                            self.buffered.set(Buffered { buf: leftover, len: leftover_len });
+                            self.buffered.set(Buffered {
+                                buf: leftover,
+                                len: leftover_len,
+                            });
                         }
                     }
                     let len = decoded.len();
@@ -371,7 +378,11 @@ impl TextDecoder {
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
                 // inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| { ... }
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
-                let bom: &[u8] = if !big_endian { b"\xff\xfe" } else { b"\xfe\xff" };
+                let bom: &[u8] = if !big_endian {
+                    b"\xff\xfe"
+                } else {
+                    b"\xfe\xff"
+                };
                 let input = if !self.ignore_bom && buffer_slice.starts_with(bom) {
                     &buffer_slice[2..]
                 } else {
@@ -490,16 +501,14 @@ impl TextDecoder {
             // default to utf-8
             decoder.encoding = EncodingLabel::Utf8;
         } else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "TextDecoder(encoding) label is invalid",
-            )));
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("TextDecoder(encoding) label is invalid",)));
         }
 
         if !options_value.is_undefined() {
             if !options_value.is_object() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "TextDecoder(options) is invalid",
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("TextDecoder(options) is invalid",)));
             }
 
             if let Some(fatal) = options_value.get(global_this, b"fatal")? {

@@ -77,7 +77,9 @@ pub struct RawAtomicRefCount {
 impl RawAtomicRefCount {
     /// Usually the initial count should be 1.
     pub const fn init(initial_count: u32) -> Self {
-        Self { raw_value: AtomicU32::new(initial_count) }
+        Self {
+            raw_value: AtomicU32::new(initial_count),
+        }
     }
 
     pub fn increment(&self) {

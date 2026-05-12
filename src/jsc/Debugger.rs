@@ -12,11 +12,11 @@ use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_io::posix_event_loop::{get_vm_ctx, AllocatorType};
-use bun_io::KeepAlive;
 use bun_core::String as BunString;
+use bun_io::KeepAlive;
+use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
-use crate::virtual_machine::{runtime_hooks, VirtualMachine};
+use crate::virtual_machine::{VirtualMachine, runtime_hooks};
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
@@ -214,9 +214,7 @@ impl BunFrontendDevServerAgent {
 }
 
 // HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
-pub fn frontend_dev_server_agent_set_enabled(
-    agent: *mut InspectorBunFrontendDevServerAgentHandle,
-) {
+pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDevServerAgentHandle) {
     // SAFETY: called on the JS thread with a live VM (C++ inspector agent
     // invokes this only after the VM is initialized).
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
@@ -739,7 +737,9 @@ impl Debugger {
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_core::Output::error_writer()));
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    bun_core::Output::error_writer(),
+                ));
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();
             }
@@ -800,7 +800,9 @@ pub struct AsyncTaskTracker {
 
 impl AsyncTaskTracker {
     pub fn init(vm: &mut VirtualMachine) -> AsyncTaskTracker {
-        AsyncTaskTracker { id: vm.next_async_task_id() }
+        AsyncTaskTracker {
+            id: vm.next_async_task_id(),
+        }
     }
 
     pub fn did_schedule(self, global_object: &JSGlobalObject) {
@@ -837,7 +839,10 @@ impl AsyncTaskTracker {
     #[must_use]
     pub fn dispatch(self, global_object: &JSGlobalObject) -> DispatchScope<'_> {
         self.will_dispatch(global_object);
-        DispatchScope { tracker: self, global_object }
+        DispatchScope {
+            tracker: self,
+            global_object,
+        }
     }
 }
 
@@ -972,7 +977,9 @@ impl TestReporterHandle {
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(self, call_frame, test_id, name, item_type, parent_id);
+        Bun__TestReporterAgentReportTestFound(
+            self, call_frame, test_id, name, item_type, parent_id,
+        );
     }
 
     pub fn report_test_found_with_location(
@@ -1057,7 +1064,8 @@ impl TestReporterAgent {
         parent_id: i32,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
-        self.handle_mut().report_test_found(call_frame, test_id, name, item_type, parent_id);
+        self.handle_mut()
+            .report_test_found(call_frame, test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
@@ -1069,7 +1077,8 @@ impl TestReporterAgent {
     /// Caller must ensure that it is enabled first.
     pub fn report_test_end(&self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
-        self.handle_mut().report_test_end(test_id, bun_test_status, elapsed);
+        self.handle_mut()
+            .report_test_end(test_id, bun_test_status, elapsed);
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -1093,7 +1102,10 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 // reads/fills in-place.
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentReportError(agent: &mut LifecycleHandle, exception: &mut ZigException);
+    safe fn Bun__LifecycleAgentReportError(
+        agent: &mut LifecycleHandle,
+        exception: &mut ZigException,
+    );
     safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
     safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
 }

@@ -2,20 +2,20 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
+use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
-use bun_core::ZigString;
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::ZigStringJsc as _;
+use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_threading::work_pool::WorkPool;
 
@@ -117,13 +117,14 @@ impl AlgorithmValue {
                             let rounds = rounds_value.coerce_to_i32(global_object)?;
 
                             if rounds < 4 || rounds > 31 {
-                                return Err(global_object.throw_invalid_arguments(
-                                    format_args!("Rounds must be between 4 and 31"),
-                                ));
+                                return Err(global_object.throw_invalid_arguments(format_args!(
+                                    "Rounds must be between 4 and 31"
+                                )));
                             }
 
-                            algorithm =
-                                AlgorithmValue::Bcrypt(u8::try_from(rounds).expect("int cast") & 0x3F);
+                            algorithm = AlgorithmValue::Bcrypt(
+                                u8::try_from(rounds).expect("int cast") & 0x3F,
+                            );
                             // Zig: @as(u6, @intCast(rounds))
                         }
 
@@ -149,9 +150,7 @@ impl AlgorithmValue {
                             argon.time_cost = u32::try_from(time_cost).expect("int cast");
                         }
 
-                        if let Some(memory_value) =
-                            value.get_truthy(global_object, "memoryCost")?
-                        {
+                        if let Some(memory_value) = value.get_truthy(global_object, "memoryCost")? {
                             if !memory_value.is_number() {
                                 return Err(global_object.throw_invalid_argument_type(
                                     "hash",
@@ -589,7 +588,9 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
     write!(
         &mut error_code,
         "PASSWORD{}",
-        PascalToUpperUnderscoreCaseFormatter { input: err.name().as_bytes() }
+        PascalToUpperUnderscoreCaseFormatter {
+            input: err.name().as_bytes()
+        }
     )
     .expect("unreachable"); // bun.handleOom
     let instance = g.create_error_instance(format_args!(
@@ -659,7 +660,8 @@ struct PasswordResult<Op: PasswordOp> {
 
 impl<Op: PasswordOp> PasswordResult<Op> {
     fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p).map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
+        Self::run_from_js(p)
+            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
     }
 
     fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
@@ -667,7 +669,13 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         // event loop hands sole ownership to this callback. Reclaim the Box once
         // up-front so all fields drop on scope exit (no `mem::replace` dance).
         let this = *unsafe { bun_core::heap::take(this) };
-        let PasswordResult { value, mut r#ref, mut promise, global, task: _ } = this;
+        let PasswordResult {
+            value,
+            mut r#ref,
+            mut promise,
+            global,
+            task: _,
+        } = this;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
         let global = unsafe { &*global };
         r#ref.unref(bun_io::js_vm_ctx());
@@ -701,8 +709,7 @@ impl JSPasswordObject {
         if SYNC {
             return match op.compute(&password) {
                 Err(err) => {
-                    let error_instance =
-                        password_error_instance(&err, Op::ERR_VERB, global_object);
+                    let error_instance = password_error_instance(&err, Op::ERR_VERB, global_object);
                     Err(global_object.throw_value(error_instance))
                 }
                 Ok(v) => Ok(Op::to_js(v, global_object)),
@@ -742,7 +749,14 @@ impl JSPasswordObject {
         prev_hash: Box<[u8]>,
         algorithm: Option<Algorithm>,
     ) -> JsResult<JSValue> {
-        Self::run::<VerifyOp, SYNC>(global_object, password, VerifyOp { prev_hash, algorithm })
+        Self::run::<VerifyOp, SYNC>(
+            global_object,
+            password,
+            VerifyOp {
+                prev_hash,
+                algorithm,
+            },
+        )
     }
 }
 
@@ -772,8 +786,7 @@ pub fn js_password_object_hash(
     // fromJS(...) orelse {
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
-    let password_to_hash =
-        StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
+    let password_to_hash = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
     // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
 
     if password_to_hash.is_empty() {
@@ -782,7 +795,11 @@ pub fn js_password_object_hash(
         );
     }
 
-    JSPasswordObject::hash::<false>(global_object, password_to_hash.into_boxed_slice(), algorithm)
+    JSPasswordObject::hash::<false>(
+        global_object,
+        password_to_hash.into_boxed_slice(),
+        algorithm,
+    )
 }
 
 // Once we have bindings generator, this should be replaced with a generated function
@@ -848,9 +865,7 @@ pub fn js_password_object_verify(
 
     if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
         if !arguments[2].is_string() {
-            return Err(
-                global_object.throw_invalid_argument_type("verify", "algorithm", "string")
-            );
+            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
         let algorithm_string = arguments[2].get_zig_string(global_object)?;
@@ -892,12 +907,18 @@ pub fn js_password_object_verify(
 
     if owned_hash.is_empty() {
         drop(owned_password);
-        return Ok(JSPromise::resolved_promise_value(global_object, JSValue::FALSE));
+        return Ok(JSPromise::resolved_promise_value(
+            global_object,
+            JSValue::FALSE,
+        ));
     }
 
     if owned_password.is_empty() {
         drop(owned_hash);
-        return Ok(JSPromise::resolved_promise_value(global_object, JSValue::FALSE));
+        return Ok(JSPromise::resolved_promise_value(
+            global_object,
+            JSValue::FALSE,
+        ));
     }
 
     JSPasswordObject::verify::<false>(
@@ -925,9 +946,7 @@ pub fn js_password_object_verify_sync(
 
     if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
         if !arguments[2].is_string() {
-            return Err(
-                global_object.throw_invalid_argument_type("verify", "algorithm", "string")
-            );
+            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
         let algorithm_string = arguments[2].get_zig_string(global_object)?;
@@ -957,9 +976,11 @@ pub fn js_password_object_verify_sync(
 
     let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
         drop(password);
-        return Err(
-            global_object.throw_invalid_argument_type("verify", "hash", "string or TypedArray")
-        );
+        return Err(global_object.throw_invalid_argument_type(
+            "verify",
+            "hash",
+            "string or TypedArray",
+        ));
     };
 
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
@@ -982,7 +1003,6 @@ pub fn js_password_object_verify_sync(
     )
 }
 
-const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str =
-    "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
+const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
 // ported from: src/runtime/crypto/PasswordObject.zig

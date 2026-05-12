@@ -2,12 +2,12 @@ use bstr::BStr;
 
 use bun_core::ZBox;
 use bun_core::fmt::PathSep;
+use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{initialize_store, Resolution, ResolutionTag};
+use bun_install::{Resolution, ResolutionTag, initialize_store};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
-use bun_core::strings;
 use bun_sys::{self, Fd};
 
 use crate::bun_json::{self, Expr};
@@ -219,11 +219,8 @@ impl Scripts {
         add_node_gyp_rebuild_script: bool,
     ) -> Option<List> {
         let _ = lockfile;
-        let (first_index, total, scripts) = self.get_script_entries(
-            lockfile_buf,
-            resolution_tag,
-            add_node_gyp_rebuild_script,
-        );
+        let (first_index, total, scripts) =
+            self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
             #[cfg(windows)]
             let mut cwd_buf = bun_paths::PathBuffer::uninit();
@@ -233,10 +230,9 @@ impl Scripts {
 
             #[cfg(windows)]
             let cwd: &[u8] = 'brk: {
-                let Ok(cwd_handle) = bun_sys::open_dir_no_renaming_or_deleting_windows(
-                    Fd::INVALID,
-                    cwd_.slice_z(),
-                ) else {
+                let Ok(cwd_handle) =
+                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_.slice_z())
+                else {
                     break 'brk cwd_.slice();
                 };
                 // Resolve the canonical path, then close the directory HANDLE.
@@ -458,7 +454,9 @@ impl List {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                BStr::new(strings::without_trailing_slash(&self.cwd.as_bytes()[i + 1..])),
+                BStr::new(strings::without_trailing_slash(
+                    &self.cwd.as_bytes()[i + 1..]
+                )),
                 resolution.fmt(resolution_buf, PathSep::Posix),
             );
         } else {

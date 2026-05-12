@@ -2,17 +2,19 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
-use bun_paths::strings;
 use bun_alloc::ArenaVecExt as _;
+use bun_paths::strings;
 use core::fmt;
 use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena, ArenaVec};
-use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_collections::array_hash_map::ArrayHashContext;
+use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Strong, StrongOptional, StringJsc};
-use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
+};
+use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
 
 use bun_wyhash;
@@ -105,7 +107,6 @@ pub struct Route {
     pub file_page: OpaqueFileIdOptional,
     pub file_layout: OpaqueFileIdOptional,
     // pub file_not_found: OpaqueFileIdOptional,
-
     /// Only used by DevServer, if this route is 1. navigatable & 2. has been requested at least once
     pub bundle: RouteBundleIndexOptional,
 }
@@ -263,7 +264,9 @@ pub struct EncodedPattern {
 
 impl EncodedPattern {
     /// `/` is represented by zero bytes
-    pub const ROOT: EncodedPattern = EncodedPattern { data: bun_ptr::RawSlice::EMPTY };
+    pub const ROOT: EncodedPattern = EncodedPattern {
+        data: bun_ptr::RawSlice::EMPTY,
+    };
 
     #[inline]
     fn data(&self) -> &[u8] {
@@ -289,7 +292,9 @@ impl EncodedPattern {
             }
             debug_assert!(fbs.pos == len);
         }
-        Ok(EncodedPattern { data: bun_ptr::RawSlice::new(slice) })
+        Ok(EncodedPattern {
+            data: bun_ptr::RawSlice::new(slice),
+        })
     }
 
     pub fn iterate(&self) -> EncodedPatternIterator<'_> {
@@ -391,7 +396,9 @@ impl EncodedPattern {
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {
                                     key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
+                                    value: bun_ptr::RawSlice::new(
+                                        &path[segment_start..segment_end],
+                                    ),
                                 };
                                 param_num += 1;
                             }
@@ -423,8 +430,8 @@ impl<'a> EncodedPatternIterator<'a> {
                 .try_into()
                 .unwrap(),
         ));
-        let payload =
-            &self.pattern[self.offset + size_of::<u32>()..self.offset + size_of::<u32>() + header.len()];
+        let payload = &self.pattern
+            [self.offset + size_of::<u32>()..self.offset + size_of::<u32>() + header.len()];
         let part = match header.tag() {
             PartTag::Text => Part::Text(payload),
             PartTag::Param => Part::Param(payload),
@@ -589,13 +596,17 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn write_as_serialized(
+        &self,
+        writer: &mut impl bun_io::Write,
+    ) -> Result<(), bun_core::Error> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());
         }
         let payload = self.payload();
-        let header = SerializedHeader::new(self.tag(), u32::try_from(payload.len()).expect("int cast"));
+        let header =
+            SerializedHeader::new(self.tag(), u32::try_from(payload.len()).expect("int cast"));
         writer.write_all(&header.0.to_le_bytes())?;
         writer.write_all(payload)?;
         Ok(())
@@ -682,8 +693,7 @@ pub static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
     b"nextjs-app-routes" => || Style::NextjsAppRoutes,
 };
 
-pub const STYLE_ERROR_MESSAGE: &str =
-    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+pub const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
     // TODO(port): move to *_jsc — calls JSValue methods
@@ -727,13 +737,23 @@ impl Style {
         debug_assert!(file_path[0] == b'/');
 
         match self {
-            Style::NextjsPages => Self::parse_nextjs_pages(file_path, ext, log, allow_layouts, arena),
-            Style::NextjsAppUi => {
-                Self::parse_nextjs_app::<{ UiOrRoutes::Ui }>(file_path, ext, log, allow_layouts, arena)
+            Style::NextjsPages => {
+                Self::parse_nextjs_pages(file_path, ext, log, allow_layouts, arena)
             }
-            Style::NextjsAppRoutes => {
-                Self::parse_nextjs_app::<{ UiOrRoutes::Routes }>(file_path, ext, log, allow_layouts, arena)
-            }
+            Style::NextjsAppUi => Self::parse_nextjs_app::<{ UiOrRoutes::Ui }>(
+                file_path,
+                ext,
+                log,
+                allow_layouts,
+                arena,
+            ),
+            Style::NextjsAppRoutes => Self::parse_nextjs_app::<{ UiOrRoutes::Routes }>(
+                file_path,
+                ext,
+                log,
+                allow_layouts,
+                arena,
+            ),
 
             // The strategy for this should be to collect a list of candidates,
             // then batch-call the javascript handler and collect all results.
@@ -851,7 +871,7 @@ impl Style {
                                 start,
                                 raw_input.len() - start,
                             )
-                            .into())
+                            .into());
                     }
                 };
 
@@ -975,7 +995,7 @@ impl Style {
                                 start,
                                 raw_input.len() - start,
                             )
-                            .into())
+                            .into());
                     }
                 };
 
@@ -1029,7 +1049,10 @@ impl Style {
             }
         }
         if !route_segment[i..].is_empty() {
-            for part in route_segment[i..].split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+            for part in route_segment[i..]
+                .split(|b| *b == b'/')
+                .filter(|s| !s.is_empty())
+            {
                 parts.push(Part::Text(part));
             }
         }
@@ -1173,8 +1196,7 @@ impl FrameworkRouter {
                         file_layout: None,
                         bundle: RouteBundleIndexOptional::None,
                     })?;
-                    self.route_ptr_mut(new_route_index).first_child =
-                        Some(newer_route_index);
+                    self.route_ptr_mut(new_route_index).first_child = Some(newer_route_index);
                     new_route_index = newer_route_index;
                 }
 
@@ -1262,7 +1284,9 @@ pub struct MatchedParams {
 
 impl Default for MatchedParams {
     fn default() -> Self {
-        Self { params: BoundedArray::default() }
+        Self {
+            params: BoundedArray::default(),
+        }
     }
 }
 
@@ -1372,7 +1396,12 @@ impl From<PatternParseError> for bun_core::Error {
     }
 }
 
-const TINY_LOG_CAP: usize = 512 + if MAX_PATH_BYTES < 4096 { MAX_PATH_BYTES } else { 4096 };
+const TINY_LOG_CAP: usize = 512
+    + if MAX_PATH_BYTES < 4096 {
+        MAX_PATH_BYTES
+    } else {
+        4096
+    };
 
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
 /// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
@@ -1679,10 +1708,12 @@ impl FrameworkRouter {
                         // `mi_heap` warm between directory entries instead of
                         // paying `mi_heap_destroy + mi_heap_new` per file.
                         let parse_result =
-                            t.style.parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
+                            t.style
+                                .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at += u32::try_from(abs_root_len - root_len).expect("int cast");
+                                log.cursor_at +=
+                                    u32::try_from(abs_root_len - root_len).expect("int cast");
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
@@ -1865,13 +1896,13 @@ impl JSFrameworkRouter {
         // Zig's `errdefer style.deinit()` is implicit: `Style` owns a `Strong` (Drop type),
         // so `?` on any error path below drops it automatically.
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(
-            paths::resolve_path::join_abs::<paths::platform::Auto>(
-                // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-                bun_resolver::fs::FileSystem::get().top_level_dir,
-                root.slice(),
-            ),
-        )
+        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
+            paths::platform::Auto,
+        >(
+            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
+            bun_resolver::fs::FileSystem::get().top_level_dir,
+            root.slice(),
+        ))
         .into();
 
         let types: Box<[Type]> = Box::new([Type {
@@ -1928,23 +1959,17 @@ impl JSFrameworkRouter {
                     )),
                 )?;
             }
-            return Err(global.throw_value(
-                global.create_aggregate_error_with_array(
-                    bun_core::String::static_str("Errors scanning routes"),
-                    arr,
-                )?,
-            ));
+            return Err(global.throw_value(global.create_aggregate_error_with_array(
+                bun_core::String::static_str("Errors scanning routes"),
+                arr,
+            )?));
         }
 
         Ok(jsfr)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
         let path = path_value.to_slice(global)?;
 
@@ -1987,8 +2012,16 @@ impl JSFrameworkRouter {
         let route = self.router.route_ptr(route_index);
         let obj = JSValue::create_empty_object(global, 4);
         obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
-        obj.put(global, b"page", self.file_id_to_js(global, route.file_page)?);
-        obj.put(global, b"layout", self.file_id_to_js(global, route.file_layout)?);
+        obj.put(
+            global,
+            b"page",
+            self.file_id_to_js(global, route.file_page)?,
+        );
+        obj.put(
+            global,
+            b"layout",
+            self.file_id_to_js(global, route.file_layout)?,
+        );
         // obj.put(global, "notFound", self.file_id_to_js(global, route.file_not_found)?);
         obj.put(global, b"children", {
             let mut len: usize = 0;
@@ -2018,8 +2051,16 @@ impl JSFrameworkRouter {
         let route = self.router.route_ptr(route_index);
         let obj = JSValue::create_empty_object(global, 4);
         obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
-        obj.put(global, b"page", self.file_id_to_js(global, route.file_page)?);
-        obj.put(global, b"layout", self.file_id_to_js(global, route.file_layout)?);
+        obj.put(
+            global,
+            b"page",
+            self.file_id_to_js(global, route.file_page)?,
+        );
+        obj.put(
+            global,
+            b"layout",
+            self.file_id_to_js(global, route.file_layout)?,
+        );
         // obj.put(global, "notFound", self.file_id_to_js(global, route.file_not_found)?);
         obj.put(
             global,
@@ -2043,9 +2084,8 @@ impl JSFrameworkRouter {
         let arena = Arena::new();
 
         if frame.arguments_count() < 2 {
-            return Err(
-                global.throw_invalid_arguments(format_args!("parseRoutePattern takes two arguments"))
-            );
+            return Err(global
+                .throw_invalid_arguments(format_args!("parseRoutePattern takes two arguments")));
         }
 
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();

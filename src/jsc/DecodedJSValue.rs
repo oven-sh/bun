@@ -1,4 +1,4 @@
-use crate::{ffi, JSCell, JSValue};
+use crate::{JSCell, JSValue, ffi};
 
 /// ABI-compatible with `JSC::JSValue`.
 #[repr(C)]

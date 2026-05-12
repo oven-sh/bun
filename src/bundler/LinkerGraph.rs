@@ -1,20 +1,20 @@
+use crate::bundled_ast;
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_collections::{AutoBitSet, VecExt, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
-use bun_js_parser as js_ast;
 use bun_ast::base::RefTag;
-use crate::bundled_ast;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_ast::{ImportKind, ImportRecord};
+use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
 use bun_core::PathString;
+use bun_js_parser as js_ast;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::entry_point::EntryPointColumns as _;
 use crate::{
-    entry_point, import_record, index, js_meta, part, EntryPoint, ImportTracker, Index, JSAst,
-    JSMeta, Part, Ref, ResolvedExports, TopLevelSymbolToParts, UseDirective,
+    EntryPoint, ImportTracker, Index, JSAst, JSMeta, Part, Ref, ResolvedExports,
+    TopLevelSymbolToParts, UseDirective, entry_point, import_record, index, js_meta, part,
 };
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // PORT NOTE: `BundledAstColumns` is emitted by ``
@@ -297,11 +297,12 @@ pub fn generate_symbol_import_and_use(
 
     // Mark this symbol as used by this part
     {
-        let part: &mut Part =
-            &mut parts[source_index as usize].slice_mut()[part_index as usize];
+        let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use { count_estimate: use_count };
+            *uses_entry.value_ptr = symbol::Use {
+                count_estimate: use_count,
+            };
         } else {
             uses_entry.value_ptr.count_estimate += use_count;
         }
@@ -340,7 +341,8 @@ pub fn generate_symbol_import_and_use(
         source_index_to_import_from.get(),
         ref_,
     );
-    let dependencies = &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
+    let dependencies =
+        &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
     // SAFETY: every element of `new_dependencies` is overwritten in the
     // zip-loop immediately below before any read/drop.
     let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
@@ -368,7 +370,9 @@ impl LinkerGraph {
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
     #[inline]
     pub fn symbol(&self, ref_: Ref) -> &Symbol {
-        self.symbols.get_const(ref_).expect("infallible: ref in symbol table")
+        self.symbols
+            .get_const(ref_)
+            .expect("infallible: ref in symbol table")
     }
 
     /// Mutable view of a symbol that is known to exist. Takes `&self` (not
@@ -388,7 +392,12 @@ impl LinkerGraph {
     pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
         // SAFETY: see `symbol` for liveness/validity; caller guarantees the
         // mutated slot is disjoint from any other borrow held at the call site.
-        unsafe { &mut *self.symbols.get(ref_).expect("infallible: ref in symbol table") }
+        unsafe {
+            &mut *self
+                .symbols
+                .get(ref_)
+                .expect("infallible: ref in symbol table")
+        }
     }
 
     pub fn generate_new_symbol(
@@ -585,8 +594,7 @@ impl LinkerGraph {
             }
 
             if scb.list.len() > 0 {
-                self.is_scb_bitset =
-                    BitSet::init_empty(self.files.len()).expect("unreachable");
+                self.is_scb_bitset = BitSet::init_empty(self.files.len()).expect("unreachable");
 
                 // Index all SCBs into the bitset. This is needed so chunking
                 // can track the chunks that SCBs belong to.
@@ -621,8 +629,9 @@ impl LinkerGraph {
                 let import_records_list: &mut [import_record::List] =
                     self.ast.items_import_records_mut();
                 for source_id in self.reachable_files.slice() {
-                    for import_record in
-                        import_records_list[source_id.get() as usize].slice_mut().iter_mut()
+                    for import_record in import_records_list[source_id.get() as usize]
+                        .slice_mut()
+                        .iter_mut()
                     {
                         if import_record.source_index.is_valid()
                             && self

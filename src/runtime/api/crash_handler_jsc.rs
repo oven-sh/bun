@@ -1,12 +1,12 @@
 //! JS testing/debugging bindings for the crash handler. Keeps
 //! `src/crash_handler/` free of JSC types.
 
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
-use bun_core::String as BunString;
-use bun_collections::BoundedArray;
-use bun_core::{Global, Environment};
-use bun_crash_handler as crash_handler;
 use bun_analytics as analytics;
+use bun_collections::BoundedArray;
+use bun_core::String as BunString;
+use bun_core::{Environment, Global};
+use bun_crash_handler as crash_handler;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 pub mod js_bindings {
     use super::*;
@@ -17,14 +17,20 @@ pub mod js_bindings {
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
-            ("getMachOImageZeroOffset", __jsc_host_js_get_mach_o_image_zero_offset),
+            (
+                "getMachOImageZeroOffset",
+                __jsc_host_js_get_mach_o_image_zero_offset,
+            ),
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
-            ("raiseIgnoringPanicHandler", __jsc_host_js_raise_ignoring_panic_handler),
+            (
+                "raiseIgnoringPanicHandler",
+                __jsc_host_js_raise_ignoring_panic_handler,
+            ),
         ];
         for &(name, func) in ENTRIES {
             obj.put(

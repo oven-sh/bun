@@ -1,17 +1,16 @@
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 
-use bun_core::{Global, Output};
-use bun_ast::{Log, Loc};
+use bun_ast::{Loc, Log};
 use bun_core::strings;
-use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
+use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
+use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
-use bun_install::{
-    Dependency, Lockfile, PackageID, PackageNameHash, INVALID_PACKAGE_ID,
-    PackageManager,
-};
 use bun_install::dependency::{self, DependencyExt as _};
+use bun_install::{
+    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
+};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
 pub struct UpdateRequest {
@@ -159,12 +158,8 @@ impl UpdateRequest {
                 Subcommand::Link | Subcommand::Unlink => {
                     if !input.starts_with(b"link:") {
                         let mut buf = Vec::with_capacity(input.len() * 2 + 6);
-                        write!(
-                            &mut buf,
-                            "{0}@link:{0}",
-                            bstr::BStr::new(&input)
-                        )
-                        .expect("unreachable");
+                        write!(&mut buf, "{0}@link:{0}", bstr::BStr::new(&input))
+                            .expect("unreachable");
                         input = buf;
                     }
                 }
@@ -244,9 +239,7 @@ impl UpdateRequest {
                 dependency::version::Tag::DistTag => {
                     version.dist_tag().name.eql(placeholder, input, input)
                 }
-                dependency::version::Tag::Npm => {
-                    version.npm().name.eql(placeholder, input, input)
-                }
+                dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
                 if fatal {
@@ -300,8 +293,8 @@ impl UpdateRequest {
     }
 }
 
-pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
-pub use bun_install::package_manager::Options;
 pub use super::Subcommand;
+pub use bun_install::package_manager::Options;
+pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
 
 // ported from: src/install/PackageManager/UpdateRequest.zig

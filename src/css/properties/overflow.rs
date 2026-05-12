@@ -1,5 +1,5 @@
 use crate as css;
-use crate::{Parser, Printer, PrintErr};
+use crate::{Parser, PrintErr, Printer};
 
 /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
 #[derive(Clone, Copy, PartialEq, Eq)]

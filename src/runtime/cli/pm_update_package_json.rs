@@ -11,9 +11,9 @@
 //! `update_package_json_and_install_and_cli`.
 
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::{err, Error, Global, Output};
+use bun_core::{Error, Global, Output, err};
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
-use bun_install::package_manager_real::{update_package_json_and_install_and_cli, Subcommand};
+use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
 use crate::build_command::BuildCommand;
 use crate::cli::Cli;
@@ -39,10 +39,7 @@ pub fn update_package_json_and_install_catch_error(
     }
 }
 
-pub fn update_package_json_and_install(
-    ctx: Context,
-    subcommand: Subcommand,
-) -> Result<(), Error> {
+pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
     // TODO(port): narrow error set
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
@@ -78,8 +75,7 @@ pub fn update_package_json_and_install(
                 // `bun.default_allocator.alloc(string, keys.len + 1)` with no matching
                 // free — `Global::exit(0)` follows immediately. `OnceLock` (not
                 // leaked) per PORTING.md §Forbidden.
-                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> =
-                    std::sync::OnceLock::new();
+                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();
 

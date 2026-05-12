@@ -1,21 +1,21 @@
 #![allow(dead_code, unused_imports)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
+use bun_alloc::ArenaVecExt as _;
 
 use crate::Result;
-use css::SmallList;
-use css::Printer;
 use css::PrintErr;
+use css::Printer;
+use css::SmallList;
 
+use css::VendorPrefix;
+use css::css_properties::{Property, PropertyId, PropertyIdTag};
+use css::css_values::image::Image;
+use css::css_values::length::LengthOrNumber;
 use css::css_values::length::LengthPercentage;
 use css::css_values::number::{CSSNumber, CSSNumberFns};
-use css::css_values::length::LengthOrNumber;
-use css::css_values::image::Image;
-use css::css_values::rect::Rect;
 use css::css_values::percentage::NumberOrPercentage;
 use css::css_values::percentage::Percentage;
-use css::css_properties::{Property, PropertyId, PropertyIdTag};
-use css::VendorPrefix;
+use css::css_values::rect::Rect;
 
 use bun_alloc::Arena;
 
@@ -68,7 +68,10 @@ impl BorderImage {
                     slice = Some(value);
                     // Parse border image width and outset, if applicable.
                     let maybe_width_outset = input.try_parse(
-                        |i: &mut css::Parser| -> Result<(Option<Rect<BorderImageSideWidth>>, Option<Rect<LengthOrNumber>>)> {
+                        |i: &mut css::Parser| -> Result<(
+                            Option<Rect<BorderImageSideWidth>>,
+                            Option<Rect<LengthOrNumber>>,
+                        )> {
                             if let Err(e) = i.expect_delim(b'/') {
                                 return Err(e);
                             }
@@ -76,16 +79,20 @@ impl BorderImage {
                             let w = i.try_parse(Rect::<BorderImageSideWidth>::parse).ok();
 
                             let o = i
-                                .try_parse(|in_: &mut css::Parser| -> Result<Rect<LengthOrNumber>> {
-                                    if let Err(e) = in_.expect_delim(b'/') {
-                                        return Err(e);
-                                    }
-                                    Rect::<LengthOrNumber>::parse(in_)
-                                })
+                                .try_parse(
+                                    |in_: &mut css::Parser| -> Result<Rect<LengthOrNumber>> {
+                                        if let Err(e) = in_.expect_delim(b'/') {
+                                            return Err(e);
+                                        }
+                                        Rect::<LengthOrNumber>::parse(in_)
+                                    },
+                                )
                                 .ok();
 
                             if w.is_none() && o.is_none() {
-                                return Err(i.new_custom_error(css::ParserError::invalid_declaration));
+                                return Err(
+                                    i.new_custom_error(css::ParserError::invalid_declaration)
+                                );
                             }
                             Ok((w, o))
                         },
@@ -120,12 +127,20 @@ impl BorderImage {
             break;
         }
 
-        if source.is_some() || slice.is_some() || width.is_some() || outset.is_some() || repeat.is_some() {
+        if source.is_some()
+            || slice.is_some()
+            || width.is_some()
+            || outset.is_some()
+            || repeat.is_some()
+        {
             return Ok(BorderImage {
                 source: source.unwrap_or_default(),
                 slice: slice.unwrap_or_else(BorderImageSlice::default),
-                width: width.unwrap_or_else(|| Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())),
-                outset: outset.unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
+                width: width.unwrap_or_else(|| {
+                    Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())
+                }),
+                outset: outset
+                    .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
                 repeat: repeat.unwrap_or_else(BorderImageRepeat::default),
             });
         }
@@ -133,7 +148,14 @@ impl BorderImage {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        Self::to_css_internal(&self.source, &self.slice, &self.width, &self.outset, &self.repeat, dest)
+        Self::to_css_internal(
+            &self.source,
+            &self.slice,
+            &self.width,
+            &self.outset,
+            &self.repeat,
+            dest,
+        )
     }
 
     pub fn to_css_internal(
@@ -148,7 +170,9 @@ impl BorderImage {
             source.to_css(dest)?;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
-        let has_width = !width.eql(&Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default()));
+        let has_width = !width.eql(&Rect::<BorderImageSideWidth>::all(
+            BorderImageSideWidth::default(),
+        ));
         let has_outset = !outset.eql(&Rect::<LengthOrNumber>::all(LengthOrNumber::Number(0.0)));
         if has_slice || has_width || has_outset {
             dest.write_str(" ")?;
@@ -174,7 +198,11 @@ impl BorderImage {
         Ok(())
     }
 
-    pub fn get_fallbacks(&mut self, arena: &Arena, targets: css::targets::Targets) -> SmallList<BorderImage, 6> {
+    pub fn get_fallbacks(
+        &mut self,
+        arena: &Arena,
+        targets: css::targets::Targets,
+    ) -> SmallList<BorderImage, 6> {
         let fallbacks = self.source.get_fallbacks(arena, targets);
         // PORT NOTE: `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
@@ -266,7 +294,10 @@ impl BorderImageRepeat {
     }
 
     pub fn deep_clone(&self, _arena: &Arena) -> Self {
-        BorderImageRepeat { horizontal: self.horizontal, vertical: self.vertical }
+        BorderImageRepeat {
+            horizontal: self.horizontal,
+            vertical: self.vertical,
+        }
     }
 }
 
@@ -371,13 +402,17 @@ pub struct BorderImageSlice {
 
 impl BorderImageSlice {
     pub fn parse(input: &mut css::Parser) -> Result<BorderImageSlice> {
-        let mut fill = input.try_parse(|i| i.expect_ident_matching(b"fill")).is_ok();
+        let mut fill = input
+            .try_parse(|i| i.expect_ident_matching(b"fill"))
+            .is_ok();
         let offsets = match Rect::<NumberOrPercentage>::parse(input) {
             Err(e) => return Err(e),
             Ok(v) => v,
         };
         if !fill {
-            fill = input.try_parse(|i| i.expect_ident_matching(b"fill")).is_ok();
+            fill = input
+                .try_parse(|i| i.expect_ident_matching(b"fill"))
+                .is_ok();
         }
         Ok(BorderImageSlice { offsets, fill })
     }
@@ -400,7 +435,9 @@ impl BorderImageSlice {
 
     pub fn default() -> BorderImageSlice {
         BorderImageSlice {
-            offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage { v: 1.0 })),
+            offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
+                v: 1.0,
+            })),
             fill: false,
         }
     }
@@ -530,20 +567,26 @@ impl BorderImageHandler {
 
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
-                    let mut unparsed_clone = if unparsed.property_id.tag() == PropertyIdTag::BorderImage {
-                        unparsed.get_prefixed(arena, context.targets, css::prefixes::Feature::BorderImage)
-                    } else {
-                        unparsed.deep_clone(arena)
-                    };
+                    let mut unparsed_clone =
+                        if unparsed.property_id.tag() == PropertyIdTag::BorderImage {
+                            unparsed.get_prefixed(
+                                arena,
+                                context.targets,
+                                css::prefixes::Feature::BorderImage,
+                            )
+                        } else {
+                            unparsed.deep_clone(arena)
+                        };
 
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-                    
-                     // blocked_on: PropertyHandlerContext::add_unparsed_fallbacks (gated in context.rs)
+
+                    // blocked_on: PropertyHandlerContext::add_unparsed_fallbacks (gated in context.rs)
                     context.add_unparsed_fallbacks(arena, &mut unparsed_clone);
                     let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(
-                        BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag()).unwrap(),
+                        BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag())
+                            .unwrap(),
                     );
                     dest.push(Property::Unparsed(unparsed_clone));
                     // PERF(port): was bun.handleOom(dest.append(arena, ...))
@@ -557,7 +600,11 @@ impl BorderImageHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut css::DeclarationList, context: &mut css::PropertyHandlerContext) {
+    pub fn finalize(
+        &mut self,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
         self.flushed_properties = BorderImageProperty::empty();
     }
@@ -582,7 +629,11 @@ impl BorderImageHandler {
         }
     }
 
-    fn flush(&mut self, dest: &mut css::DeclarationList, context: &mut css::PropertyHandlerContext) {
+    fn flush(
+        &mut self,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
+    ) {
         if !self.has_any {
             return;
         }
@@ -596,7 +647,12 @@ impl BorderImageHandler {
         let outset = self.outset.take();
         let repeat = self.repeat.take();
 
-        if source.is_some() && slice.is_some() && width.is_some() && outset.is_some() && repeat.is_some() {
+        if source.is_some()
+            && slice.is_some()
+            && width.is_some()
+            && outset.is_some()
+            && repeat.is_some()
+        {
             let mut border_image = BorderImage {
                 source: source.unwrap(),
                 slice: slice.unwrap(),
@@ -607,7 +663,9 @@ impl BorderImageHandler {
 
             let mut prefix = self.vendor_prefix;
             if prefix.contains(VendorPrefix::NONE) && !border_image.slice.fill {
-                prefix = context.targets.prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
+                prefix = context
+                    .targets
+                    .prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                 if self.flushed_properties.is_empty() {
                     let fallbacks = border_image.get_fallbacks(arena, context.targets);
                     for fallback in fallbacks.slice() {
@@ -631,10 +689,14 @@ impl BorderImageHandler {
             }
 
             dest.push(Property::BorderImage((border_image, prefix)));
-            self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE);
+            self.flushed_properties
+                .insert(BorderImageProperty::BORDER_IMAGE);
         } else {
             if let Some(mut_source) = &mut source {
-                if !self.flushed_properties.contains(BorderImageProperty::BORDER_IMAGE_SOURCE) {
+                if !self
+                    .flushed_properties
+                    .contains(BorderImageProperty::BORDER_IMAGE_SOURCE)
+                {
                     let img_fallbacks = mut_source.get_fallbacks(arena, context.targets);
                     for fallback in img_fallbacks.slice() {
                         // TODO(port): same by-value move note as above.
@@ -645,27 +707,32 @@ impl BorderImageHandler {
                 dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
                 // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
                 // avoid partial-move out of `source: Option<Image>`. Revisit in Phase B.
-                self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
+                self.flushed_properties
+                    .insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
             }
 
             if let Some(s) = slice {
                 dest.push(Property::BorderImageSlice(s));
-                self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_SLICE);
+                self.flushed_properties
+                    .insert(BorderImageProperty::BORDER_IMAGE_SLICE);
             }
 
             if let Some(w) = width {
                 dest.push(Property::BorderImageWidth(w));
-                self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_WIDTH);
+                self.flushed_properties
+                    .insert(BorderImageProperty::BORDER_IMAGE_WIDTH);
             }
 
             if let Some(o) = outset {
                 dest.push(Property::BorderImageOutset(o));
-                self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_OUTSET);
+                self.flushed_properties
+                    .insert(BorderImageProperty::BORDER_IMAGE_OUTSET);
             }
 
             if let Some(r) = repeat {
                 dest.push(Property::BorderImageRepeat(r));
-                self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_REPEAT);
+                self.flushed_properties
+                    .insert(BorderImageProperty::BORDER_IMAGE_REPEAT);
             }
         }
 

@@ -5,11 +5,11 @@
 //! `StoreSlice<T>` / `StoreStr` (lifetime-erased arena slice newtypes — see
 //! `crate::StoreSlice` doc).
 
+use crate::g as G;
 use crate::{
     Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
 };
-use crate::g as G;
 use crate::{StoreSlice, StoreStr};
 
 pub struct Block {
@@ -19,7 +19,10 @@ pub struct Block {
 
 impl Default for Block {
     fn default() -> Self {
-        Self { stmts: StmtNodeList::EMPTY, close_brace_loc: crate::Loc::EMPTY }
+        Self {
+            stmts: StmtNodeList::EMPTY,
+            close_brace_loc: crate::Loc::EMPTY,
+        }
     }
 }
 
@@ -131,7 +134,7 @@ pub struct If {
 pub struct For {
     /// May be a SConst, SLet, SVar, or SExpr
     pub init: Option<StmtNodeIndex>, // = None
-    pub test_: Option<ExprNodeIndex>, // = None
+    pub test_: Option<ExprNodeIndex>,  // = None
     pub update: Option<ExprNodeIndex>, // = None
     pub body: StmtNodeIndex,
 }
@@ -171,7 +174,7 @@ pub struct Try {
     pub body_loc: crate::Loc,
     pub body: StmtNodeList,
 
-    pub catch_: Option<Catch>, // = None
+    pub catch_: Option<Catch>,    // = None
     pub finally: Option<Finally>, // = None
 }
 
@@ -199,8 +202,8 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>, // = None
-    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
+    pub default_name: Option<LocRef>,      // = None
+    pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
     pub star_name_loc: Option<crate::Loc>, // = None
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
@@ -229,9 +232,9 @@ pub struct Throw {
 }
 
 pub struct Local {
-    pub kind: Kind, // = Kind::KVar
+    pub kind: Kind,         // = Kind::KVar
     pub decls: G::DeclList, // = .{}
-    pub is_export: bool, // = false
+    pub is_export: bool,    // = false
     /// The TypeScript compiler doesn't generate code for "import foo = bar"
     /// statements where the import is never used.
     pub was_ts_import_equals: bool, // = false

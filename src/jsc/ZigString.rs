@@ -14,16 +14,16 @@ use core::ffi::c_void;
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
 
+/// `ZigString.as_()` return type — re-exported alongside the struct.
+pub use bun_core::ByteString;
 /// Canonical `ZigString` lives in `bun_core`; re-exported here so existing
 /// `bun_jsc::zig_string::ZigString` import paths keep resolving.
 pub use bun_core::ZigString;
-/// `ZigString.as_()` return type — re-exported alongside the struct.
-pub use bun_core::ByteString;
-/// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
-pub use bun_core::ZigStringSlice as Slice;
 /// `ZigString.githubAction()` return type — re-exported for parity with the
 /// pre-dedup local `GithubActionFormatter` struct.
 pub use bun_core::ZigStringGithubActionFormatter as GithubActionFormatter;
+/// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
+pub use bun_core::ZigStringSlice as Slice;
 
 /// JSC-side conversions on `ZigString` are provided by the [`ZigStringJsc`]
 /// extension trait (canonical impl in `crate::lib`). Re-exported here so
@@ -38,7 +38,11 @@ bun_opaque::opaque_ffi! { pub struct OpaqueJSString; }
 pub type JSStringRef = *mut OpaqueJSString;
 
 unsafe extern "C" {
-    fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toExternalU16(
+        ptr: *const u16,
+        len: usize,
+        global: *const JSGlobalObject,
+    ) -> JSValue;
 }
 
 /// `ZigString.static(comptime s)` — borrow a static ASCII/Latin-1 literal.
@@ -81,7 +85,9 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
-    let Some(allocator_) = core::ptr::NonNull::new(allocator_) else { return };
+    let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
+        return;
+    };
     // TODO(port): Zig dereferenced *std.mem.Allocator from opaque ptr — Rust uses global mimalloc;
     // verify no callers pass a non-default allocator here.
     let _ = allocator_;
@@ -100,7 +106,11 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
 pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
-    let untagged = ZigString::init(s).slice().as_ptr().cast_mut().cast::<c_void>();
+    let untagged = ZigString::init(s)
+        .slice()
+        .as_ptr()
+        .cast_mut()
+        .cast::<c_void>();
     #[cfg(debug_assertions)]
     // SAFETY: read-only heap-region probe.
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
@@ -130,13 +140,20 @@ mod _slice_struct {
 
     impl Default for Slice {
         fn default() -> Self {
-            Self { allocator: NullableAllocator::null(), ptr: b"".as_ptr(), len: 0 }
+            Self {
+                allocator: NullableAllocator::null(),
+                ptr: b"".as_ptr(),
+                len: 0,
+            }
         }
     }
 
     impl Slice {
-        pub const EMPTY: Slice =
-            Slice { allocator: NullableAllocator::NULL, ptr: b"".as_ptr(), len: 0 };
+        pub const EMPTY: Slice = Slice {
+            allocator: NullableAllocator::NULL,
+            ptr: b"".as_ptr(),
+            len: 0,
+        };
 
         pub fn is_wtf_allocated(&self) -> bool {
             self.allocator.is_wtf_allocator()
@@ -151,7 +168,11 @@ mod _slice_struct {
         }
 
         pub fn from_utf8_never_free(input: &[u8]) -> Slice {
-            Slice { ptr: input.as_ptr(), len: input.len() as u32, allocator: NullableAllocator::null() }
+            Slice {
+                ptr: input.as_ptr(),
+                len: input.len() as u32,
+                allocator: NullableAllocator::null(),
+            }
         }
 
         #[inline]

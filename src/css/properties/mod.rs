@@ -81,11 +81,22 @@ macro_rules! impl_rect_shorthand {
         impl $T {
             pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
                 let r = $crate::css_values::rect::Rect::<$V>::parse(input)?;
-                Ok(Self { top: r.top, right: r.right, bottom: r.bottom, left: r.left })
+                Ok(Self {
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                    left: r.left,
+                })
             }
-            pub fn to_css(&self, dest: &mut $crate::printer::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
+            pub fn to_css(
+                &self,
+                dest: &mut $crate::printer::Printer,
+            ) -> ::core::result::Result<(), $crate::PrintErr> {
                 $crate::css_values::rect::Rect::<&$V> {
-                    top: &self.top, right: &self.right, bottom: &self.bottom, left: &self.left,
+                    top: &self.top,
+                    right: &self.right,
+                    bottom: &self.bottom,
+                    left: &self.left,
                 }
                 .to_css(dest)
             }
@@ -137,9 +148,15 @@ macro_rules! impl_size_shorthand {
         impl $T {
             pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
                 let s = $crate::css_values::size::Size2D::<$V>::parse(input)?;
-                Ok(Self { $start: s.a, $end: s.b })
+                Ok(Self {
+                    $start: s.a,
+                    $end: s.b,
+                })
             }
-            pub fn to_css(&self, dest: &mut $crate::printer::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
+            pub fn to_css(
+                &self,
+                dest: &mut $crate::printer::Printer,
+            ) -> ::core::result::Result<(), $crate::PrintErr> {
                 use $crate::generic::ToCss as _;
                 self.$start.to_css(dest)?;
                 if self.$start != self.$end {
@@ -427,7 +444,10 @@ mod generic_registrations {
     /// traits and would otherwise create a coherence cycle).
     pub trait GenericBorderImpl: Sized {
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
-        fn to_css(&self, dest: &mut crate::printer::Printer) -> ::core::result::Result<(), crate::PrintErr>;
+        fn to_css(
+            &self,
+            dest: &mut crate::printer::Printer,
+        ) -> ::core::result::Result<(), crate::PrintErr>;
     }
 }
 pub(crate) use generic_registrations::GenericBorderImpl;

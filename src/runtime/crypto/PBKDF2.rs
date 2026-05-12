@@ -123,12 +123,17 @@ impl PBKDF2 {
         }
 
         if !arg2.is_any_int() {
-            return Err(global_this.throw_invalid_argument_type_value(b"iterations", b"number", arg2));
+            return Err(global_this.throw_invalid_argument_type_value(
+                b"iterations",
+                b"number",
+                arg2,
+            ));
         }
 
         let iteration_count = arg2.coerce_to_int64(global_this)?;
 
-        if !global_this.has_exception() && (iteration_count < 1 || iteration_count > i32::MAX as i64)
+        if !global_this.has_exception()
+            && (iteration_count < 1 || iteration_count > i32::MAX as i64)
         {
             return Err(global_this.throw_range_error(
                 iteration_count,
@@ -147,7 +152,9 @@ impl PBKDF2 {
 
         let algorithm = 'brk: {
             if !arg4.is_string() {
-                return Err(global_this.throw_invalid_argument_type_value(b"digest", b"string", arg4));
+                return Err(
+                    global_this.throw_invalid_argument_type_value(b"digest", b"string", arg4)
+                );
             }
 
             'invalid: {
@@ -233,9 +240,11 @@ impl PBKDF2 {
 
         if is_async {
             if !arg5.is_function() {
-                return Err(
-                    global_this.throw_invalid_argument_type_value(b"callback", b"function", arg5)
-                );
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"callback",
+                    b"function",
+                    arg5,
+                ));
             }
         }
 

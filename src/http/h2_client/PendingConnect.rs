@@ -67,10 +67,7 @@ impl PendingConnect {
     /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
     /// allocation `&mut self` borrows from (UAF). Caller holds the returned
     /// Box until scope exit (Zig: `defer pc.deinit()`).
-    pub fn unregister_from(
-        this: *const Self,
-        ctx: &mut NewHTTPContext<true>,
-    ) -> Option<Box<Self>> {
+    pub fn unregister_from(this: *const Self, ctx: &mut NewHTTPContext<true>) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
         // PORT NOTE: reshaped for borrowck (was `for + swapRemove + return`)
         list.iter()

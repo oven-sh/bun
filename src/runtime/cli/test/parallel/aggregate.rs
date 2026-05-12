@@ -7,25 +7,29 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{self, err, Output, ZBox};
+use bun_core::strings;
+use bun_core::{self, Output, ZBox, err};
+use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
-use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_core::strings;
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
-use crate::node::fs::{args as fs_args, NodeFS};
 use crate::node::PathLike;
+use crate::node::fs::{NodeFS, args as fs_args};
 use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B
     let needle = [b" ", name, b"=\""].concat();
-    let Some(idx) = strings::index_of(head, &needle) else { return 0 };
+    let Some(idx) = strings::index_of(head, &needle) else {
+        return 0;
+    };
     let start = idx + needle.len();
-    let Some(q) = strings::index_of_char(&head[start..], b'"') else { return 0 };
+    let Some(q) = strings::index_of_char(&head[start..], b'"') else {
+        return 0;
+    };
     let end = start + q as usize;
     // TODO(port): narrow error set
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
@@ -38,7 +42,11 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     // <testsuites> totals from what we actually emit so they always equal the
     // sum of inner <testsuite> elements; CI tools schema-validate this.
     #[derive(Default)]
-    struct Totals { tests: u32, failures: u32, skipped: u32 }
+    struct Totals {
+        tests: u32,
+        failures: u32,
+        skipped: u32,
+    }
     let mut totals = Totals::default();
 
     for path in &coord.junit_fragments {
@@ -48,18 +56,28 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
         };
         // Each fragment is a full <testsuites> document; extract its header
         // attributes for the merged totals and its body for the inner suites.
-        let Some(open_start) = strings::index_of(&file, b"<testsuites") else { continue };
-        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else { continue };
+        let Some(open_start) = strings::index_of(&file, b"<testsuites") else {
+            continue;
+        };
+        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else {
+            continue;
+        };
         let head_end = open_start + gt as usize;
         let head = &file[open_start..head_end];
         totals.tests += attr_value(head, b"tests");
         totals.failures += attr_value(head, b"failures");
         totals.skipped += attr_value(head, b"skipped");
         let body_start = head_end + 1;
-        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else { continue };
-        if body_start >= body_end { continue; }
+        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
+            continue;
+        };
+        if body_start >= body_end {
+            continue;
+        }
         let inner = strings::trim(&file[body_start..body_end], b"\n");
-        if inner.is_empty() { continue; }
+        if inner.is_empty() {
+            continue;
+        }
         body.extend_from_slice(inner);
         body.push(b'\n');
     }
@@ -81,7 +99,8 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     }
 
     let mut contents: Vec<u8> = Vec::new();
-    let elapsed_time = (bun_core::time::nano_timestamp() - bun_core::start_time()) as f64 / 1_000_000_000.0;
+    let elapsed_time =
+        (bun_core::time::nano_timestamp() - bun_core::start_time()) as f64 / 1_000_000_000.0;
     let _ = write!(
         &mut contents,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -160,7 +179,10 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
                     *gop.key_ptr = owned.clone();
-                    *gop.value_ptr = FileCoverage { path: owned, ..Default::default() };
+                    *gop.value_ptr = FileCoverage {
+                        path: owned,
+                        ..Default::default()
+                    };
                 }
                 cur = Some(gop.index);
             } else if line == b"end_of_record" {
@@ -170,15 +192,27 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 if line.starts_with(b"DA:") {
                     let mut parts = line[3..].split(|b| *b == b',');
                     let Some(ln_s) = parts.next() else { continue };
-                    let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else { continue };
+                    let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
+                        continue;
+                    };
                     let Some(cnt_s) = parts.next() else { continue };
-                    let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else { continue };
+                    let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else {
+                        continue;
+                    };
                     let gop = bun_core::handle_oom(fc.da.get_or_put(ln));
-                    *gop.value_ptr = if gop.found_existing { gop.value_ptr.saturating_add(cnt) } else { cnt };
+                    *gop.value_ptr = if gop.found_existing {
+                        gop.value_ptr.saturating_add(cnt)
+                    } else {
+                        cnt
+                    };
                 } else if line.starts_with(b"FNF:") {
-                    fc.fnf = fc.fnf.max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
+                    fc.fnf = fc
+                        .fnf
+                        .max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
                 } else if line.starts_with(b"FNH:") {
-                    fc.fnh = fc.fnh.max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
+                    fc.fnh = fc
+                        .fnh
+                        .max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
                 }
             }
         }
@@ -200,7 +234,9 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(&opts.reports_directory)),
+            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(
+                &opts.reports_directory,
+            )),
             always_return_none: true,
             ..Default::default()
         });
@@ -210,7 +246,12 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             &mut path_buf.0,
             &[&opts.reports_directory, b"lcov.info"],
         );
-        match File::openat(Fd::cwd(), out_path, O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC, 0o644) {
+        match File::openat(
+            Fd::cwd(),
+            out_path,
+            O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC,
+            0o644,
+        ) {
             bun_sys::Result::Err(e) => Output::err(
                 err!("lcovCoverageError"),
                 "Failed to write merged lcov.info\n{}",
@@ -223,11 +264,27 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     let fc = &by_file.values()[i];
                     let mut sorted: Vec<u32> = fc.da.keys().to_vec();
                     sorted.sort_unstable();
-                    let _ = write!(&mut w, "TN:\nSF:{}\nFNF:{}\nFNH:{}\n", BStr::new(&fc.path), fc.fnf, fc.fnh);
+                    let _ = write!(
+                        &mut w,
+                        "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
+                        BStr::new(&fc.path),
+                        fc.fnf,
+                        fc.fnh
+                    );
                     for &ln in &sorted {
-                        let _ = write!(&mut w, "DA:{},{}\n", ln, fc.da.get(&ln).expect("unreachable"));
+                        let _ = write!(
+                            &mut w,
+                            "DA:{},{}\n",
+                            ln,
+                            fc.da.get(&ln).expect("unreachable")
+                        );
                     }
-                    let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", fc.da.count(), fc.lh());
+                    let _ = write!(
+                        &mut w,
+                        "LF:{}\nLH:{}\nend_of_record\n",
+                        fc.da.count(),
+                        fc.lh()
+                    );
                 }
                 let _ = File::write_all(&f, &w);
                 let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
@@ -237,7 +294,12 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
 
     let base = opts.fractions;
     let mut failing = false;
-    let mut avg = CoverageFraction { functions: 0.0, lines: 0.0, stmts: 0.0, ..Default::default() };
+    let mut avg = CoverageFraction {
+        functions: 0.0,
+        lines: 0.0,
+        stmts: 0.0,
+        ..Default::default()
+    };
     let mut avg_n: f64 = 0.0;
     let mut fracs: Vec<CoverageFraction> = vec![CoverageFraction::default(); by_file.count()];
     debug_assert_eq!(order.len(), fracs.len());
@@ -246,13 +308,19 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let lf: f64 = fc.da.count() as f64;
         let lh_: f64 = fc.lh() as f64;
         *frac = CoverageFraction {
-            functions: if fc.fnf > 0 { fc.fnh as f64 / fc.fnf as f64 } else { 1.0 },
+            functions: if fc.fnf > 0 {
+                fc.fnh as f64 / fc.fnf as f64
+            } else {
+                1.0
+            },
             lines: if lf > 0.0 { lh_ / lf } else { 1.0 },
             stmts: if lf > 0.0 { lh_ / lf } else { 1.0 },
             ..Default::default()
         };
         frac.failing = frac.functions < base.functions || frac.lines < base.lines;
-        if frac.failing { failing = true; }
+        if frac.failing {
+            failing = true;
+        }
         avg.functions += frac.functions;
         avg.lines += frac.lines;
         avg.stmts += frac.stmts;
@@ -271,12 +339,20 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
             // TODO(port): splatByteAll equivalent on writer
             let _ = c.write_all(&vec![b'-'; n + 2]);
-            let _ = c.write_all(Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n").as_ref());
+            let _ = c.write_all(
+                Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n")
+                    .as_ref(),
+            );
         }
         sep::<ENABLE_COLORS>(console, max_len);
         let _ = console.write_all(b"File");
         let _ = console.write_all(&vec![b' '; max_len - b"File".len() + 1]);
-        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n").as_ref());
+        let _ = console.write_all(
+            Output::pretty_fmt::<ENABLE_COLORS>(
+                " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n",
+            )
+            .as_ref(),
+        );
         sep::<ENABLE_COLORS>(console, max_len);
 
         let mut body: Vec<u8> = Vec::new();
@@ -284,7 +360,13 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         for (&i, frac) in order.iter().zip(fracs.iter()) {
             let fc = &by_file.values()[i];
             let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
-                &fc.path, max_len, *frac, base, frac.failing, &mut body, true,
+                &fc.path,
+                max_len,
+                *frac,
+                base,
+                frac.failing,
+                &mut body,
+                true,
             );
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
@@ -294,7 +376,9 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let mut range_start: u32 = 0;
             let mut range_end: u32 = 0;
             for &ln in &sorted {
-                if *fc.da.get(&ln).expect("unreachable") != 0 { continue; }
+                if *fc.da.get(&ln).expect("unreachable") != 0 {
+                    continue;
+                }
                 if range_start == 0 {
                     range_start = ln;
                     range_end = ln;
@@ -322,7 +406,13 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
-            b"All files", max_len, avg, base, failing, &mut all_files, false,
+            b"All files",
+            max_len,
+            avg,
+            base,
+            failing,
+            &mut all_files,
+            false,
         );
         let _ = console.write_all(&all_files);
         let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());

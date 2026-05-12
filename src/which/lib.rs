@@ -1,12 +1,12 @@
 #![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 #![warn(unused_must_use, unreachable_pub)]
 use bstr::BStr;
+use bun_core::{WStr, ZStr, strings, w};
+use bun_paths::resolve_path::{PosixToWinNormalizer, posix_to_platform_in_place};
 use bun_paths::{
-    is_absolute, path_buffer_pool, w_path_buffer_pool, PathBuffer,
-    WPathBuffer, DELIMITER, MAX_PATH_BYTES, SEP, SEP_STR,
+    DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer, is_absolute,
+    path_buffer_pool, w_path_buffer_pool,
 };
-use bun_paths::resolve_path::{posix_to_platform_in_place, PosixToWinNormalizer};
-use bun_core::{strings, w, WStr, ZStr};
 
 #[allow(non_upper_case_globals)]
 mod scope {
@@ -36,12 +36,7 @@ fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
 
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
-pub fn which<'a>(
-    buf: &'a mut PathBuffer,
-    path: &[u8],
-    cwd: &[u8],
-    bin: &[u8],
-) -> Option<&'a ZStr> {
+pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
     if bin.len() > MAX_PATH_BYTES {
         return None;
     }
@@ -119,16 +114,8 @@ pub fn which<'a>(
     }
 }
 
-static WIN_EXTENSIONS_W: [&[u16]; 3] = [
-    w!("exe"),
-    w!("cmd"),
-    w!("bat"),
-];
-const WIN_EXTENSIONS: [&[u8]; 3] = [
-    b"exe",
-    b"cmd",
-    b"bat",
-];
+static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
+const WIN_EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
 
 pub fn ends_with_extension(str: &[u8]) -> bool {
     if str.len() < 4 {
@@ -274,7 +261,8 @@ pub fn which_win<'a>(
         // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
         // branch can fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
-        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+        let buf_reborrow: &'a mut WPathBuffer =
+            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,
@@ -294,10 +282,15 @@ pub fn which_win<'a>(
         // PORT NOTE: NLL Polonius limitation — re-borrowing `buf` across loop
         // iterations when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.
-        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
-        if let Some(bin_path) =
-            search_bin_in_path(buf_reborrow, &mut *path_buf, segment_part, bin, check_windows_extensions)
-        {
+        let buf_reborrow: &'a mut WPathBuffer =
+            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+        if let Some(bin_path) = search_bin_in_path(
+            buf_reborrow,
+            &mut *path_buf,
+            segment_part,
+            bin,
+            check_windows_extensions,
+        ) {
             return Some(&*bin_path);
         }
     }

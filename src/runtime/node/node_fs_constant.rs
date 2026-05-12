@@ -1,4 +1,4 @@
-use bun_sys::{posix, O};
+use bun_sys::{O, posix};
 
 // PORT NOTE: the Zig `get(comptime name)` helper used `@hasDecl(bun.O, name)` +
 // `@field(bun.O, name)` to look up an open-flag by string at comptime, with a
@@ -26,7 +26,9 @@ pub struct Copyfile(pub i32);
 impl Copyfile {
     /// Zig: `@enumFromInt(raw)` — wrap a raw flags value.
     #[inline]
-    pub const fn from_raw(raw: i32) -> Self { Self(raw) }
+    pub const fn from_raw(raw: i32) -> Self {
+        Self(raw)
+    }
 
     pub const EXCLUSIVE: i32 = 1;
     pub const CLONE: i32 = 2;

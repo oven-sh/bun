@@ -6,43 +6,47 @@ use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_io::{KeepAlive, Loop as AsyncLoop};
+use crate::api::js_bundler::PluginJscExt as _;
+use crate::api::{SocketAddress, js_bundler as JSBundler};
+use crate::bake::dev_server::{self as dev_server_mod, DevServer};
+use crate::bake::framework_router as FrameworkRouter;
+use crate::bake::{self as bake};
+use crate::node::types::PathLikeExt as _;
+use crate::webcore::BlobExt;
+use crate::webcore::body::Value as BodyValue;
+use crate::webcore::fetch as Fetch;
+use crate::webcore::response::HeadersRef;
+use crate::webcore::{
+    self as WebCore, AbortSignal, AnyBlob, Blob, Body, FetchHeaders, Request, Response,
+};
+use ::bstr::BStr;
 use bun_alloc::AllocError;
 use bun_boringssl as boringssl;
 use bun_collections::HashMap;
-use bun_core::{self as core_, analytics, fmt as bun_fmt, Global, Output};
+use bun_core::{self as core_, Global, Output, analytics, fmt as bun_fmt};
+use bun_core::{self as bstr, String as BunString, ZStr, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_jsc::{
-    self as jsc, host_fn, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue,
-    JsError, JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _,
-    SystemError, VirtualMachine,
-};
-use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, FetchHeaders, Request, Response};
-use crate::webcore::BlobExt;
-use crate::webcore::fetch as Fetch;
+use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
+use bun_jsc::uuid::UUID;
+use bun_jsc::{
+    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
+    JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError,
+    VirtualMachine, host_fn,
+};
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};
-use crate::api::{js_bundler as JSBundler, SocketAddress};
-use crate::api::js_bundler::PluginJscExt as _;
-use crate::webcore::body::Value as BodyValue;
-use crate::webcore::response::HeadersRef;
 use bun_paths as paths;
 use bun_ptr::{IntrusiveRc, RefPtr};
-use bun_core::{self as bstr, strings, String as BunString, ZStr, ZigString};
+use bun_resolver::fs::FileSystem;
+use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
+use bun_uws::{
+    self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext,
+};
 use bun_uws_sys as uws_sys;
-use crate::bake::{self as bake};
-use crate::bake::dev_server::{self as dev_server_mod, DevServer};
-use crate::bake::framework_router as FrameworkRouter;
-use bun_resolver::fs::FileSystem;
-use crate::node::types::PathLikeExt as _;
-use bun_standalone_graph::StandaloneModuleGraph;
-use bun_jsc::uuid::UUID;
 use bun_wyhash::hash;
-use ::bstr::BStr;
 
 bun_output::declare_scope!(Server, visible);
 bun_output::declare_scope!(RequestContext, visible);
@@ -59,19 +63,19 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::http_server_agent::{self, InspectorHTTPServerAgent};
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
-pub use super::web_socket_server_context::WebSocketServerContext;
-pub use super::http_status_text as HTTPStatusText;
 pub use super::html_bundle::{self as html_bundle, HTMLBundle};
+pub use super::http_status_text as HTTPStatusText;
+pub use super::web_socket_server_context::WebSocketServerContext;
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
-pub use super::static_route::StaticRoute;
-pub use super::file_route::FileRoute;
+pub use super::any_request_context::AnyRequestContext;
 pub use super::file_response_stream::FileResponseStream;
+pub use super::file_route::FileRoute;
+pub use super::node_http_response::NodeHTTPResponse;
 pub use super::range_request as RangeRequest;
+pub use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
 pub use super::server_config::{self as server_config, ServerConfig};
 pub use super::server_web_socket::ServerWebSocket;
-pub use super::node_http_response::NodeHTTPResponse;
-pub use super::any_request_context::AnyRequestContext;
-pub use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
+pub use super::static_route::StaticRoute;
 
 // ─── RequestCtx trait ────────────────────────────────────────────────────────
 // PORT NOTE: Zig's `NewRequestContext` exposes `Req`/`Resp`/`http3` as comptime
@@ -118,7 +122,12 @@ pub trait RequestCtxOps: RequestCtx {
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     );
-    fn on_response(&mut self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
+    fn on_response(
+        &mut self,
+        server: &Self::Server,
+        request_value: JSValue,
+        response_value: JSValue,
+    );
     fn deinit(&mut self);
     fn should_render_missing(&self) -> bool;
     fn render_missing(&mut self);
@@ -166,26 +175,51 @@ where
         // MaybeUninit for in-place construction.
         let slot = unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() };
         let any_resp = RespLike::to_any_response(resp);
-        Self::create(slot, server, std::ptr::from_mut(req).cast(), any_resp, should_deinit_context, method);
+        Self::create(
+            slot,
+            server,
+            std::ptr::from_mut(req).cast(),
+            any_resp,
+            should_deinit_context,
+            method,
+        );
     }
     #[inline]
-    fn on_response(&mut self, server: &ThisServer, rq: JSValue, rv: JSValue) { Self::on_response(self, server, rq, rv) }
+    fn on_response(&mut self, server: &ThisServer, rq: JSValue, rv: JSValue) {
+        Self::on_response(self, server, rq, rv)
+    }
     #[inline]
-    fn deinit(&mut self) { Self::deinit(self) }
+    fn deinit(&mut self) {
+        Self::deinit(self)
+    }
     #[inline]
-    fn should_render_missing(&self) -> bool { Self::should_render_missing(self) }
+    fn should_render_missing(&self) -> bool {
+        Self::should_render_missing(self)
+    }
     #[inline]
-    fn render_missing(&mut self) { Self::render_missing(self) }
+    fn render_missing(&mut self) {
+        Self::render_missing(self)
+    }
     #[inline]
-    fn to_async(&mut self, req: &mut Self::Req, ro: &mut Request) { Self::to_async(self, std::ptr::from_mut(req).cast(), ro) }
+    fn to_async(&mut self, req: &mut Self::Req, ro: &mut Request) {
+        Self::to_async(self, std::ptr::from_mut(req).cast(), ro)
+    }
     #[inline]
-    fn ctx_method(&self) -> http::Method { self.method }
+    fn ctx_method(&self) -> http::Method {
+        self.method
+    }
     #[inline]
-    fn set_upgrade_context(&mut self, c: Option<*mut WebSocketUpgradeContext>) { self.upgrade_context = c }
+    fn set_upgrade_context(&mut self, c: Option<*mut WebSocketUpgradeContext>) {
+        self.upgrade_context = c
+    }
     #[inline]
-    fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag> { &mut self.defer_deinit_until_callback_completes }
+    fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag> {
+        &mut self.defer_deinit_until_callback_completes
+    }
     #[inline]
-    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) { self.request_body = body }
+    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) {
+        self.request_body = body
+    }
     #[inline]
     fn request_body_mut(&mut self) -> Option<&mut BodyValue> {
         // SAFETY: request_body points at a live HiveRef<Value> slot owned by the
@@ -206,15 +240,25 @@ where
         self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(unsafe { &mut *req });
     }
     #[inline]
-    fn clear_req(&mut self) { self.req = None }
+    fn clear_req(&mut self) {
+        self.req = None
+    }
     #[inline]
-    fn set_is_web_browser_navigation(&mut self, v: bool) { self.flags.set_is_web_browser_navigation(v) }
+    fn set_is_web_browser_navigation(&mut self, v: bool) {
+        self.flags.set_is_web_browser_navigation(v)
+    }
     #[inline]
-    fn set_request_body_content_len(&mut self, len: usize) { self.request_body_content_len = len }
+    fn set_request_body_content_len(&mut self, len: usize) {
+        self.request_body_content_len = len
+    }
     #[inline]
-    fn set_is_transfer_encoding(&mut self, v: bool) { self.flags.set_is_transfer_encoding(v) }
+    fn set_is_transfer_encoding(&mut self, v: bool) {
+        self.flags.set_is_transfer_encoding(v)
+    }
     #[inline]
-    fn set_is_waiting_for_request_body(&mut self, v: bool) { self.flags.set_is_waiting_for_request_body(v) }
+    fn set_is_waiting_for_request_body(&mut self, v: bool) {
+        self.flags.set_is_waiting_for_request_body(v)
+    }
     #[inline]
     fn arm_on_data(&mut self, resp: &mut Self::Resp) {
         // PORT NOTE: route via the type-erased `AnyResponse::on_data` so the
@@ -228,7 +272,10 @@ where
         {
             NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
         }
-        RespLike::to_any_response(resp).on_data(handler::<ThisServer, SSL, DBG, H3>, std::ptr::from_mut::<Self>(self));
+        RespLike::to_any_response(resp).on_data(
+            handler::<ThisServer, SSL, DBG, H3>,
+            std::ptr::from_mut::<Self>(self),
+        );
     }
     #[inline]
     fn on_start_buffering_callback(this: *mut c_void) {
@@ -259,16 +306,40 @@ pub trait ReqLike {
     fn set_yield(&mut self, y: bool);
 }
 impl ReqLike for uws_sys::Request {
-    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { uws_sys::Request::header(self, name) }
-    #[inline] fn method(&mut self) -> &[u8] { uws_sys::Request::method(self) }
-    #[inline] fn url(&mut self) -> &[u8] { uws_sys::Request::url(self) }
-    #[inline] fn set_yield(&mut self, y: bool) { uws_sys::Request::set_yield(self, y) }
+    #[inline]
+    fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+        uws_sys::Request::header(self, name)
+    }
+    #[inline]
+    fn method(&mut self) -> &[u8] {
+        uws_sys::Request::method(self)
+    }
+    #[inline]
+    fn url(&mut self) -> &[u8] {
+        uws_sys::Request::url(self)
+    }
+    #[inline]
+    fn set_yield(&mut self, y: bool) {
+        uws_sys::Request::set_yield(self, y)
+    }
 }
 impl ReqLike for uws_sys::h3::Request {
-    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { uws_sys::h3::Request::header(self, name) }
-    #[inline] fn method(&mut self) -> &[u8] { uws_sys::h3::Request::method(self) }
-    #[inline] fn url(&mut self) -> &[u8] { uws_sys::h3::Request::url(self) }
-    #[inline] fn set_yield(&mut self, y: bool) { uws_sys::h3::Request::set_yield(self, y) }
+    #[inline]
+    fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+        uws_sys::h3::Request::header(self, name)
+    }
+    #[inline]
+    fn method(&mut self) -> &[u8] {
+        uws_sys::h3::Request::method(self)
+    }
+    #[inline]
+    fn url(&mut self) -> &[u8] {
+        uws_sys::h3::Request::url(self)
+    }
+    #[inline]
+    fn set_yield(&mut self, y: bool) {
+        uws_sys::h3::Request::set_yield(self, y)
+    }
 }
 
 pub trait RespLike {
@@ -279,10 +350,20 @@ pub trait RespLike {
     fn to_any_response(&mut self) -> uws::AnyResponse;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
-    #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::NewAppResponse::<SSL>::write_status(self, s) }
-    #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::NewAppResponse::<SSL>::end_without_body(self, c) }
-    #[inline] fn timeout(&mut self, s: u8) { uws_sys::NewAppResponse::<SSL>::timeout(self, s) }
-    #[inline] fn on_timeout_warn(&mut self, ud: *mut c_void) {
+    #[inline]
+    fn write_status(&mut self, s: &[u8]) {
+        uws_sys::NewAppResponse::<SSL>::write_status(self, s)
+    }
+    #[inline]
+    fn end_without_body(&mut self, c: bool) {
+        uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
+    }
+    #[inline]
+    fn timeout(&mut self, s: u8) {
+        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
+    }
+    #[inline]
+    fn on_timeout_warn(&mut self, ud: *mut c_void) {
         // The dev-mode idle-timeout warning ignores both args; the user-data
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
         uws_sys::NewAppResponse::<SSL>::on_timeout(
@@ -291,29 +372,47 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
             ud,
         );
     }
-    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse {
+    #[inline]
+    fn to_any_response(&mut self) -> uws::AnyResponse {
         // SAFETY: NewAppResponse<true>/NewAppResponse<false> are the only two
         // monomorphizations; cast through the matching `From` arm. The const
         // bool is checked at compile time so only one branch is reachable.
         if SSL {
-            uws::AnyResponse::from(std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<true>>())
+            uws::AnyResponse::from(
+                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<true>>(),
+            )
         } else {
-            uws::AnyResponse::from(std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<false>>())
+            uws::AnyResponse::from(
+                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<false>>(),
+            )
         }
     }
 }
 impl RespLike for uws_sys::h3::Response {
-    #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::h3::Response::write_status(self, s) }
-    #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::h3::Response::end_without_body(self, c) }
-    #[inline] fn timeout(&mut self, s: u8) { uws_sys::h3::Response::timeout(self, s) }
-    #[inline] fn on_timeout_warn(&mut self, ud: *mut c_void) {
+    #[inline]
+    fn write_status(&mut self, s: &[u8]) {
+        uws_sys::h3::Response::write_status(self, s)
+    }
+    #[inline]
+    fn end_without_body(&mut self, c: bool) {
+        uws_sys::h3::Response::end_without_body(self, c)
+    }
+    #[inline]
+    fn timeout(&mut self, s: u8) {
+        uws_sys::h3::Response::timeout(self, s)
+    }
+    #[inline]
+    fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h3::Response::on_timeout(
             self,
             |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }
-    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse { uws::AnyResponse::from(std::ptr::from_mut::<Self>(self)) }
+    #[inline]
+    fn to_any_response(&mut self) -> uws::AnyResponse {
+        uws::AnyResponse::from(std::ptr::from_mut::<Self>(self))
+    }
 }
 
 // Local shim: `SystemError` lives upstream and lacks `Default`; this builds the
@@ -367,8 +466,7 @@ extern "C" fn _route_tramp<T, H, const SSL: bool>(
     res: *mut uws_sys::uws_res,
     req: *mut uws_sys::Request,
     ud: *mut c_void,
-)
-where
+) where
     H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
 {
     use bun_uws_sys::thunk;
@@ -378,7 +476,9 @@ where
     // `thunk::zst`). Consolidates the open-coded `&mut *cast` derefs into the
     // audited `thunk::*` primitives so the invariant is documented once (S005).
     unsafe {
-        let Some(ctx) = thunk::user_mut::<T>(ud) else { return };
+        let Some(ctx) = thunk::user_mut::<T>(ud) else {
+            return;
+        };
         thunk::zst::<H>()(
             ctx,
             thunk::handle_mut(req.cast::<uws::Request>()),
@@ -392,25 +492,42 @@ impl<const SSL: bool> AppRouteExt<SSL> for uws_sys::NewApp<SSL> {
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.get(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
+        self.get(
+            pattern,
+            Some(_route_tramp::<T, H, SSL>),
+            ctx.cast::<c_void>(),
+        );
     }
     fn head_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.head(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
+        self.head(
+            pattern,
+            Some(_route_tramp::<T, H, SSL>),
+            ctx.cast::<c_void>(),
+        );
     }
     fn any_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.any(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
+        self.any(
+            pattern,
+            Some(_route_tramp::<T, H, SSL>),
+            ctx.cast::<c_void>(),
+        );
     }
     fn method_ctx<T, H>(&mut self, m: http::Method, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.method(m, pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
+        self.method(
+            m,
+            pattern,
+            Some(_route_tramp::<T, H, SSL>),
+            ctx.cast::<c_void>(),
+        );
     }
 }
 
@@ -431,10 +548,10 @@ pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
-    use bun_core::Global;
-    use bun_ast::e::EString;
-    use bun_ast::{Expr, E, G};
     use bun_ast::Loc;
+    use bun_ast::e::EString;
+    use bun_ast::{E, Expr, G};
+    use bun_core::Global;
 
     pub struct BunInfo {
         pub bun_version: &'static [u8],
@@ -532,11 +649,15 @@ impl AnyRoute {
             return Ok(None);
         }
 
-        let Some(path_js) = argument.get(init_ctx.global, b"path")? else { return Ok(None); };
+        let Some(path_js) = argument.get(init_ctx.global, b"path")? else {
+            return Ok(None);
+        };
         let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
-        let mut path = Node::PathOrFileDescriptor::Path(
-            Node::PathLike::from_bun_string(init_ctx.global, &mut path_string, false)?,
-        );
+        let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
+            init_ctx.global,
+            &mut path_string,
+            false,
+        )?);
         // PORT NOTE: Zig `defer path_string.deref()`. `from_bun_string` clones
         // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
         // release the source ref immediately — `bun_core::String` has no `Drop`.
@@ -576,11 +697,15 @@ impl AnyRoute {
         }
         builder.extend_from_slice(relative_path);
 
-        let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else { return Ok(None); };
+        let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
+            return Ok(None);
+        };
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
         let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
             // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh { bun_opaque::opaque_deref_mut(h.as_ptr()).deref(); }
+            if let Some(h) = fh {
+                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
+            }
         });
         if init_ctx.global.has_exception() {
             return Err(JsError::Thrown);
@@ -594,7 +719,8 @@ impl AnyRoute {
             return Ok(Some(route));
         }
 
-        let mut methods = bun_http_types::Method::Optional::Method(bun_http_types::Method::Set::empty());
+        let mut methods =
+            bun_http_types::Method::Optional::Method(bun_http_types::Method::Set::empty());
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
@@ -622,11 +748,15 @@ impl AnyRoute {
         };
         // `ZigStringSlice` impls `Drop` — freed at scope end.
 
-        let Some(files) = argument.get_array(init_ctx.global, b"files")? else { return Ok(None); };
+        let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
+            return Ok(None);
+        };
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {
-            if let Some(item) = Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)? {
+            if let Some(item) =
+                Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)?
+            {
                 html_route = Some(item);
             }
         }
@@ -677,7 +807,11 @@ impl AnyRoute {
             return Ok(AnyRoute::File(
                 NonNull::new(FileRoute::init_from_blob(
                     blob,
-                    super::file_route::InitOptions { server: None, status_code: 200, headers },
+                    super::file_route::InitOptions {
+                        server: None,
+                        status_code: 200,
+                        headers,
+                    },
                 ))
                 .expect("FileRoute::init_from_blob returns a fresh heap allocation"),
             ));
@@ -686,7 +820,11 @@ impl AnyRoute {
         Ok(AnyRoute::Static(
             NonNull::new(StaticRoute::init_from_any_blob(
                 AnyBlob::Blob(blob),
-                super::static_route::InitFromBytesOptions { server: None, headers, ..Default::default() },
+                super::static_route::InitFromBytesOptions {
+                    server: None,
+                    headers,
+                    ..Default::default()
+                },
             ))
             .expect("StaticRoute::init_from_any_blob returns a fresh heap allocation"),
         ))
@@ -698,7 +836,9 @@ impl AnyRoute {
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
         if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
-            let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle.cast_const());
+            let entry = init_ctx
+                .dedupe_html_bundle_map
+                .entry(html_bundle.cast_const());
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM
             return Ok(Some(match entry {
                 StdEntry::Vacant(v) => {
@@ -741,17 +881,18 @@ impl AnyRoute {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
                 let relative_root = init_ctx.js_string_allocations.track(dir);
 
-                let style: FrameworkRouter::Style = if let Some(style_js) = argument.get(global, b"style")? {
-                    FrameworkRouter::Style::from_js(style_js, global)?
-                } else {
-                    FrameworkRouter::Style::NextjsPages
-                };
+                let style: FrameworkRouter::Style =
+                    if let Some(style_js) = argument.get(global, b"style")? {
+                        FrameworkRouter::Style::from_js(style_js, global)?
+                    } else {
+                        FrameworkRouter::Style::NextjsPages
+                    };
                 // errdefer style.deinit() — Style impls Drop; `?` drops it on the error path
 
                 if !strings::ends_with(path, b"/*") {
-                    return Err(global.throw_invalid_arguments(
-                        format_args!("To mount a directory, make sure the path ends in `/*`"),
-                    ));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "To mount a directory, make sure the path ends in `/*`"
+                    )));
                 }
 
                 // trim the /*
@@ -767,35 +908,47 @@ impl AnyRoute {
                 } else {
                     Cow::Owned(path[..path.len() - 2].to_vec())
                 };
-                init_ctx.framework_router_list.push(bake::FileSystemRouterType {
-                    root: Cow::Owned(relative_root.to_vec()),
-                    style,
-                    prefix,
-                    // TODO: customizable framework option.
-                    entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
-                    entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
-                    ignore_underscores: true,
-                    ignore_dirs: vec![Cow::Borrowed(b"node_modules".as_slice()), Cow::Borrowed(b".git".as_slice())],
-                    extensions: vec![Cow::Borrowed(b".tsx".as_slice()), Cow::Borrowed(b".jsx".as_slice())],
-                    allow_layouts: true,
-                });
+                init_ctx
+                    .framework_router_list
+                    .push(bake::FileSystemRouterType {
+                        root: Cow::Owned(relative_root.to_vec()),
+                        style,
+                        prefix,
+                        // TODO: customizable framework option.
+                        entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                        entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
+                        ignore_underscores: true,
+                        ignore_dirs: vec![
+                            Cow::Borrowed(b"node_modules".as_slice()),
+                            Cow::Borrowed(b".git".as_slice()),
+                        ],
+                        extensions: vec![
+                            Cow::Borrowed(b".tsx".as_slice()),
+                            Cow::Borrowed(b".jsx".as_slice()),
+                        ],
+                        allow_layouts: true,
+                    });
 
                 // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
                 let limit = u8::MAX as usize;
                 if init_ctx.framework_router_list.len() > limit {
-                    return Err(global.throw_invalid_arguments(
-                        format_args!("Too many framework routers. Maximum is {}.", limit),
-                    ));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Too many framework routers. Maximum is {}.",
+                        limit
+                    )));
                 }
-                return Ok(Some(AnyRoute::FrameworkRouter(FrameworkRouter::TypeIndex::init(
-                    u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
-                ))));
+                return Ok(Some(AnyRoute::FrameworkRouter(
+                    FrameworkRouter::TypeIndex::init(
+                        u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
+                    ),
+                )));
             }
         }
 
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(
-                NonNull::new(file_route).expect("FileRoute::from_js returns a fresh heap allocation"),
+                NonNull::new(file_route)
+                    .expect("FileRoute::from_js returns a fresh heap allocation"),
             )));
         }
         match StaticRoute::from_js(global, argument)? {
@@ -917,7 +1070,11 @@ impl ServePlugins {
                     // could jump to any branch if synchronously resolved
                     continue;
                 }
-                ServePluginsState::Pending { html_bundle_routes, dev_server, .. } => {
+                ServePluginsState::Pending {
+                    html_bundle_routes,
+                    dev_server,
+                    ..
+                } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
                             // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
@@ -930,7 +1087,8 @@ impl ServePlugins {
                         ServePluginsCallback::DevServer(server) => {
                             debug_assert!(
                                 dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr().cast_const()) == Some(std::ptr::from_ref(server))
+                                    || dev_server.map(|p| p.as_ptr().cast_const())
+                                        == Some(std::ptr::from_ref(server))
                             ); // one dev server per server
                             *dev_server = Some(NonNull::from(server));
                         }
@@ -951,12 +1109,15 @@ impl ServePlugins {
 
     fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
-        let ServePluginsState::Unqueued(plugin_list) = &self.state else { unreachable!() };
+        let ServePluginsState::Unqueued(plugin_list) = &self.state else {
+            unreachable!()
+        };
         // PORT NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] =
-            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
+        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
+            bun_paths::resolve_path::platform::Auto,
+        >(bunfig_path);
 
         // NOTE: the keep-alive ref/deref pair (Zig: `this.ref(); defer this.deref()`)
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
@@ -1006,10 +1167,19 @@ impl ServePlugins {
                     jsc::js_promise::Status::Pending => {
                         self.ref_();
                         let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending { promise: pending_promise, .. } = &mut self.state {
+                        if let ServePluginsState::Pending {
+                            promise: pending_promise,
+                            ..
+                        } = &mut self.state
+                        {
                             pending_promise.set(global, promise_value);
                         }
-                        promise_value.then(global, std::ptr::from_mut::<Self>(self), __jsc_host_on_resolve_impl, __jsc_host_on_reject_impl);
+                        promise_value.then(
+                            global,
+                            std::ptr::from_mut::<Self>(self),
+                            __jsc_host_on_resolve_impl,
+                            __jsc_host_on_reject_impl,
+                        );
                         return Ok(());
                     }
                     jsc::js_promise::Status::Fulfilled => {
@@ -1035,8 +1205,12 @@ impl ServePlugins {
 
     pub fn handle_on_resolve(&mut self) {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, promise } =
-            mem::replace(&mut self.state, ServePluginsState::Err)
+        let ServePluginsState::Pending {
+            plugin,
+            dev_server,
+            html_bundle_routes,
+            promise,
+        } = mem::replace(&mut self.state, ServePluginsState::Err)
         else {
             unreachable!()
         };
@@ -1054,7 +1228,8 @@ impl ServePlugins {
             let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
             // Spec server.zig:457 — `bun.handleOom(route.onPluginsResolved(plugin))`
             bun_core::handle_oom(
-                bun_ptr::BackRef::from(route_nn).on_plugins_resolved(Some(NonNull::from(plugin_ref))),
+                bun_ptr::BackRef::from(route_nn)
+                    .on_plugins_resolved(Some(NonNull::from(plugin_ref))),
             );
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
@@ -1063,16 +1238,20 @@ impl ServePlugins {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
             // by `get_or_start_load`; the owning Box<DevServer> is held by the
             // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(
-                Some(std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut()),
-            ));
+            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
+                std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
+            )));
         }
     }
 
     pub fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, promise } =
-            mem::replace(&mut self.state, ServePluginsState::Err)
+        let ServePluginsState::Pending {
+            plugin,
+            dev_server,
+            html_bundle_routes,
+            promise,
+        } = mem::replace(&mut self.state, ServePluginsState::Err)
         else {
             unreachable!()
         };
@@ -1134,7 +1313,7 @@ impl Drop for ServePlugins {
         match &self.state {
             ServePluginsState::Unqueued(_) => {}
             ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {} // Box<Plugin> drops
+            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
             ServePluginsState::Err => {}
         }
     }
@@ -1275,7 +1454,9 @@ where
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe { Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id) };
+        unsafe {
+            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
+        };
     }
 }
 
@@ -1352,13 +1533,13 @@ where
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
-
-
     pub fn get_plugins(&self) -> PluginsResult<'_> {
         match self.plugins_ref() {
             None => PluginsResult::Found(None),
             Some(p) => match &p.state {
-                ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => PluginsResult::Pending,
+                ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => {
+                    PluginsResult::Pending
+                }
                 ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin.as_ref())),
                 ServePluginsState::Err => PluginsResult::Err,
             },
@@ -1376,7 +1557,10 @@ where
     /// - .ready if no plugin has to be loaded
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
-    pub fn get_or_load_plugins(&mut self, callback: ServePluginsCallback<'_>) -> GetOrStartLoadResult<'_> {
+    pub fn get_or_load_plugins(
+        &mut self,
+        callback: ServePluginsCallback<'_>,
+    ) -> GetOrStartLoadResult<'_> {
         if let Some(p) = self.plugins {
             let global = self.global();
             // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`
@@ -1404,16 +1588,20 @@ where
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_subscriber_count(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_subscriber_count(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         if arguments.len < 1 {
             return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
         if arguments.ptr[0].is_empty_or_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(
-                format_args!("subscriberCount requires a topic name as a string"),
-            ));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "subscriberCount requires a topic name as a string"
+            )));
         }
 
         let topic = arguments.ptr[0].to_slice(global)?;
@@ -1422,7 +1610,9 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        Ok(JSValue::js_number(f64::from(self.app_mut().num_subscribers(topic.slice()))))
+        Ok(JSValue::js_number(f64::from(
+            self.app_mut().num_subscribers(topic.slice()),
+        )))
     }
 
     // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
@@ -1453,13 +1643,21 @@ where
 
     /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
     #[bun_jsc::host_fn(method)]
-    pub fn dispose(&mut self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn dispose(
+        &mut self,
+        _global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         Ok(self.dispose_from_js())
     }
 
     /// `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false)`
     #[bun_jsc::host_fn(method)]
-    pub fn do_upgrade(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_upgrade(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<4>();
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         // jsc.JSValue
@@ -1473,7 +1671,11 @@ where
 
     /// `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false)`
     #[bun_jsc::host_fn(method)]
-    pub fn do_publish(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_publish(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<5>();
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         // jsc.ZigString
@@ -1495,34 +1697,50 @@ where
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
     #[bun_jsc::host_fn(method)]
-    pub fn do_request_ip(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_request_ip(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         // *jsc.WebCore.Request
-        let arg = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing Request object")))?;
-        let request = arg
-            .as_class_ref::<Request>()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Expected Request object")))?;
+        let arg = iter.next_eat().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Missing Request object"))
+        })?;
+        let request = arg.as_class_ref::<Request>().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Expected Request object"))
+        })?;
         self.request_ip(request)
     }
 
     /// `pub const doReload = onReload`
     #[inline]
-    pub fn do_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_reload(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.on_reload(global, callframe)
     }
 
     /// `pub const doFetch = onFetch`
     #[inline]
-    pub fn do_fetch(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_fetch(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.on_fetch(global, callframe)
     }
 
     /// `pub const doTimeout = timeout`
     #[inline]
-    pub fn do_timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_timeout(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.timeout(global, callframe)
     }
 
@@ -1541,7 +1759,6 @@ where
         )
     }
 
-
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_buf = callframe.arguments_old::<2>();
@@ -1557,18 +1774,22 @@ where
         }
 
         if !seconds.is_number() {
-            return Err(self.global().throw(format_args!("timeout() requires a number")));
+            return Err(self
+                .global()
+                .throw(format_args!("timeout() requires a number")));
         }
         let value = seconds.to_u32();
 
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request
             let _ = unsafe { &mut *request }.request_context.set_timeout(value);
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0]) {
+        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
+        {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { &mut *response }.set_timeout((value % 255) as u8);
         } else {
-            return Err(self.global()
+            return Err(self
+                .global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));
         }
 
@@ -1616,7 +1837,14 @@ where
             return Ok(JSValue::js_number(f64::from(
                 // if 0, return 0
                 // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer.slice(), uws_sys::Opcode::Binary, compress) as i32)
+                (AnyWebSocket::publish_with_options(
+                    SSL,
+                    app,
+                    topic_slice.slice(),
+                    buffer.slice(),
+                    uws_sys::Opcode::Binary,
+                    compress,
+                ) as i32)
                     * ((buffer.len as u32 & 0x7FFF_FFFF) as i32), // @intCast(@as(u31, @truncate(buffer.len)))
             )));
         }
@@ -1631,7 +1859,14 @@ where
             // GC during `publish_with_options` could otherwise reclaim the bytes
             // `slice` borrows.
             let buffer = slice.slice();
-            let result = (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer, uws_sys::Opcode::Text, compress) as i32)
+            let result = (AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                buffer,
+                uws_sys::Opcode::Text,
+                compress,
+            ) as i32)
                 * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32);
             js_string.ensure_still_alive();
             // if 0, return 0
@@ -1647,8 +1882,8 @@ where
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
-        use bun_jsc::HTTPHeaderName;
         use bun_core::ZigStringSlice;
+        use bun_jsc::HTTPHeaderName;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1663,8 +1898,14 @@ where
         if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             let node_http_response = unsafe { &mut *node_http_response };
-            if node_http_response.flags.get().contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response.flags.get().contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
+            if node_http_response
+                .flags
+                .get()
+                .contains(NodeHTTPResponseFlags::ENDED)
+                || node_http_response
+                    .flags
+                    .get()
+                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
             {
                 return Ok(JSValue::FALSE);
             }
@@ -1672,7 +1913,8 @@ where
             let mut data_value = JSValue::ZERO;
 
             // if we converted a HeadersInit to a Headers object, we need to free it
-            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> = core::cell::Cell::new(None);
+            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> =
+                core::cell::Cell::new(None);
             let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
                 if let Some(fh) = cell.get() {
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
@@ -1697,7 +1939,9 @@ where
                     }
 
                     if !opts.is_object() {
-                        return Err(global.throw_invalid_arguments(format_args!("upgrade options must be an object")));
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "upgrade options must be an object"
+                        )));
                     }
 
                     if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
@@ -1713,49 +1957,64 @@ where
                             break 'getter;
                         }
 
-                        let fetch_headers_to_use: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
-                            Some(h) => h,
-                            None => 'brk: {
-                                if headers_value.is_object() {
-                                    if let Some(fetch_headers) = FetchHeaders::create_from_js(global, headers_value)? {
-                                        fetch_headers_to_deref.set(Some(fetch_headers.as_ptr()));
-                                        break 'brk fetch_headers.as_ptr();
+                        let fetch_headers_to_use: *mut FetchHeaders =
+                            match fetch_headers_from_js(headers_value, global) {
+                                Some(h) => h,
+                                None => 'brk: {
+                                    if headers_value.is_object() {
+                                        if let Some(fetch_headers) =
+                                            FetchHeaders::create_from_js(global, headers_value)?
+                                        {
+                                            fetch_headers_to_deref
+                                                .set(Some(fetch_headers.as_ptr()));
+                                            break 'brk fetch_headers.as_ptr();
+                                        }
                                     }
+                                    if !global.has_exception() {
+                                        return Err(global.throw_invalid_arguments(format_args!(
+                                            "upgrade options.headers must be a Headers or an object"
+                                        )));
+                                    }
+                                    return Err(JsError::Thrown);
                                 }
-                                if !global.has_exception() {
-                                    return Err(global.throw_invalid_arguments(format_args!(
-                                        "upgrade options.headers must be a Headers or an object"
-                                    )));
-                                }
-                                return Err(JsError::Thrown);
-                            }
-                        };
+                            };
                         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                        let fetch_headers_to_use = bun_opaque::opaque_deref_mut(fetch_headers_to_use);
+                        let fetch_headers_to_use =
+                            bun_opaque::opaque_deref_mut(fetch_headers_to_use);
 
                         if global.has_exception() {
                             return Err(JsError::Thrown);
                         }
 
-                        if let Some(protocol) = fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
+                        if let Some(protocol) =
+                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
+                        {
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_protocol_owned = protocol.to_slice_clone();
-                            sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
+                            sec_websocket_protocol =
+                                ZigString::init(sec_websocket_protocol_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
 
-                        if let Some(extensions) = fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
+                        if let Some(extensions) =
+                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
+                        {
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_extensions_owned = extensions.to_slice_clone();
-                            sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
+                            sec_websocket_extensions =
+                                ZigString::init(sec_websocket_extensions_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                            fetch_headers_to_use
+                                .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket().cast::<c_void>());
+                            fetch_headers_to_use.to_uws_response(
+                                ResponseKind::from(SSL, false),
+                                raw_response.socket().cast::<c_void>(),
+                            );
                         }
                     }
 
@@ -1772,12 +2031,17 @@ where
         }
 
         let Some(request) = <Request as bun_jsc::JsClass>::from_js(object) else {
-            return Err(global.throw_invalid_arguments(format_args!("upgrade requires a Request object")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
+            );
         };
         // SAFETY: from_js returns a live *mut Request
         let request = unsafe { &mut *request };
 
-        let Some(upgrader_ptr) = request.request_context.get::<ServerRequestContext<SSL, DEBUG>>() else {
+        let Some(upgrader_ptr) = request
+            .request_context
+            .get::<ServerRequestContext<SSL, DEBUG>>()
+        else {
             return Ok(JSValue::FALSE);
         };
         // SAFETY: tagged pointer just matched this monomorphization.
@@ -1847,80 +2111,110 @@ where
             // (BACKREF; live while RequestContext.req is Some).
             let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
             if sec_websocket_key_str.len == 0 {
-                sec_websocket_key_str = ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
+                sec_websocket_key_str =
+                    ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
             }
             if sec_websocket_protocol.len == 0 {
-                sec_websocket_protocol = ZigString::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
+                sec_websocket_protocol =
+                    ZigString::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
             }
             if sec_websocket_extensions.len == 0 {
-                sec_websocket_extensions = ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
+                sec_websocket_extensions =
+                    ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
             }
         }
 
         if sec_websocket_key_str.len == 0 {
             return Ok(JSValue::FALSE);
         }
-        if sec_websocket_protocol.len > 0 { sec_websocket_protocol.mark_utf8(); }
-        if sec_websocket_extensions.len > 0 { sec_websocket_extensions.mark_utf8(); }
+        if sec_websocket_protocol.len > 0 {
+            sec_websocket_protocol.mark_utf8();
+        }
+        if sec_websocket_extensions.len > 0 {
+            sec_websocket_extensions.mark_utf8();
+        }
 
         let mut data_value = JSValue::ZERO;
         // Non-unit guard state: holds the temporarily-created FetchHeaders (if
         // any) and derefs it on scope exit. Populated below via DerefMut.
-        let mut fetch_headers_to_deref =
-            scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
-                // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                if let Some(h) = fh { bun_opaque::opaque_deref_mut(h).deref() }
-            });
+        let mut fetch_headers_to_deref = scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
+            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+            if let Some(h) = fh {
+                bun_opaque::opaque_deref_mut(h).deref()
+            }
+        });
         let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
 
         if let Some(opts) = optional {
             'getter: {
-                if opts.is_empty_or_undefined_or_null() { break 'getter; }
-                if !opts.is_object() {
-                    return Err(global.throw_invalid_arguments(format_args!("upgrade options must be an object")));
+                if opts.is_empty_or_undefined_or_null() {
+                    break 'getter;
                 }
-                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? { data_value = v; }
-                if global.has_exception() { return Err(JsError::Thrown); }
+                if !opts.is_object() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "upgrade options must be an object"
+                    )));
+                }
+                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
+                    data_value = v;
+                }
+                if global.has_exception() {
+                    return Err(JsError::Thrown);
+                }
 
                 if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
-                    if headers_value.is_empty_or_undefined_or_null() { break 'getter; }
+                    if headers_value.is_empty_or_undefined_or_null() {
+                        break 'getter;
+                    }
                     use jsc::HTTPHeaderName;
                     let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
                         Some(h) => h,
                         None => {
                             if headers_value.is_object() {
-                                if let Some(created) = FetchHeaders::create_from_js(global, headers_value)? {
+                                if let Some(created) =
+                                    FetchHeaders::create_from_js(global, headers_value)?
+                                {
                                     *fetch_headers_to_deref = Some(created.as_ptr());
                                     created.as_ptr()
                                 } else if !global.has_exception() {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                         "upgrade options.headers must be a Headers or an object"
                                     )));
-                                } else { return Err(JsError::Thrown); }
+                                } else {
+                                    return Err(JsError::Thrown);
+                                }
                             } else if !global.has_exception() {
                                 return Err(global.throw_invalid_arguments(format_args!(
                                     "upgrade options.headers must be a Headers or an object"
                                 )));
-                            } else { return Err(JsError::Thrown); }
+                            } else {
+                                return Err(JsError::Thrown);
+                            }
                         }
                     };
                     fetch_headers_to_use = Some(fh);
-                    if global.has_exception() { return Err(JsError::Thrown); }
+                    if global.has_exception() {
+                        return Err(JsError::Thrown);
+                    }
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         sec_websocket_protocol_owned = p.to_slice_clone();
-                        sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
+                        sec_websocket_protocol =
+                            ZigString::init(sec_websocket_protocol_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                         sec_websocket_extensions_owned = e.to_slice_clone();
-                        sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
+                        sec_websocket_extensions =
+                            ZigString::init(sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
-                if global.has_exception() { return Err(JsError::Thrown); }
+                if global.has_exception() {
+                    return Err(JsError::Thrown);
+                }
             }
         }
 
@@ -1940,10 +2234,17 @@ where
             resp.write_status(b"101 Switching Protocols");
             if let Some(h) = fetch_headers_to_use {
                 // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(h).to_uws_response(ResponseKind::from(SSL, false), resp.socket().cast::<c_void>());
+                bun_opaque::opaque_deref_mut(h).to_uws_response(
+                    ResponseKind::from(SSL, false),
+                    resp.socket().cast::<c_void>(),
+                );
             }
             if let Some(c) = cookies_to_write.as_mut() {
-                c.write(global, ResponseKind::from(SSL, false), resp.socket().cast::<c_void>())?;
+                c.write(
+                    global,
+                    ResponseKind::from(SSL, false),
+                    resp.socket().cast::<c_void>(),
+                )?;
             }
         }
 
@@ -2002,7 +2303,9 @@ where
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
         if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { bun_opaque::opaque_deref_mut(h3a).clear_routes(); }
+            if let Some(h3a) = self.h3_app {
+                bun_opaque::opaque_deref_mut(h3a).clear_routes();
+            }
         }
 
         // Only reload `on_request` / `on_error` when the new config actually
@@ -2033,10 +2336,9 @@ where
         }
 
         if let Some(mut ws) = new_config.websocket.take() {
-            ws.handler.flags.set(
-                super::web_socket_server_context::HandlerFlags::SSL,
-                SSL,
-            );
+            ws.handler
+                .flags
+                .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = self.config.websocket.as_ref() {
                     old_ws.unprotect();
@@ -2098,7 +2400,9 @@ where
         self.config = self.config.clone_for_reloading_static_routes()?;
         self.app_mut().clear_routes();
         if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { bun_opaque::opaque_deref_mut(h3a).clear_routes(); }
+            if let Some(h3a) = self.h3_app {
+                bun_opaque::opaque_deref_mut(h3a).clear_routes();
+            }
         }
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
@@ -2112,7 +2416,11 @@ where
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn on_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn on_reload(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
             return Err(global.throw_not_enough_arguments("reload", 1, 0));
@@ -2121,11 +2429,15 @@ where
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
         let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), arguments);
 
-        let mut new_config = ServerConfig::from_js(global, &mut args_slice, server_config::FromJSOptions {
-            allow_bake_config: false,
-            is_fetch_required: true,
-            has_user_routes: !self.user_routes.is_empty(),
-        })?;
+        let mut new_config = ServerConfig::from_js(
+            global,
+            &mut args_slice,
+            server_config::FromJSOptions {
+                allow_bake_config: false,
+                is_fetch_required: true,
+                has_user_routes: !self.user_routes.is_empty(),
+            },
+        )?;
         if global.has_exception() {
             drop(new_config);
             return Err(JsError::Thrown);
@@ -2141,20 +2453,25 @@ where
         jsc::mark_binding!();
 
         if self.config.on_request.is_none() {
-            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                ctx,
-                ZigString::init(b"fetch() requires the server to have a fetch handler").to_error_instance(ctx),
-            ));
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    ctx,
+                    ZigString::init(b"fetch() requires the server to have a fetch handler")
+                        .to_error_instance(ctx),
+                ),
+            );
         }
 
         let arguments_buf = callframe.arguments_old::<2>();
         let arguments = arguments_buf.slice();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
-            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                ctx,
-                ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
-            ));
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    ctx,
+                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                ),
+            );
         }
 
         let mut headers: Option<HeadersRef> = None;
@@ -2173,10 +2490,12 @@ where
 
             if temp_url_str.is_empty() {
                 let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
-                return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
-                ));
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        ctx,
+                        ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                    ),
+                );
             }
 
             let mut url = URL::parse(temp_url_str);
@@ -2185,9 +2504,7 @@ where
             // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
             // buffer must be freed before we leave the block.
             let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
-                strings::append(&self.base_url_string_for_joining, url.pathname)
-                    
-                    .into_vec()
+                strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
             } else {
                 temp_url_str.to_vec()
             };
@@ -2254,13 +2571,16 @@ where
         } else {
             // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
             // `first_arg.as_ref()` produces a valid `JSValueRef`.
-            let js_type = unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
+            let js_type =
+                unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
             let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
                 .get(js_type)
                 .copied()
                 .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
+            );
         };
 
         // Zig: `var request = Request.new(existing_request)` → raw
@@ -2276,24 +2596,28 @@ where
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
-        let response_value = match on_request.call(
-            &global_this,
-            self.js_value_assert_alive(),
-            &[request_value],
-        ) {
-            Ok(v) => v,
-            Err(err) => global_this.take_exception(err),
-        };
+        let response_value =
+            match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
+                Ok(v) => v,
+                Err(err) => global_this.take_exception(err),
+            };
 
         if response_value.is_any_error() {
-            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, response_value));
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    ctx,
+                    response_value,
+                ),
+            );
         }
 
         if response_value.is_empty_or_undefined_or_null() {
-            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                ctx,
-                ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
-            ));
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    ctx,
+                    ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
+                ),
+            );
         }
 
         if response_value.as_any_promise().is_some() {
@@ -2311,7 +2635,11 @@ where
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close_idle_connections(&mut self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn close_idle_connections(
+        &mut self,
+        _global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -2352,12 +2680,16 @@ where
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(bun_opaque::opaque_deref_mut(listener).get_local_port() as f64);
+            return JSValue::js_number(
+                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
+            );
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                return JSValue::js_number(bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64);
+                return JSValue::js_number(
+                    bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64
+                );
             }
         }
         match &self.config.address {
@@ -2437,10 +2769,11 @@ where
         }
     }
 
-
     #[bun_jsc::host_fn(getter)]
     pub fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut url = self.get_url_as_string().map_err(|_| global.throw_out_of_memory())?;
+        let mut url = self
+            .get_url_as_string()
+            .map_err(|_| global.throw_out_of_memory())?;
         // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
         // backing string on both Ok/Err paths, then propagate.
         let r = bun_string_jsc::to_jsdomurl(&mut url, global);
@@ -2459,7 +2792,10 @@ where
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
                 // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                if let Some(addr) = bun_opaque::opaque_deref_mut(listener).socket().remote_address(&mut buf[..1024]) {
+                if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
+                    .socket()
+                    .remote_address(&mut buf[..1024])
+                {
                     if !addr.is_empty() {
                         return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
                     }
@@ -2469,7 +2805,10 @@ where
                 match &self.config.address {
                     server_config::Address::Tcp { hostname, .. } => {
                         if let Some(hostname) = hostname {
-                            return jsc::bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
+                            return jsc::bun_string_jsc::create_utf8_for_js(
+                                global,
+                                hostname.as_bytes(),
+                            );
                         } else {
                             return BunString::static_(b"localhost").to_js(global);
                         }
@@ -2495,8 +2834,6 @@ where
         JSValue::from(DEBUG)
     }
 
-
-
     pub fn finalize(self: Box<Self>) {
         httplog!("finalize");
         // `deinit_if_we_can` may defer the actual free (pending requests still
@@ -2505,9 +2842,6 @@ where
         this.js_value.finalize();
         this.deinit_if_we_can();
     }
-
-
-
 
     pub fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
         if !self.has_listener() && self.pending_requests == 0 {
@@ -2521,21 +2855,13 @@ where
         prom.value()
     }
 
-
-
-
-
     // `notify_inspector_server_stopped` lives in the unbounded impl block
     // above so the unbounded `deinit()` (mod.rs) can call it.
 
-
-
-
-
-
-
     pub fn on_h3_request(&mut self, req: &mut uws::H3::Request, resp: &mut uws::H3::Response) {
-        if !Self::HAS_H3 { unreachable!(); }
+        if !Self::HAS_H3 {
+            unreachable!();
+        }
         if self.config.on_request.is_none() {
             return Self::on_h3_404(self, req, resp);
         }
@@ -2547,17 +2873,21 @@ where
         req: &mut uws::H3::Request,
         resp: &mut uws::H3::Response,
     ) {
-        if !Self::HAS_H3 { unreachable!(); }
-        Self::on_user_route_request_for::<ServerH3RequestContext<SSL, DEBUG>>(user_route, req, resp);
+        if !Self::HAS_H3 {
+            unreachable!();
+        }
+        Self::on_user_route_request_for::<ServerH3RequestContext<SSL, DEBUG>>(
+            user_route, req, resp,
+        );
     }
 
     pub fn on_h3_404(_this: &mut Self, _req: &mut uws::H3::Request, resp: &mut uws::H3::Response) {
-        if !Self::HAS_H3 { unreachable!(); }
+        if !Self::HAS_H3 {
+            unreachable!();
+        }
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
     }
-
-
 
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(&mut self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2573,7 +2903,11 @@ where
         Ok(this_value)
     }
 
-    pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
+    pub fn on_bun_info_request(
+        &mut self,
+        req: &mut uws::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
         jsc::mark_binding!();
         self.pending_requests += 1;
         req.set_yield(false);
@@ -2587,7 +2921,10 @@ where
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
             &source,
-            bun_js_printer::PrintJsonOptions { mangled_props: None, ..Default::default() },
+            bun_js_printer::PrintJsonOptions {
+                mangled_props: None,
+                ..Default::default()
+            },
         );
 
         resp.write_status(b"200 OK");
@@ -2623,13 +2960,20 @@ where
                 server_config::RouteMethod::Any => None,
                 server_config::RouteMethod::Specific(m) => Some(m),
             },
-        ) else { return };
+        ) else {
+            return;
+        };
 
         // SAFETY: `server_ptr` outlives `prepared`; reborrow to break the
         // exclusive lifetime tie between `prepared` and `server`.
         let server = unsafe { &mut *server_ptr };
-        let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
-        let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
+        let server_request_list =
+            Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
+        let call_route = if Ctx::IS_H3 {
+            Bun__ServerRouteList__callRouteH3
+        } else {
+            Bun__ServerRouteList__callRoute
+        };
         let global = server.global_this();
         let response_value = match jsc::from_js_host_call(global, || {
             call_route(
@@ -2648,7 +2992,6 @@ where
 
         server.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
-
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
@@ -2686,7 +3029,6 @@ where
         RequestCtxOps::to_async(ctx, req, prepared.request_object);
     }
 
-
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
         req: &mut Ctx::Req,
@@ -2700,7 +3042,9 @@ where
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
-        ) else { return };
+        ) else {
+            return;
+        };
 
         // SAFETY: `prepared` borrows into `*self` but the fields touched below
         // (`config.on_request`, `global_this`, `js_value`) are disjoint from
@@ -2710,20 +3054,20 @@ where
 
         let global = this.global_this();
         let js_value = this.js_value_assert_alive();
-        let on_request_fn = this.config.on_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED);
-        let response_value = match on_request_fn.call(
-            global,
-            js_value,
-            &[prepared.js_request, js_value],
-        ) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let on_request_fn = this
+            .config
+            .on_request
+            .as_ref()
+            .map(|s| s.get())
+            .unwrap_or(JSValue::UNDEFINED);
+        let response_value =
+            match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
+                Ok(v) => v,
+                Err(err) => global.take_exception(err),
+            };
 
         this.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
-
-
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
@@ -2781,7 +3125,9 @@ where
 
         // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
         let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm_ref().event_loop()).debug))
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
+                (*self.vm_ref().event_loop()).debug
+            ))
         };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
@@ -2795,7 +3141,9 @@ where
             // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
             RespLike::on_timeout_warn(
                 resp,
-                did_send_idletimeout_warning_once().as_ptr().cast::<c_void>(),
+                did_send_idletimeout_warning_once()
+                    .as_ptr()
+                    .cast::<c_void>(),
             );
         }
 
@@ -2814,12 +3162,26 @@ where
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
                 let slot = (*self.h3_request_pool).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_context, method);
+                Ctx::create_in(
+                    slot.addr().as_ptr().cast(),
+                    self_ptr,
+                    req,
+                    resp,
+                    should_deinit_context,
+                    method,
+                );
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
                 let slot = (*self.request_pool).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_context, method);
+                Ctx::create_in(
+                    slot.addr().as_ptr().cast(),
+                    self_ptr,
+                    req,
+                    resp,
+                    should_deinit_context,
+                    method,
+                );
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             }
@@ -2828,7 +3190,9 @@ where
         let ctx = unsafe { &mut *ctx_slot };
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
         // owned by the per-thread VirtualMachine.
-        self.vm_ref().jsc_vm().deprecated_report_extra_memory(mem::size_of::<Ctx>());
+        self.vm_ref()
+            .jsc_vm()
+            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
         // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with
@@ -2837,7 +3201,8 @@ where
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero (released in `RequestContext::deinit` and
         // `Request::finalize`).
-        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
+        let body_ptr: *mut BodyValue =
+            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.set_request_body(NonNull::new(body_ptr));
 
         let signal = AbortSignal::new(&self.global());
@@ -2876,9 +3241,9 @@ where
         if Ctx::IS_H3 {
             // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(
-                    FetchHeaders::create_from_h3(std::ptr::from_mut(req).cast::<c_void>()),
-                )
+                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
+                    std::ptr::from_mut(req).cast::<c_void>(),
+                ))
             }));
             // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Snapshot
@@ -2888,7 +3253,11 @@ where
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(host) = host.as_deref() {
-                    let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
+                    let fmt = bun_fmt::HostFormatter {
+                        is_https: true,
+                        host,
+                        port: None,
+                    };
                     let mut s = Vec::new();
                     write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
                     request_object.url.set(BunString::clone_utf8(&s));
@@ -2929,7 +3298,9 @@ where
                         global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
-                        on_readable_stream_available: Some(Ctx::on_request_body_readable_stream_available),
+                        on_readable_stream_available: Some(
+                            Ctx::on_request_body_readable_stream_available,
+                        ),
                         ..Default::default()
                     });
                 }
@@ -2977,7 +3348,9 @@ where
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             method,
-        ) else { return };
+        ) else {
+            return;
+        };
         // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
         unsafe { (*prepared.ctx).upgrade_context = Some(upgrade_ctx) };
         // BACKREF: `server_ref` outlives this request (see decl above).
@@ -3000,7 +3373,13 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(server_ptr, &should_deinit_context, prepared, req, response_value);
+        Self::handle_request(
+            server_ptr,
+            &should_deinit_context,
+            prepared,
+            req,
+            response_value,
+        );
     }
 
     /// # Safety
@@ -3067,7 +3446,8 @@ where
         let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero.
-        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
+        let body_ptr: *mut BodyValue =
+            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
         let signal = AbortSignal::new(&this.global());
@@ -3103,14 +3483,15 @@ where
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        let args = [
-            request_object.to_js(&global),
-            this.js_value_assert_alive(),
-        ];
+        let args = [request_object.to_js(&global), this.js_value_assert_alive()];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match this.config.on_request.as_ref().unwrap().get().call(&global, this.js_value_assert_alive(), &args) {
+        let response_value = match this.config.on_request.as_ref().unwrap().get().call(
+            &global,
+            this.js_value_assert_alive(),
+            &args,
+        ) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -3137,7 +3518,10 @@ where
             return;
         }
 
-        ctx.to_async(std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(), request_object);
+        ctx.to_async(
+            std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
+            request_object,
+        );
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -3189,7 +3573,8 @@ where
             let mut buffer = paths::path_buffer_pool::get();
             let main = self.vm_ref().main();
             let len = main.len().min(buffer.len());
-            break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes();
+            break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
+                .to_ne_bytes();
         };
 
         // And then we use a hash of their project root directory:
@@ -3197,7 +3582,8 @@ where
             let mut buffer = paths::path_buffer_pool::get();
             let root = &self.dev_server.as_ref().unwrap().root;
             let len = root.len().min(buffer.len());
-            break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes();
+            break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
+                .to_ne_bytes();
         };
 
         // We combine it together to get a 16 byte uuid.
@@ -3216,7 +3602,10 @@ where
         write!(
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
-            bun_fmt::format_json_string_utf8(&self.dev_server.as_ref().unwrap().root, Default::default()),
+            bun_fmt::format_json_string_utf8(
+                &self.dev_server.as_ref().unwrap().root,
+                Default::default()
+            ),
             uuid,
         )
         .ok();
@@ -3226,8 +3615,11 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-
-    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
+    pub fn on404(
+        _this: &mut Self,
+        req: &mut uws::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
         if cfg!(debug_assertions) {
             // PORT NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
             let m = req.method().to_vec();
@@ -3241,14 +3633,24 @@ where
         resp.end(b"", false);
     }
 
-
-    pub fn on_client_error_callback(&mut self, socket: &mut uws::Socket, error_code: u8, raw_packet: &[u8]) {
-        let Some(callback) = self.on_clienterror.get() else { return };
+    pub fn on_client_error_callback(
+        &mut self,
+        socket: &mut uws::Socket,
+        error_code: u8,
+        raw_packet: &[u8],
+    ) {
+        let Some(callback) = self.on_clienterror.get() else {
+            return;
+        };
         {
             let is_ssl = SSL;
             let global = self.global();
             let node_socket = match jsc::from_js_host_call(&global, || {
-                Bun__createNodeHTTPServerSocketForClientError(is_ssl, std::ptr::from_mut(socket).cast::<c_void>(), &global)
+                Bun__createNodeHTTPServerSocketForClientError(
+                    is_ssl,
+                    std::ptr::from_mut(socket).cast::<c_void>(),
+                    &global,
+                )
             }) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -3263,11 +3665,17 @@ where
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
             // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope =
+                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
             if let Err(err) = callback.call(
                 &global,
                 JSValue::UNDEFINED,
-                &[JSValue::from(is_ssl), node_socket, error_code_value, raw_packet_value],
+                &[
+                    JSValue::from(is_ssl),
+                    node_socket,
+                    error_code_value,
+                    raw_packet_value,
+                ],
             ) {
                 global.report_active_exception_as_unhandled(err);
             }
@@ -3303,7 +3711,11 @@ pub enum AnyUserRouteList<'a> {
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
 #[unsafe(no_mangle)]
-pub extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
+pub extern "C" fn Server__setIdleTimeout(
+    server: JSValue,
+    seconds: JSValue,
+    global: &JSGlobalObject,
+) {
     match server_set_idle_timeout_(server, seconds, global) {
         Ok(()) => {}
         Err(JsError::Thrown) => {}
@@ -3314,13 +3726,21 @@ pub extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, glob
     }
 }
 
-pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+pub fn server_set_idle_timeout_(
+    server: JSValue,
+    seconds: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<()> {
     if !server.is_object() {
-        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set timeout: The 'this' value is not a Server."
+        )));
     }
 
     if !seconds.is_number() {
-        return Err(global.throw(format_args!("Failed to set timeout: The provided value is not of type 'number'.")));
+        return Err(global.throw(format_args!(
+            "Failed to set timeout: The provided value is not of type 'number'."
+        )));
     }
     let value = seconds.to_u32();
     // SAFETY: as_ returned a non-null *mut to a live server.
@@ -3333,18 +3753,28 @@ pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGl
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         unsafe { &mut *this }.set_idle_timeout(value);
     } else {
-        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set timeout: The 'this' value is not a Server."
+        )));
     }
     Ok(())
 }
 
-pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, callback: JSValue) -> JsResult<JSValue> {
+pub fn server_set_on_client_error_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
     if !server.is_object() {
-        return Err(global.throw(format_args!("Failed to set clientError: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set clientError: The 'this' value is not a Server."
+        )));
     }
 
     if !callback.is_function() {
-        return Err(global.throw(format_args!("Failed to set clientError: The provided value is not a function.")));
+        return Err(global.throw(format_args!(
+            "Failed to set clientError: The provided value is not a function."
+        )));
     }
 
     macro_rules! handle {
@@ -3398,7 +3828,9 @@ pub fn server_set_app_flags_(
     use_strict_method_validation: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
-        return Err(global.throw(format_args!("Failed to set requireHostHeader: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set requireHostHeader: The 'this' value is not a Server."
+        )));
     }
 
     // SAFETY: as_ returned a non-null *mut to a live server.
@@ -3411,7 +3843,9 @@ pub fn server_set_app_flags_(
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else {
-        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set timeout: The 'this' value is not a Server."
+        )));
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -3422,7 +3856,9 @@ pub fn server_set_max_http_header_size_(
     max_header_size: u64,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
-        return Err(global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set maxHeaderSize: The 'this' value is not a Server."
+        )));
     }
 
     // SAFETY: as_ returned a non-null *mut to a live server.
@@ -3435,7 +3871,9 @@ pub fn server_set_max_http_header_size_(
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else {
-        return Err(global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server.")));
+        return Err(global.throw(format_args!(
+            "Failed to set maxHeaderSize: The 'this' value is not a Server."
+        )));
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -3459,7 +3897,12 @@ extern "C" fn server_set_app_flags_shim(
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
-        server_set_app_flags_(global, server, require_host_header, use_strict_method_validation),
+        server_set_app_flags_(
+            global,
+            server,
+            require_host_header,
+            use_strict_method_validation,
+        ),
     )
 }
 
@@ -3469,7 +3912,10 @@ extern "C" fn server_set_on_client_error_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(global, server_set_on_client_error_(global, server, callback))
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_on_client_error_(global, server, callback),
+    )
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
@@ -3483,7 +3929,6 @@ extern "C" fn server_set_max_http_header_size_shim(
         server_set_max_http_header_size_(global, server, max_header_size),
     )
 }
-
 
 // ─── Externs ─────────────────────────────────────────────────────────────────
 // C++-implemented (bindings/BunServer.cpp). Declared here (not `bun_jsc`)

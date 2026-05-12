@@ -1,4 +1,4 @@
-use crate::jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 
@@ -15,7 +15,11 @@ pub fn create_mysql_error(
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
     opts_obj.put_optional(global, b"errno", options.errno.map(f64::from));
-    opts_obj.put_optional_utf8(global, b"sqlState", options.sql_state.as_ref().map(|s| &s[..]))?;
+    opts_obj.put_optional_utf8(
+        global,
+        b"sqlState",
+        options.sql_state.as_ref().map(|s| &s[..]),
+    )?;
     opts_obj.put(
         global,
         b"message",

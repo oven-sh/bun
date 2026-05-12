@@ -993,7 +993,8 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some() {
+                if browsers.android.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some()
+                {
                     return false;
                 }
             }
@@ -1028,7 +1029,8 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some() {
+                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some()
+                {
                     return false;
                 }
             }
@@ -1580,7 +1582,14 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.firefox.is_some() || browsers.ie.is_some() || browsers.opera.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.firefox.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -1629,7 +1638,9 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::CustomMediaQueries | Feature::FitContentFunctionSize | Feature::StretchSize => {
+            Feature::CustomMediaQueries
+            | Feature::FitContentFunctionSize
+            | Feature::StretchSize => {
                 return false;
             }
             Feature::DoublePositionGradients => {
@@ -1992,7 +2003,9 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::LogicalBorderShorthand | Feature::LogicalMarginShorthand | Feature::LogicalPaddingShorthand => {
+            Feature::LogicalBorderShorthand
+            | Feature::LogicalMarginShorthand
+            | Feature::LogicalPaddingShorthand => {
                 if let Some(version) = browsers.chrome {
                     if version < 5701632 {
                         return false;
@@ -2518,7 +2531,8 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some() {
+                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some()
+                {
                     return false;
                 }
             }
@@ -2773,7 +2787,8 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some() {
+                if browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some()
+                {
                     return false;
                 }
             }
@@ -2923,7 +2938,13 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.ie.is_some() || browsers.opera.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -3394,7 +3415,13 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.ie.is_some() || browsers.opera.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -3424,7 +3451,11 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.firefox.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some() {
+                if browsers.firefox.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.ios_saf.is_some()
+                    || browsers.safari.is_some()
+                {
                     return false;
                 }
             }
@@ -3657,7 +3688,11 @@ impl Feature {
                     }
                 }
             }
-            Feature::ExUnit | Feature::CircleListStyleType | Feature::DecimalListStyleType | Feature::DiscListStyleType | Feature::SquareListStyleType => {
+            Feature::ExUnit
+            | Feature::CircleListStyleType
+            | Feature::DecimalListStyleType
+            | Feature::DiscListStyleType
+            | Feature::SquareListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -3966,7 +4001,11 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::VbUnit | Feature::ViUnit | Feature::ViewportPercentageUnitsDynamic | Feature::ViewportPercentageUnitsLarge | Feature::ViewportPercentageUnitsSmall => {
+            Feature::VbUnit
+            | Feature::ViUnit
+            | Feature::ViewportPercentageUnitsDynamic
+            | Feature::ViewportPercentageUnitsLarge
+            | Feature::ViewportPercentageUnitsSmall => {
                 if let Some(version) = browsers.chrome {
                     if version < 7077888 {
                         return false;
@@ -4336,7 +4375,27 @@ impl Feature {
                     }
                 }
             }
-            Feature::AfarListStyleType | Feature::AmharicListStyleType | Feature::AmharicAbegedeListStyleType | Feature::EthiopicListStyleType | Feature::EthiopicAbegedeListStyleType | Feature::EthiopicAbegedeAmEtListStyleType | Feature::EthiopicAbegedeGezListStyleType | Feature::EthiopicAbegedeTiErListStyleType | Feature::EthiopicAbegedeTiEtListStyleType | Feature::EthiopicHalehameAaErListStyleType | Feature::EthiopicHalehameAaEtListStyleType | Feature::EthiopicHalehameAmEtListStyleType | Feature::EthiopicHalehameGezListStyleType | Feature::EthiopicHalehameOmEtListStyleType | Feature::EthiopicHalehameSidEtListStyleType | Feature::EthiopicHalehameSoEtListStyleType | Feature::EthiopicHalehameTigListStyleType | Feature::LowerHexadecimalListStyleType | Feature::LowerNorwegianListStyleType | Feature::UpperHexadecimalListStyleType | Feature::UpperNorwegianListStyleType => {
+            Feature::AfarListStyleType
+            | Feature::AmharicListStyleType
+            | Feature::AmharicAbegedeListStyleType
+            | Feature::EthiopicListStyleType
+            | Feature::EthiopicAbegedeListStyleType
+            | Feature::EthiopicAbegedeAmEtListStyleType
+            | Feature::EthiopicAbegedeGezListStyleType
+            | Feature::EthiopicAbegedeTiErListStyleType
+            | Feature::EthiopicAbegedeTiEtListStyleType
+            | Feature::EthiopicHalehameAaErListStyleType
+            | Feature::EthiopicHalehameAaEtListStyleType
+            | Feature::EthiopicHalehameAmEtListStyleType
+            | Feature::EthiopicHalehameGezListStyleType
+            | Feature::EthiopicHalehameOmEtListStyleType
+            | Feature::EthiopicHalehameSidEtListStyleType
+            | Feature::EthiopicHalehameSoEtListStyleType
+            | Feature::EthiopicHalehameTigListStyleType
+            | Feature::LowerHexadecimalListStyleType
+            | Feature::LowerNorwegianListStyleType
+            | Feature::UpperHexadecimalListStyleType
+            | Feature::UpperNorwegianListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4376,7 +4435,22 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::ArabicIndicListStyleType | Feature::BengaliListStyleType | Feature::CjkEarthlyBranchListStyleType | Feature::CjkHeavenlyStemListStyleType | Feature::DevanagariListStyleType | Feature::GujaratiListStyleType | Feature::GurmukhiListStyleType | Feature::KannadaListStyleType | Feature::KhmerListStyleType | Feature::LaoListStyleType | Feature::MalayalamListStyleType | Feature::MyanmarListStyleType | Feature::OriyaListStyleType | Feature::PersianListStyleType | Feature::TeluguListStyleType | Feature::ThaiListStyleType => {
+            Feature::ArabicIndicListStyleType
+            | Feature::BengaliListStyleType
+            | Feature::CjkEarthlyBranchListStyleType
+            | Feature::CjkHeavenlyStemListStyleType
+            | Feature::DevanagariListStyleType
+            | Feature::GujaratiListStyleType
+            | Feature::GurmukhiListStyleType
+            | Feature::KannadaListStyleType
+            | Feature::KhmerListStyleType
+            | Feature::LaoListStyleType
+            | Feature::MalayalamListStyleType
+            | Feature::MyanmarListStyleType
+            | Feature::OriyaListStyleType
+            | Feature::PersianListStyleType
+            | Feature::TeluguListStyleType
+            | Feature::ThaiListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4421,7 +4495,15 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::ArmenianListStyleType | Feature::DecimalLeadingZeroListStyleType | Feature::GeorgianListStyleType | Feature::LowerAlphaListStyleType | Feature::LowerGreekListStyleType | Feature::LowerRomanListStyleType | Feature::UpperAlphaListStyleType | Feature::UpperLatinListStyleType | Feature::UpperRomanListStyleType => {
+            Feature::ArmenianListStyleType
+            | Feature::DecimalLeadingZeroListStyleType
+            | Feature::GeorgianListStyleType
+            | Feature::LowerAlphaListStyleType
+            | Feature::LowerGreekListStyleType
+            | Feature::LowerRomanListStyleType
+            | Feature::UpperAlphaListStyleType
+            | Feature::UpperLatinListStyleType
+            | Feature::UpperRomanListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4508,7 +4590,16 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::BinaryListStyleType | Feature::OctalListStyleType | Feature::OromoListStyleType | Feature::SidamaListStyleType | Feature::SomaliListStyleType | Feature::TigreListStyleType | Feature::TigrinyaErListStyleType | Feature::TigrinyaErAbegedeListStyleType | Feature::TigrinyaEtListStyleType | Feature::TigrinyaEtAbegedeListStyleType => {
+            Feature::BinaryListStyleType
+            | Feature::OctalListStyleType
+            | Feature::OromoListStyleType
+            | Feature::SidamaListStyleType
+            | Feature::SomaliListStyleType
+            | Feature::TigreListStyleType
+            | Feature::TigrinyaErListStyleType
+            | Feature::TigrinyaErAbegedeListStyleType
+            | Feature::TigrinyaEtListStyleType
+            | Feature::TigrinyaEtAbegedeListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4548,7 +4639,9 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::CambodianListStyleType | Feature::MongolianListStyleType | Feature::TibetanListStyleType => {
+            Feature::CambodianListStyleType
+            | Feature::MongolianListStyleType
+            | Feature::TibetanListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4683,7 +4776,10 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::EthiopicNumericListStyleType | Feature::JapaneseFormalListStyleType | Feature::JapaneseInformalListStyleType | Feature::TamilListStyleType => {
+            Feature::EthiopicNumericListStyleType
+            | Feature::JapaneseFormalListStyleType
+            | Feature::JapaneseInformalListStyleType
+            | Feature::TamilListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 5963776 {
                         return false;
@@ -4728,7 +4824,12 @@ impl Feature {
                     return false;
                 }
             }
-            Feature::HebrewListStyleType | Feature::HiraganaListStyleType | Feature::HiraganaIrohaListStyleType | Feature::KatakanaListStyleType | Feature::KatakanaIrohaListStyleType | Feature::AutoSize => {
+            Feature::HebrewListStyleType
+            | Feature::HiraganaListStyleType
+            | Feature::HiraganaIrohaListStyleType
+            | Feature::KatakanaListStyleType
+            | Feature::KatakanaIrohaListStyleType
+            | Feature::AutoSize => {
                 if let Some(version) = browsers.chrome {
                     if version < 1179648 {
                         return false;
@@ -4775,7 +4876,9 @@ impl Feature {
                     }
                 }
             }
-            Feature::KoreanHangulFormalListStyleType | Feature::KoreanHanjaFormalListStyleType | Feature::KoreanHanjaInformalListStyleType => {
+            Feature::KoreanHangulFormalListStyleType
+            | Feature::KoreanHanjaFormalListStyleType
+            | Feature::KoreanHanjaInformalListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 2949120 {
                         return false;
@@ -4959,7 +5062,10 @@ impl Feature {
                     }
                 }
             }
-            Feature::SimpChineseFormalListStyleType | Feature::SimpChineseInformalListStyleType | Feature::TradChineseFormalListStyleType | Feature::TradChineseInformalListStyleType => {
+            Feature::SimpChineseFormalListStyleType
+            | Feature::SimpChineseInformalListStyleType
+            | Feature::TradChineseFormalListStyleType
+            | Feature::TradChineseInformalListStyleType => {
                 if let Some(version) = browsers.chrome {
                     if version < 2949120 {
                         return false;
@@ -5055,7 +5161,15 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.opera.is_some() || browsers.safari.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.ios_saf.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.safari.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -5080,7 +5194,12 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.firefox.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.safari.is_some() || browsers.samsung.is_some() {
+                if browsers.firefox.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.ios_saf.is_some()
+                    || browsers.safari.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -5312,7 +5431,15 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.ie.is_some() || browsers.ios_saf.is_some() || browsers.opera.is_some() || browsers.safari.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.ios_saf.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.safari.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }
@@ -5327,7 +5454,14 @@ impl Feature {
                         return false;
                     }
                 }
-                if browsers.android.is_some() || browsers.chrome.is_some() || browsers.edge.is_some() || browsers.firefox.is_some() || browsers.ie.is_some() || browsers.opera.is_some() || browsers.samsung.is_some() {
+                if browsers.android.is_some()
+                    || browsers.chrome.is_some()
+                    || browsers.edge.is_some()
+                    || browsers.firefox.is_some()
+                    || browsers.ie.is_some()
+                    || browsers.opera.is_some()
+                    || browsers.samsung.is_some()
+                {
                     return false;
                 }
             }

@@ -24,7 +24,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 
-use crate::{mimalloc, MimallocArena};
+use crate::{MimallocArena, mimalloc};
 
 /// Inline bump buffer + fallback allocator. See module doc.
 ///
@@ -353,7 +353,9 @@ impl MimallocHeapRef {
     /// Null heap → process-global `mi_malloc`/`mi_free`.
     #[inline]
     pub const fn global() -> Self {
-        Self { heap: ptr::null_mut() }
+        Self {
+            heap: ptr::null_mut(),
+        }
     }
     /// The wrapped heap pointer (null when global).
     #[inline]

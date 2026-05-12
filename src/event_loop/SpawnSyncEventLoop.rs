@@ -18,7 +18,6 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_uws as uws;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -26,6 +25,7 @@ use bun_sys::windows::libuv;
 // `ref_`/`unref`/`close` are `UvHandle` default trait methods; bring it into
 // scope so method resolution finds them on `Timer`.
 use bun_sys::windows::libuv::UvHandle as _;
+use bun_uws as uws;
 
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
@@ -158,7 +158,8 @@ impl SpawnSyncEventLoop {
         // The Rust wrapper takes a `LoopHandler` impl with associated-const fn ptrs.
         let loop_ = uws::Loop::create::<handler::Handler>();
 
-        let loop_ = NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
+        let loop_ =
+            NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
 
         // Initialize the JSC EventLoop with empty state.
         // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
@@ -319,7 +320,7 @@ impl SpawnSyncEventLoop {
     /// Restore the original event loop handle after spawnSync completes
     pub fn cleanup(
         &mut self,
-        vm: *mut (),             /* SAFETY: erased *mut VirtualMachine */
+        vm: *mut (),              /* SAFETY: erased *mut VirtualMachine */
         prev_event_loop: *mut (), /* SAFETY: erased *mut jsc::EventLoop */
     ) {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
@@ -457,7 +458,9 @@ impl SpawnSyncEventLoop {
                 // that returns no callback runs until the next `uv_run`, so the
                 // `&mut self` receiver reborrow in `uv_timer_mut` is sound here
                 // (the raw `*mut Self` in `timer.data` is dead until restarted).
-                let t = self.uv_timer_mut().expect("set in prepare_timer_on_windows");
+                let t = self
+                    .uv_timer_mut()
+                    .expect("set in prepare_timer_on_windows");
                 t.unref();
                 t.stop();
             }

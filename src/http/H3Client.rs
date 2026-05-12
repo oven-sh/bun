@@ -17,13 +17,20 @@
 
 use core::sync::atomic::AtomicU32;
 
-#[path = "h3_client/Stream.rs"]          pub mod stream;
-#[path = "h3_client/ClientSession.rs"]   pub mod client_session;
-#[path = "h3_client/ClientContext.rs"]   pub mod client_context;
-#[path = "h3_client/PendingConnect.rs"]  pub mod pending_connect;
-#[path = "h3_client/AltSvc.rs"]          pub mod AltSvc;
-#[path = "h3_client/callbacks.rs"]       pub mod callbacks;
-#[path = "h3_client/encode.rs"]          pub mod encode;
+#[path = "h3_client/AltSvc.rs"]
+pub mod AltSvc;
+#[path = "h3_client/callbacks.rs"]
+pub mod callbacks;
+#[path = "h3_client/ClientContext.rs"]
+pub mod client_context;
+#[path = "h3_client/ClientSession.rs"]
+pub mod client_session;
+#[path = "h3_client/encode.rs"]
+pub mod encode;
+#[path = "h3_client/PendingConnect.rs"]
+pub mod pending_connect;
+#[path = "h3_client/Stream.rs"]
+pub mod stream;
 
 // Single `Output.scoped(.h3_client, .hidden)` for the whole module tree. Zig
 // comptime-deduplicates per tag, so the four submodules share one
@@ -31,10 +38,10 @@ use core::sync::atomic::AtomicU32;
 // in each child preserves that behavior.
 bun_core::declare_scope!(h3_client, hidden);
 
-pub use client_session::ClientSession;
 pub use client_context::ClientContext;
-pub use stream::Stream;
+pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
+pub use stream::Stream;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread

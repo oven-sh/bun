@@ -1,6 +1,6 @@
+use crate::expr::{Data, PrimitiveType, data};
+use crate::{self as js_ast, E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use crate::{self as js_ast, e, E, Expr, StoreRef};
-use crate::expr::{data, Data, PrimitiveType};
 
 // ── local rope helpers ─────────────────────────────────────────────────────
 // `EString::push` / `EString::clone_rope_nodes` are still gated in E.rs
@@ -69,7 +69,11 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
 /// bugs due to inlined enum values sharing `E::String`s. If a new use case
 /// besides inlined enums comes up to set this to true, please rename the
 /// variable and document it.
-fn join_strings(left: &E::EString, right: &E::EString, has_inlined_enum_poison: bool) -> E::EString {
+fn join_strings(
+    left: &E::EString,
+    right: &E::EString,
+    has_inlined_enum_poison: bool,
+) -> E::EString {
     let mut new = if has_inlined_enum_poison {
         // Inlined enums can be shared by multiple call sites. In
         // this case, we need to ensure that the ENTIRE rope is

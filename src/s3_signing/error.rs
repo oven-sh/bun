@@ -1,4 +1,4 @@
-use bun_core::{self, err, Error};
+use bun_core::{self, Error, err};
 
 pub struct ErrorCodeAndMessage {
     pub code: &'static [u8],
@@ -22,12 +22,30 @@ pub fn get_sign_error_message(e: Error) -> &'static [u8] {
 pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
     // keep error codes consistent for internal errors
     match e {
-        e if e == err!("MissingCredentials") => ErrorCodeAndMessage { code: b"ERR_S3_MISSING_CREDENTIALS", message: get_sign_error_message(err!("MissingCredentials")) },
-        e if e == err!("InvalidMethod") => ErrorCodeAndMessage { code: b"ERR_S3_INVALID_METHOD", message: get_sign_error_message(err!("InvalidMethod")) },
-        e if e == err!("InvalidPath") => ErrorCodeAndMessage { code: b"ERR_S3_INVALID_PATH", message: get_sign_error_message(err!("InvalidPath")) },
-        e if e == err!("InvalidEndpoint") => ErrorCodeAndMessage { code: b"ERR_S3_INVALID_ENDPOINT", message: get_sign_error_message(err!("InvalidEndpoint")) },
-        e if e == err!("InvalidSessionToken") => ErrorCodeAndMessage { code: b"ERR_S3_INVALID_SESSION_TOKEN", message: get_sign_error_message(err!("InvalidSessionToken")) },
-        _ => ErrorCodeAndMessage { code: b"ERR_S3_INVALID_SIGNATURE", message: get_sign_error_message(err!("SignError")) },
+        e if e == err!("MissingCredentials") => ErrorCodeAndMessage {
+            code: b"ERR_S3_MISSING_CREDENTIALS",
+            message: get_sign_error_message(err!("MissingCredentials")),
+        },
+        e if e == err!("InvalidMethod") => ErrorCodeAndMessage {
+            code: b"ERR_S3_INVALID_METHOD",
+            message: get_sign_error_message(err!("InvalidMethod")),
+        },
+        e if e == err!("InvalidPath") => ErrorCodeAndMessage {
+            code: b"ERR_S3_INVALID_PATH",
+            message: get_sign_error_message(err!("InvalidPath")),
+        },
+        e if e == err!("InvalidEndpoint") => ErrorCodeAndMessage {
+            code: b"ERR_S3_INVALID_ENDPOINT",
+            message: get_sign_error_message(err!("InvalidEndpoint")),
+        },
+        e if e == err!("InvalidSessionToken") => ErrorCodeAndMessage {
+            code: b"ERR_S3_INVALID_SESSION_TOKEN",
+            message: get_sign_error_message(err!("InvalidSessionToken")),
+        },
+        _ => ErrorCodeAndMessage {
+            code: b"ERR_S3_INVALID_SIGNATURE",
+            message: get_sign_error_message(err!("SignError")),
+        },
     }
 }
 
@@ -41,7 +59,6 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
 pub struct S3Error<'a> {
     pub code: &'a [u8],
     pub message: &'a [u8],
-
     // PORT NOTE: `toJS` / `toJSWithAsyncStack` aliases to `error_jsc.zig` deleted —
     // implemented as extension-trait methods in the `*_jsc` crate.
 }

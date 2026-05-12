@@ -39,12 +39,12 @@ pub mod backend_coregraphics;
 pub mod backend_wic;
 
 // ─── pure helpers (no jsc / no FFI sys deps) ─────────────────────────────────
-#[path = "thumbhash.rs"]
-pub mod thumbhash;
-#[path = "quantize.rs"]
-pub mod quantize;
 #[path = "exif.rs"]
 pub mod exif;
+#[path = "quantize.rs"]
+pub mod quantize;
+#[path = "thumbhash.rs"]
+pub mod thumbhash;
 
 // ─── JS-facing `Image` class + pipeline task ─────────────────────────────────
 //

@@ -5,26 +5,17 @@ const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 // TODO(port): writer trait — Zig uses `*std.Io.Writer` (byte writer). Mapping to
 // `&mut impl std::io::Write` per PORTING.md; Phase B may swap to the concrete
 // crate-local byte-writer trait once `bun_io` is wired.
-pub fn escape_reg_exp<W: std::io::Write>(input: &[u8], writer: &mut W) -> Result<(), std::io::Error> {
+pub fn escape_reg_exp<W: std::io::Write>(
+    input: &[u8],
+    writer: &mut W,
+) -> Result<(), std::io::Error> {
     let mut remain = input;
 
     while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS).map(|i| i as usize) {
         writer.write_all(&remain[0..i])?;
         match remain[i] {
-            c @ (b'|'
-            | b'\\'
-            | b'{'
-            | b'}'
-            | b'('
-            | b')'
-            | b'['
-            | b']'
-            | b'^'
-            | b'$'
-            | b'+'
-            | b'*'
-            | b'?'
-            | b'.') => writer.write_all(&[b'\\', c])?,
+            c @ (b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+'
+            | b'*' | b'?' | b'.') => writer.write_all(&[b'\\', c])?,
             b'-' => writer.write_all(b"\\x2d")?,
             c => {
                 if cfg!(debug_assertions) {
@@ -49,19 +40,8 @@ pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
     while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS).map(|i| i as usize) {
         writer.write_all(&remain[0..i])?;
         match remain[i] {
-            c @ (b'|'
-            | b'\\'
-            | b'{'
-            | b'}'
-            | b'('
-            | b')'
-            | b'['
-            | b']'
-            | b'^'
-            | b'$'
-            | b'+'
-            | b'?'
-            | b'.') => writer.write_all(&[b'\\', c])?,
+            c @ (b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+'
+            | b'?' | b'.') => writer.write_all(&[b'\\', c])?,
             b'*' => writer.write_all(b".*")?,
             b'-' => writer.write_all(b"\\x2d")?,
             c => {

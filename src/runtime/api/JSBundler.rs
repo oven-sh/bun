@@ -3,23 +3,23 @@
 use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ffi::c_void;
 
-use bun_core::Output;
-use bun_core::{strings, String as BunString, ZigString};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JsError};
-use bun_paths as resolve_path;
-use bun_resolver::{self as resolver, fs as Fs};
-use bun_ast::{Loader, Target};
-use bun_bundler::options;
-use bun_bundler::BundleV2;
-use bun_options_types::compile_target::CompileTarget;
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_standalone_graph::StandaloneModuleGraph;
-use bun_ast::Index;
-use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
-use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
+use bun_ast::Index;
+use bun_ast::{Loader, Target};
+use bun_bundler::BundleV2;
+use bun_bundler::options;
+use bun_collections::{StringArrayHashMap, StringHashMap, StringMap, StringSet};
 use bun_core::MutableString;
+use bun_core::Output;
+use bun_core::{String as BunString, ZigString, strings};
+use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_options_types::compile_target::CompileTarget;
+use bun_options_types::schema::api; // bun.schema.api
+use bun_paths as resolve_path;
+use bun_resolver::{self as resolver, fs as Fs};
+use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
@@ -55,12 +55,17 @@ pub mod js_bundler {
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
     /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    pub fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
+    pub fn file_map_from_js(
+        global_this: &JSGlobalObject,
+        files_value: JSValue,
+    ) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
         let Some(files_obj) = files_value.get_object() else {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected files to be an object")));
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Expected files to be an object"))
+            );
         };
 
         let mut files_iter = jsc::JSPropertyIterator::init(
@@ -293,7 +298,9 @@ pub mod js_bundler {
                 } else if compile_value.is_object() {
                     break 'brk compile_value;
                 } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!("Expected compile to be a boolean or string or options object")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected compile to be a boolean or string or options object"
+                    )));
                 }
             };
 
@@ -316,14 +323,18 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(executable_path) = object.get_own(global_this, &BunString::static_str("executablePath"))? {
+            if let Some(executable_path) =
+                object.get_own(global_this, &BunString::static_str("executablePath"))?
+            {
                 let slice = executable_path.to_slice(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
                     != bun_sys::ExistsAtType::File
                 {
-                    return Err(global_this.throw_invalid_arguments(format_args!("executablePath must be a valid path to a Bun executable")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "executablePath must be a valid path to a Bun executable"
+                    )));
                 }
 
                 this.executable_path.append_slice_exact(slice.slice())?;
@@ -331,47 +342,64 @@ pub mod js_bundler {
 
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {
                 if !windows.is_object() {
-                    return Err(global_this.throw_invalid_arguments(format_args!("windows must be an object")));
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("windows must be an object")));
                 }
 
-                if let Some(hide_console) = windows.get_own(global_this, &BunString::static_str("hideConsole"))? {
+                if let Some(hide_console) =
+                    windows.get_own(global_this, &BunString::static_str("hideConsole"))?
+                {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
-                if let Some(windows_icon_path) = windows.get_own(global_this, &BunString::static_str("icon"))? {
+                if let Some(windows_icon_path) =
+                    windows.get_own(global_this, &BunString::static_str("icon"))?
+                {
                     let slice = windows_icon_path.to_slice(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
                         != bun_sys::ExistsAtType::File
                     {
-                        return Err(global_this.throw_invalid_arguments(format_args!("windows.icon must be a valid path to an ico file")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "windows.icon must be a valid path to an ico file"
+                        )));
                     }
 
                     this.windows_icon_path.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_title) = windows.get_own(global_this, &BunString::static_str("title"))? {
+                if let Some(windows_title) =
+                    windows.get_own(global_this, &BunString::static_str("title"))?
+                {
                     let slice = windows_title.to_slice(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_publisher) = windows.get_own(global_this, &BunString::static_str("publisher"))? {
+                if let Some(windows_publisher) =
+                    windows.get_own(global_this, &BunString::static_str("publisher"))?
+                {
                     let slice = windows_publisher.to_slice(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_version) = windows.get_own(global_this, &BunString::static_str("version"))? {
+                if let Some(windows_version) =
+                    windows.get_own(global_this, &BunString::static_str("version"))?
+                {
                     let slice = windows_version.to_slice(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_description) = windows.get_own(global_this, &BunString::static_str("description"))? {
+                if let Some(windows_description) =
+                    windows.get_own(global_this, &BunString::static_str("description"))?
+                {
                     let slice = windows_description.to_slice(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_copyright) = windows.get_own(global_this, &BunString::static_str("copyright"))? {
+                if let Some(windows_copyright) =
+                    windows.get_own(global_this, &BunString::static_str("copyright"))?
+                {
                     let slice = windows_copyright.to_slice(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
@@ -382,15 +410,21 @@ pub mod js_bundler {
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
-            if let Some(autoload_dotenv) = object.get_boolean_loose(global_this, "autoloadDotenv")? {
+            if let Some(autoload_dotenv) =
+                object.get_boolean_loose(global_this, "autoloadDotenv")?
+            {
                 this.autoload_dotenv = autoload_dotenv;
             }
 
-            if let Some(autoload_bunfig) = object.get_boolean_loose(global_this, "autoloadBunfig")? {
+            if let Some(autoload_bunfig) =
+                object.get_boolean_loose(global_this, "autoloadBunfig")?
+            {
                 this.autoload_bunfig = autoload_bunfig;
             }
 
-            if let Some(autoload_tsconfig) = object.get_boolean_loose(global_this, "autoloadTsconfig")? {
+            if let Some(autoload_tsconfig) =
+                object.get_boolean_loose(global_this, "autoloadTsconfig")?
+            {
                 this.autoload_tsconfig = autoload_tsconfig;
             }
 
@@ -458,22 +492,28 @@ pub mod js_bundler {
                 let mut i: usize = 0;
                 while let Some(plugin) = iter.next()? {
                     if !plugin.is_object() {
-                        return Err(global_this
-                            .throw_invalid_arguments(format_args!("Expected plugin to be an object")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to be an object"
+                        )));
                     }
 
                     if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
                         if slice.slice().is_empty() {
-                            return Err(global_this.throw_invalid_arguments(format_args!("Expected plugin to have a non-empty name")));
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "Expected plugin to have a non-empty name"
+                            )));
                         }
                         drop(slice);
                     } else {
-                        return Err(global_this
-                            .throw_invalid_arguments(format_args!("Expected plugin to have a name")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to have a name"
+                        )));
                     }
 
                     let Some(function) = plugin.get_function(global_this, b"setup")? else {
-                        return Err(global_this.throw_invalid_arguments(format_args!("Expected plugin to have a setup() function")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to have a setup() function"
+                        )));
                     };
 
                     let bun_plugins: *mut Plugin = match **plugins {
@@ -482,9 +522,7 @@ pub mod js_bundler {
                             let p = Plugin::create(
                                 global_this,
                                 match this.target {
-                                    Target::Bun | Target::BunMacro => {
-                                        jsc::BunPluginTarget::Bun
-                                    }
+                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
                                     Target::Node => jsc::BunPluginTarget::Node,
                                     _ => jsc::BunPluginTarget::Browser,
                                 },
@@ -511,7 +549,9 @@ pub mod js_bundler {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
                             global_this.bun_vm().as_mut().wait_for_promise(promise);
-                            match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                            match promise
+                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
+                            {
                                 jsc::PromiseResult::Pending => unreachable!(),
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
@@ -545,7 +585,9 @@ pub mod js_bundler {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = options::Format::Cjs;
                     if did_set_target && this.target != Target::Bun && this.bytecode {
-                        return Err(global_this.throw_invalid_arguments(format_args!("target must be 'bun' when bytecode is true")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "target must be 'bun' when bytecode is true"
+                        )));
                     }
                     this.target = Target::Bun;
                 }
@@ -617,7 +659,9 @@ pub mod js_bundler {
                         }
                         drop(slice);
                     } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "env must be 'inline', 'disable', or a string with a '*' character"
+                        )));
                     }
                 }
             }
@@ -634,18 +678,16 @@ pub mod js_bundler {
             // Parse JSX configuration
             if let Some(jsx_value) = config.get_truthy(global_this, "jsx")? {
                 if !jsx_value.is_object() {
-                    return Err(global_this.throw_invalid_arguments(format_args!("jsx must be an object")));
+                    return Err(
+                        global_this.throw_invalid_arguments(format_args!("jsx must be an object"))
+                    );
                 }
 
-                if let Some(slice) =
-                    jsx_value.get_optional_slice(global_this, b"runtime")?
-                {
+                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"runtime")? {
                     let mut str_lower = [0u8; 128];
                     let len = slice.slice().len().min(str_lower.len());
-                    let _ = bun_core::copy_lowercase(
-                        &slice.slice()[0..len],
-                        &mut str_lower[0..len],
-                    );
+                    let _ =
+                        bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
@@ -660,23 +702,17 @@ pub mod js_bundler {
                     drop(slice);
                 }
 
-                if let Some(slice) =
-                    jsx_value.get_optional_slice(global_this, b"factory")?
-                {
+                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"factory")? {
                     this.jsx.factory = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
-                if let Some(slice) =
-                    jsx_value.get_optional_slice(global_this, b"fragment")?
-                {
+                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"fragment")? {
                     this.jsx.fragment = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
-                if let Some(slice) =
-                    jsx_value.get_optional_slice(global_this, b"importSource")?
-                {
+                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"importSource")? {
                     this.jsx.import_source = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
@@ -700,7 +736,9 @@ pub mod js_bundler {
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm
                 {
-                    return Err(global_this.throw_invalid_arguments(format_args!("format must be 'cjs' or 'esm' when bytecode is true.")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "format must be 'cjs' or 'esm' when bytecode is true."
+                    )));
                 }
             }
 
@@ -728,7 +766,9 @@ pub mod js_bundler {
                         this.minify.keep_names = keep_names;
                     }
                 } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!("Expected minify to be a boolean or an object")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected minify to be a boolean or an object"
+                    )));
                 }
             }
 
@@ -744,8 +784,9 @@ pub mod js_bundler {
                     drop(slice);
                 }
             } else {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected entrypoints to be an array of strings")));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected entrypoints to be an array of strings"
+                )));
             }
 
             // Parse the files option for in-memory files
@@ -774,15 +815,15 @@ pub mod js_bundler {
                         drop(slice);
                     }
                 } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!("Expected conditions to be an array of strings")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected conditions to be an array of strings"
+                    )));
                 }
             }
 
             {
                 let path: ZigStringSlice = 'brk: {
-                    if let Some(slice) =
-                        config.get_optional_slice(global_this, b"root")?
-                    {
+                    if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         break 'brk slice;
                     }
 
@@ -804,17 +845,20 @@ pub mod js_bundler {
 
                     if entry_points.len() == 1 {
                         // TODO(port): std.fs.path.dirname → bun_paths::dirname
-                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&entry_points[0]);
-                        break 'brk ZigStringSlice::from_utf8_never_free(
-                            if d.is_empty() { b"." } else { d },
+                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                            &entry_points[0],
                         );
+                        break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
+                            b"."
+                        } else {
+                            d
+                        });
                     }
 
                     // PORT NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
-                    let borrowed: Vec<&[u8]> =
-                        entry_points.iter().map(|b| b.as_ref()).collect();
+                    let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
                     break 'brk ZigStringSlice::from_utf8_never_free(
                         bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
@@ -858,20 +902,26 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(allow_unresolved_val) = config.get_own(global_this, &BunString::static_str("allowUnresolved"))? {
+            if let Some(allow_unresolved_val) =
+                config.get_own(global_this, &BunString::static_str("allowUnresolved"))?
+            {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !(allow_unresolved_val.is_cell()
                         && allow_unresolved_val.js_type().is_array())
                     {
-                        return Err(global_this
-                            .throw_invalid_arguments(format_args!("allowUnresolved must be an array")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "allowUnresolved must be an array"
+                        )));
                     }
                     this.allow_unresolved = Some(StringSet::default());
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
                             let slice = entry.to_slice_or_null(global_this)?;
-                            this.allow_unresolved.as_mut().unwrap().insert(slice.slice())?;
+                            this.allow_unresolved
+                                .as_mut()
+                                .unwrap()
+                                .insert(slice.slice())?;
                             drop(slice);
                         }
                     }
@@ -933,35 +983,29 @@ pub mod js_bundler {
                     }
                 };
                 if naming.is_string() {
-                    if let Some(slice) =
-                        config.get_optional_slice(global_this, b"naming")?
-                    {
+                    if let Some(slice) = config.get_optional_slice(global_this, b"naming")? {
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else if naming.is_object() {
-                    if let Some(slice) =
-                        naming.get_optional_slice(global_this, b"entry")?
-                    {
+                    if let Some(slice) = naming.get_optional_slice(global_this, b"entry")? {
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
-                    if let Some(slice) =
-                        naming.get_optional_slice(global_this, b"chunk")?
-                    {
+                    if let Some(slice) = naming.get_optional_slice(global_this, b"chunk")? {
                         this.names.chunk.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
-                    if let Some(slice) =
-                        naming.get_optional_slice(global_this, b"asset")?
-                    {
+                    if let Some(slice) = naming.get_optional_slice(global_this, b"asset")? {
                         this.names.asset.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!("Expected naming to be a string or an object")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected naming to be a string or an object"
+                    )));
                 }
             }
 
@@ -1034,7 +1078,9 @@ pub mod js_bundler {
                 while let Some(prop) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
-                        return Err(global_this.throw_invalid_arguments(format_args!("loader property names must be file extensions, such as '.txt'")));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "loader property names must be file extensions, such as '.txt'"
+                        )));
                     }
                     drop(prop_slice);
 
@@ -1059,7 +1105,9 @@ pub mod js_bundler {
             }
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
-            if let Some(metafile_value) = config.get_own(global_this, &BunString::static_str("metafile"))? {
+            if let Some(metafile_value) =
+                config.get_own(global_this, &BunString::static_str("metafile"))?
+            {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;
                 } else if metafile_value.is_string() {
@@ -1071,16 +1119,15 @@ pub mod js_bundler {
                 } else if metafile_value.is_object() {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
-                    if let Some(slice) =
-                        metafile_value.get_optional_slice(global_this, b"json")?
-                    {
+                    if let Some(slice) = metafile_value.get_optional_slice(global_this, b"json")? {
                         this.metafile_json_path.append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                     if let Some(slice) =
                         metafile_value.get_optional_slice(global_this, b"markdown")?
                     {
-                        this.metafile_markdown_path.append_slice_exact(slice.slice())?;
+                        this.metafile_markdown_path
+                            .append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                 } else if !metafile_value.is_undefined_or_null() {
@@ -1110,8 +1157,7 @@ pub mod js_bundler {
                     }
                     true
                 };
-                let is_standalone_html =
-                    this.target == Target::Browser && has_all_html_entrypoints;
+                let is_standalone_html = this.target == Target::Browser && has_all_html_entrypoints;
                 if !is_standalone_html {
                     this.target = Target::Bun;
 
@@ -1143,12 +1189,16 @@ pub mod js_bundler {
                         }
 
                         if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
+                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                entry_point,
+                            );
                             outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
                         }
 
                         if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
+                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                entry_point,
+                            );
                             outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
                         }
 
@@ -1171,10 +1221,9 @@ pub mod js_bundler {
                         // build's output inside its own (temp) directory and is
                         // also the more intuitive default for a programmatic API.
                         // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir =
-                            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
+                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                            entry_point,
+                        );
                         if this.outdir.is_empty()
                             && !entry_dir.is_empty()
                             && bun_paths::is_absolute(entry_dir)
@@ -1210,7 +1259,9 @@ pub mod js_bundler {
                     true
                 };
                 if has_all_html && this.code_splitting {
-                    return Err(global_this.throw_invalid_arguments(format_args!("Cannot use compile with target 'browser' and splitting for standalone HTML")));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use compile with target 'browser' and splitting for standalone HTML"
+                    )));
                 }
             }
 
@@ -1257,8 +1308,9 @@ pub mod js_bundler {
 
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
-            return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected a config object to be passed to Bun.build")));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected a config object to be passed to Bun.build"
+            )));
         }
 
         let vm = global_this.bun_vm();
@@ -1287,13 +1339,14 @@ pub mod js_bundler {
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion = crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-            config,
-            plugins.and_then(core::ptr::NonNull::new),
-            global_this,
-            event_loop,
-        )
-        .map_err(|_| JsError::OutOfMemory)?;
+        let completion =
+            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
+                config,
+                plugins.and_then(core::ptr::NonNull::new),
+                global_this,
+                event_loop,
+            )
+            .map_err(|_| JsError::OutOfMemory)?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;
         // sole owner on the JS thread until enqueued task runs.
         unsafe {
@@ -1317,8 +1370,7 @@ pub mod js_bundler {
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Resolve, MiniImportRecord, ResolveSuccess, ResolveValue,
-        Load, LoadSuccess, LoadValue,
+        Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1364,7 +1416,8 @@ pub mod js_bundler {
     ) {
         // SAFETY: called from C++ with valid Resolve pointer
         let resolve = unsafe { &mut *resolve };
-        if path_value.is_empty_or_undefined_or_null() || namespace_value.is_empty_or_undefined_or_null()
+        if path_value.is_empty_or_undefined_or_null()
+            || namespace_value.is_empty_or_undefined_or_null()
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
@@ -1403,8 +1456,9 @@ pub mod js_bundler {
     impl LoadJsExt for Load {
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             if self.called_defer {
-                return Err(global_object
-                    .throw(format_args!("Can't call .defer() more than once within an onLoad plugin")));
+                return Err(global_object.throw(format_args!(
+                    "Can't call .defer() more than once within an onLoad plugin"
+                )));
             }
             self.called_defer = true;
 
@@ -1433,9 +1487,10 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { owner } => {
-                        owner.enqueue_task_concurrent(
-                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw),
-                        );
+                        owner.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                            ctx.as_mut_ptr(),
+                            on_notify_defer_raw,
+                        ));
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         // `mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1494,9 +1549,9 @@ pub mod js_bundler {
                 // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
                 unsafe {
                     (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
-                        bun_threading::thread_pool::Batch::from(
-                            core::ptr::addr_of_mut!((*this.parse_task.as_ptr()).task),
-                        ),
+                        bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
+                            (*this.parse_task.as_ptr()).task
+                        )),
                     );
                 }
                 // Zig: this.deinit() — explicit drop
@@ -1755,8 +1810,7 @@ pub mod js_bundler {
         match which.as_int32() {
             0 => {
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
-                let msg =
-                    plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
+                let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
@@ -1772,10 +1826,10 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
+pub use js_bundler::Config;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub use js_bundler::PluginJscExt;
-pub use js_bundler::Config;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind/sourcemap`.
@@ -2025,10 +2079,7 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                if let Some(sourcemap) = self
-                    .sourcemap
-                    .get()
-                    .and_then(|v| v.as_::<BuildArtifact>())
+                if let Some(sourcemap) = self.sourcemap.get().and_then(|v| v.as_::<BuildArtifact>())
                 {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
                     // `write_format` is `&self` so a shared borrow is sound

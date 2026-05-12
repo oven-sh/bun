@@ -10,19 +10,19 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use bun_collections::HashMap;
-use bun_http_types::MimeType::MimeType;
-use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_core::{strings, PathString, ZigString};
-use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
-use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::node::fs as node_fs;
-use crate::webcore::s3::client::{
-    MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
-    S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
-};
+use crate::node::types::PathOrFileDescriptorSerializeTag;
+use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
+use crate::webcore::s3::client::{
+    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
+    S3ListObjectsOptions, S3ListObjectsResult, StorageClass,
+};
+use bun_collections::HashMap;
+use bun_core::{PathString, ZigString, strings};
+use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
 use super::{Blob, SizeType};
@@ -51,20 +51,30 @@ pub trait StoreExt {
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: Arc<S3Credentials>,
-    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    ) -> Result<Box<Store>, bun_core::Error>
+    where
+        Self: Sized;
     fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    ) -> Result<Box<Store>, bun_core::Error>
+    where
+        Self: Sized;
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    ) -> Result<Box<Store>, bun_core::Error>
+    where
+        Self: Sized;
     #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> StoreRef where Self: Sized;
+    fn init_mmap(slice: &'static mut [u8]) -> StoreRef
+    where
+        Self: Sized;
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error>;
-    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> where Self: Sized;
+    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error>
+    where
+        Self: Sized;
 }
 
 pub trait S3Ext {
@@ -98,8 +108,12 @@ pub trait FileExt {
 
 pub trait BytesExt {
     #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> Bytes where Self: Sized;
-    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> where Self: Sized;
+    fn init_mmap(slice: &'static mut [u8]) -> Bytes
+    where
+        Self: Sized;
+    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error>
+    where
+        Self: Sized;
     fn to_internal_blob(&mut self) -> super::Internal;
 }
 
@@ -116,7 +130,6 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
 }
 
 impl StoreExt for Store {
-
     /// Caller is responsible for derefing the Store.
     fn to_any_blob(&mut self) -> Option<super::Any> {
         if self.has_one_ref() {
@@ -142,7 +155,11 @@ impl StoreExt for Store {
         let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
 
         Ok(Store::new(Store {
-            data: Data::S3(S3::init_with_referenced_credentials(path, mime_type, credentials)),
+            data: Data::S3(S3::init_with_referenced_credentials(
+                path,
+                mime_type,
+                credentials,
+            )),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
@@ -188,7 +205,6 @@ impl StoreExt for Store {
             is_all_ascii: None,
         }))
     }
-
 
     /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
     /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
@@ -301,7 +317,6 @@ impl FileExt for File {
 }
 
 impl S3Ext for S3 {
-
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
@@ -400,7 +415,8 @@ impl S3Ext for S3 {
                 // intrusive refcount (Zig: `store.ref()`).
                 store: unsafe { StoreRef::retained(NonNull::from(store)) },
                 global: bun_ptr::BackRef::new(global_this),
-            })).cast::<c_void>(),
+            }))
+            .cast::<c_void>(),
             proxy,
             aws_options.request_payer,
         )?;
@@ -518,8 +534,6 @@ impl S3Ext for S3 {
 }
 
 impl BytesExt for Bytes {
-
-
     /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
     /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
@@ -530,10 +544,13 @@ impl BytesExt for Bytes {
         // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
         fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
-                bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {err:?}"));
+                bun_core::Output::debug_warn(format_args!(
+                    "Blob mmap-store munmap failed: {err:?}"
+                ));
             }
         }
-        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
+        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
+            bun_alloc::AllocatorVTable::free_only(free);
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
         // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
         // exactly the same range.
@@ -542,7 +559,10 @@ impl BytesExt for Bytes {
                 slice.as_mut_ptr(),
                 slice.len() as SizeType,
                 slice.len() as SizeType,
-                bun_alloc::StdAllocator { ptr: core::ptr::null_mut(), vtable: &MMAP_FREE_VTABLE },
+                bun_alloc::StdAllocator {
+                    ptr: core::ptr::null_mut(),
+                    vtable: &MMAP_FREE_VTABLE,
+                },
             )
         }
     }
@@ -583,7 +603,10 @@ impl BytesExt for Bytes {
         self.len = 0;
         self.cap = 0;
         self.allocator = bun_alloc::basic::C_ALLOCATOR;
-        super::Internal { bytes, was_string: false }
+        super::Internal {
+            bytes,
+            was_string: false,
+        }
     }
 }
 

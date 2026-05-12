@@ -4,10 +4,10 @@ use core::marker::PhantomData;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
-use bun_sql::mysql::mysql_param::Param;
-use bun_sql::mysql::mysql_request as mysql_request;
-use bun_sql::mysql::mysql_types::FieldType;
 use super::my_sql_value::Value;
+use bun_sql::mysql::mysql_param::Param;
+use bun_sql::mysql::mysql_request;
+use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
@@ -15,11 +15,11 @@ use bun_sql::mysql::protocol::prepared_statement::{self as prepared_statement, E
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
+use crate::jsc::js_error_to_mysql;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use crate::mysql::protocol::signature::Signature;
 use crate::shared::query_binding_iterator::QueryBindingIterator;
-use crate::jsc::js_error_to_mysql;
 
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
@@ -317,7 +317,12 @@ impl MySQLQuery {
 
         if self.statement.is_null() {
             let query = self.query.to_utf8();
-            let mut signature = match Signature::generate(global_object, query.slice(), binding_value, columns_value) {
+            let mut signature = match Signature::generate(
+                global_object,
+                query.slice(),
+                binding_value,
+                columns_value,
+            ) {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
@@ -333,7 +338,9 @@ impl MySQLQuery {
             query_str = Some(query);
             // errdefer signature.deinit() — `Signature: Drop` handles the error path; on the
             // found_existing success path below we explicitly drop it (Zig calls deinit + reassigns empty).
-            let entry = match connection.get_statement_from_signature_hash(bun_wyhash::hash(&signature.name)) {
+            let entry = match connection
+                .get_statement_from_signature_hash(bun_wyhash::hash(&signature.name))
+            {
                 Ok(e) => e,
                 Err(err) => {
                     let _ = global_object.throw_error(err, "failed to allocate statement");
@@ -402,9 +409,13 @@ impl MySQLQuery {
                     let writer = connection.get_writer();
                     // Pass the raw `*mut MySQLStatement` separately from `&mut self`
                     // (matches Zig .zig:183/195 which passes an independent `*MySQLStatement`).
-                    if let Err(err) =
-                        self.bind_and_execute(writer, stmt, global_object, binding_value, columns_value)
-                    {
+                    if let Err(err) = self.bind_and_execute(
+                        writer,
+                        stmt,
+                        global_object,
+                        binding_value,
+                        columns_value,
+                    ) {
                         if !global_object.has_exception() {
                             let _ = global_object.throw_value(mysql_error_to_js(
                                 global_object,
@@ -472,8 +483,16 @@ impl MySQLQuery {
         self.run_prepared_query(
             connection,
             global_object,
-            if columns_value.is_empty() { JSValue::UNDEFINED } else { columns_value },
-            if binding_value.is_empty() { JSValue::UNDEFINED } else { binding_value },
+            if columns_value.is_empty() {
+                JSValue::UNDEFINED
+            } else {
+                columns_value
+            },
+            if binding_value.is_empty() {
+                JSValue::UNDEFINED
+            } else {
+                binding_value
+            },
         )
     }
 
@@ -487,7 +506,11 @@ impl MySQLQuery {
         if self.status == Status::Success || self.status == Status::Fail {
             return false;
         }
-        self.status = if is_last_result { Status::Success } else { Status::PartialResponse };
+        self.status = if is_last_result {
+            Status::Success
+        } else {
+            Status::PartialResponse
+        };
 
         true
     }

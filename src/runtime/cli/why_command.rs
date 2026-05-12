@@ -6,13 +6,13 @@ use bstr::BStr;
 
 use bun_collections::HashMap;
 use bun_core::fmt::PathSep;
+use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
-use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
+use bun_install::lockfile::package::{PackageColumns as _};
 use bun_install::lockfile::{self, Lockfile};
-use bun_install::{package_manager, CommandLineArguments, PackageID, PackageManager, Subcommand};
+use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
 use bun_semver as semver;
-use bun_core::strings;
 
 use crate::command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -179,7 +179,10 @@ impl<'a> GlobPattern<'a> {
 
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
         if !pattern.iter().any(|&b| b == b'*') {
-            return GlobPattern { pattern_type: PatternType::Exact, ..Default::default() };
+            return GlobPattern {
+                pattern_type: PatternType::Exact,
+                ..Default::default()
+            };
         }
 
         if pattern.len() >= 3 && pattern[0] == b'*' && pattern[pattern.len() - 1] == b'*' {
@@ -211,7 +214,10 @@ impl<'a> GlobPattern<'a> {
             }
 
             if pattern[wildcard_pos + 1..].iter().any(|&b| b == b'*') {
-                return GlobPattern { pattern_type: PatternType::Invalid, ..Default::default() };
+                return GlobPattern {
+                    pattern_type: PatternType::Invalid,
+                    ..Default::default()
+                };
             }
 
             return GlobPattern {
@@ -222,7 +228,10 @@ impl<'a> GlobPattern<'a> {
             };
         }
 
-        GlobPattern { pattern_type: PatternType::Exact, ..Default::default() }
+        GlobPattern {
+            pattern_type: PatternType::Exact,
+            ..Default::default()
+        }
     }
 
     fn matches_name(&self, name: &[u8], pattern: &[u8]) -> bool {
@@ -483,8 +492,7 @@ impl WhyCommand {
         }
 
         for target_version in &target_versions {
-            let target_name =
-                pkg_names[target_version.pkg_id as usize].slice(string_bytes);
+            let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
             Output::prettyln(format_args!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),
@@ -516,7 +524,11 @@ impl WhyCommand {
                             print_dependency_tree(
                                 &mut ctx_data,
                                 dep.pkg_id,
-                                if is_last { PREFIX_SPACE } else { PREFIX_CONTINUE },
+                                if is_last {
+                                    PREFIX_SPACE
+                                } else {
+                                    PREFIX_CONTINUE
+                                },
                                 1,
                                 is_last,
                                 dep.workspace,
@@ -565,7 +577,10 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 
     if !package.spec.is_empty() {
-        Output::prettyln(format_args!(" <d>(requires {})<r>", BStr::new(&package.spec)));
+        Output::prettyln(format_args!(
+            " <d>(requires {})<r>",
+            BStr::new(&package.spec)
+        ));
     } else {
         Output::prettyln(format_args!(""));
     }
@@ -607,7 +622,10 @@ fn print_dependency_tree(
     parent_is_workspace: bool,
 ) {
     if ctx.path_tracker.get(&current_pkg_id).is_some() {
-        Output::prettyln(format_args!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix)));
+        Output::prettyln(format_args!(
+            "<d>{}└─ <yellow>*circular<r>",
+            BStr::new(prefix)
+        ));
         return;
     }
 

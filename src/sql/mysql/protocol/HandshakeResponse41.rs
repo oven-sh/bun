@@ -1,17 +1,17 @@
 // Client authentication response
 
-use crate::mysql::capabilities::Capabilities;
-use crate::shared::data::Data;
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
 use super::new_writer::{NewWriter, write_wrap};
+use crate::mysql::capabilities::Capabilities;
+use crate::shared::data::Data;
 use bun_collections::StringHashMap;
 
 bun_core::declare_scope!(MySQLConnection, hidden);
 
 pub struct HandshakeResponse41 {
     pub capability_flags: Capabilities,
-    pub max_packet_size: u32,   // default: 0xFFFFFF (16MB)
+    pub max_packet_size: u32,        // default: 0xFFFFFF (16MB)
     pub character_set: CharacterSet, // default: CharacterSet::default()
     pub username: Data,
     pub auth_response: Data,

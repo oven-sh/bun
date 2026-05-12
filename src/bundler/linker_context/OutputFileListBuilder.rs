@@ -54,8 +54,7 @@ impl OutputFileList {
     ) -> Result<Self, bun_core::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
-        let mut output_files: Vec<options::OutputFile> =
-            Vec::with_capacity(length as usize);
+        let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
         // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
         output_files.resize_with(length as usize, || OutputFile::zero_value());
 
@@ -86,10 +85,7 @@ impl OutputFileList {
         core::mem::take(&mut self.output_files)
     }
 
-    pub fn calculate_output_file_list_capacity(
-        c: &LinkerContext,
-        chunks: &[Chunk],
-    ) -> (u32, u32) {
+    pub fn calculate_output_file_list_capacity(c: &LinkerContext, chunks: &[Chunk]) -> (u32, u32) {
         let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {

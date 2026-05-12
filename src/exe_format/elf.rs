@@ -321,7 +321,8 @@ impl ElfFile {
         // the source, so memmove is required.
         if moved_tail_size != 0 {
             self.data.copy_within(
-                usize::try_from(move_src_start).expect("int cast")..usize::try_from(move_src_end).expect("int cast"),
+                usize::try_from(move_src_start).expect("int cast")
+                    ..usize::try_from(move_src_end).expect("int cast"),
                 usize::try_from(move_dst_start).expect("int cast"),
             );
         }
@@ -329,20 +330,25 @@ impl ElfFile {
         // Zero the bytes between the old RW file-content end and the payload
         // start. This entire range is now inside the extended PT_LOAD's
         // file-backed region; keeping it zero preserves BSS semantics.
-        self.data[usize::try_from(move_src_start).expect("int cast")..usize::try_from(new_file_offset).expect("int cast")].fill(0);
+        self.data[usize::try_from(move_src_start).expect("int cast")
+            ..usize::try_from(new_file_offset).expect("int cast")]
+            .fill(0);
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
         write_u64_le(
             &mut self.data[usize::try_from(new_file_offset).expect("int cast")..][..8],
             payload.len() as u64,
         );
-        self.data[usize::try_from(new_file_offset + header_size).expect("int cast")..][..payload.len()]
+        self.data[usize::try_from(new_file_offset + header_size).expect("int cast")..]
+            [..payload.len()]
             .copy_from_slice(payload);
 
         // Zero the padding between payload end and the relocated tail
         let payload_end = new_file_offset + new_content_size;
         if move_dst_start > payload_end {
-            self.data[usize::try_from(payload_end).expect("int cast")..usize::try_from(move_dst_start).expect("int cast")].fill(0);
+            self.data[usize::try_from(payload_end).expect("int cast")
+                ..usize::try_from(move_dst_start).expect("int cast")]
+                .fill(0);
         }
 
         // Write the vaddr of the appended data at the ORIGINAL .bun section location
@@ -412,7 +418,8 @@ impl ElfFile {
                 p_memsz: new_segment_size,
                 p_align: rw_phdr.p_align,
             };
-            let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + rw_index * phdr_size;
+            let phdr_offset =
+                usize::try_from(ehdr.e_phoff).expect("int cast") + rw_index * phdr_size;
             write_struct(&mut self.data[phdr_offset..][..phdr_size], &extended);
         }
 
@@ -449,7 +456,8 @@ impl ElfFile {
         if strtab_offset + strtab_size > self.data.len() as u64 {
             return Err(ElfError::InvalidElfFile);
         }
-        let strtab = &self.data[usize::try_from(strtab_offset).expect("int cast")..][..usize::try_from(strtab_size).expect("int cast")];
+        let strtab = &self.data[usize::try_from(strtab_offset).expect("int cast")..]
+            [..usize::try_from(strtab_size).expect("int cast")];
 
         // Search for .bun section
         for i in 0..shnum as usize {
@@ -472,7 +480,9 @@ impl ElfFile {
 
     fn read_shdr(&self, table_offset: u64, index: u16) -> Elf64_Shdr {
         let offset = table_offset + index as u64 * size_of::<Elf64_Shdr>() as u64;
-        read_struct(&self.data[usize::try_from(offset).expect("int cast")..][..size_of::<Elf64_Shdr>()])
+        read_struct(
+            &self.data[usize::try_from(offset).expect("int cast")..][..size_of::<Elf64_Shdr>()],
+        )
     }
 
     fn write_ehdr_shoff(&mut self, new_shoff: u64) {
@@ -633,8 +643,7 @@ fn host_uses_nix_store_interpreter() -> bool {
                 }
 
                 let interp = slice_to_nul(&data[interp_off..][..interp_sz]);
-                return interp.starts_with(b"/nix/store/")
-                    || interp.starts_with(b"/gnu/store/");
+                return interp.starts_with(b"/nix/store/") || interp.starts_with(b"/gnu/store/");
             }
             false
         }

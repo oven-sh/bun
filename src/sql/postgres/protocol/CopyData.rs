@@ -1,9 +1,9 @@
-use crate::postgres::types::int_types::int32;
-use crate::shared::Data;
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 use super::new_writer::NewWriter;
 use super::write_wrap::WriteWrap;
+use crate::postgres::types::int_types::int32;
+use crate::shared::Data;
 
 #[derive(Default)]
 pub struct CopyData {
@@ -41,7 +41,13 @@ impl CopyData {
             u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).expect("int cast");
         // Zig: [_]u8{'d'} ++ toBytes(Int32(count)) — `int32` returns big-endian [u8;4].
         let count_bytes = int32(count);
-        let header: [u8; 5] = [b'd', count_bytes[0], count_bytes[1], count_bytes[2], count_bytes[3]];
+        let header: [u8; 5] = [
+            b'd',
+            count_bytes[0],
+            count_bytes[1],
+            count_bytes[2],
+            count_bytes[3],
+        ];
         writer.write(&header)?;
         writer.string(data)?;
         Ok(())

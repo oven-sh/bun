@@ -1,10 +1,10 @@
+use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 pub struct If {
     pub base: Base,
@@ -132,7 +132,8 @@ impl If {
                                         // `elif` cond at `idx + 1`.
                                         let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[then_idx as usize]);
+                                        exec.stmts =
+                                            bun_ptr::BackRef::new(&n.else_parts[then_idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -142,11 +143,14 @@ impl If {
                                         Action::Done(0)
                                     } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
-                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[(else_len - 1) as usize]);
+                                        exec.stmts = bun_ptr::BackRef::new(
+                                            &n.else_parts[(else_len - 1) as usize],
+                                        );
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
-                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[*idx as usize]);
+                                        exec.stmts =
+                                            bun_ptr::BackRef::new(&n.else_parts[*idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -157,8 +161,7 @@ impl If {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
                             // `i` was bounds-checked against `stmts_len()`.
-                            let stmt_node: *const ast::Stmt =
-                                &raw const exec.stmts()[i as usize];
+                            let stmt_node: *const ast::Stmt = &raw const exec.stmts()[i as usize];
                             Action::SpawnStmt(stmt_node)
                         }
                     }
@@ -189,7 +192,9 @@ impl If {
         interp.deinit_node(child);
         let me = interp.as_if_mut(this);
         let IfState::Exec(exec) = &mut me.state else {
-            panic!("Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue.");
+            panic!(
+                "Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue."
+            );
         };
         exec.last_exit_code = exit_code;
         Yield::Next(this)

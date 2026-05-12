@@ -335,16 +335,25 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
                 };
 
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
-                result.push(Diff { kind: DiffKind::Equal, value: line });
+                result.push(Diff {
+                    kind: DiffKind::Equal,
+                    value: line,
+                });
                 x -= 1;
                 y -= 1;
             }
             if diff_level > 0 {
                 if x > prev_x {
-                    result.push(Diff { kind: DiffKind::Insert, value: actual[us(x) - 1] });
+                    result.push(Diff {
+                        kind: DiffKind::Insert,
+                        value: actual[us(x) - 1],
+                    });
                     x -= 1;
                 } else {
-                    result.push(Diff { kind: DiffKind::Delete, value: expected[us(y) - 1] });
+                    result.push(Diff {
+                        kind: DiffKind::Delete,
+                        value: expected[us(y) - 1],
+                    });
                     y -= 1;
                 }
             }
@@ -427,10 +436,7 @@ where
     let (largest, smallest) = if a.len() > b.len() { (a, b) } else { (b, a) };
     match largest.len() - smallest.len() {
         0 => a == b,
-        1 => {
-            largest[largest.len() - 1] == C::from(b',')
-                && largest[0..smallest.len()] == *smallest
-        } // 'foo,' == 'foo'
+        1 => largest[largest.len() - 1] == C::from(b',') && largest[0..smallest.len()] == *smallest, // 'foo,' == 'foo'
         _ => false,
     }
 }
@@ -520,22 +526,37 @@ mod tests {
         assert!(are_lines_equal::<&[u8], false>(b"", b""));
         assert!(are_lines_equal::<&[u8], false>(b"a", b"a"));
         assert!(are_lines_equal::<&[u8], false>(b"Bun", b"Bun"));
-        assert!(are_lines_equal::<&[u8], false>("😤".as_bytes(), "😤".as_bytes()));
+        assert!(are_lines_equal::<&[u8], false>(
+            "😤".as_bytes(),
+            "😤".as_bytes()
+        ));
         // not equal
         assert!(!are_lines_equal::<&[u8], false>(b"", b"a"));
         assert!(!are_lines_equal::<&[u8], false>(b"", b" "));
         assert!(!are_lines_equal::<&[u8], false>(b"\n", b"\t"));
         assert!(!are_lines_equal::<&[u8], false>(b"bun", b"Bun"));
-        assert!(!are_lines_equal::<&[u8], false>("😤".as_bytes(), "😩".as_bytes()));
+        assert!(!are_lines_equal::<&[u8], false>(
+            "😤".as_bytes(),
+            "😩".as_bytes()
+        ));
 
         // strings w/ comma check
         assert!(are_lines_equal::<&[u8], true>(b"", b""));
         assert!(are_lines_equal::<&[u8], true>(b"", b","));
         assert!(are_lines_equal::<&[u8], true>(b" ", b" ,"));
         assert!(are_lines_equal::<&[u8], true>(b"I am speed", b"I am speed"));
-        assert!(are_lines_equal::<&[u8], true>(b"I am speed,", b"I am speed"));
-        assert!(are_lines_equal::<&[u8], true>(b"I am speed", b"I am speed,"));
-        assert!(are_lines_equal::<&[u8], false>("😤".as_bytes(), "😤".as_bytes()));
+        assert!(are_lines_equal::<&[u8], true>(
+            b"I am speed,",
+            b"I am speed"
+        ));
+        assert!(are_lines_equal::<&[u8], true>(
+            b"I am speed",
+            b"I am speed,"
+        ));
+        assert!(are_lines_equal::<&[u8], false>(
+            "😤".as_bytes(),
+            "😤".as_bytes()
+        ));
         // assert!(are_lines_equal::<&[u8], false>("😤".as_bytes(), "😤,".as_bytes()));
         // assert!(are_lines_equal::<&[u8], false>("😤,".as_bytes(), "😤".as_bytes()));
         // not equal
@@ -545,8 +566,14 @@ mod tests {
         assert!(!are_lines_equal::<&[u8], true>(b"Bun", b",Bun"));
         assert!(!are_lines_equal::<&[u8], true>(b"", b" ,"));
         assert!(!are_lines_equal::<&[u8], true>(b" ", b" , "));
-        assert!(!are_lines_equal::<&[u8], true>(b"I, am speed", b"I am speed"));
-        assert!(!are_lines_equal::<&[u8], true>(",😤".as_bytes(), "😤".as_bytes()));
+        assert!(!are_lines_equal::<&[u8], true>(
+            b"I, am speed",
+            b"I am speed"
+        ));
+        assert!(!are_lines_equal::<&[u8], true>(
+            ",😤".as_bytes(),
+            "😤".as_bytes()
+        ));
     }
 
     // const CharList = DiffList(u8);

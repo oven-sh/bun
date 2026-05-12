@@ -270,11 +270,8 @@ impl Pragma {
             b"/jsx-dev-runtime",
             defaults::IMPORT_SOURCE_DEV,
         );
-        self.import_source.production = Self::concat_or_interned(
-            &self.package_name,
-            b"/jsx-runtime",
-            defaults::IMPORT_SOURCE,
-        );
+        self.import_source.production =
+            Self::concat_or_interned(&self.package_name, b"/jsx-runtime", defaults::IMPORT_SOURCE);
     }
 
     #[inline]

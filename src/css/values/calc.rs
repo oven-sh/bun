@@ -4,8 +4,8 @@ use crate::values::angle::Angle;
 use crate::values::length::{Length, LengthValue};
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::{DimensionPercentage, Percentage};
-use crate::values::time::Time;
 use crate::values::protocol;
+use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
 // `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
 use crate::values::protocol::{
@@ -174,12 +174,25 @@ impl<V: PartialEq + Clone> PartialEq for Calc<V> {
         match (self, other) {
             (Calc::Value(a), Calc::Value(b)) => **a == **b,
             (Calc::Number(a), Calc::Number(b)) => a == b,
-            (Calc::Sum { left: al, right: ar }, Calc::Sum { left: bl, right: br }) => {
-                **al == **bl && **ar == **br
-            }
             (
-                Calc::Product { number: an, expression: ae },
-                Calc::Product { number: bn, expression: be },
+                Calc::Sum {
+                    left: al,
+                    right: ar,
+                },
+                Calc::Sum {
+                    left: bl,
+                    right: br,
+                },
+            ) => **al == **bl && **ar == **br,
+            (
+                Calc::Product {
+                    number: an,
+                    expression: ae,
+                },
+                Calc::Product {
+                    number: bn,
+                    expression: be,
+                },
             ) => an == bn && **ae == **be,
             (Calc::Function(a), Calc::Function(b)) => **a == **b,
             _ => false,
@@ -228,9 +241,16 @@ impl<V> Calc<V> {
         match (self, other) {
             (Calc::Value(a), Calc::Value(b)) => a.eql(b),
             (Calc::Number(a), Calc::Number(b)) => *a == *b,
-            (Calc::Sum { left: al, right: ar }, Calc::Sum { left: bl, right: br }) => {
-                al.eql(bl) && ar.eql(br)
-            }
+            (
+                Calc::Sum {
+                    left: al,
+                    right: ar,
+                },
+                Calc::Sum {
+                    left: bl,
+                    right: br,
+                },
+            ) => al.eql(bl) && ar.eql(br),
             (
                 Calc::Product {
                     number: an,
@@ -514,8 +534,7 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, ctx, parse_ident),
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
-                let mut args =
-                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
                 let val = Self::parse_hypot(&mut args)?;
                 if let Some(v) = val {
                     return Ok(v);
@@ -539,11 +558,9 @@ impl<V: CalcValue> Calc<V> {
                         // computed value in order to determine the sign.
                         if let Some(new_v) = v2.try_map(std_math_sign) {
                             // sign() alwasy resolves to a number.
-                            return Ok(Calc::Number(
-                                new_v
-                                    .try_sign()
-                                    .unwrap_or_else(|| panic!("sign() always resolves to a number.")),
-                            ));
+                            return Ok(Calc::Number(new_v.try_sign().unwrap_or_else(|| {
+                                panic!("sign() always resolves to a number.")
+                            })));
                         }
                     }
                     _ => {}
@@ -892,8 +909,7 @@ impl<V: CalcValue> Calc<V> {
         let mut errored = false;
         let mut sum = first;
         for arg in &args[i..] {
-            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0))
-            else {
+            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0)) else {
                 errored = true;
                 break;
             };
@@ -1171,20 +1187,48 @@ impl<V: PartialEq + Clone> PartialEq for MathFunction<V> {
             (MathFunction::Min(a), MathFunction::Min(b)) => a == b,
             (MathFunction::Max(a), MathFunction::Max(b)) => a == b,
             (
-                MathFunction::Clamp { min: a0, center: a1, max: a2 },
-                MathFunction::Clamp { min: b0, center: b1, max: b2 },
+                MathFunction::Clamp {
+                    min: a0,
+                    center: a1,
+                    max: a2,
+                },
+                MathFunction::Clamp {
+                    min: b0,
+                    center: b1,
+                    max: b2,
+                },
             ) => a0 == b0 && a1 == b1 && a2 == b2,
             (
-                MathFunction::Round { strategy: as_, value: av, interval: ai },
-                MathFunction::Round { strategy: bs, value: bv, interval: bi },
+                MathFunction::Round {
+                    strategy: as_,
+                    value: av,
+                    interval: ai,
+                },
+                MathFunction::Round {
+                    strategy: bs,
+                    value: bv,
+                    interval: bi,
+                },
             ) => as_ == bs && av == bv && ai == bi,
             (
-                MathFunction::Rem { dividend: ad, divisor: av },
-                MathFunction::Rem { dividend: bd, divisor: bv },
+                MathFunction::Rem {
+                    dividend: ad,
+                    divisor: av,
+                },
+                MathFunction::Rem {
+                    dividend: bd,
+                    divisor: bv,
+                },
             ) => ad == bd && av == bv,
             (
-                MathFunction::Mod { dividend: ad, divisor: av },
-                MathFunction::Mod { dividend: bd, divisor: bv },
+                MathFunction::Mod {
+                    dividend: ad,
+                    divisor: av,
+                },
+                MathFunction::Mod {
+                    dividend: bd,
+                    divisor: bv,
+                },
             ) => ad == bd && av == bv,
             (MathFunction::Abs(a), MathFunction::Abs(b)) => a == b,
             (MathFunction::Sign(a), MathFunction::Sign(b)) => a == b,
@@ -1216,20 +1260,48 @@ impl<V> MathFunction<V> {
             (MathFunction::Min(a), MathFunction::Min(b)) => eql_calc_list(a, b),
             (MathFunction::Max(a), MathFunction::Max(b)) => eql_calc_list(a, b),
             (
-                MathFunction::Clamp { min: a0, center: a1, max: a2 },
-                MathFunction::Clamp { min: b0, center: b1, max: b2 },
+                MathFunction::Clamp {
+                    min: a0,
+                    center: a1,
+                    max: a2,
+                },
+                MathFunction::Clamp {
+                    min: b0,
+                    center: b1,
+                    max: b2,
+                },
             ) => a0.eql(b0) && a1.eql(b1) && a2.eql(b2),
             (
-                MathFunction::Round { strategy: as_, value: av, interval: ai },
-                MathFunction::Round { strategy: bs, value: bv, interval: bi },
+                MathFunction::Round {
+                    strategy: as_,
+                    value: av,
+                    interval: ai,
+                },
+                MathFunction::Round {
+                    strategy: bs,
+                    value: bv,
+                    interval: bi,
+                },
             ) => as_ == bs && av.eql(bv) && ai.eql(bi),
             (
-                MathFunction::Rem { dividend: ad, divisor: av },
-                MathFunction::Rem { dividend: bd, divisor: bv },
+                MathFunction::Rem {
+                    dividend: ad,
+                    divisor: av,
+                },
+                MathFunction::Rem {
+                    dividend: bd,
+                    divisor: bv,
+                },
             ) => ad.eql(bd) && av.eql(bv),
             (
-                MathFunction::Mod { dividend: ad, divisor: av },
-                MathFunction::Mod { dividend: bd, divisor: bv },
+                MathFunction::Mod {
+                    dividend: ad,
+                    divisor: av,
+                },
+                MathFunction::Mod {
+                    dividend: bd,
+                    divisor: bv,
+                },
             ) => ad.eql(bd) && av.eql(bv),
             (MathFunction::Abs(a), MathFunction::Abs(b)) => a.eql(b),
             (MathFunction::Sign(a), MathFunction::Sign(b)) => a.eql(b),
@@ -1251,7 +1323,11 @@ impl<V> MathFunction<V> {
                 center: center.deep_clone(),
                 max: max.deep_clone(),
             },
-            MathFunction::Round { strategy, value, interval } => MathFunction::Round {
+            MathFunction::Round {
+                strategy,
+                value,
+                interval,
+            } => MathFunction::Round {
                 strategy: *strategy,
                 value: value.deep_clone(),
                 interval: interval.deep_clone(),
@@ -1301,7 +1377,11 @@ impl<V> MathFunction<V> {
                 max.to_css(dest)?;
                 dest.write_char(b')')
             }
-            MathFunction::Round { strategy, value, interval } => {
+            MathFunction::Round {
+                strategy,
+                value,
+                interval,
+            } => {
                 dest.write_str("round(")?;
                 if *strategy != RoundingStrategy::default() {
                     strategy.to_css(dest)?;
@@ -1367,7 +1447,9 @@ impl<V> MathFunction<V> {
                     && center.is_compatible(browsers)
                     && max.is_compatible(browsers)
             }
-            MathFunction::Round { value, interval, .. } => {
+            MathFunction::Round {
+                value, interval, ..
+            } => {
                 F::RoundFunction.is_compatible(browsers)
                     && value.is_compatible(browsers)
                     && interval.is_compatible(browsers)
@@ -1495,8 +1577,14 @@ fn absf(a: f32) -> f32 {
 // inherent method.
 
 impl CalcValue for CSSNumber {
-    #[inline] fn add_internal(self, rhs: Self) -> Self { self + rhs }
-    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    #[inline]
+    fn add_internal(self, rhs: Self) -> Self {
+        self + rhs
+    }
+    #[inline]
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -1504,19 +1592,31 @@ impl CalcValue for CSSNumber {
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
-    #[inline] fn eql(&self, other: &Self) -> bool { *self == *other }
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        *self == *other
+    }
 }
 
 impl CalcValue for Angle {
-    #[inline] fn add_internal(self, rhs: Self) -> Self { Angle::add_internal(self, rhs) }
-    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    #[inline]
+    fn add_internal(self, rhs: Self) -> Self {
+        Angle::add_internal(self, rhs)
+    }
+    #[inline]
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
-    #[inline] fn eql(&self, other: &Self) -> bool { Angle::eql(self, other) }
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        Angle::eql(self, other)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1629,8 +1729,14 @@ calc_protocol_forwarders!(Percentage {
     parse_to_css: forward,
 });
 impl CalcValue for Percentage {
-    #[inline] fn add_internal(self, rhs: Self) -> Self { Percentage::add_internal(self, rhs) }
-    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    #[inline]
+    fn add_internal(self, rhs: Self) -> Self {
+        Percentage::add_internal(self, rhs)
+    }
+    #[inline]
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -1638,7 +1744,10 @@ impl CalcValue for Percentage {
             _ => Ok(Percentage { v: f32::NAN }),
         }
     }
-    #[inline] fn eql(&self, other: &Self) -> bool { Percentage::eql(self, other) }
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        Percentage::eql(self, other)
+    }
 }
 
 calc_protocol_forwarders!(Time {
@@ -1667,15 +1776,24 @@ calc_protocol_forwarders!(Time {
     is_compatible: always_true,
 });
 impl CalcValue for Time {
-    #[inline] fn add_internal(self, rhs: Self) -> Self { Time::add_internal(self, rhs) }
-    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    #[inline]
+    fn add_internal(self, rhs: Self) -> Self {
+        Time::add_internal(self, rhs)
+    }
+    #[inline]
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
-    #[inline] fn eql(&self, other: &Self) -> bool { Time::eql(self, other) }
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        Time::eql(self, other)
+    }
 }
 
 calc_protocol_forwarders!(Length {
@@ -1702,13 +1820,22 @@ calc_protocol_forwarders!(Length {
     partial_cmp: forward,
 });
 impl CalcValue for Length {
-    #[inline] fn add_internal(self, rhs: Self) -> Self { Length::add_internal(self, rhs) }
-    #[inline] fn into_calc(self) -> Calc<Self> { Length::into_calc(self) }
+    #[inline]
+    fn add_internal(self, rhs: Self) -> Self {
+        Length::add_internal(self, rhs)
+    }
+    #[inline]
+    fn into_calc(self) -> Calc<Self> {
+        Length::into_calc(self)
+    }
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         // Zig: Length { .calc = Box::new(self) }
         Ok(Length::Calc(Box::new(c)))
     }
-    #[inline] fn eql(&self, other: &Self) -> bool { self == other }
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 /// `protocol::*` + `CalcValue` impls for the two concrete `DimensionPercentage<D>`

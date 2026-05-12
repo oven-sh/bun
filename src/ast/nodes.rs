@@ -5,13 +5,13 @@ use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 pub use bun_collections::VecExt as _VecExtReexport;
+use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
 use crate::JsonWriter;
 use crate::char_freq::CHAR_FREQ_COUNT;
-use crate::{symbol, Binding, E, Expr, Index, Ref, Scope, Stmt};
+use crate::{Binding, E, Expr, Index, Ref, Scope, Stmt, symbol};
 
 pub use crate::flags as Flags;
 
@@ -168,8 +168,10 @@ unsafe impl Send for StoreStr {}
 unsafe impl Sync for StoreStr {}
 
 impl StoreStr {
-    pub const EMPTY: StoreStr =
-        StoreStr { ptr: core::ptr::NonNull::<u8>::dangling(), len: 0 };
+    pub const EMPTY: StoreStr = StoreStr {
+        ptr: core::ptr::NonNull::<u8>::dangling(),
+        len: 0,
+    };
 
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
@@ -326,7 +328,9 @@ pub struct StoreSlice<T> {
 impl<T> Copy for StoreSlice<T> {}
 impl<T> Clone for StoreSlice<T> {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
@@ -336,8 +340,10 @@ unsafe impl<T> Send for StoreSlice<T> {}
 unsafe impl<T> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
-    pub const EMPTY: StoreSlice<T> =
-        StoreSlice { ptr: core::ptr::NonNull::<T>::dangling(), len: 0 };
+    pub const EMPTY: StoreSlice<T> = StoreSlice {
+        ptr: core::ptr::NonNull::<T>::dangling(),
+        len: 0,
+    };
 
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
@@ -346,7 +352,10 @@ impl<T> StoreSlice<T> {
     pub const fn new(s: &[T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
         match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
-            Some(ptr) => StoreSlice { ptr, len: s.len() as u32 },
+            Some(ptr) => StoreSlice {
+                ptr,
+                len: s.len() as u32,
+            },
             None => StoreSlice::EMPTY,
         }
     }
@@ -358,7 +367,10 @@ impl<T> StoreSlice<T> {
     pub fn new_mut(s: &mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
         match core::ptr::NonNull::new(s.as_mut_ptr()) {
-            Some(ptr) => StoreSlice { ptr, len: s.len() as u32 },
+            Some(ptr) => StoreSlice {
+                ptr,
+                len: s.len() as u32,
+            },
             None => StoreSlice::EMPTY,
         }
     }
@@ -422,7 +434,9 @@ impl<T> StoreSlice<T> {
 
 impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
     #[inline]
-    fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self { StoreSlice::from_bump(v) }
+    fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self {
+        StoreSlice::from_bump(v)
+    }
 }
 
 impl<T> Default for StoreSlice<T> {
@@ -525,7 +539,10 @@ pub enum ImportItemStatus {
 
 impl ImportItemStatus {
     // TODO(port): narrow error set
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 }
@@ -544,7 +561,10 @@ pub enum AssignTarget {
 
 impl AssignTarget {
     // TODO(port): narrow error set
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        &self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(*self))
     }
 }
@@ -560,7 +580,10 @@ pub struct LocRef {
 
 impl Default for LocRef {
     fn default() -> Self {
-        Self { loc: crate::Loc::EMPTY, ref_: None }
+        Self {
+            loc: crate::Loc::EMPTY,
+            ref_: None,
+        }
     }
 }
 
@@ -611,7 +634,9 @@ pub struct SlotCounts {
 impl Default for SlotCounts {
     fn default() -> Self {
         // EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
-        Self { slots: symbol::SlotNamespaceCountsArray::default() }
+        Self {
+            slots: symbol::SlotNamespaceCountsArray::default(),
+        }
     }
 }
 
@@ -632,11 +657,16 @@ pub struct NameMinifier {
 }
 
 impl NameMinifier {
-    pub const DEFAULT_HEAD: &'static [u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
-    pub const DEFAULT_TAIL: &'static [u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
+    pub const DEFAULT_HEAD: &'static [u8] =
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
+    pub const DEFAULT_TAIL: &'static [u8] =
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
 
     pub fn init() -> NameMinifier {
-        NameMinifier { head: Vec::new(), tail: Vec::new() }
+        NameMinifier {
+            head: Vec::new(),
+            tail: Vec::new(),
+        }
     }
 
     pub fn number_to_minified_name(
@@ -659,7 +689,9 @@ impl NameMinifier {
         Ok(())
     }
 
-    pub fn default_number_to_minified_name(i_: isize) -> core::result::Result<Vec<u8>, bun_alloc::AllocError> {
+    pub fn default_number_to_minified_name(
+        i_: isize,
+    ) -> core::result::Result<Vec<u8>, bun_alloc::AllocError> {
         let mut i = i_;
         let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
         let mut name: Vec<u8> = Vec::new();
@@ -691,7 +723,10 @@ pub enum OptionalChain {
 
 impl OptionalChain {
     // TODO(port): narrow error set
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 }
@@ -758,7 +793,10 @@ pub struct Span {
 
 impl Default for Span {
     fn default() -> Self {
-        Self { text: empty_arena_str(), range: crate::Range::default() }
+        Self {
+            text: empty_arena_str(),
+            range: crate::Range::default(),
+        }
     }
 }
 
@@ -784,13 +822,19 @@ impl InlinedEnumValue {
     const PURE_NAN: f64 = f64::from_bits(0x7ff8000000000000);
 
     fn purify_nan(value: f64) -> f64 {
-        if value.is_nan() { Self::PURE_NAN } else { value }
+        if value.is_nan() {
+            Self::PURE_NAN
+        } else {
+            value
+        }
     }
 
     pub fn encode(decoded: InlinedEnumValueDecoded) -> InlinedEnumValue {
         let encoded = InlinedEnumValue {
             raw_data: match decoded {
-                InlinedEnumValueDecoded::String(ptr) => (ptr as usize as u64) & 0x0000_FFFF_FFFF_FFFF, // @truncate to u48
+                InlinedEnumValueDecoded::String(ptr) => {
+                    (ptr as usize as u64) & 0x0000_FFFF_FFFF_FFFF
+                } // @truncate to u48
                 InlinedEnumValueDecoded::Number(num) => {
                     Self::purify_nan(num).to_bits() + Self::DOUBLE_ENCODE_OFFSET
                 }
@@ -814,7 +858,9 @@ impl InlinedEnumValue {
 
     pub fn decode(self) -> InlinedEnumValueDecoded {
         if self.raw_data > 0x0000_FFFF_FFFF_FFFF {
-            InlinedEnumValueDecoded::Number(f64::from_bits(self.raw_data - Self::DOUBLE_ENCODE_OFFSET))
+            InlinedEnumValueDecoded::Number(f64::from_bits(
+                self.raw_data - Self::DOUBLE_ENCODE_OFFSET,
+            ))
         } else {
             // SAFETY: encoded from a valid arena `*const E::String` (see `encode`); low 48 bits hold the address.
             InlinedEnumValueDecoded::String(self.raw_data as usize as *const E::String)
@@ -865,11 +911,17 @@ impl ExportsKind {
     }
 
     pub fn is_esm_with_dynamic_fallback(self) -> bool {
-        matches!(self, Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs)
+        matches!(
+            self,
+            Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
+        )
     }
 
     // TODO(port): narrow error set
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 
@@ -889,7 +941,9 @@ pub struct DeclaredSymbolList {
 
 impl Default for DeclaredSymbolList {
     fn default() -> Self {
-        Self { entries: MultiArrayList::default() }
+        Self {
+            entries: MultiArrayList::default(),
+        }
     }
 }
 
@@ -903,7 +957,9 @@ impl DeclaredSymbolList {
     }
 
     pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        Ok(DeclaredSymbolList { entries: self.entries.clone()? })
+        Ok(DeclaredSymbolList {
+            entries: self.entries.clone()?,
+        })
     }
 
     #[inline]
@@ -911,13 +967,19 @@ impl DeclaredSymbolList {
         self.entries.len()
     }
 
-    pub fn append(&mut self, entry: DeclaredSymbol) -> core::result::Result<(), bun_alloc::AllocError> {
+    pub fn append(
+        &mut self,
+        entry: DeclaredSymbol,
+    ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(entry);
         Ok(())
     }
 
-    pub fn append_list(&mut self, other: DeclaredSymbolList) -> core::result::Result<(), bun_alloc::AllocError> {
+    pub fn append_list(
+        &mut self,
+        other: DeclaredSymbolList,
+    ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.ensure_unused_capacity(other.len())?;
         self.append_list_assume_capacity(other);
         Ok(())
@@ -933,11 +995,17 @@ impl DeclaredSymbolList {
         self.entries.append_assume_capacity(entry);
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> core::result::Result<(), bun_alloc::AllocError> {
+    pub fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.entries.ensure_total_capacity(count)
     }
 
-    pub fn ensure_unused_capacity(&mut self, count: usize) -> core::result::Result<(), bun_alloc::AllocError> {
+    pub fn ensure_unused_capacity(
+        &mut self,
+        count: usize,
+    ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.entries.ensure_unused_capacity(count)
     }
 
@@ -947,13 +1015,17 @@ impl DeclaredSymbolList {
 
     // `deinit` → Drop on MultiArrayList; no explicit body needed.
 
-    pub fn init_capacity(capacity: usize) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
+    pub fn init_capacity(
+        capacity: usize,
+    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
         let mut entries = MultiArrayList::<DeclaredSymbol>::default();
         entries.ensure_unused_capacity(capacity)?;
         Ok(DeclaredSymbolList { entries })
     }
 
-    pub fn from_slice(entries: &[DeclaredSymbol]) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
+    pub fn from_slice(
+        entries: &[DeclaredSymbol],
+    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
         let mut this = Self::init_capacity(entries.len())?;
         // errdefer this.deinit() → Drop handles it
         for entry in entries {
@@ -1004,7 +1076,10 @@ pub struct Dependency {
 
 impl Default for Dependency {
     fn default() -> Self {
-        Self { source_index: Index::INVALID, part_index: 0 }
+        Self {
+            source_index: Index::INVALID,
+            part_index: 0,
+        }
     }
 }
 
@@ -1107,7 +1182,10 @@ impl Default for Part {
 
 impl Part {
     // TODO(port): narrow error set
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        &self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(self.stmts.slice())
     }
 }
@@ -1195,7 +1273,10 @@ pub enum StrictModeKind {
 
 impl StrictModeKind {
     // TODO(port): narrow error set
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
+    pub fn json_stringify(
+        self,
+        writer: &mut impl JsonWriter,
+    ) -> core::result::Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 }
@@ -1233,14 +1314,19 @@ pub struct Batcher<T> {
 }
 
 impl<T> Batcher<T> {
-    pub fn init(bump: &bun_alloc::Arena, count: usize) -> core::result::Result<Self, bun_alloc::AllocError>
+    pub fn init(
+        bump: &bun_alloc::Arena,
+        count: usize,
+    ) -> core::result::Result<Self, bun_alloc::AllocError>
     where
         T: Default,
     {
         // TODO(port): bumpalo alloc_slice for uninit T — Zig `arena.alloc(Type, count)`.
         // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
-        Ok(Self { head: StoreSlice::new_mut(all) })
+        Ok(Self {
+            head: StoreSlice::new_mut(all),
+        })
     }
 
     pub fn done(&mut self) {
@@ -1309,4 +1395,3 @@ pub mod math {
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
 pub type MangledProps = ArrayHashMap<Ref, StoreStr>;
-

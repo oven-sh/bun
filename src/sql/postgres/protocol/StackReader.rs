@@ -62,7 +62,9 @@ impl<'a> StackReader<'a> {
         // PORT NOTE: reshaped for borrowck — copy the &'a [u8] out before slicing so the
         // returned Data borrows 'a, not &mut self.
         let buffer: &'a [u8] = self.buffer;
-        Ok(Data::Temporary(bun_ptr::RawSlice::new(&buffer[offset..*self.offset])))
+        Ok(Data::Temporary(bun_ptr::RawSlice::new(
+            &buffer[offset..*self.offset],
+        )))
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
@@ -81,12 +83,24 @@ impl<'a> StackReader<'a> {
 }
 
 impl<'a> ReaderContext for StackReader<'a> {
-    fn mark_message_start(&mut self) { Self::mark_message_start(self) }
-    fn peek(&self) -> &[u8] { Self::peek(self) }
-    fn skip(&mut self, count: usize) { Self::skip(self, count) }
-    fn ensure_length(&mut self, count: usize) -> bool { Self::ensure_length(self, count) }
-    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> { Self::read(self, count) }
-    fn read_z(&mut self) -> Result<Data, AnyPostgresError> { Self::read_z(self) }
+    fn mark_message_start(&mut self) {
+        Self::mark_message_start(self)
+    }
+    fn peek(&self) -> &[u8] {
+        Self::peek(self)
+    }
+    fn skip(&mut self, count: usize) {
+        Self::skip(self, count)
+    }
+    fn ensure_length(&mut self, count: usize) -> bool {
+        Self::ensure_length(self, count)
+    }
+    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+        Self::read(self, count)
+    }
+    fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+        Self::read_z(self)
+    }
 }
 
 // ported from: src/sql/postgres/protocol/StackReader.zig

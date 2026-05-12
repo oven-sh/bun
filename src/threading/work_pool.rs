@@ -194,10 +194,7 @@ impl WorkPool {
         Self::schedule_owned(Box::new(task));
     }
 
-    pub fn go<C: Send + 'static>(
-        context: C,
-        function: fn(C),
-    ) -> Result<(), bun_alloc::AllocError> {
+    pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
         // PERF(port): `function` was a comptime param in Zig (monomorphized into the
         // callback); stored as a runtime field here — profile in Phase B.
         #[repr(C)]

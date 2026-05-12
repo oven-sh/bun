@@ -59,36 +59,156 @@ unsafe extern "C" {
     pub fn simdutf__validate_utf16be_with_errors(buf: *const u16, len: usize) -> SIMDUTFResult;
     pub fn simdutf__validate_utf32(buf: *const c_uint, len: usize) -> bool;
     pub fn simdutf__validate_utf32_with_errors(buf: *const c_uint, len: usize) -> SIMDUTFResult;
-    pub fn simdutf__convert_utf8_to_utf16le(buf: *const u8, len: usize, utf16_output: *mut u16) -> usize;
-    pub fn simdutf__convert_utf8_to_utf16be(buf: *const u8, len: usize, utf16_output: *mut u16) -> usize;
-    pub fn simdutf__convert_utf8_to_utf16le_with_errors(buf: *const u8, len: usize, utf16_output: *mut u16) -> SIMDUTFResult;
-    pub fn simdutf__convert_utf8_to_utf16be_with_errors(buf: *const u8, len: usize, utf16_output: *mut u16) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf8_to_utf16be(buf: *const u8, len: usize, utf16_buffer: *mut u16) -> usize;
-    pub fn simdutf__convert_utf8_to_utf32(buf: *const u8, len: usize, utf32_output: *mut u32) -> usize;
-    pub fn simdutf__convert_utf8_to_utf32_with_errors(buf: *const u8, len: usize, utf32_output: *mut u32) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf8_to_utf32(buf: *const u8, len: usize, utf32_buffer: *mut u32) -> usize;
-    pub fn simdutf__convert_utf16le_to_utf8(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_utf16be_to_utf8(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_utf16le_to_utf8_with_errors(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> SIMDUTFResult;
-    pub fn simdutf__convert_utf16be_to_utf8_with_errors(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf16le_to_utf8(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_valid_utf16be_to_utf8(buf: *const u16, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_utf32_to_utf8(buf: *const c_uint, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_utf32_to_utf8_with_errors(buf: *const c_uint, len: usize, utf8_buffer: *mut u8) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf32_to_utf8(buf: *const c_uint, len: usize, utf8_buffer: *mut u8) -> usize;
-    pub fn simdutf__convert_utf32_to_utf16le(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> usize;
-    pub fn simdutf__convert_utf32_to_utf16be(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> usize;
-    pub fn simdutf__convert_utf32_to_utf16le_with_errors(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> SIMDUTFResult;
-    pub fn simdutf__convert_utf32_to_utf16be_with_errors(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf32_to_utf16le(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> usize;
-    pub fn simdutf__convert_valid_utf32_to_utf16be(buf: *const c_uint, len: usize, utf16_buffer: *mut u16) -> usize;
-    pub fn simdutf__convert_utf16le_to_utf32(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> usize;
-    pub fn simdutf__convert_utf16be_to_utf32(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> usize;
-    pub fn simdutf__convert_utf16le_to_utf32_with_errors(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> SIMDUTFResult;
-    pub fn simdutf__convert_utf16be_to_utf32_with_errors(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> SIMDUTFResult;
-    pub fn simdutf__convert_valid_utf16le_to_utf32(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> usize;
-    pub fn simdutf__convert_valid_utf16be_to_utf32(buf: *const u16, len: usize, utf32_buffer: *mut u32) -> usize;
-    pub fn simdutf__convert_latin1_to_utf8(buf: *const u8, len: usize, utf8_buffer: *mut u8) -> usize;
+    pub fn simdutf__convert_utf8_to_utf16le(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf8_to_utf16be(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf8_to_utf16le_with_errors(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_utf8_to_utf16be_with_errors(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf8_to_utf16be(
+        buf: *const u8,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf8_to_utf32(
+        buf: *const u8,
+        len: usize,
+        utf32_output: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_utf8_to_utf32_with_errors(
+        buf: *const u8,
+        len: usize,
+        utf32_output: *mut u32,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf8_to_utf32(
+        buf: *const u8,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_utf16le_to_utf8(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_utf16be_to_utf8(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_utf16le_to_utf8_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_utf16be_to_utf8_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf16le_to_utf8(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_valid_utf16be_to_utf8(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_utf32_to_utf8(
+        buf: *const c_uint,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_utf32_to_utf8_with_errors(
+        buf: *const c_uint,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf32_to_utf8(
+        buf: *const c_uint,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
+    pub fn simdutf__convert_utf32_to_utf16le(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf32_to_utf16be(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf32_to_utf16le_with_errors(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_utf32_to_utf16be_with_errors(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf32_to_utf16le(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_valid_utf32_to_utf16be(
+        buf: *const c_uint,
+        len: usize,
+        utf16_buffer: *mut u16,
+    ) -> usize;
+    pub fn simdutf__convert_utf16le_to_utf32(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_utf16be_to_utf32(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_utf16le_to_utf32_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_utf16be_to_utf32_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> SIMDUTFResult;
+    pub fn simdutf__convert_valid_utf16le_to_utf32(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_valid_utf16be_to_utf32(
+        buf: *const u16,
+        len: usize,
+        utf32_buffer: *mut u32,
+    ) -> usize;
+    pub fn simdutf__convert_latin1_to_utf8(
+        buf: *const u8,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
     pub fn simdutf__change_endianness_utf16(buf: *const u16, length: usize, output: *mut u16);
     pub fn simdutf__count_utf16le(buf: *const u16, length: usize) -> usize;
     pub fn simdutf__count_utf16be(buf: *const u16, length: usize) -> usize;
@@ -156,7 +276,13 @@ pub mod convert {
             use super::*;
             pub fn utf8(input: &[u8], output: &mut [u8]) -> usize {
                 // SAFETY: caller guarantees output.len() is sufficient (>= utf8_length_from_latin1).
-                unsafe { simdutf__convert_latin1_to_utf8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                unsafe {
+                    simdutf__convert_latin1_to_utf8(
+                        input.as_ptr(),
+                        input.len(),
+                        output.as_mut_ptr(),
+                    )
+                }
             }
         }
     }
@@ -171,21 +297,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u8], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf8_to_utf16le_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf8_to_utf16le_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u8], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf8_to_utf16be_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf8_to_utf16be_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u8], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_utf8_to_utf16le(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_utf8_to_utf16le(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u8], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_utf8_to_utf16be(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_utf8_to_utf16be(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
 
@@ -195,21 +345,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u8], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf8_to_utf32_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf8_to_utf32_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u8], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf8_to_utf32_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf8_to_utf32_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u8], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf8_to_utf32(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf8_to_utf32(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u8], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf8_to_utf32(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf8_to_utf32(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
         }
@@ -225,21 +399,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf16le_to_utf8_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf16le_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf16be_to_utf8_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf16be_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u16], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf16le_to_utf8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf16le_to_utf8(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u16], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf16be_to_utf8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf16be_to_utf8(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
 
@@ -249,21 +447,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u16], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf16le_to_utf32_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf16le_to_utf32_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u16], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf16be_to_utf32_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf16be_to_utf32_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u16], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf16le_to_utf32(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf16le_to_utf32(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u16], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf16be_to_utf32(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf16be_to_utf32(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
         }
@@ -279,21 +501,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u32], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf32_to_utf8_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf32_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u32], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf32_to_utf8_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf32_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u32], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf32_to_utf8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf32_to_utf8(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u32], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf32_to_utf8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf32_to_utf8(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
 
@@ -303,21 +549,45 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u32], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf32_to_utf16le_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf32_to_utf16le_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                     pub fn be(input: &[u32], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe { simdutf__convert_utf32_to_utf16be_with_errors(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                        unsafe {
+                            simdutf__convert_utf32_to_utf16be_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output.as_mut_ptr(),
+                            )
+                        }
                     }
                 }
 
                 pub fn le(input: &[u32], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf32_to_utf16le(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf32_to_utf16le(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u32], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe { simdutf__convert_valid_utf32_to_utf16be(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+                    unsafe {
+                        simdutf__convert_valid_utf32_to_utf16be(
+                            input.as_ptr(),
+                            input.len(),
+                            output.as_mut_ptr(),
+                        )
+                    }
                 }
             }
         }
@@ -473,15 +743,39 @@ pub mod base64 {
     use core::ffi::c_int;
 
     unsafe extern "C" {
-        fn simdutf__base64_encode(input: *const u8, length: usize, output: *mut u8, is_urlsafe: c_int) -> usize;
-        fn simdutf__base64_decode_from_binary(input: *const u8, length: usize, output: *mut u8, outlen: usize, is_urlsafe: c_int) -> SIMDUTFResult;
-        fn simdutf__base64_decode_from_binary16(input: *const u16, length: usize, output: *mut u8, outlen: usize, is_urlsafe: c_int) -> SIMDUTFResult;
+        fn simdutf__base64_encode(
+            input: *const u8,
+            length: usize,
+            output: *mut u8,
+            is_urlsafe: c_int,
+        ) -> usize;
+        fn simdutf__base64_decode_from_binary(
+            input: *const u8,
+            length: usize,
+            output: *mut u8,
+            outlen: usize,
+            is_urlsafe: c_int,
+        ) -> SIMDUTFResult;
+        fn simdutf__base64_decode_from_binary16(
+            input: *const u16,
+            length: usize,
+            output: *mut u8,
+            outlen: usize,
+            is_urlsafe: c_int,
+        ) -> SIMDUTFResult;
         fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
         // SAFETY: caller guarantees output.len() >= encode_len(input.len(), is_urlsafe).
-        unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output.as_mut_ptr(), is_urlsafe as c_int) }
+        unsafe {
+            simdutf__base64_encode(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr(),
+                is_urlsafe as c_int,
+            )
+        }
     }
 
     /// Raw-pointer variant of [`encode`] for writing into uninitialised
@@ -504,12 +798,28 @@ pub mod base64 {
 
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
-        unsafe { simdutf__base64_decode_from_binary(input.as_ptr(), input.len(), output.as_mut_ptr(), output.len(), is_urlsafe as c_int) }
+        unsafe {
+            simdutf__base64_decode_from_binary(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr(),
+                output.len(),
+                is_urlsafe as c_int,
+            )
+        }
     }
 
     pub fn decode16(input: &[u16], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
-        unsafe { simdutf__base64_decode_from_binary16(input.as_ptr(), input.len(), output.as_mut_ptr(), output.len(), is_urlsafe as c_int) }
+        unsafe {
+            simdutf__base64_decode_from_binary16(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr(),
+                output.len(),
+                is_urlsafe as c_int,
+            )
+        }
     }
 }
 

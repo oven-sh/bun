@@ -9,7 +9,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::{host_fn, zig_string, JSGlobalObject, JSHostFn, JSValue};
+use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, zig_string};
 
 /// Generated for "src/jsc/bindgen_test.zig"
 pub mod bindgen_test {

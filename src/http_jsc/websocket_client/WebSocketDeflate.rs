@@ -166,7 +166,10 @@ impl PerMessageDeflate {
             // placeholder in bun_jsc; the real type is `self::RareData` (this
             // module), which bun_jsc cannot import without a dep cycle. Until a
             // re-export shim lands, fall back to a fresh per-connection instance.
-            rare_data: { let _ = rare_data; RareData::default() },
+            rare_data: {
+                let _ = rare_data;
+                RareData::default()
+            },
         });
 
         // Initialize compressor (deflate)
@@ -176,11 +179,11 @@ impl PerMessageDeflate {
         let compress_err = unsafe {
             zlib::deflateInit2_(
                 &raw mut self_.compress_stream,
-                Z_DEFAULT_COMPRESSION,                          // level
-                Z_DEFLATED,                                     // method
+                Z_DEFAULT_COMPRESSION,                           // level
+                Z_DEFLATED,                                      // method
                 -(self_.params.client_max_window_bits as c_int), // windowBits
-                Z_DEFAULT_MEM_LEVEL,                            // memLevel
-                Z_DEFAULT_STRATEGY,                             // strategy
+                Z_DEFAULT_MEM_LEVEL,                             // memLevel
+                Z_DEFAULT_STRATEGY,                              // strategy
                 zlib::zlibVersion().cast::<u8>(),
                 c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
             )
@@ -226,8 +229,11 @@ impl PerMessageDeflate {
         if Self::can_use_libdeflate(in_buf.len()) {
             // SAFETY: `decompressor()` returns a live *mut Decompressor allocated
             // on first use and freed in Drop.
-            let result = unsafe { &mut *self.rare_data.decompressor() }
-                .decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
+            let result = unsafe { &mut *self.rare_data.decompressor() }.decompress_to_vec(
+                in_buf,
+                out,
+                libdeflate_sys::Encoding::Deflate,
+            );
             if result.status == libdeflate_sys::Status::Success {
                 if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
                     return Err(DecompressError::TooLarge);
@@ -249,12 +255,14 @@ impl PerMessageDeflate {
             // SAFETY: `stream` was initialized by inflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_with_trailer kept alive on
             // stack); next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe { bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
-                stream.next_out = spare.as_mut_ptr();
-                stream.avail_out = spare.len() as u32;
-                let res = zlib::inflate(&raw mut *stream, zlib::FlushValue::NoFlush);
-                (spare.len() - stream.avail_out as usize, res)
-            }) };
+            let res = unsafe {
+                bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
+                    stream.next_out = spare.as_mut_ptr();
+                    stream.avail_out = spare.len() as u32;
+                    let res = zlib::inflate(&raw mut *stream, zlib::FlushValue::NoFlush);
+                    (spare.len() - stream.avail_out as usize, res)
+                })
+            };
 
             // Check for decompression bomb
             if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
@@ -294,12 +302,14 @@ impl PerMessageDeflate {
             // SAFETY: `stream` was initialized by deflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_buf borrowed for this call);
             // next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe { bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
-                stream.next_out = spare.as_mut_ptr();
-                stream.avail_out = spare.len() as u32;
-                let res = zlib::deflate(&raw mut *stream, zlib::FlushValue::SyncFlush);
-                (spare.len() - stream.avail_out as usize, res)
-            }) };
+            let res = unsafe {
+                bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
+                    stream.next_out = spare.as_mut_ptr();
+                    stream.avail_out = spare.len() as u32;
+                    let res = zlib::deflate(&raw mut *stream, zlib::FlushValue::SyncFlush);
+                    (spare.len() - stream.avail_out as usize, res)
+                })
+            };
             if res != zlib::ReturnCode::Ok {
                 return Err(CompressError::DeflateFailed);
             }

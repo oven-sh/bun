@@ -15,15 +15,15 @@ use bun_uws::{ConnectingSocket, NewSocketHandler};
 use bun_uws_sys::thunk;
 use bun_uws_sys::thunk::ExtSlot;
 use bun_uws_sys::vtable::Handler as VHandler;
-use bun_uws_sys::{us_bun_verify_error_t, us_socket_t, CloseCode};
+use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
+use crate::api;
+use crate::valkey_jsc::js_valkey;
 use bun_http_jsc::websocket_client;
 use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_jsc::ipc as IPC;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
-use crate::api;
-use crate::valkey_jsc::js_valkey;
 
 /// Some consumer methods are `bun.JSError!void` (they can throw into JS),
 /// some are plain `void`. The old `configure()` trampolines hand-unrolled the
@@ -66,16 +66,46 @@ impl<E> Swallow for Result<(), E> {
 // TODO(port): if a consumer's `on_*` is infallible, the trait default forces a
 // `Result` wrap; revisit once consumer crates are ported.
 pub trait SocketEvents<const SSL: bool> {
-    fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_data(&mut self, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_writable(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_close(&mut self, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_long_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_end(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_connect_error(&mut self, _s: NewSocketHandler<SSL>, _code: i32) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_handshake(&mut self, _s: NewSocketHandler<SSL>, _ok: i32, _err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_fd(&mut self, _s: NewSocketHandler<SSL>, _fd: c_int) -> bun_jsc::JsResult<()> { Ok(()) }
+    fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_data(&mut self, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_writable(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_close(
+        &mut self,
+        _s: NewSocketHandler<SSL>,
+        _code: i32,
+        _reason: Option<*mut c_void>,
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_long_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_end(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_connect_error(&mut self, _s: NewSocketHandler<SSL>, _code: i32) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_handshake(
+        &mut self,
+        _s: NewSocketHandler<SSL>,
+        _ok: i32,
+        _err: us_bun_verify_error_t,
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_fd(&mut self, _s: NewSocketHandler<SSL>, _fd: c_int) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
 }
 
 /// `Ext = *?*T`: the socket ext stores a single pointer to the heap-allocated
@@ -169,10 +199,17 @@ where
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<T>(c) }) else { return };
+        let Some(this) = (unsafe { thunk::connecting_ext_owner::<T>(c) }) else {
+            return;
+        };
         swallow(this.on_connect_error(NewSocketHandler::<SSL>::from_connecting(c), code));
     }
-    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+    ) {
         let Some(this) = ext.owner_mut() else { return };
         swallow(this.on_handshake(wrap::<SSL>(s), ok as i32, err));
     }
@@ -196,7 +233,13 @@ pub trait RawSocketEvents<const SSL: bool>: Sized {
     unsafe fn on_open(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
     unsafe fn on_data(_this: *mut Self, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
     unsafe fn on_writable(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_close(_this: *mut Self, _s: NewSocketHandler<SSL>, _code: i32, _reason: *mut c_void) {}
+    unsafe fn on_close(
+        _this: *mut Self,
+        _s: NewSocketHandler<SSL>,
+        _code: i32,
+        _reason: *mut c_void,
+    ) {
+    }
     unsafe fn on_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
     unsafe fn on_long_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
     unsafe fn on_end(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
@@ -247,7 +290,14 @@ where
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_close(this.as_ptr(), wrap::<SSL>(s), code, reason.unwrap_or(core::ptr::null_mut())) };
+        unsafe {
+            T::on_close(
+                this.as_ptr(),
+                wrap::<SSL>(s),
+                code,
+                reason.unwrap_or(core::ptr::null_mut()),
+            )
+        };
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
@@ -277,11 +327,24 @@ where
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket passed by the trampoline.
-        let Some(this) = (unsafe { thunk::connecting_ext_ptr::<T>(c) }) else { return };
+        let Some(this) = (unsafe { thunk::connecting_ext_ptr::<T>(c) }) else {
+            return;
+        };
         // SAFETY: see `on_open`.
-        unsafe { T::on_connect_error(this.as_ptr(), NewSocketHandler::<SSL>::from_connecting(c), code) };
+        unsafe {
+            T::on_connect_error(
+                this.as_ptr(),
+                NewSocketHandler::<SSL>::from_connecting(c),
+                code,
+            )
+        };
     }
-    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+    ) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
         unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, err) };
@@ -369,35 +432,65 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
     for postgres::postgres_sql_connection::SocketHandler<SSL>
 {
-    fn on_open(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_open(this, s);
         Ok(())
     }
-    fn on_data(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+    fn on_data(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
         Self::on_data(this, s, data);
         Ok(())
     }
-    fn on_writable(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_writable(this, s);
         Ok(())
     }
-    fn on_close(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+    fn on_close(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        reason: Option<*mut c_void>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_close(this, s, code, reason);
         Ok(())
     }
-    fn on_timeout(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_timeout(this, s);
         Ok(())
     }
-    fn on_end(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_end(this, s);
         Ok(())
     }
-    fn on_connect_error(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+    fn on_connect_error(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_connect_error(this, s, code);
         Ok(())
     }
-    fn on_handshake(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+    fn on_handshake(
+        this: &mut postgres::PostgresSQLConnection,
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: us_bun_verify_error_t,
+    ) -> bun_jsc::JsResult<()> {
         if let Some(f) = Self::ON_HANDSHAKE {
             f(this, s, ok, err);
         }
@@ -407,35 +500,65 @@ impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
 impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnection, SSL>
     for mysql::js_my_sql_connection::SocketHandler<SSL>
 {
-    fn on_open(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_open(this, s);
         Ok(())
     }
-    fn on_data(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+    fn on_data(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
         Self::on_data(this, s, data);
         Ok(())
     }
-    fn on_writable(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_writable(this, s);
         Ok(())
     }
-    fn on_close(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+    fn on_close(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        reason: Option<*mut c_void>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_close(this, s, code, reason);
         Ok(())
     }
-    fn on_timeout(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_timeout(this, s);
         Ok(())
     }
-    fn on_end(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_end(this, s);
         Ok(())
     }
-    fn on_connect_error(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+    fn on_connect_error(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_connect_error(this, s, code);
         Ok(())
     }
-    fn on_handshake(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+    fn on_handshake(
+        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: us_bun_verify_error_t,
+    ) -> bun_jsc::JsResult<()> {
         if let Some(f) = Self::ON_HANDSHAKE {
             f(this, s, ok, err);
         }
@@ -445,33 +568,63 @@ impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnect
 impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
     for js_valkey::SocketHandler<SSL>
 {
-    fn on_open(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Ok(Self::on_open(this, s)?)
     }
-    fn on_data(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+    fn on_data(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
         Self::on_data(this, s, data);
         Ok(())
     }
-    fn on_writable(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_writable(this, s);
         Ok(())
     }
-    fn on_close(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+    fn on_close(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        reason: Option<*mut c_void>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_close(this, s, code, reason);
         Ok(())
     }
-    fn on_timeout(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_timeout(this, s);
         Ok(())
     }
-    fn on_end(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         Self::on_end(this, s);
         Ok(())
     }
-    fn on_connect_error(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+    fn on_connect_error(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+    ) -> bun_jsc::JsResult<()> {
         Ok(Self::on_connect_error(this, s, code)?)
     }
-    fn on_handshake(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+    fn on_handshake(
+        this: &mut js_valkey::JSValkeyClient,
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: us_bun_verify_error_t,
+    ) -> bun_jsc::JsResult<()> {
         // Zig: `pub const onHandshake = if (ssl) onHandshake_ else null;` — the
         // `null` arm meant "leave the slot unbound" so the dispatcher's no-op
         // default fires for plain TCP.
@@ -589,18 +742,54 @@ where
 /// methods take `&mut Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
 pub trait NsSocketEvents<Owner, const SSL: bool> {
-    fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_data(_this: &mut Owner, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_writable(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_close(_this: &mut Owner, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_connect_error(_this: &mut Owner, _s: NewSocketHandler<SSL>, _code: i32) -> bun_jsc::JsResult<()> { Ok(()) }
+    fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_data(
+        _this: &mut Owner,
+        _s: NewSocketHandler<SSL>,
+        _data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_writable(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_close(
+        _this: &mut Owner,
+        _s: NewSocketHandler<SSL>,
+        _code: i32,
+        _reason: Option<*mut c_void>,
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+    fn on_connect_error(
+        _this: &mut Owner,
+        _s: NewSocketHandler<SSL>,
+        _code: i32,
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
     /// Zig guarded this with `@TypeOf(H.onHandshake) != @TypeOf(null)` — i.e.
     /// some adapters explicitly set `onHandshake = null`. Default no-op covers
     /// that case.
-    fn on_handshake(_this: &mut Owner, _s: NewSocketHandler<SSL>, _ok: i32, _err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> { Ok(()) }
+    fn on_handshake(
+        _this: &mut Owner,
+        _s: NewSocketHandler<SSL>,
+        _ok: i32,
+        _err: us_bun_verify_error_t,
+    ) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
 }
 
 pub struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
@@ -665,10 +854,21 @@ where
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<Owner>(c) }) else { return };
-        swallow(H::on_connect_error(this, NewSocketHandler::<SSL>::from_connecting(c), code));
+        let Some(this) = (unsafe { thunk::connecting_ext_owner::<Owner>(c) }) else {
+            return;
+        };
+        swallow(H::on_connect_error(
+            this,
+            NewSocketHandler::<SSL>::from_connecting(c),
+            code,
+        ));
     }
-    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+    ) {
         let Some(this) = ext.owner_mut() else { return };
         swallow(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
     }
@@ -721,7 +921,12 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(owner) = *ext else { return };
-        swallow(HttpH::<SSL>::on_close(owner.as_ptr(), wrap::<SSL>(s), code, reason));
+        swallow(HttpH::<SSL>::on_close(
+            owner.as_ptr(),
+            wrap::<SSL>(s),
+            code,
+            reason,
+        ));
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };
@@ -729,7 +934,10 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };
-        swallow(HttpH::<SSL>::on_long_timeout(owner.as_ptr(), wrap::<SSL>(s)));
+        swallow(HttpH::<SSL>::on_long_timeout(
+            owner.as_ptr(),
+            wrap::<SSL>(s),
+        ));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };
@@ -743,20 +951,36 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         // deref (`s` is a live socket passed by the trampoline).
         us_socket_t::opaque_mut(s).close(CloseCode::failure);
         let Some(owner) = owner else { return };
-        swallow(HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code));
+        swallow(HttpH::<SSL>::on_connect_error(
+            owner.as_ptr(),
+            wrap::<SSL>(s),
+            code,
+        ));
     }
     fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
         // SAFETY: `cs` is a live connecting socket passed by the trampoline.
-        let Some(owner) = (unsafe { thunk::connecting_ext_ptr::<c_void>(cs) }) else { return };
+        let Some(owner) = (unsafe { thunk::connecting_ext_ptr::<c_void>(cs) }) else {
+            return;
+        };
         swallow(HttpH::<SSL>::on_connect_error(
             owner.as_ptr(),
             NewSocketHandler::<SSL>::from_connecting(cs),
             code,
         ));
     }
-    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+    ) {
         let Some(owner) = *ext else { return };
-        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, err));
+        swallow(HttpH::<SSL>::on_handshake(
+            owner.as_ptr(),
+            wrap::<SSL>(s),
+            ok as i32,
+            err,
+        ));
     }
 }
 

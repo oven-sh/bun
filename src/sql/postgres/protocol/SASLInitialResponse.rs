@@ -1,7 +1,7 @@
-use crate::shared::Data;
-use crate::postgres::types::int_types::int32;
 use crate::postgres::protocol::new_writer::NewWriter;
 use crate::postgres::protocol::write_wrap::WriteWrap;
+use crate::postgres::types::int_types::int32;
+use crate::shared::Data;
 
 pub struct SASLInitialResponse {
     pub mechanism: Data,

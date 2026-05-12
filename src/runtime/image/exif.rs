@@ -44,17 +44,49 @@ impl Orientation {
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
     pub fn transform(self) -> Transform {
         match self {
-            Orientation::Normal => Transform { flop: false, flip: false, rotate: 0 },
-            Orientation::Flop => Transform { flop: true, flip: false, rotate: 0 },
-            Orientation::Rotate180 => Transform { flop: false, flip: false, rotate: 180 },
-            Orientation::Flip => Transform { flop: false, flip: true, rotate: 0 },
+            Orientation::Normal => Transform {
+                flop: false,
+                flip: false,
+                rotate: 0,
+            },
+            Orientation::Flop => Transform {
+                flop: true,
+                flip: false,
+                rotate: 0,
+            },
+            Orientation::Rotate180 => Transform {
+                flop: false,
+                flip: false,
+                rotate: 180,
+            },
+            Orientation::Flip => Transform {
+                flop: false,
+                flip: true,
+                rotate: 0,
+            },
             // 5 = transpose, 7 = transverse. With flop applied BEFORE a CW
             // rotate (Image.applyOrientation order), flop∘rot270 = transpose
             // and flop∘rot90 = transverse.
-            Orientation::FlopRotate90 => Transform { flop: true, flip: false, rotate: 270 },
-            Orientation::Rotate90 => Transform { flop: false, flip: false, rotate: 90 },
-            Orientation::FlopRotate270 => Transform { flop: true, flip: false, rotate: 90 },
-            Orientation::Rotate270 => Transform { flop: false, flip: false, rotate: 270 },
+            Orientation::FlopRotate90 => Transform {
+                flop: true,
+                flip: false,
+                rotate: 270,
+            },
+            Orientation::Rotate90 => Transform {
+                flop: false,
+                flip: false,
+                rotate: 90,
+            },
+            Orientation::FlopRotate270 => Transform {
+                flop: true,
+                flip: false,
+                rotate: 90,
+            },
+            Orientation::Rotate270 => Transform {
+                flop: false,
+                flip: false,
+                rotate: 270,
+            },
         }
     }
 }
@@ -157,7 +189,11 @@ fn rd16(b: &[u8], off: usize, big: bool) -> Option<u16> {
         return None;
     }
     let bytes = [b[off], b[off + 1]];
-    Some(if big { u16::from_be_bytes(bytes) } else { u16::from_le_bytes(bytes) })
+    Some(if big {
+        u16::from_be_bytes(bytes)
+    } else {
+        u16::from_le_bytes(bytes)
+    })
 }
 
 #[inline]
@@ -166,7 +202,11 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
         return None;
     }
     let bytes = [b[off], b[off + 1], b[off + 2], b[off + 3]];
-    Some(if big { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) })
+    Some(if big {
+        u32::from_be_bytes(bytes)
+    } else {
+        u32::from_le_bytes(bytes)
+    })
 }
 
 // ported from: src/runtime/image/exif.zig

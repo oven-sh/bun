@@ -17,15 +17,15 @@ use bun_wyhash::Wyhash11 as Wyhash;
 #[cfg(not(windows))]
 mod sock {
     pub use libc::{
-        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6, sockaddr_un,
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
+        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6, sockaddr_un,
     };
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::{
-        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
+        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
     };
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
@@ -395,7 +395,9 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             // only sees the 16 raw addr bytes and cannot emit it itself.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let n = match unsafe { bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf) } {
+            let n = match unsafe {
+                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
+            } {
                 Some(s) => s.len(),
                 None => return Ok(BunString::EMPTY),
             };
@@ -417,10 +419,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
             // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
             let path: &[u8] = unsafe {
-                core::slice::from_raw_parts(
-                    un.sun_path.as_ptr().cast::<u8>(),
-                    un.sun_path.len(),
-                )
+                core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
             };
             Ok(BunString::clone_latin1(path))
         }
@@ -520,7 +519,14 @@ pub mod internal {
         // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
         // the call. Prefetch is a perf hint — the body short-circuits if no
         // resolver is available.
-        unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname.as_ptr(), hostname.len(), port) }
+        unsafe {
+            __bun_dns_prefetch(
+                loop_.cast::<c_void>(),
+                hostname.as_ptr(),
+                hostname.len(),
+                port,
+            )
+        }
     }
 
     /// Register `pc` to be notified when the addrinfo `request` resolves.

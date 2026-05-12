@@ -13,10 +13,10 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_core::Fd;
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
+use bun_core::Fd;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
@@ -203,7 +203,12 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        c::uws_res_end_sendfile(Self::ssl_flag(), self.as_raw(), write_offset, close_connection)
+        c::uws_res_end_sendfile(
+            Self::ssl_flag(),
+            self.as_raw(),
+            write_offset,
+            close_connection,
+        )
     }
 
     pub fn timeout(&mut self, seconds: u8) {
@@ -221,8 +226,14 @@ impl<const SSL: bool> Response<SSL> {
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        match unsafe { c::uws_res_write(Self::ssl_flag(), self.downcast(), data.as_ptr(), &raw mut len) }
-        {
+        match unsafe {
+            c::uws_res_write(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                &raw mut len,
+            )
+        } {
             true => WriteResult::WantMore(len),
             false => WriteResult::Backpressure(len),
         }
@@ -334,10 +345,18 @@ impl<const SSL: bool> Response<SSL> {
             H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
         {
             // null user-data is always a no-op.
-            if data.is_null() { return true; }
+            if data.is_null() {
+                return true;
+            }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe { thunk::zst::<H>()(data.cast::<U>(), amount, thunk::handle_mut(Response::<SSL>::cast_res(this))) }
+            unsafe {
+                thunk::zst::<H>()(
+                    data.cast::<U>(),
+                    amount,
+                    thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                )
+            }
         }
         c::uws_res_on_writable(
             Self::ssl_flag(),
@@ -364,17 +383,22 @@ impl<const SSL: bool> Response<SSL> {
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn handle<U, H, const SSL: bool>(
-            this: *mut c::uws_res,
-            user_data: *mut c_void,
-        ) where
+        extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
+        where
             H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
         {
             // null user-data is always a no-op.
-            if user_data.is_null() { return; }
+            if user_data.is_null() {
+                return;
+            }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
+            unsafe {
+                thunk::zst::<H>()(
+                    user_data.cast::<U>(),
+                    thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                )
+            }
         }
         c::uws_res_on_aborted(
             Self::ssl_flag(),
@@ -394,17 +418,22 @@ impl<const SSL: bool> Response<SSL> {
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn handle<U, H, const SSL: bool>(
-            this: *mut c::uws_res,
-            user_data: *mut c_void,
-        ) where
+        extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
+        where
             H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
         {
             // null user-data is always a no-op.
-            if user_data.is_null() { return; }
+            if user_data.is_null() {
+                return;
+            }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
+            unsafe {
+                thunk::zst::<H>()(
+                    user_data.cast::<U>(),
+                    thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                )
+            }
         }
         c::uws_res_on_timeout(
             Self::ssl_flag(),
@@ -438,7 +467,9 @@ impl<const SSL: bool> Response<SSL> {
             H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
         {
             // null user-data is always a no-op.
-            if user_data.is_null() { return; }
+            if user_data.is_null() {
+                return;
+            }
             // SAFETY: uWS callback contract — `this` live, `chunk_ptr[..len]`
             // valid for the call, `H` is a ZST handler (asserted in `thunk::zst`).
             unsafe {
@@ -560,9 +591,18 @@ pub enum AnyResponse {
 macro_rules! any_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
-            AnyResponse::SSL(ptr) => { let $r = TLSResponse::as_handle(ptr); $body }
-            AnyResponse::TCP(ptr) => { let $r = TCPResponse::as_handle(ptr); $body }
-            AnyResponse::H3(ptr)  => { let $r = H3Response::as_handle(ptr);  $body }
+            AnyResponse::SSL(ptr) => {
+                let $r = TLSResponse::as_handle(ptr);
+                $body
+            }
+            AnyResponse::TCP(ptr) => {
+                let $r = TCPResponse::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H3(ptr) => {
+                let $r = H3Response::as_handle(ptr);
+                $body
+            }
         }
     };
 }
@@ -1029,8 +1069,12 @@ pub mod c {
         pub safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
         pub safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
-        pub fn uws_res_write(ssl: i32, res: *mut uws_res, data: *const u8, length: *mut usize)
-            -> bool;
+        pub fn uws_res_write(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: *mut usize,
+        ) -> bool;
         pub safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;

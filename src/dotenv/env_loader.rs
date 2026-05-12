@@ -1,13 +1,13 @@
 use core::ffi::c_char;
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_core::{strings, ZStr};
+use bun_core::{ZStr, strings};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -116,7 +116,6 @@ pub struct S3Credentials {
 pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-
     pub env_local: Option<bun_ast::Source>,
     pub env_development: Option<bun_ast::Source>,
     pub env_production: Option<bun_ast::Source>,
@@ -177,7 +176,9 @@ impl<'a> Loader<'a> {
     }
 
     pub fn has(&self, input: &[u8]) -> bool {
-        let Some(value) = self.get(input) else { return false };
+        let Some(value) = self.get(input) else {
+            return false;
+        };
         // NOTE: intentionally stricter than `is_emptyish` — also rejects "0"/"false"
         // per Zig `Loader.has` spec; do not collapse the extra terms.
         !Self::is_emptyish(value) && value != b"0" && value != b"false"
@@ -266,8 +267,9 @@ impl<'a> Loader<'a> {
 
         let mut endpoint: Box<[u8]> = Box::default();
         let mut insecure_http = false;
-        if let Some(endpoint_) =
-            self.get(b"S3_ENDPOINT").or_else(|| self.get(b"AWS_ENDPOINT"))
+        if let Some(endpoint_) = self
+            .get(b"S3_ENDPOINT")
+            .or_else(|| self.get(b"AWS_ENDPOINT"))
         {
             let url = URL::parse(endpoint_);
             endpoint = Box::from(url.host_with_path());
@@ -354,9 +356,8 @@ impl<'a> Loader<'a> {
         //
         // SAFETY: see above — `s` points into a `Box<[u8]>` owned by
         // `*self.map`, which outlives `'a`.
-        let extend = |s: &[u8]| -> &'a [u8] {
-            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
-        };
+        let extend =
+            |s: &[u8]| -> &'a [u8] { unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) } };
 
         let mut http_proxy: Option<URL<'a>> = None;
 
@@ -483,7 +484,9 @@ impl<'a> Loader<'a> {
             .unwrap_or_default();
 
         if !ccache_path.is_empty() {
-            let cxx_gop = self.map.get_or_put_without_value(b"CMAKE_CXX_COMPILER_LAUNCHER")?;
+            let cxx_gop = self
+                .map
+                .get_or_put_without_value(b"CMAKE_CXX_COMPILER_LAUNCHER")?;
             if !cxx_gop.found_existing {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
@@ -491,7 +494,9 @@ impl<'a> Loader<'a> {
                     conditional: false,
                 };
             }
-            let c_gop = self.map.get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
+            let c_gop = self
+                .map
+                .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
                 *c_gop.value_ptr = HashTableValue {
@@ -516,8 +521,11 @@ impl<'a> Loader<'a> {
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
         } else {
-            let cached: Option<Box<[u8]>> =
-                NODE_PATH_TO_USE_SET_ONCE.read().as_ref().filter(|b| !b.is_empty()).cloned();
+            let cached: Option<Box<[u8]>> = NODE_PATH_TO_USE_SET_ONCE
+                .read()
+                .as_ref()
+                .filter(|b| !b.is_empty())
+                .cloned();
             if let Some(c) = cached {
                 c
             } else {
@@ -876,34 +884,35 @@ impl<'a> Loader<'a> {
         // `bun_sys` is errno-based, so the match arms below approximate the Zig
         // error groups by errno. Any errno not listed propagates (matches the
         // Zig `else => return err`).
-        let file = match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-            Ok(file) => file,
-            Err(err) => {
-                use bun_sys::E;
-                match err.get_errno() {
-                    E::EISDIR | E::ENOENT => {
-                        // prevent retrying
-                        *self.default_file_slot(base) =
-                            Some(bun_ast::Source::init_path_string(base, b""));
-                        return Ok(());
-                    }
-                    E::EBUSY | E::EACCES => {
-                        if !self.quiet {
-                            bun_core::pretty_errorln!(
-                                "<r><red>{}<r> error loading {} file",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(base)
-                            );
+        let file =
+            match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
+                Ok(file) => file,
+                Err(err) => {
+                    use bun_sys::E;
+                    match err.get_errno() {
+                        E::EISDIR | E::ENOENT => {
+                            // prevent retrying
+                            *self.default_file_slot(base) =
+                                Some(bun_ast::Source::init_path_string(base, b""));
+                            return Ok(());
                         }
-                        // prevent retrying
-                        *self.default_file_slot(base) =
-                            Some(bun_ast::Source::init_path_string(base, b""));
-                        return Ok(());
+                        E::EBUSY | E::EACCES => {
+                            if !self.quiet {
+                                bun_core::pretty_errorln!(
+                                    "<r><red>{}<r> error loading {} file",
+                                    bstr::BStr::new(err.name()),
+                                    bstr::BStr::new(base)
+                                );
+                            }
+                            // prevent retrying
+                            *self.default_file_slot(base) =
+                                Some(bun_ast::Source::init_path_string(base, b""));
+                            return Ok(());
+                        }
+                        _ => return Err(err.into()),
                     }
-                    _ => return Err(err.into()),
                 }
-            }
-        };
+            };
         let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
@@ -949,7 +958,8 @@ impl<'a> Loader<'a> {
                 // map key already carries `file_path` (boxed), and the value is never
                 // read for its path/contents — only `.contains()` and key iteration —
                 // so an empty placeholder is observationally identical.
-                self.custom_files_loaded.put(file_path, bun_ast::Source::default())?;
+                self.custom_files_loaded
+                    .put(file_path, bun_ast::Source::default())?;
                 return Ok(());
             }
         };
@@ -973,7 +983,8 @@ impl<'a> Loader<'a> {
 
         // TODO(port): see `load_env_file` — `Source.contents` not retained
         // pending the `bun_logger` owning-`Str` rework.
-        self.custom_files_loaded.put(file_path, bun_ast::Source::default())?;
+        self.custom_files_loaded
+            .put(file_path, bun_ast::Source::default())?;
         Ok(())
     }
 }
@@ -1172,7 +1183,11 @@ impl<'a> Parser<'a> {
         };
         if let Some(len) = quoted_len {
             let value = &self.value_buffer[..len];
-            return Ok(if IS_PROCESS { value } else { &value[1..value.len() - 1] });
+            return Ok(if IS_PROCESS {
+                value
+            } else {
+                &value[1..value.len() - 1]
+            });
         }
         end = start;
         while end < self.src.len() {
@@ -1199,10 +1214,15 @@ impl<'a> Parser<'a> {
             if value[pos] == b'$' {
                 if pos > 0 && value[pos - 1] == b'\\' {
                     // PERF(port): insertSlice(0, ..) is O(n); same as Zig
-                    self.value_buffer.splice(0..0, value[pos..last].iter().copied());
+                    self.value_buffer
+                        .splice(0..0, value[pos..last].iter().copied());
                     pos -= 1;
                 } else {
-                    let mut end = if value[pos + 1] == b'{' { pos + 2 } else { pos + 1 };
+                    let mut end = if value[pos + 1] == b'{' {
+                        pos + 2
+                    } else {
+                        pos + 1
+                    };
                     let key_start = end;
                     while end < value.len() {
                         match value[end] {
@@ -1233,7 +1253,8 @@ impl<'a> Parser<'a> {
                     if end < value.len() && value[end] == b'}' {
                         end += 1;
                     }
-                    self.value_buffer.splice(0..0, value[end..last].iter().copied());
+                    self.value_buffer
+                        .splice(0..0, value[end..last].iter().copied());
                     self.value_buffer
                         .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
                 }
@@ -1248,7 +1269,8 @@ impl<'a> Parser<'a> {
             pos -= 1;
         }
         if last > 0 {
-            self.value_buffer.splice(0..0, value[..last].iter().copied());
+            self.value_buffer
+                .splice(0..0, value[..last].iter().copied());
         }
         Ok(Some(self.value_buffer.as_slice()))
     }
@@ -1393,7 +1415,10 @@ impl Map {
             debug_assert!(i == envp_count);
         }
         envp_buf.push(core::ptr::null()); // sentinel
-        Ok(NullDelimitedEnvMap { storage, envp: envp_buf.into_boxed_slice() })
+        Ok(NullDelimitedEnvMap {
+            storage,
+            envp: envp_buf.into_boxed_slice(),
+        })
     }
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
@@ -1410,7 +1435,9 @@ impl Map {
                 String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
             );
         }
-        Ok(StdEnvMapWrapper { unsafe_map: env_map })
+        Ok(StdEnvMapWrapper {
+            unsafe_map: env_map,
+        })
     }
 
     /// Write the Windows environment block into a buffer
@@ -1472,7 +1499,9 @@ impl Map {
 
     #[inline]
     pub fn init() -> Map {
-        Map { map: HashTable::default() }
+        Map {
+            map: HashTable::default(),
+        }
     }
 
     #[inline]
@@ -1483,7 +1512,10 @@ impl Map {
         }
         self.map.put(
             key,
-            HashTableValue { value: Box::from(value), conditional: false },
+            HashTableValue {
+                value: Box::from(value),
+                conditional: false,
+            },
         )
     }
 
@@ -1499,14 +1531,20 @@ impl Map {
         // PERF(port): was assume_capacity
         self.map.put_assume_capacity(
             key,
-            HashTableValue { value: Box::from(value), conditional: false },
+            HashTableValue {
+                value: Box::from(value),
+                conditional: false,
+            },
         );
     }
 
     #[inline]
     pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         let gop = self.map.get_or_put(key)?;
-        *gop.value_ptr = HashTableValue { value: Box::from(value), conditional: false };
+        *gop.value_ptr = HashTableValue {
+            value: Box::from(value),
+            conditional: false,
+        };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
         }
@@ -1542,7 +1580,13 @@ impl Map {
         // PORT NOTE: `iterator()` requires `&mut self`; iterate parallel slices instead.
         let count = self.map.count();
         writer.write_str("{")?;
-        for (i, (k, v)) in self.map.keys().iter().zip(self.map.values().iter()).enumerate() {
+        for (i, (k, v)) in self
+            .map
+            .keys()
+            .iter()
+            .zip(self.map.values().iter())
+            .enumerate()
+        {
             writer.write_str("\n    ")?;
             writer.write_str(&String::from_utf8_lossy(k))?;
             writer.write_str(": ")?;
@@ -1563,7 +1607,10 @@ impl Map {
     pub fn put_default(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         let _ = self.map.get_or_put_value(
             key,
-            HashTableValue { value: Box::from(value), conditional: false },
+            HashTableValue {
+                value: Box::from(value),
+                conditional: false,
+            },
         )?;
         Ok(())
     }
@@ -1580,7 +1627,9 @@ impl Map {
 
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
         // allocator param dropped — global mimalloc
-        Ok(Map { map: self.map.clone()? })
+        Ok(Map {
+            map: self.map.clone()?,
+        })
     }
 }
 
@@ -1641,11 +1690,7 @@ pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null
 #[inline]
 pub fn instance() -> Option<*mut Loader<'static>> {
     let ptr = INSTANCE.load(Ordering::Acquire);
-    if ptr.is_null() {
-        None
-    } else {
-        Some(ptr)
-    }
+    if ptr.is_null() { None } else { Some(ptr) }
 }
 
 /// Install the global singleton. Overwrites any previous value (matches Zig `pub var` re-assign

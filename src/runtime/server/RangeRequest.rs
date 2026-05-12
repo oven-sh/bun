@@ -24,7 +24,10 @@ pub enum Raw {
     /// bytes=-N
     Suffix(u64),
     /// bytes=N-[M]
-    Bounded { start: u64, end: Option<u64> },
+    Bounded {
+        start: u64,
+        end: Option<u64>,
+    },
 }
 
 impl Raw {
@@ -40,7 +43,10 @@ impl Raw {
                 if total == 0 {
                     return Result::None;
                 }
-                Result::Satisfiable { start: total.saturating_sub(n), end: total - 1 }
+                Result::Satisfiable {
+                    start: total.saturating_sub(n),
+                    end: total - 1,
+                }
             }
             Raw::Bounded { start, end } => {
                 if start >= total {

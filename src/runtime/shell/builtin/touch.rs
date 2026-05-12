@@ -1,13 +1,13 @@
 use core::ffi::CStr;
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
+    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
+    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Touch {
@@ -58,7 +58,7 @@ impl Touch {
                 Err(e) => {
                     return Builtin::fail_parse(interp, cmd, Kind::Touch, e, || {
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    })
+                    });
                 }
             }
         };
@@ -77,7 +77,10 @@ impl Touch {
     }
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        enum Action { Done(ExitCode), Schedule(usize) }
+        enum Action {
+            Done(ExitCode),
+            Schedule(usize),
+        }
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
@@ -148,11 +151,7 @@ impl Touch {
     }
 
     /// Spec: touch.zig `onShellTouchTaskDone`.
-    pub fn on_shell_touch_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellTouchTask,
-    ) {
+    pub fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -274,7 +273,7 @@ impl ShellTouchTask {
     /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub fn run_from_thread_pool(this: &mut ShellTouchTask) {
-        use bun_paths::resolve_path::{self, platform, Platform};
+        use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
         // We have to give an absolute path.
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -333,7 +332,9 @@ impl bun_event_loop::Taskable for ShellTouchTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) {
+        Self::run_from_thread_pool(this)
+    }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
@@ -355,14 +356,16 @@ pub struct Opts {
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
         match flag {
-            b"--no-create" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--no-create"))),
+            b"--no-create" => Some(ParseFlagResult::Unsupported(unsupported_flag(
+                b"--no-create",
+            ))),
             b"--date" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--date"))),
-            b"--reference" => {
-                Some(ParseFlagResult::Unsupported(unsupported_flag(b"--reference=FILE")))
-            }
-            b"--time" => {
-                Some(ParseFlagResult::Unsupported(unsupported_flag(b"--reference=FILE")))
-            }
+            b"--reference" => Some(ParseFlagResult::Unsupported(unsupported_flag(
+                b"--reference=FILE",
+            ))),
+            b"--time" => Some(ParseFlagResult::Unsupported(unsupported_flag(
+                b"--reference=FILE",
+            ))),
             _ => None,
         }
     }
@@ -376,7 +379,9 @@ impl FlagParser for Opts {
             b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m"))),
             b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-r"))),
             b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[1 + i..])),
+            _ => Some(ParseFlagResult::IllegalOption(
+                &raw const smallflags[1 + i..],
+            )),
         }
     }
 }

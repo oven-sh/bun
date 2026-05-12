@@ -2,10 +2,10 @@ use crate::css_parser as css;
 
 use css::SmallList;
 
+use css::css_values::angle::Angle;
 use css::css_values::color::CssColor;
 use css::css_values::length::LengthValue as Length;
 use css::css_values::percentage::NumberOrPercentage;
-use css::css_values::angle::Angle;
 use css::css_values::url::Url;
 
 /// A value for the [filter](https://drafts.fxtf.org/filter-effects-1/#FilterProperty) and

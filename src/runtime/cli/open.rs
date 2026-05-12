@@ -2,10 +2,10 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::{Global, OrWriteFailed as _, Output};
+use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_core::{strings, ZStr};
 use bun_which::which;
 
 use crate::api::bun::process::sync;
@@ -48,7 +48,10 @@ pub fn open_url(url: &ZStr) {
     #[cfg(not(target_os = "android"))]
     let args_buf: &[&[u8]] = &two_args;
 
-    let argv: Vec<Box<[u8]>> = args_buf.iter().map(|s| s.to_vec().into_boxed_slice()).collect();
+    let argv: Vec<Box<[u8]>> = args_buf
+        .iter()
+        .map(|s| s.to_vec().into_boxed_slice())
+        .collect();
 
     'maybe_fallback: {
         let spawn_result = match sync::spawn(&sync::Options {
@@ -59,7 +62,9 @@ pub fn open_url(url: &ZStr) {
             stdin: sync::SyncStdio::Inherit,
             #[cfg(windows)]
             windows: crate::api::bun::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+                loop_: bun_jsc::EventLoopHandle::init_mini(
+                    bun_event_loop::MiniEventLoop::init_global(None, None),
+                ),
                 ..Default::default()
             },
             ..Default::default()
@@ -285,12 +290,15 @@ impl Editor {
         }
 
         match self {
-            Editor::Sublime | Editor::Atom | Editor::Vscode | Editor::Webstorm | Editor::Intellij => {
+            Editor::Sublime
+            | Editor::Atom
+            | Editor::Vscode
+            | Editor::Webstorm
+            | Editor::Intellij => {
                 cursor.write_all(file).or_write_failed()?;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
-                        write!(cursor, ":{}", bstr::BStr::new(line_))
-                            .or_write_failed()?;
+                        write!(cursor, ":{}", bstr::BStr::new(line_)).or_write_failed()?;
 
                         if !self.is_jet_brains() {
                             if let Some(col) = column {
@@ -320,13 +328,11 @@ impl Editor {
                     if !line_.is_empty() {
                         push_arg!(b"--line");
 
-                        write!(cursor, "{}", bstr::BStr::new(line_))
-                            .or_write_failed()?;
+                        write!(cursor, "{}", bstr::BStr::new(line_)).or_write_failed()?;
 
                         if let Some(col) = column {
                             if !col.is_empty() {
-                                write!(cursor, ":{}", bstr::BStr::new(col))
-                                    .or_write_failed()?;
+                                write!(cursor, ":{}", bstr::BStr::new(col)).or_write_failed()?;
                             }
                         }
 
@@ -421,19 +427,33 @@ pub fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
         // `const { &[...] }` forces const-promotion so the array lives in
         // `'static` storage (otherwise `&[..]` borrows a stack temporary).
         match editor {
-            Editor::Vscode => Some(const { &[
+            Editor::Vscode => Some(
+                const {
+                    &[
                 ZStr::from_static(b"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\0"),
                 ZStr::from_static(b"/Applications/VSCodium.app/Contents/Resources/app/bin/code\0"),
-            ] }),
-            Editor::Atom => Some(const { &[
-                ZStr::from_static(b"/Applications/Atom.app/Contents/Resources/app/atom.sh\0"),
-            ] }),
-            Editor::Sublime => Some(const { &[
+            ]
+                },
+            ),
+            Editor::Atom => Some(
+                const {
+                    &[ZStr::from_static(
+                        b"/Applications/Atom.app/Contents/Resources/app/atom.sh\0",
+                    )]
+                },
+            ),
+            Editor::Sublime => {
+                Some(
+                    const {
+                        &[
                 ZStr::from_static(b"/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl\0"),
-            ] }),
+            ]
+                    },
+                )
+            }
             _ => None,
         }
     }
@@ -503,7 +523,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         stdin: sync::SyncStdio::Inherit,
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
             ..Default::default()
         },
         ..Default::default()
@@ -540,7 +562,8 @@ impl EditorContext {
         line: &[u8],
         column: &[u8],
     ) {
-        if let Err(err) = Self::_open_in_editor(self.path, editor_, blob, id, tmpdir, line, column) {
+        if let Err(err) = Self::_open_in_editor(self.path, editor_, blob, id, tmpdir, line, column)
+        {
             if editor_ != Editor::Other {
                 Output::pretty_errorln(format_args!(
                     "Error {} opening in {}",
@@ -607,9 +630,8 @@ impl EditorContext {
         if !self.name.is_empty() {
             // /usr/bin/vim
             if bun_paths::is_absolute(self.name) {
-                self.editor = Some(
-                    Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other),
-                );
+                self.editor =
+                    Some(Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other));
                 self.path = self.name;
                 return;
             }

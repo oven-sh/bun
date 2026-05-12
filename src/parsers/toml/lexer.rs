@@ -122,17 +122,16 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        self.log
-            .add_error_fmt_opts(
-                // TODO(port): Zig passed `self.log.msgs.allocator`; Rust Log owns its allocator.
-                args,
-                bun_ast::AddErrorOptions {
-                    source: Some(self.source),
-                    loc: __loc,
-                    redact_sensitive_information: self.should_redact_logs,
-                    ..Default::default()
-                },
-            );
+        self.log.add_error_fmt_opts(
+            // TODO(port): Zig passed `self.log.msgs.allocator`; Rust Log owns its allocator.
+            args,
+            bun_ast::AddErrorOptions {
+                source: Some(self.source),
+                loc: __loc,
+                redact_sensitive_information: self.should_redact_logs,
+                ..Default::default()
+            },
+        );
         self.prev_error_loc = __loc;
     }
 
@@ -202,9 +201,9 @@ impl<'a> Lexer<'a> {
         if self.current >= self.source.contents.len() {
             return b"";
         }
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(
-            self.source.contents[self.current],
-        ) as usize;
+        let cp_len =
+            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
+                as usize;
         if !(cp_len + self.current > self.source.contents.len()) {
             &self.source.contents[self.current..cp_len + self.current]
         } else {
@@ -218,9 +217,9 @@ impl<'a> Lexer<'a> {
             self.end = self.source.contents.len();
             return -1;
         }
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(
-            self.source.contents[self.current],
-        ) as usize;
+        let cp_len =
+            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
+                as usize;
         let slice: &[u8] = if !(cp_len + self.current > self.source.contents.len()) {
             &self.source.contents[self.current..cp_len + self.current]
         } else {
@@ -1105,7 +1104,8 @@ impl<'a> Lexer<'a> {
                                         loc: bun_ast::Loc {
                                             start: i32::try_from(octal_start).expect("int cast"),
                                         },
-                                        len: i32::try_from(iter.i as usize - octal_start).expect("int cast"),
+                                        len: i32::try_from(iter.i as usize - octal_start)
+                                            .expect("int cast"),
                                     },
                                     format_args!("Invalid legacy octal literal"),
                                 )
@@ -1233,7 +1233,8 @@ impl<'a> Lexer<'a> {
                                     self.add_range_error(
                                         bun_ast::Range {
                                             loc: bun_ast::Loc {
-                                                start: i32::try_from(start + hex_start).expect("int cast"),
+                                                start: i32::try_from(start + hex_start)
+                                                    .expect("int cast"),
                                             },
                                             len: i32::try_from(iter.i as usize - hex_start)
                                                 .unwrap(),
@@ -1288,8 +1289,7 @@ impl<'a> Lexer<'a> {
                             }
 
                             // Ignore line continuations. A line continuation is not an escaped newline.
-                            if (iter.i as usize) < text.len()
-                                && text[iter.i as usize + 1] == b'\n'
+                            if (iter.i as usize) < text.len() && text[iter.i as usize + 1] == b'\n'
                             {
                                 // Make sure Windows CRLF counts as a single newline
                                 iter.i += 1;
@@ -1408,16 +1408,10 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn to_string(&self, loc_: bun_ast::Loc) -> js_ast::Expr {
         if self.string_literal_is_ascii {
-            return js_ast::Expr::init(
-                js_ast::E::String::init(self.string_literal_slice),
-                loc_,
-            );
+            return js_ast::Expr::init(js_ast::E::String::init(self.string_literal_slice), loc_);
         }
 
-        js_ast::Expr::init(
-            js_ast::E::String::init(self.string_literal_slice),
-            loc_,
-        )
+        js_ast::Expr::init(js_ast::E::String::init(self.string_literal_slice), loc_)
     }
 
     pub fn raw(&self) -> &'a [u8] {

@@ -1,7 +1,7 @@
 use core::mem::{ManuallyDrop, MaybeUninit};
 
-use bun_sql::shared::ColumnIdentifier;
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
+use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
@@ -67,7 +67,8 @@ impl CachedStructure {
         // unconditionally `into_boxed_slice()` it; in the `<= max_inline` branch
         // it stays empty and is never read.
         let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
-        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline {
+        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline
+        {
             &mut stack_ids[..non_duplicated_count]
         } else {
             heap_ids = Vec::with_capacity(non_duplicated_count);
@@ -85,9 +86,8 @@ impl CachedStructure {
             let mut out = ExternColumnIdentifier::default();
             match name_or_index {
                 ColumnIdentifier::Name(name) => {
-                    out.value.name = ManuallyDrop::new(
-                        bun_core::String::create_atom_if_possible(name.slice()),
-                    );
+                    out.value.name =
+                        ManuallyDrop::new(bun_core::String::create_atom_if_possible(name.slice()));
                 }
                 ColumnIdentifier::Index(index) => {
                     out.value.index = *index;

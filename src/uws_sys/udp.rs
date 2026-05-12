@@ -4,10 +4,10 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::Loop;
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
 // ws2_32 shim there. Both definitions are 128-byte 8-aligned POD.
-#[cfg(not(windows))]
-use libc::sockaddr_storage;
 #[cfg(windows)]
 use bun_windows_sys::ws2_32::sockaddr_storage;
+#[cfg(not(windows))]
+use libc::sockaddr_storage;
 
 bun_opaque::opaque_ffi! {
     /// Opaque uSockets UDP socket handle (`us_udp_socket_t`).
@@ -228,7 +228,10 @@ impl PacketBuffer {
 }
 
 unsafe extern "C" {
-    safe fn us_udp_packet_buffer_peer(buf: &mut PacketBuffer, index: c_int) -> *mut sockaddr_storage;
+    safe fn us_udp_packet_buffer_peer(
+        buf: &mut PacketBuffer,
+        index: c_int,
+    ) -> *mut sockaddr_storage;
     safe fn us_udp_packet_buffer_payload(buf: &mut PacketBuffer, index: c_int) -> *mut u8;
     safe fn us_udp_packet_buffer_payload_length(buf: &mut PacketBuffer, index: c_int) -> c_int;
     safe fn us_udp_packet_buffer_truncated(buf: &mut PacketBuffer, index: c_int) -> c_int;

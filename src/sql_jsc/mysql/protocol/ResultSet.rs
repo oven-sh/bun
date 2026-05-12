@@ -1,20 +1,20 @@
 use core::ptr;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
-use bun_core::parse_int;
 use bun_core::String as BunString;
+use bun_core::parse_int;
 
+use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
-use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::shared::ColumnIdentifier as NameOrIndex;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
-use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell, Tag, Value};
 use crate::shared::CachedStructure;
+use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell, Tag, Value};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
@@ -92,56 +92,104 @@ impl<'a> Row<'a> {
         match column.column_type {
             MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => {
                 let val: f64 = bun_core::parse_double(value.slice()).unwrap_or(f64::NAN);
-                *cell = SQLDataCell { tag: Tag::Float8, value: Value { float8: val }, ..SQLDataCell::default() };
+                *cell = SQLDataCell {
+                    tag: Tag::Float8,
+                    value: Value { float8: val },
+                    ..SQLDataCell::default()
+                };
             }
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val as u32 }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Uint4,
+                        value: Value { uint4: val as u32 },
+                        ..SQLDataCell::default()
+                    };
                 } else {
                     let val: i16 = parse_int::<i16>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val as i32 }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Int4,
+                        value: Value { int4: val as i32 },
+                        ..SQLDataCell::default()
+                    };
                 }
             }
             MYSQL_TYPE_LONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Uint4,
+                        value: Value { uint4: val },
+                        ..SQLDataCell::default()
+                    };
                 } else {
                     let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(i32::MIN);
-                    *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Int4,
+                        value: Value { int4: val },
+                        ..SQLDataCell::default()
+                    };
                 }
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Uint4,
+                        value: Value { uint4: val },
+                        ..SQLDataCell::default()
+                    };
                 } else {
                     // std.math.minInt(i24) == -8_388_608
                     let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
-                    *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val }, ..SQLDataCell::default() };
+                    *cell = SQLDataCell {
+                        tag: Tag::Int4,
+                        value: Value { int4: val },
+                        ..SQLDataCell::default()
+                    };
                 }
             }
             MYSQL_TYPE_LONGLONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u64 = parse_int::<u64>(value.slice(), 10).unwrap_or(0);
                     if val <= u32::MAX as u64 {
-                        *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: u32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell {
+                            tag: Tag::Uint4,
+                            value: Value {
+                                uint4: u32::try_from(val).expect("int cast"),
+                            },
+                            ..SQLDataCell::default()
+                        };
                         return;
                     }
                     if self.bigint {
-                        *cell = SQLDataCell { tag: Tag::Uint8, value: Value { uint8: val }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell {
+                            tag: Tag::Uint8,
+                            value: Value { uint8: val },
+                            ..SQLDataCell::default()
+                        };
                         return;
                     }
                 } else {
                     let val: i64 = parse_int::<i64>(value.slice(), 10).unwrap_or(0);
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                        *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: i32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell {
+                            tag: Tag::Int4,
+                            value: Value {
+                                int4: i32::try_from(val).expect("int cast"),
+                            },
+                            ..SQLDataCell::default()
+                        };
                         return;
                     }
                     if self.bigint {
-                        *cell = SQLDataCell { tag: Tag::Int8, value: Value { int8: val }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell {
+                            tag: Tag::Int8,
+                            value: Value { int8: val },
+                            ..SQLDataCell::default()
+                        };
                         return;
                     }
                 }
@@ -149,7 +197,9 @@ impl<'a> Row<'a> {
                 let slice = value.slice();
                 *cell = SQLDataCell {
                     tag: Tag::String,
-                    value: Value { string: clone_wtf_string_or_null(slice) },
+                    value: Value {
+                        string: clone_wtf_string_or_null(slice),
+                    },
                     free_value: 1,
                     ..SQLDataCell::default()
                 };
@@ -158,7 +208,9 @@ impl<'a> Row<'a> {
                 let slice = value.slice();
                 *cell = SQLDataCell {
                     tag: Tag::Json,
-                    value: Value { json: clone_wtf_string_or_null(slice) },
+                    value: Value {
+                        json: clone_wtf_string_or_null(slice),
+                    },
                     free_value: 1,
                     ..SQLDataCell::default()
                 };
@@ -170,7 +222,9 @@ impl<'a> Row<'a> {
                 let slice = value.slice();
                 *cell = SQLDataCell {
                     tag: Tag::String,
-                    value: Value { string: clone_wtf_string_or_null(slice) },
+                    value: Value {
+                        string: clone_wtf_string_or_null(slice),
+                    },
                     free_value: 1,
                     ..SQLDataCell::default()
                 };
@@ -187,7 +241,11 @@ impl<'a> Row<'a> {
                         }
                     }
                 };
-                *cell = SQLDataCell { tag: Tag::Date, value: Value { date }, ..SQLDataCell::default() };
+                *cell = SQLDataCell {
+                    tag: Tag::Date,
+                    value: Value { date },
+                    ..SQLDataCell::default()
+                };
             }
             MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
@@ -195,7 +253,13 @@ impl<'a> Row<'a> {
                     let slice = value.slice();
                     *cell = SQLDataCell {
                         tag: Tag::Bool,
-                        value: Value { bool_: if !slice.is_empty() && slice[0] == 1 { 1 } else { 0 } },
+                        value: Value {
+                            bool_: if !slice.is_empty() && slice[0] == 1 {
+                                1
+                            } else {
+                                0
+                            },
+                        },
                         ..SQLDataCell::default()
                     };
                 } else {
@@ -215,7 +279,9 @@ impl<'a> Row<'a> {
                     let slice = value.slice();
                     *cell = SQLDataCell {
                         tag: Tag::String,
-                        value: Value { string: clone_wtf_string_or_null(slice) },
+                        value: Value {
+                            string: clone_wtf_string_or_null(slice),
+                        },
                         free_value: 1,
                         ..SQLDataCell::default()
                     };
@@ -224,9 +290,19 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn decode_text<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
-        let cells = vec![SQLDataCell { tag: Tag::Null, value: Value { null: 0 }, ..SQLDataCell::default() }; self.columns.len()]
-            .into_boxed_slice();
+    fn decode_text<Context: ReaderContext>(
+        &mut self,
+        reader: NewReader<Context>,
+    ) -> Result<(), AnyMySQLError> {
+        let cells = vec![
+            SQLDataCell {
+                tag: Tag::Null,
+                value: Value { null: 0 },
+                ..SQLDataCell::default()
+            };
+            self.columns.len()
+        ]
+        .into_boxed_slice();
         let mut cells = scopeguard::guard(cells, |mut cells| {
             for value in cells.iter_mut() {
                 value.deinit();
@@ -240,14 +316,19 @@ impl<'a> Row<'a> {
                     // NULL value
                     reader.skip(result.bytes_read);
                     // this dont matter if is raw because we will sent as null too like in postgres
-                    *value = SQLDataCell { tag: Tag::Null, value: Value { null: 0 }, ..SQLDataCell::default() };
+                    *value = SQLDataCell {
+                        tag: Tag::Null,
+                        value: Value { null: 0 },
+                        ..SQLDataCell::default()
+                    };
                 } else {
                     if self.raw {
                         let data = reader.encode_len_string()?;
                         *value = SQLDataCell::raw(&data);
                     } else {
                         reader.skip(result.bytes_read);
-                        let string_data = reader.read(usize::try_from(result.value).expect("int cast"))?;
+                        let string_data =
+                            reader.read(usize::try_from(result.value).expect("int cast"))?;
                         self.parse_value_and_set_cell(value, column, &string_data);
                     }
                 }
@@ -270,7 +351,10 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    fn decode_binary<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
+    fn decode_binary<Context: ReaderContext>(
+        &mut self,
+        reader: NewReader<Context>,
+    ) -> Result<(), AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -278,8 +362,15 @@ impl<'a> Row<'a> {
         let bitmap_bytes = (self.columns.len() + 7 + 2) / 8;
         let null_bitmap = reader.read(bitmap_bytes)?;
 
-        let cells = vec![SQLDataCell { tag: Tag::Null, value: Value { null: 0 }, ..SQLDataCell::default() }; self.columns.len()]
-            .into_boxed_slice();
+        let cells = vec![
+            SQLDataCell {
+                tag: Tag::Null,
+                value: Value { null: 0 },
+                ..SQLDataCell::default()
+            };
+            self.columns.len()
+        ]
+        .into_boxed_slice();
         let mut cells = scopeguard::guard(cells, |mut cells| {
             for value in cells.iter_mut() {
                 value.deinit();
@@ -294,7 +385,11 @@ impl<'a> Row<'a> {
             let is_null = (null_bitmap.slice()[byte_pos] & (1u8 << bit_pos)) != 0;
 
             if is_null {
-                *value = SQLDataCell { tag: Tag::Null, value: Value { null: 0 }, ..SQLDataCell::default() };
+                *value = SQLDataCell {
+                    tag: Tag::Null,
+                    value: Value { null: 0 },
+                    ..SQLDataCell::default()
+                };
                 continue;
             }
 
@@ -327,7 +422,10 @@ impl<'a> Row<'a> {
     }
 
     // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
-    pub fn decode<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
+    pub fn decode<Context: ReaderContext>(
+        &mut self,
+        reader: NewReader<Context>,
+    ) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
     }
 }

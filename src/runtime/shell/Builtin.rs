@@ -3,20 +3,20 @@
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&Interpreter`.
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_char;
 use std::sync::Arc;
 
+use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    is_pollable_from_mode, shell_openat, Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 pub struct Builtin {
     /// Owning Cmd node. Replaces Zig's `@fieldParentPtr("impl", ...)` chain.
@@ -235,7 +235,11 @@ impl Kind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IoKind { Stdin, Stdout, Stderr }
+pub enum IoKind {
+    Stdin,
+    Stdout,
+    Stderr,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BuiltinIO — Spec: Builtin.zig `BuiltinIO.{Output,Input}`.
@@ -261,7 +265,10 @@ pub enum BuiltinIO {
     /// `from_out_kind` and copied verbatim by `dup_ref` so `2>&1` keeps
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
-    ArrayBuf { buf: crate::jsc::array_buffer::ArrayBufferStrong, i: u32 },
+    ArrayBuf {
+        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        i: u32,
+    },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
@@ -273,7 +280,10 @@ pub enum BuiltinInput {
     /// type`). In the NodeId port no producer wires this yet; reserved for
     /// pipeline-from-builtin.
     Buf(Vec<u8>),
-    ArrayBuf { buf: crate::jsc::array_buffer::ArrayBufferStrong, i: u32 },
+    ArrayBuf {
+        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        i: u32,
+    },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
@@ -285,7 +295,10 @@ pub struct BuiltinBlob {
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
 // which already asserts `Send + Sync`. No `unsafe impl` needed.
-const _: fn() = || { fn assert<T: Send + Sync>() {} assert::<BuiltinBlob>(); };
+const _: fn() = || {
+    fn assert<T: Send + Sync>() {}
+    assert::<BuiltinBlob>();
+};
 
 impl BuiltinIO {
     /// From the Cmd's IO::OutKind. Spec: Builtin.zig `init` stdin/stdout/stderr
@@ -347,9 +360,9 @@ impl BuiltinIO {
             return Ok(0);
         }
         match self {
-            BuiltinIO::Fd(_) => panic!(
-                "write_no_io called on fd output; caller must check needs_io()"
-            ),
+            BuiltinIO::Fd(_) => {
+                panic!("write_no_io called on fd output; caller must check needs_io()")
+            }
             BuiltinIO::Buf(target) => {
                 // PORT NOTE: Zig appended to a local `io.buf` and flushed in
                 // `done()` to `buffered_{stdout,stderr}` keyed on which field
@@ -700,7 +713,9 @@ impl Builtin {
                 let idx = jsbuf.idx as usize;
                 // Safe accessor — single `unsafe` deref lives in
                 // `Interpreter::global_this_ref`.
-                let Some(global) = interp.global_this_ref().filter(|_| idx < interp.jsobjs.len())
+                let Some(global) = interp
+                    .global_this_ref()
+                    .filter(|_| idx < interp.jsobjs.len())
                 else {
                     interp.throw(crate::shell::ShellErr::Custom(
                         b"Invalid JS object reference in shell"
@@ -728,7 +743,9 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
-                } else if let Some(body) = crate::webcore::body::Value::from_request_or_response(jsval) {
+                } else if let Some(body) =
+                    crate::webcore::body::Value::from_request_or_response(jsval)
+                {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
@@ -746,7 +763,9 @@ impl Builtin {
                         drop(original_blob);
                         return None;
                     }
-                    let blob = Arc::new(BuiltinBlob { blob: original_blob.dupe() });
+                    let blob = Arc::new(BuiltinBlob {
+                        blob: original_blob.dupe(),
+                    });
                     drop(original_blob);
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
@@ -765,7 +784,9 @@ impl Builtin {
                         ));
                         return Some(Yield::failed());
                     }
-                    let theblob = Arc::new(BuiltinBlob { blob: blob_ref.dupe() });
+                    let theblob = Arc::new(BuiltinBlob {
+                        blob: blob_ref.dupe(),
+                    });
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
                         me.stdin = BuiltinInput::Blob(theblob);
@@ -827,8 +848,13 @@ impl Builtin {
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr =
-                unsafe { interp.as_cmd_mut(cmd).base.shell_mut().buffered_stderr_mut() };
+            let stderr = unsafe {
+                interp
+                    .as_cmd_mut(cmd)
+                    .base
+                    .shell_mut()
+                    .buffered_stderr_mut()
+            };
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
@@ -913,7 +939,10 @@ impl Builtin {
 
     /// Shell exec env of the owning Cmd.
     #[inline]
-    pub fn shell<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a crate::shell::interpreter::ShellExecEnv {
+    pub fn shell<'a>(
+        interp: &'a Interpreter,
+        cmd: NodeId,
+    ) -> &'a crate::shell::interpreter::ShellExecEnv {
         interp.as_cmd(cmd).base.shell()
     }
 
@@ -932,7 +961,10 @@ impl Builtin {
     /// Event loop handle (forwarded from the interpreter). Spec: Builtin.zig
     /// `eventLoop` → `parentCmd().base.eventLoop()`.
     #[inline]
-    pub fn event_loop(interp: &Interpreter, _cmd: NodeId) -> crate::shell::interpreter::EventLoopHandle {
+    pub fn event_loop(
+        interp: &Interpreter,
+        _cmd: NodeId,
+    ) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
     }
 
@@ -1009,13 +1041,22 @@ impl Builtin {
                 }
             }
             ShellErr::Custom(s) => Self::fmt_error_arena(
-                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(s)),
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("{}\n", bstr::BStr::new(s)),
             ),
             ShellErr::InvalidArguments { val } => Self::fmt_error_arena(
-                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(val)),
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("{}\n", bstr::BStr::new(val)),
             ),
             ShellErr::Todo(s) => Self::fmt_error_arena(
-                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(s)),
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("{}\n", bstr::BStr::new(s)),
             ),
         }
     }

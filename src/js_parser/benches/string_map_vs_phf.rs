@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -695,19 +695,30 @@ pub static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobalIdentif
 
 fn load_corpus() -> Vec<Vec<u8>> {
     let candidates = [
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/snippets/react-dom.development.js"),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../node_modules/typescript/lib/typescript.js"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test/snippets/react-dom.development.js"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../node_modules/typescript/lib/typescript.js"
+        ),
     ];
     let src = candidates
         .iter()
         .find_map(|p| std::fs::read_to_string(p).ok())
         .expect("no corpus file found");
     let re = regex::Regex::new(r"[A-Za-z_$][A-Za-z0-9_$]*").unwrap();
-    re.find_iter(&src).map(|m| m.as_str().as_bytes().to_vec()).collect()
+    re.find_iter(&src)
+        .map(|m| m.as_str().as_bytes().to_vec())
+        .collect()
 }
 
 fn table_keys() -> Vec<Vec<u8>> {
-    PURE_GLOBAL_IDENTIFIER_MAP.keys().map(|k| k.to_vec()).collect()
+    PURE_GLOBAL_IDENTIFIER_MAP
+        .keys()
+        .map(|k| k.to_vec())
+        .collect()
 }
 
 fn rand_idents(n: usize, lo: usize, hi: usize, exclude: &HashSet<Vec<u8>>) -> Vec<Vec<u8>> {
@@ -715,7 +726,9 @@ fn rand_idents(n: usize, lo: usize, hi: usize, exclude: &HashSet<Vec<u8>>) -> Ve
     const REST: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
     let mut state: u64 = 0x243f_6a88_85a3_08d3;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         state
     };
     let mut out = Vec::with_capacity(n);
@@ -767,13 +780,17 @@ fn bench(c: &mut Criterion) {
                 }
             })
         });
-        g.bench_with_input(BenchmarkId::new("generated", data.len()), data, |b, data| {
-            b.iter(|| {
-                for k in data.iter() {
-                    black_box(lookup_pure_global_identifier(black_box(k.as_slice())));
-                }
-            })
-        });
+        g.bench_with_input(
+            BenchmarkId::new("generated", data.len()),
+            data,
+            |b, data| {
+                b.iter(|| {
+                    for k in data.iter() {
+                        black_box(lookup_pure_global_identifier(black_box(k.as_slice())));
+                    }
+                })
+            },
+        );
         g.finish();
     }
 }

@@ -2,15 +2,15 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_io::KeepAlive;
 use bun_core::Error;
-use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
+use bun_core::{MutableString, strings};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{task_tag, TaskTag, Taskable};
+use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
+use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
-use bun_core::{strings, MutableString};
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
@@ -328,12 +328,16 @@ impl S3HttpDownloadStreamingTask {
         let async_http = unsafe { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            let task = std::ptr::from_mut::<ConcurrentTask>(self_
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit));
+            let task = std::ptr::from_mut::<ConcurrentTask>(
+                self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
+            );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            self_.vm.expect("vm set at task creation").event_loop_shared().enqueue_task_concurrent(task);
+            self_
+                .vm
+                .expect("vm set at task creation")
+                .event_loop_shared()
+                .enqueue_task_concurrent(task);
         }
     }
 }
@@ -343,8 +347,9 @@ impl Drop for S3HttpDownloadStreamingTask {
         // PORT NOTE: KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
         // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.
-        self.poll_ref
-            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
+        ));
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.

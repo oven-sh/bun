@@ -3,12 +3,12 @@
 
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{self, declare_scope, err, scoped_log};
+use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
-use bun_core::{strings, ZigString, ZigStringSlice};
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
@@ -31,7 +31,7 @@ pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
 // without depending on `bun_runtime`. Re-exported here so `crate::webcore::
 // form_data::*` callers see the same nominal types.
-pub use bun_core::form_data::{get_boundary, AsyncFormData, Encoding};
+pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
@@ -45,7 +45,10 @@ impl AsyncFormDataExt for AsyncFormData {
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
-                scoped_log!(FormData, "AsnycFormData.toJS -> promise.reject missing boundary");
+                scoped_log!(
+                    FormData,
+                    "AsnycFormData.toJS -> promise.reject missing boundary"
+                );
                 promise.reject(
                     global,
                     ZigString::init(b"FormData missing boundary").to_error_instance(global),
@@ -261,8 +264,9 @@ pub fn to_js_from_multipart_data(
                             std::borrow::Cow::Owned(v) => {
                                 // by_extension/sniff currently always yield Borrowed,
                                 // but handle Owned defensively to avoid a dangling ptr.
-                                blob.content_type
-                                    .set(bun_core::heap::into_raw(v.into_boxed_slice()).cast_const());
+                                blob.content_type.set(
+                                    bun_core::heap::into_raw(v.into_boxed_slice()).cast_const(),
+                                );
                                 blob.content_type_was_set.set(false);
                                 blob.content_type_allocated.set(true);
                             }
@@ -349,8 +353,8 @@ pub fn for_each_multipart_entry<C>(
 
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
-        let header_end = strings::index_of(remain, b"\r\n\r\n")
-            .ok_or(err!("is missing header end"))?;
+        let header_end =
+            strings::index_of(remain, b"\r\n\r\n").ok_or(err!("is missing header end"))?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -364,8 +368,8 @@ pub fn for_each_multipart_entry<C>(
                 .ok_or(err!("is missing header line end"))?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon = strings::index_of(line, b":")
-                .ok_or(err!("is missing header colon separator"))?;
+            let colon =
+                strings::index_of(line, b":").ok_or(err!("is missing header colon separator"))?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {

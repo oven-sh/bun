@@ -75,15 +75,11 @@ impl RuntimeTranspilerCache {
     }
 
     #[inline]
-    pub fn get(
-        &mut self,
-        source: &Source,
-        parser_options: *const (),
-        used_jsx: bool,
-    ) -> bool {
+    pub fn get(&mut self, source: &Source, parser_options: *const (), used_jsx: bool) -> bool {
         match self.r#impl {
-            Some(k) => Self::handle(k, self)
-                .get(core::ptr::from_ref(source), parser_options, used_jsx),
+            Some(k) => {
+                Self::handle(k, self).get(core::ptr::from_ref(source), parser_options, used_jsx)
+            }
             None => false,
         }
     }

@@ -1,5 +1,5 @@
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
+use bun_alloc::ArenaVecExt as _;
 
 use css::PrintErr;
 use css::Printer;
@@ -19,27 +19,27 @@ pub(super) type ArrayList<T> = Vec<T>;
 // `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
 // selector helpers.
 
-pub mod import;
-pub mod layer;
-pub mod style;
-pub mod keyframes;
-pub mod font_face;
-pub mod font_palette_values;
-pub mod page;
-pub mod supports;
+pub mod container;
 pub mod counter_style;
 pub mod custom_media;
-pub mod namespace;
-pub mod unknown;
 pub mod document;
-pub mod nesting;
-pub mod viewport;
-pub mod property;
-pub mod container;
-pub mod scope;
+pub mod font_face;
+pub mod font_palette_values;
+pub mod import;
+pub mod keyframes;
+pub mod layer;
 pub mod media;
+pub mod namespace;
+pub mod nesting;
+pub mod page;
+pub mod property;
+pub mod scope;
 pub mod starting_style;
+pub mod style;
+pub mod supports;
 pub mod tailwind;
+pub mod unknown;
+pub mod viewport;
 
 // ─── CssRule / CssRuleList ─────────────────────────────────────────────────
 // Zig: pub fn CssRule(comptime Rule: type) type { return union(enum) { ... } }
@@ -233,7 +233,9 @@ pub(super) mod dc {
     ) -> crate::DeclarationBlock<'bump> {
         crate::DeclarationBlock {
             important_declarations: bun_alloc::vec_from_iter_in(
-                this.important_declarations.iter().map(|p| property(p, bump)),
+                this.important_declarations
+                    .iter()
+                    .map(|p| property(p, bump)),
                 bump,
             ),
             declarations: bun_alloc::vec_from_iter_in(
@@ -302,7 +304,10 @@ pub(super) mod dc {
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
     /// media_query.rs (element-wise walk of `media_queries`).
     #[inline]
-    pub fn media_list(this: &crate::media_query::MediaList, bump: &Arena) -> crate::media_query::MediaList {
+    pub fn media_list(
+        this: &crate::media_query::MediaList,
+        bump: &Arena,
+    ) -> crate::media_query::MediaList {
         this.deep_clone(bump)
     }
 
@@ -334,7 +339,10 @@ pub(super) mod dc {
     /// `Property::deep_clone` in properties_generated.rs (faithful per-variant
     /// port of .zig:6307-6558).
     #[inline]
-    pub fn property(this: &crate::properties::Property, bump: &Arena) -> crate::properties::Property {
+    pub fn property(
+        this: &crate::properties::Property,
+        bump: &Arena,
+    ) -> crate::properties::Property {
         this.deep_clone(bump)
     }
 }
@@ -419,9 +427,12 @@ pub(super) fn custom_ident_to_css(
     let v = unsafe { crate::arena_str(ident.v) };
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
-    
+
     {
-        let enabled = dest.css_module.as_ref().is_some_and(|m| m.config.custom_idents);
+        let enabled = dest
+            .css_module
+            .as_ref()
+            .is_some_and(|m| m.config.custom_idents);
         return dest.write_ident(v, enabled);
     }
     dest.serialize_identifier(v)
@@ -536,7 +547,7 @@ impl<R> CssRuleList<R> {
         // update_prefix,hash_key,is_duplicate}, selector::{is_compatible,
         // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
         // DeclarationBlock::deep_clone — all `` in their leaves.
-        
+
         let mut style_rules = StyleRuleKeyMap::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
@@ -560,7 +571,7 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::Media(med) => {
                         // blocked_on: MediaList::eql — merge-with-previous-@media.
-                        
+
                         if let Some(CssRule::Media(last_rule)) = rules.last_mut()
                             && last_rule.query.eql(&med.query)
                         {
@@ -574,7 +585,7 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::Supports(supp) => {
                         // blocked_on: SupportsCondition::eql (gated in supports.rs).
-                        
+
                         if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
@@ -607,9 +618,15 @@ impl<R> CssRuleList<R> {
                         // dedup via StyleRuleKey, nested-rule split) bottoms
                         // out on the gated StyleRule behavior surface. Until
                         // that un-gates, fall through and keep the rule as-is.
-                        
+
                         {
-                            minify_style_arm(rule, &mut rules, &mut style_rules, context, parent_is_unused)?;
+                            minify_style_arm(
+                                rule,
+                                &mut rules,
+                                &mut style_rules,
+                                context,
+                                parent_is_unused,
+                            )?;
                             break 'arm;
                         }
                     }
@@ -629,7 +646,7 @@ impl<R> CssRuleList<R> {
                 // an intervening at-rule may change how declarations are
                 // interpreted, so identical selectors on either side aren't
                 // safely mergeable.
-                
+
                 style_rules.clear();
             }
 
@@ -651,7 +668,9 @@ impl<R> CssRuleList<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
+        Self {
+            v: self.v.iter().map(|r| r.deep_clone(bump)).collect(),
+        }
     }
 }
 
@@ -667,7 +686,9 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
     use css::selector::{self, Component, Selector, SelectorList};
-    let CssRule::Style(sty) = rule else { unreachable!() };
+    let CssRule::Style(sty) = rule else {
+        unreachable!()
+    };
 
     if parent_is_unused || sty.minify(context, parent_is_unused)? {
         return Ok(());
@@ -683,13 +704,13 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // Note that :is() does not allow pseudo elements, so we need to check for that.
         // In addition, :is() takes the highest specificity of its arguments, so if the selectors
         // have different weights, we need to split them into separate rules as well.
-        if context.targets.is_compatible(css::compat::Feature::IsSelector)
+        if context
+            .targets
+            .is_compatible(css::compat::Feature::IsSelector)
             && !sty.selectors.any_has_pseudo_element()
             && sty.selectors.specifities_all_equal()
         {
-            let component = Component::Is(
-                core::mem::take(&mut sty.selectors.v).to_owned_slice(),
-            );
+            let component = Component::Is(core::mem::take(&mut sty.selectors.v).to_owned_slice());
             let mut list = SmallList::<Selector, 1>::default();
             list.append(Selector::from_component(component));
             sty.selectors = SelectorList { v: list };
@@ -700,7 +721,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             let mut incompatible = SmallList::<Selector, 1>::default();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
-                if selector::is_compatible(&sty.selectors.v.slice()[i as usize..i as usize + 1], *context.targets) {
+                if selector::is_compatible(
+                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
+                    *context.targets,
+                ) {
                     i += 1;
                 } else {
                     incompatible.append(sty.selectors.v.ordered_remove(i));
@@ -749,7 +773,9 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
         let sel = incompatible.ordered_remove(0);
-        let list = SelectorList { v: SmallList::with_one(sel) };
+        let list = SelectorList {
+            v: SmallList::with_one(sel),
+        };
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
@@ -760,7 +786,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         clone.update_prefix(context);
         let s = context.handler_context.get_supports_rules::<R>(&clone);
         let l = context.handler_context.get_additional_rules::<R>(&clone);
-        incompatible_rules.append(IncompatibleRuleEntry { rule: clone, supports: s, logical: l });
+        incompatible_rules.append(IncompatibleRuleEntry {
+            rule: clone,
+            supports: s,
+            logical: l,
+        });
     }
 
     context.handler_context.reset();
@@ -888,7 +918,9 @@ impl StyleRuleKeyMap {
         key: &StyleRuleKey,
     ) -> Option<usize> {
         let bucket = self.buckets.get_mut(&key.hash)?;
-        let CssRule::Style(rule) = &rules[key.index] else { return None };
+        let CssRule::Style(rule) = &rules[key.index] else {
+            return None;
+        };
         let pos = bucket.iter().position(|&other_idx| {
             // Mirrors `StyleRuleKey.eql` from rules.zig: bounds-check + .style
             // tag-check + `isDuplicate`.
@@ -920,72 +952,72 @@ pub fn merge_style_rules<R>(
     context: &mut MinifyContext<'_, '_>,
 ) -> bool {
     use css::VendorPrefix;
-        // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
-        // Does not apply if css modules are enabled.
-        if sty.selectors.eql(&last_style_rule.selectors)
-            && sty.is_compatible(*context.targets)
-            && last_style_rule.is_compatible(*context.targets)
-            && sty.rules.v.is_empty()
-            && last_style_rule.rules.v.is_empty()
-            && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
+    // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
+    // Does not apply if css modules are enabled.
+    if sty.selectors.eql(&last_style_rule.selectors)
+        && sty.is_compatible(*context.targets)
+        && last_style_rule.is_compatible(*context.targets)
+        && sty.rules.v.is_empty()
+        && last_style_rule.rules.v.is_empty()
+        && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
+    {
+        last_style_rule
+            .declarations
+            .declarations
+            .extend(sty.declarations.declarations.drain(..));
+        last_style_rule
+            .declarations
+            .important_declarations
+            .extend(sty.declarations.important_declarations.drain(..));
+        last_style_rule.declarations.minify(
+            dc::decl_handler_static(&mut *context.handler),
+            dc::decl_handler_static(&mut *context.important_handler),
+            &mut context.handler_context,
+        );
+        return true;
+    } else if sty.declarations.eql(&last_style_rule.declarations)
+        && sty.rules.v.is_empty()
+        && last_style_rule.rules.v.is_empty()
+    {
+        // If both selectors are potentially vendor prefixable, and they are
+        // equivalent minus prefixes, add the prefix to the last rule.
+        if !sty.vendor_prefix.is_empty()
+            && !last_style_rule.vendor_prefix.is_empty()
+            && css::selector::is_equivalent(
+                sty.selectors.v.slice(),
+                last_style_rule.selectors.v.slice(),
+            )
         {
-            last_style_rule
-                .declarations
-                .declarations
-                .extend(sty.declarations.declarations.drain(..));
-            last_style_rule
-                .declarations
-                .important_declarations
-                .extend(sty.declarations.important_declarations.drain(..));
-            last_style_rule.declarations.minify(
-                dc::decl_handler_static(&mut *context.handler),
-                dc::decl_handler_static(&mut *context.important_handler),
-                &mut context.handler_context,
-            );
-            return true;
-        } else if sty.declarations.eql(&last_style_rule.declarations)
-            && sty.rules.v.is_empty()
-            && last_style_rule.rules.v.is_empty()
-        {
-            // If both selectors are potentially vendor prefixable, and they are
-            // equivalent minus prefixes, add the prefix to the last rule.
-            if !sty.vendor_prefix.is_empty()
-                && !last_style_rule.vendor_prefix.is_empty()
-                && css::selector::is_equivalent(
-                    sty.selectors.v.slice(),
-                    last_style_rule.selectors.v.slice(),
-                )
+            if sty.vendor_prefix.contains(VendorPrefix::NONE)
+                && context.targets.should_compile_selectors()
             {
-                if sty.vendor_prefix.contains(VendorPrefix::NONE)
-                    && context.targets.should_compile_selectors()
-                {
-                    last_style_rule.vendor_prefix = sty.vendor_prefix;
-                } else {
-                    last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
-                }
-                return true;
+                last_style_rule.vendor_prefix = sty.vendor_prefix;
+            } else {
+                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
             }
-
-            // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-            if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
-                let moved = core::mem::take(&mut sty.selectors.v);
-                // `reserve` (not `ensure_total_capacity`) so capacity grows
-                // super-linearly across repeated merges — matches .zig
-                // `appendSlice` and keeps the N-way merge amortized O(N).
-                last_style_rule.selectors.v.reserve(moved.len());
-                for sel in moved {
-                    last_style_rule.selectors.v.append_assume_capacity(sel);
-                }
-                if sty.vendor_prefix.contains(VendorPrefix::NONE)
-                    && context.targets.should_compile_selectors()
-                {
-                    last_style_rule.vendor_prefix = sty.vendor_prefix;
-                } else {
-                    last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
-                }
-                return true;
-            }
+            return true;
         }
+
+        // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
+        if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
+            let moved = core::mem::take(&mut sty.selectors.v);
+            // `reserve` (not `ensure_total_capacity`) so capacity grows
+            // super-linearly across repeated merges — matches .zig
+            // `appendSlice` and keeps the N-way merge amortized O(N).
+            last_style_rule.selectors.v.reserve(moved.len());
+            for sel in moved {
+                last_style_rule.selectors.v.append_assume_capacity(sel);
+            }
+            if sty.vendor_prefix.contains(VendorPrefix::NONE)
+                && context.targets.should_compile_selectors()
+            {
+                last_style_rule.vendor_prefix = sty.vendor_prefix;
+            } else {
+                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+            }
+            return true;
+        }
+    }
     false
 }
 

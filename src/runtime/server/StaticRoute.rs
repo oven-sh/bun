@@ -15,9 +15,9 @@ use bun_jsc::{HTTPHeaderName, JsClass};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::{write_status, AnyServer};
-use crate::webcore::body::Value as BodyValue;
+use crate::server::{AnyServer, write_status};
 use crate::webcore::BlobExt as _;
+use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
@@ -80,7 +80,10 @@ impl StaticRoute {
     // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.
-    pub fn init_from_any_blob(blob: AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
+    pub fn init_from_any_blob(
+        blob: AnyBlob,
+        options: InitFromBytesOptions<'_>,
+    ) -> *mut StaticRoute {
         let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
             options.headers,
             any_blob_content_type(&blob),
@@ -113,7 +116,11 @@ impl StaticRoute {
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
-    pub fn send_blob_then_deinit(resp: AnyResponse, blob: AnyBlob, options: InitFromBytesOptions<'_>) {
+    pub fn send_blob_then_deinit(
+        resp: AnyResponse,
+        blob: AnyBlob,
+        options: InitFromBytesOptions<'_>,
+    ) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
         // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute (ref_count=1)
         // with write provenance; on()/deref_() consume it via that same *mut.
@@ -143,7 +150,10 @@ impl StaticRoute {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut StaticRoute>> {
+    pub fn from_js(
+        global_this: &JSGlobalObject,
+        argument: JSValue,
+    ) -> JsResult<Option<*mut StaticRoute>> {
         // `as_class_ref` is the safe shared-borrow downcast (one audited
         // unsafe in `JSValue`); every `Response` accessor used below takes
         // `&self` (interior mutability for `body`), so no `&mut` is needed.
@@ -169,7 +179,9 @@ impl StaticRoute {
                         });
                     }
 
-                    BodyValue::Blob(_) | BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
+                    BodyValue::Blob(_)
+                    | BodyValue::InternalBlob(_)
+                    | BodyValue::WTFStringImpl(_) => {
                         if let BodyValue::Blob(b) = &*body_value {
                             if b.needs_to_read_file() {
                                 return Err(global_this
@@ -177,7 +189,8 @@ impl StaticRoute {
                             }
                         }
                         let mut blob = body_value.use_();
-                        blob.global_this.set(std::ptr::from_ref::<JSGlobalObject>(global_this));
+                        blob.global_this
+                            .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(
                             !blob.is_heap_allocated(),
                             "expected blob not to be heap-allocated",
@@ -204,10 +217,7 @@ impl StaticRoute {
             }
 
             let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                bun_http_jsc::headers_jsc::from_fetch_headers(
-                    Some(h),
-                    any_blob_content_type(&blob),
-                )
+                bun_http_jsc::headers_jsc::from_fetch_headers(Some(h), any_blob_content_type(&blob))
             } else {
                 Headers::default()
             };

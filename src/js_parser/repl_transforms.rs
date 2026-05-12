@@ -5,15 +5,14 @@
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
 
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_alloc::Arena as Bump;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::VecExt;
 
-
 use bun_ast as js_ast;
+use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
-use bun_ast::flags;
 
 // Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
 // — file-split mixin pattern. Round-D lowered to direct `impl P` block.
@@ -100,14 +99,20 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     // Extract individual identifiers from binding patterns for hoisting
                     let mut hoisted_decl_list = BumpVec::<G::Decl>::new_in(bump);
                     for decl in local.decls.slice() {
-                        self.repl_extract_identifiers_from_binding(decl.binding, &mut hoisted_decl_list)?;
+                        self.repl_extract_identifiers_from_binding(
+                            decl.binding,
+                            &mut hoisted_decl_list,
+                        )?;
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        let decls =
-                            G::DeclList::from_bump_vec(hoisted_decl_list);
+                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
                         hoisted_stmts.push(self.s(
-                            S::Local { kind, decls, ..Default::default() },
+                            S::Local {
+                                kind,
+                                decls,
+                                ..Default::default()
+                            },
                             stmt.loc,
                         ));
                     }
@@ -119,7 +124,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             let assign_expr =
                                 self.repl_create_binding_assignment(decl.binding, value, bump);
                             inner_stmts.push(self.s(
-                                S::SExpr { value: assign_expr, ..Default::default() },
+                                S::SExpr {
+                                    value: assign_expr,
+                                    ..Default::default()
+                                },
                                 stmt.loc,
                             ));
                         }
@@ -136,7 +144,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    Binding::alloc(bump, B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                    Binding::alloc(
+                                        bump,
+                                        B::Identifier { r#ref: name_ref },
+                                        name_loc.loc,
+                                    ),
                                 ),
                                 ..Default::default()
                             },
@@ -148,8 +160,9 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
                         // detaches the borrow from `self.symbols` so the &mut self calls below
                         // don't conflict.
-                        let name_str: &[u8] =
-                            self.symbols[name_ref.inner_index() as usize].original_name.slice();
+                        let name_str: &[u8] = self.symbols[name_ref.inner_index() as usize]
+                            .original_name
+                            .slice();
                         let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
@@ -160,7 +173,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             stmt.loc,
                         );
                         let func_id = self.new_expr(
-                            E::Identifier { ref_: name_ref, ..Default::default() },
+                            E::Identifier {
+                                ref_: name_ref,
+                                ..Default::default()
+                            },
                             name_loc.loc,
                         );
                         let assign = self.new_expr(
@@ -171,9 +187,13 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             },
                             stmt.loc,
                         );
-                        inner_stmts.push(
-                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
-                        );
+                        inner_stmts.push(self.s(
+                            S::SExpr {
+                                value: assign,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     }
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
@@ -189,7 +209,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    Binding::alloc(bump, B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                    Binding::alloc(
+                                        bump,
+                                        B::Identifier { r#ref: name_ref },
+                                        name_loc.loc,
+                                    ),
                                 ),
                                 ..Default::default()
                             },
@@ -202,7 +226,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         let class_value = core::mem::take(&mut class.class);
                         let class_expr = self.new_expr(class_value, stmt.loc);
                         let class_id = self.new_expr(
-                            E::Identifier { ref_: name_ref, ..Default::default() },
+                            E::Identifier {
+                                ref_: name_ref,
+                                ..Default::default()
+                            },
                             name_loc.loc,
                         );
                         let assign = self.new_expr(
@@ -213,9 +240,13 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             },
                             stmt.loc,
                         );
-                        inner_stmts.push(
-                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
-                        );
+                        inner_stmts.push(self.s(
+                            S::SExpr {
+                                value: assign,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     } else {
                         inner_stmts.push(*stmt);
                     }
@@ -231,7 +262,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         .path
                         .text;
                     let str_expr = self.new_expr(
-                        E::String { data: path_str.into(), ..Default::default() },
+                        E::String {
+                            data: path_str.into(),
+                            ..Default::default()
+                        },
                         stmt.loc,
                     );
                     let import_expr = self.new_expr(
@@ -256,7 +290,9 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                     bump,
                                     Binding::alloc(
                                         bump,
-                                        B::Identifier { r#ref: import_data.namespace_ref },
+                                        B::Identifier {
+                                            r#ref: import_data.namespace_ref,
+                                        },
                                         stmt.loc,
                                     ),
                                 ),
@@ -272,12 +308,20 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             stmt.loc,
                         );
                         let assign = self.new_expr(
-                            E::Binary { op: js_ast::OpCode::BinAssign, left, right: await_expr },
+                            E::Binary {
+                                op: js_ast::OpCode::BinAssign,
+                                left,
+                                right: await_expr,
+                            },
                             stmt.loc,
                         );
-                        inner_stmts.push(
-                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
-                        );
+                        inner_stmts.push(self.s(
+                            S::SExpr {
+                                value: assign,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
@@ -327,7 +371,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 stmt.loc,
                             );
                             let left = self.new_expr(
-                                E::Identifier { ref_: default_ref, ..Default::default() },
+                                E::Identifier {
+                                    ref_: default_ref,
+                                    ..Default::default()
+                                },
                                 default_name.loc,
                             );
                             let assign = self.new_expr(
@@ -339,7 +386,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 stmt.loc,
                             );
                             inner_stmts.push(self.s(
-                                S::SExpr { value: assign, ..Default::default() },
+                                S::SExpr {
+                                    value: assign,
+                                    ..Default::default()
+                                },
                                 stmt.loc,
                             ));
                         } else {
@@ -353,7 +403,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 stmt.loc,
                             );
                             let left = self.new_expr(
-                                E::Identifier { ref_: default_ref, ..Default::default() },
+                                E::Identifier {
+                                    ref_: default_ref,
+                                    ..Default::default()
+                                },
                                 default_name.loc,
                             );
                             let assign = self.new_expr(
@@ -365,7 +418,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 stmt.loc,
                             );
                             inner_stmts.push(self.s(
-                                S::SExpr { value: assign, ..Default::default() },
+                                S::SExpr {
+                                    value: assign,
+                                    ..Default::default()
+                                },
                                 stmt.loc,
                             ));
                         }
@@ -383,7 +439,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     } else {
                         // import 'mod' (side-effect only) -> await import('mod')
                         inner_stmts.push(self.s(
-                            S::SExpr { value: await_expr, ..Default::default() },
+                            S::SExpr {
+                                value: await_expr,
+                                ..Default::default()
+                            },
                             stmt.loc,
                         ));
                     }
@@ -392,12 +451,19 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     // In REPL mode, treat directives (string literals) as expressions.
                     let value_str: &'static [u8] = directive.value.slice();
                     let str_expr = self.new_expr(
-                        E::String { data: value_str.into(), ..Default::default() },
+                        E::String {
+                            data: value_str.into(),
+                            ..Default::default()
+                        },
                         stmt.loc,
                     );
-                    inner_stmts.push(
-                        self.s(S::SExpr { value: str_expr, ..Default::default() }, stmt.loc),
-                    );
+                    inner_stmts.push(self.s(
+                        S::SExpr {
+                            value: str_expr,
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
                 }
                 _ => {
                     inner_stmts.push(*stmt);
@@ -423,7 +489,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         );
 
         let iife = self.new_expr(
-            E::Call { target: arrow, args: bun_alloc::AstAlloc::vec(), ..Default::default() },
+            E::Call {
+                target: arrow,
+                args: bun_alloc::AstAlloc::vec(),
+                ..Default::default()
+            },
             bun_ast::Loc::EMPTY,
         );
 
@@ -434,9 +504,13 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         for stmt in hoisted_stmts.iter() {
             final_stmts.push(*stmt);
         }
-        final_stmts.push(
-            self.s(S::SExpr { value: iife, ..Default::default() }, bun_ast::Loc::EMPTY),
-        );
+        final_stmts.push(self.s(
+            S::SExpr {
+                value: iife,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
         // Update parts
@@ -469,21 +543,40 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 kind: S::Kind::KVar,
                 decls: repl_one_decl(
                     bump,
-                    Binding::alloc(bump, B::Identifier { r#ref: import_data.namespace_ref }, loc),
+                    Binding::alloc(
+                        bump,
+                        B::Identifier {
+                            r#ref: import_data.namespace_ref,
+                        },
+                        loc,
+                    ),
                 ),
                 ..Default::default()
             },
             loc,
         ));
         let left = self.new_expr(
-            E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
+            E::Identifier {
+                ref_: import_data.namespace_ref,
+                ..Default::default()
+            },
             loc,
         );
         let ns_assign = self.new_expr(
-            E::Binary { op: js_ast::OpCode::BinAssign, left, right: await_expr },
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left,
+                right: await_expr,
+            },
             loc,
         );
-        inner_stmts.push(self.s(S::SExpr { value: ns_assign, ..Default::default() }, loc));
+        inner_stmts.push(self.s(
+            S::SExpr {
+                value: ns_assign,
+                ..Default::default()
+            },
+            loc,
+        ));
 
         // For each named import: var name; name = __ns.originalName;
         for item in import_items.iter() {
@@ -500,7 +593,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 loc,
             ));
             let ns_ref_expr = self.new_expr(
-                E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
+                E::Identifier {
+                    ref_: import_data.namespace_ref,
+                    ..Default::default()
+                },
                 loc,
             );
             // `alias` is an arena-owned `StoreStr` valid for 'a.
@@ -515,14 +611,27 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 loc,
             );
             let left = self.new_expr(
-                E::Identifier { ref_: item_ref, ..Default::default() },
+                E::Identifier {
+                    ref_: item_ref,
+                    ..Default::default()
+                },
                 item.name.loc,
             );
             let item_assign = self.new_expr(
-                E::Binary { op: js_ast::OpCode::BinAssign, left, right: prop_access },
+                E::Binary {
+                    op: js_ast::OpCode::BinAssign,
+                    left,
+                    right: prop_access,
+                },
                 loc,
             );
-            inner_stmts.push(self.s(S::SExpr { value: item_assign, ..Default::default() }, loc));
+            inner_stmts.push(self.s(
+                S::SExpr {
+                    value: item_assign,
+                    ..Default::default()
+                },
+                loc,
+            ));
         }
 
         Ok(())
@@ -544,8 +653,12 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     StmtData::SExpr(expr_data) => {
                         // Wrap in return { value: expr }
                         let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
-                        inner_stmts[last_idx] =
-                            self.s(S::Return { value: Some(wrapped) }, last_stmt.loc);
+                        inner_stmts[last_idx] = self.s(
+                            S::Return {
+                                value: Some(wrapped),
+                            },
+                            last_stmt.loc,
+                        );
                         break;
                     }
                     _ => break,
@@ -591,7 +704,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {
             key: Some(self.new_expr(
-                E::String { data: b"__proto__".into(), ..Default::default() },
+                E::String {
+                    data: b"__proto__".into(),
+                    ..Default::default()
+                },
                 expr.loc,
             )),
             value: Some(self.new_expr(E::Null {}, expr.loc)),
@@ -599,15 +715,24 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         });
         // value: expr - the actual result value
         properties.push(G::Property {
-            key: Some(
-                self.new_expr(E::String { data: b"value".into(), ..Default::default() }, expr.loc),
-            ),
+            key: Some(self.new_expr(
+                E::String {
+                    data: b"value".into(),
+                    ..Default::default()
+                },
+                expr.loc,
+            )),
             value: Some(expr),
             ..Default::default()
         });
-        let prop_list =
-            G::PropertyList::from_bump_vec(properties);
-        self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
+        let prop_list = G::PropertyList::from_bump_vec(properties);
+        self.new_expr(
+            E::Object {
+                properties: prop_list,
+                ..Default::default()
+            },
+            expr.loc,
+        )
     }
 
     /// Create assignment expression from binding pattern
@@ -620,11 +745,18 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         match binding.data {
             B::B::BIdentifier(ident) => {
                 let left = self.new_expr(
-                    E::Identifier { ref_: ident.r#ref, ..Default::default() },
+                    E::Identifier {
+                        ref_: ident.r#ref,
+                        ..Default::default()
+                    },
                     binding.loc,
                 );
                 self.new_expr(
-                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
+                    E::Binary {
+                        op: js_ast::OpCode::BinAssign,
+                        left,
+                        right: value,
+                    },
                     binding.loc,
                 )
             }
@@ -632,7 +764,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 // For array destructuring, create: [a, b] = value
                 let left = self.repl_convert_binding_to_expr(binding, bump);
                 self.new_expr(
-                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
+                    E::Binary {
+                        op: js_ast::OpCode::BinAssign,
+                        left,
+                        right: value,
+                    },
                     binding.loc,
                 )
             }
@@ -640,7 +776,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 // For object destructuring, create: {a, b} = value
                 let left = self.repl_convert_binding_to_expr(binding, bump);
                 self.new_expr(
-                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
+                    E::Binary {
+                        op: js_ast::OpCode::BinAssign,
+                        left,
+                        right: value,
+                    },
                     binding.loc,
                 )
             }
@@ -653,18 +793,15 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
     /// Convert a binding pattern to an expression (for assignment targets)
     /// Handles spread/rest patterns in arrays and objects to match Binding.toExpr behavior
-    fn repl_convert_binding_to_expr<'bump>(
-        &mut self,
-        binding: Binding,
-        bump: &'bump Bump,
-    ) -> Expr {
+    fn repl_convert_binding_to_expr<'bump>(&mut self, binding: Binding, bump: &'bump Bump) -> Expr {
         match binding.data {
-            B::B::BIdentifier(ident) => {
-                self.new_expr(
-                    E::Identifier { ref_: ident.r#ref, ..Default::default() },
-                    binding.loc,
-                )
-            }
+            B::B::BIdentifier(ident) => self.new_expr(
+                E::Identifier {
+                    ref_: ident.r#ref,
+                    ..Default::default()
+                },
+                binding.loc,
+            ),
             B::B::BArray(arr) => {
                 let arr = arr.get();
                 let arr_items = arr.items();
@@ -688,8 +825,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         items.push(expr);
                     }
                 }
-                let item_list =
-                    ExprNodeList::from_bump_vec(items);
+                let item_list = ExprNodeList::from_bump_vec(items);
                 self.new_expr(
                     E::Array {
                         items: item_list,
@@ -719,8 +855,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         ..Default::default()
                     });
                 }
-                let prop_list =
-                    G::PropertyList::from_bump_vec(properties);
+                let prop_list = G::PropertyList::from_bump_vec(properties);
                 self.new_expr(
                     E::Object {
                         properties: prop_list,
@@ -738,8 +873,10 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 /// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(arena.dupe(...))`).
 #[inline]
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
-    let slice: &mut [G::Decl] =
-        bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
+    let slice: &mut [G::Decl] = bump.alloc_slice_fill_with(1, |_| G::Decl {
+        binding,
+        value: None,
+    });
     G::DeclList::from_arena_slice(slice)
 }
 

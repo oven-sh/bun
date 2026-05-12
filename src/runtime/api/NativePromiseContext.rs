@@ -20,9 +20,9 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;
@@ -38,7 +38,8 @@ type DebugHTTPServerRequestContext =
     server::NewRequestContext<server::DebugHTTPServer, false, true, false>;
 type DebugHTTPSServerRequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, false>;
-type HTTPSServerH3RequestContext = server::NewRequestContext<server::HTTPSServer, true, false, true>;
+type HTTPSServerH3RequestContext =
+    server::NewRequestContext<server::HTTPSServer, true, false, true>;
 type DebugHTTPSServerH3RequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
 
@@ -210,9 +211,7 @@ impl DeferredDerefTask {
         // pointer of the type indicated by `tag`; we are on the JS thread.
         unsafe {
             match tag {
-                Tag::HTTPServerRequestContext => {
-                    (*ctx.cast::<HTTPServerRequestContext>()).deref()
-                }
+                Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
                 Tag::HTTPSServerRequestContext => {
                     (*ctx.cast::<HTTPSServerRequestContext>()).deref()
                 }
@@ -246,10 +245,15 @@ impl DeferredDerefTask {
 // Low 3 bits hold the tag; verify both capacity and alignment slack so adding
 // a tag or a packed field can't silently break the packing.
 const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
-const _: () = assert!(core::mem::align_of::<HTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<HTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<HTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<HTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
 
 // ported from: src/runtime/api/NativePromiseContext.zig

@@ -222,7 +222,11 @@ impl<'arena> BundledAst<'arena> {
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
             // uses_require_ref: ast.uses_require_ref,
             export_keyword: bun_ast::Range {
-                len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) { 1 } else { 0 },
+                len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
+                    1
+                } else {
+                    0
+                },
                 loc: bun_ast::Loc::default(),
             },
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
@@ -230,7 +234,10 @@ impl<'arena> BundledAst<'arena> {
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
                 .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            directive: if self.flags.contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
+            directive: if self
+                .flags
+                .contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
+            {
                 Some(StoreStr::new(b"use strict"))
             } else {
                 None
@@ -345,12 +352,8 @@ impl<'arena> BundledAst<'arena> {
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
                 {
                     let mut cursor = &mut encoded[0..data_url_prefix_len];
-                    write!(
-                        &mut cursor,
-                        "data:{};base64,",
-                        bstr::BStr::new(mime_type)
-                    )
-                    .expect("unreachable");
+                    write!(&mut cursor, "data:{};base64,", bstr::BStr::new(mime_type))
+                        .expect("unreachable");
                 }
                 let len = bun_base64::encode(&mut encoded[data_url_prefix_len..], contents);
                 break 'url_for_css &encoded[0..data_url_prefix_len + len];

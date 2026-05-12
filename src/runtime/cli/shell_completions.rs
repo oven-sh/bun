@@ -60,7 +60,11 @@ impl ShellCompletions {
         if self.commands.is_empty() {
             return;
         }
-        let delimiter: &[u8] = if self.shell == Shell::Fish { b" " } else { b"\n" };
+        let delimiter: &[u8] = if self.shell == Shell::Fish {
+            b" "
+        } else {
+            b"\n"
+        };
 
         if writer.write_all(self.commands[0]).is_err() {
             return;

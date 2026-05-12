@@ -3,33 +3,35 @@ use core::cell::Cell;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_core::{self as bun, Environment, Output};
 use bun_core::strings;
-use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
+use bun_core::{self as bun, Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
+use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
 
-use bun_install::{
-    DependencyID, ExtractTarball, NetworkTask, PackageID, PackageManifestError,
-    Repository, INVALID_PACKAGE_ID,
-};
-use crate::npm;
 use crate::extract_tarball;
-use crate::tarball_stream::TarballStream;
-use crate::patch_install::{self, PatchTask, Callback as PatchTaskCallback};
 use crate::network_task::Callback as NetworkTaskCallback;
+use crate::npm;
+use crate::patch_install::{self, Callback as PatchTaskCallback, PatchTask};
+use crate::tarball_stream::TarballStream;
+use bun_install::{
+    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
+    Repository,
+};
 // `Task::Id` etc. are namespaced types in Zig (`PackageManagerTask.Id`); import
 // the *module* under the `Task` name so `Task::Id` resolves as a path.
-use bun_install::package_manager_task as Task;
-use bun_install::lockfile::{Lockfile, Package};
+use super::{
+    Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
+};
+use super::{directories, enqueue};
+use crate::dependency::Behavior;
+use crate::isolated_install::installer as store_installer;
+use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
+use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
-use crate::dependency::Behavior;
-use crate::lifecycle_script_runner::InstallCtx;
-use crate::isolated_install::installer as store_installer;
-use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
-use super::{Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
-use super::{directories, enqueue};
+use bun_install::lockfile::{Lockfile, Package};
+use bun_install::package_manager_task as Task;
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
@@ -266,7 +268,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if Environment::CI_ASSERT {
                         bun_core::assert_with_location(false, core::panic::Location::caller());
                     }
-                    installer.on_task_complete(task.entry_id, store_installer::CompleteState::Success);
+                    installer
+                        .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
                 store_installer::Result::Err(err) => {
                     let err = err.clone();
@@ -277,10 +280,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
                 &store_installer::Result::RunScripts(list) => {
                     let entry_id = task.entry_id;
-                    let node_id =
-                        installer.store.entries.items_node_id()[entry_id.get() as usize];
-                    let dep_id =
-                        installer.store.nodes.items_dep_id()[node_id.get() as usize];
+                    let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
+                    let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
                     let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
                     let optional = dep.behavior.contains(Behavior::OPTIONAL);
                     // SAFETY: `list` is the per-entry scripts slot owned by
@@ -310,7 +311,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // task from the `UnboundedQueue`, and the task is no longer running.
                         installer.store.entries.items_step()[entry_id.get() as usize]
                             .store(store_installer::Step::Done as u32, Ordering::Relaxed);
-                        installer.on_task_fail(entry_id, store_installer::TaskError::RunScripts(err));
+                        installer
+                            .on_task_fail(entry_id, store_installer::TaskError::RunScripts(err));
                     }
                 }
                 store_installer::Result::Done => {
@@ -325,7 +327,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             core::panic::Location::caller(),
                         );
                     }
-                    installer.on_task_complete(task.entry_id, store_installer::CompleteState::Success);
+                    installer
+                        .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
             }
         }
@@ -368,7 +371,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
@@ -385,7 +388,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 // Handle retry-able errors.
                 if task.response.metadata.is_none()
-                    || task.response.metadata.as_ref().unwrap().response.status_code > 499
+                    || task
+                        .response
+                        .metadata
+                        .as_ref()
+                        .unwrap()
+                        .response
+                        .status_code
+                        > 499
                 {
                     let err = task.response.fail.unwrap_or(bun_core::err!("HTTPError"));
 
@@ -415,12 +425,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.response.fail.unwrap_or(bun_core::err!("HTTPError"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(
-                            extract_ctx,
-                            name,
-                            err,
-                            &task.url_buf,
-                        );
+                        C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
@@ -471,12 +476,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => PackageManifestError::PackageManifestHTTP5xx,
                         };
 
-                        C::on_package_manifest_error(
-                            extract_ctx,
-                            name,
-                            err.into(),
-                            &task.url_buf,
-                        );
+                        C::on_package_manifest_error(extract_ctx, name, err.into(), &task.url_buf);
 
                         continue;
                     }
@@ -535,12 +535,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(
-                            !is_extended_manifest || manifest.pkg.has_extended_manifest
-                        );
+                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
 
                         if timestamp_this_tick.is_none() {
-                            let now = u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast");
+                            let now = u64::try_from(bun_core::time::timestamp().max(0))
+                                .expect("int cast");
                             timestamp_this_tick = Some((now as u32).saturating_add(300));
                         }
 
@@ -584,8 +583,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             continue;
                         }
 
-                        let dependency_list_entry =
-                            manager.task_queue.get_mut(&task.task_id).expect("infallible: task queued");
+                        let dependency_list_entry = manager
+                            .task_queue
+                            .get_mut(&task.task_id)
+                            .expect("infallible: task queued");
 
                         let dependency_list = core::mem::take(dependency_list_entry);
 
@@ -646,7 +647,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if task.response.metadata.is_none()
-                    || task.response.metadata.as_ref().unwrap().response.status_code > 499
+                    || task
+                        .response
+                        .metadata
+                        .as_ref()
+                        .unwrap()
+                        .response
+                        .status_code
+                        > 499
                 {
                     let err = task
                         .response
@@ -669,10 +677,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
-                                extract.resolution.fmt(
-                                    &manager.lockfile.buffers.string_bytes,
-                                    PathSep::Auto,
-                                ),
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                                 task.retried,
                                 manager.options.max_retry_count,
                             );
@@ -744,10 +751,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
-                            extract.resolution.fmt(
-                                &manager.lockfile.buffers.string_bytes,
-                                PathSep::Auto,
-                            ),
+                            extract
+                                .resolution
+                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -757,10 +763,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
-                            extract.resolution.fmt(
-                                &manager.lockfile.buffers.string_bytes,
-                                PathSep::Auto,
-                            ),
+                            extract
+                                .resolution
+                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -890,7 +895,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1002,10 +1007,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                let dependency_list_entry = manager.task_queue.get_mut(&task.id).expect("infallible: task queued");
+                let dependency_list_entry = manager
+                    .task_queue
+                    .get_mut(&task.id)
+                    .expect("infallible: task queued");
                 let dependency_list = core::mem::take(dependency_list_entry);
 
-                process_dependency_list_for_ctx::<C>(manager, dependency_list, extract_ctx, install_peer)?;
+                process_dependency_list_for_ctx::<C>(
+                    manager,
+                    dependency_list,
+                    extract_ctx,
+                    install_peer,
+                )?;
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
@@ -1013,7 +1026,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1050,8 +1063,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     _ => unreachable!(),
                 };
                 let dependency_id = tarball.dependency_id;
-                let mut package_id =
-                    manager.lockfile.buffers.resolutions[dependency_id as usize];
+                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
                 // SAFETY: `tarball` borrows `task.request` which is reborrowed
                 // `&mut` below; the backing `StringOrTinyString` lives in the
                 // pooled `Task` for the whole iteration and is not mutated.
@@ -1129,8 +1141,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if C::HAS_ON_EXTRACT {
                     if C::IS_PACKAGE_INSTALLER {
-                        C::as_package_installer(extract_ctx)
-                            .fix_cached_lockfile_package_slices();
+                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
                         C::on_extract_package_installer(
                             extract_ctx,
                             task.id,
@@ -1209,11 +1220,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    manager
-                                        .task_queue
-                                        .get_mut(&task.id)
-                                        .unwrap()
-                                        .push(dep);
+                                    manager.task_queue.get_mut(&task.id).unwrap().push(dep);
                                     // PERF(port): was `catch unreachable` — Vec::push aborts on OOM
                                 }
                             }
@@ -1246,7 +1253,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             alias,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1279,8 +1286,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     bun_install::TaskCallbackContext::Dependency(id) => *id,
                                     _ => continue,
                                 };
-                                let pkg_id =
-                                    manager.lockfile.buffers.resolutions[dep_id as usize];
+                                let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
                                 if pkg_id == INVALID_PACKAGE_ID {
                                     continue;
                                 }
@@ -1314,12 +1320,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // SAFETY: `clone.res.tag == Git` — git-clone tasks are
                             // only enqueued for git resolutions; `value.git` is
                             // the active union arm.
-                            let resolved =
-                                &clone.res.git().resolved;
-                            let checkout_id = Task::Id::for_git_checkout(
-                                url,
-                                manager.lockfile.str(resolved),
-                            );
+                            let resolved = &clone.res.git().resolved;
+                            let checkout_id =
+                                Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
                             C::on_package_download_error(
                                 extract_ctx,
                                 checkout_id,
@@ -1401,7 +1404,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     manager.task_batch.push(ThreadPoolBatch::from(queued));
                 } else {
                     // Resolving!
-                    let dependency_list_entry = manager.task_queue.get_mut(&task.id).expect("infallible: task queued");
+                    let dependency_list_entry = manager
+                        .task_queue
+                        .get_mut(&task.id)
+                        .expect("infallible: task queued");
                     let dependency_list = core::mem::take(dependency_list_entry);
 
                     process_dependency_list_for_ctx::<C>(
@@ -1418,7 +1424,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1466,8 +1472,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::IS_PACKAGE_INSTALLER {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        C::as_package_installer(extract_ctx)
-                            .fix_cached_lockfile_package_slices();
+                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
 
                         C::on_extract_package_installer(
                             extract_ctx,
@@ -1519,8 +1524,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     // SAFETY: this branch is only reached for
                                     // git dependencies — `version.tag == Git`.
                                     let repo = unsafe {
-                                        &mut *manager.lockfile.buffers.dependencies
-                                            [id as usize]
+                                        &mut *manager.lockfile.buffers.dependencies[id as usize]
                                             .version
                                             .value
                                             .git
@@ -1537,11 +1541,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    manager
-                                        .task_queue
-                                        .get_mut(&task.id)
-                                        .unwrap()
-                                        .push(dep);
+                                    manager.task_queue.get_mut(&task.id).unwrap().push(dep);
                                 }
                             }
                         }
@@ -1558,13 +1558,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.downloads_node_mut(),
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                            );
+                        );
                         has_updated_this_run.set(true);
                     }
                 }
             }
         }
-
     }
 
     Ok(())
@@ -1631,21 +1630,13 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
 }
 
 fn do_flush_dependency_queue(this: &mut PackageManager) {
-    while let Some(dependencies_list) =
-        this.lockfile.scratch.dependency_list_queue.read_item()
-    {
+    while let Some(dependencies_list) = this.lockfile.scratch.dependency_list_queue.read_item() {
         let mut i: u32 = dependencies_list.off;
         let end = dependencies_list.off + dependencies_list.len;
         while i < end {
             let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
             let resolution = this.lockfile.buffers.resolutions[i as usize];
-            let _ = enqueue::enqueue_dependency_with_main(
-                this,
-                i,
-                &dependency,
-                resolution,
-                false,
-            );
+            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
             i += 1;
         }
     }
@@ -1676,9 +1667,15 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         + manager.patch_calc_hash_batch.len;
 
     manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    manager.thread_pool.schedule(core::mem::take(&mut manager.patch_apply_batch));
-    manager.thread_pool.schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
-    manager.thread_pool.schedule(core::mem::take(&mut manager.task_batch));
+    manager
+        .thread_pool
+        .schedule(core::mem::take(&mut manager.patch_apply_batch));
+    manager
+        .thread_pool
+        .schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
+    manager
+        .thread_pool
+        .schedule(core::mem::take(&mut manager.task_batch));
     manager
         .network_resolve_batch
         .push(core::mem::take(&mut manager.network_tarball_batch));
@@ -1732,7 +1729,11 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
     out
 }
 
-pub fn has_created_network_task(this: &mut PackageManager, task_id: Task::Id, is_required: bool) -> bool {
+pub fn has_created_network_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    is_required: bool,
+) -> bool {
     let gpe = this
         .network_dedupe_map
         .get_or_put(task_id)
@@ -1868,12 +1869,14 @@ pub fn generate_network_task_for_tarball<'a>(
             };
             t
         };
-        let extract_task =
-            enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream =
-                Some(bun_core::heap::take(TarballStream::init(extract_task, net_ptr, this)));
+            (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(
+                extract_task,
+                net_ptr,
+                this,
+            )));
         }
     }
 

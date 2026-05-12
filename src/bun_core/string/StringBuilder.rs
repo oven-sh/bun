@@ -2,7 +2,7 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-use crate::string::{self as strings_mod, ZStr, String as BunString, StringPointer};
+use crate::string::{self as strings_mod, String as BunString, StringPointer, ZStr};
 use bun_simdutf_sys::simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
@@ -187,7 +187,10 @@ impl StringBuilder {
 
         debug_assert!(self.len <= self.cap);
 
-        StringPointer { offset: start as u32, length: len as u32 }
+        StringPointer {
+            offset: start as u32,
+            length: len as u32,
+        }
     }
 
     pub fn append_count(&mut self, slice: &[u8]) -> StringPointer {
@@ -201,7 +204,10 @@ impl StringBuilder {
 
         debug_assert!(self.len <= self.cap);
 
-        StringPointer { offset: start as u32, length: slice.len() as u32 }
+        StringPointer {
+            offset: start as u32,
+            length: slice.len() as u32,
+        }
     }
 
     pub fn append_count_z(&mut self, slice: &[u8]) -> StringPointer {
@@ -217,7 +223,10 @@ impl StringBuilder {
 
         debug_assert!(self.len <= self.cap);
 
-        StringPointer { offset: start as u32, length: slice.len() as u32 }
+        StringPointer {
+            offset: start as u32,
+            length: slice.len() as u32,
+        }
     }
 
     pub fn fmt(&mut self, args: fmt::Arguments<'_>) -> &[u8] {
@@ -243,7 +252,10 @@ impl StringBuilder {
 
         debug_assert!(self.len <= self.cap);
 
-        StringPointer { offset: off as u32, length: written as u32 }
+        StringPointer {
+            offset: off as u32,
+            length: written as u32,
+        }
     }
 
     pub fn fmt_append_count_z(&mut self, args: fmt::Arguments<'_>) -> StringPointer {
@@ -251,13 +263,18 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let off = self.len;
-        let written = crate::fmt::buf_print_z(self.writable(), args).expect("unreachable").len();
+        let written = crate::fmt::buf_print_z(self.writable(), args)
+            .expect("unreachable")
+            .len();
         self.len += written;
         self.len += 1;
 
         debug_assert!(self.len <= self.cap);
 
-        StringPointer { offset: off as u32, length: written as u32 }
+        StringPointer {
+            offset: off as u32,
+            length: written as u32,
+        }
     }
 
     pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
@@ -324,9 +341,10 @@ impl Drop for StringBuilder {
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
         // leaked in init_capacity/allocate; reconstruct to free via global allocator.
         unsafe {
-            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
-                slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
-            );
+            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(slice::from_raw_parts_mut(
+                ptr.as_ptr().cast(),
+                self.cap,
+            ));
         }
     }
 }

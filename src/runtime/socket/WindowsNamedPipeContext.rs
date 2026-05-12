@@ -3,22 +3,22 @@ use core::ffi::c_void;
 use core::ptr;
 use core::ptr::NonNull;
 
-use bun_core::Output;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, SysErrorJsc};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_event_loop::AnyTask::AnyTask;
-use bun_event_loop::Task;
-use bun_uws::{self as uws, us_bun_verify_error_t};
-use bun_sys::{self, Error as SysError, Fd, SystemErrno};
-use bun_boringssl_sys as boringssl;
-use bun_paths::PathBuffer;
-use bun_core::ZStr;
-use crate::socket::SSLConfig;
-use crate::socket::windows_named_pipe::{WindowsNamedPipe, Handlers as NamedPipeHandlers};
 use crate::api::{TCPSocket, TLSSocket};
 use crate::socket::NewSocket;
+use crate::socket::SSLConfig;
+use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
+use bun_boringssl_sys as boringssl;
+use bun_core::Output;
+use bun_core::ZStr;
+use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::Task;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, SysErrorJsc};
+use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+use bun_sys::{self, Error as SysError, Fd, SystemErrno};
+use bun_uws::{self as uws, us_bun_verify_error_t};
 #[cfg(not(windows))]
 mod uv {
     //! libuv shim for non-Windows builds. `WindowsNamedPipeContext` is only
@@ -88,15 +88,21 @@ pub enum SocketType {
 /// retag the field and invalidate the caller's reference (Stacked Borrows).
 /// The handler only needs the raw address to stuff into `InternalSocket::Pipe`.
 #[inline]
-fn socket_from_named_pipe<const SSL: bool>(pipe: *mut WindowsNamedPipe) -> uws::NewSocketHandler<SSL> {
+fn socket_from_named_pipe<const SSL: bool>(
+    pipe: *mut WindowsNamedPipe,
+) -> uws::NewSocketHandler<SSL> {
     #[cfg(windows)]
     {
-        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe(pipe.cast()) }
+        uws::NewSocketHandler {
+            socket: uws::InternalSocket::Pipe(pipe.cast()),
+        }
     }
     #[cfg(not(windows))]
     {
         let _ = pipe;
-        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe }
+        uws::NewSocketHandler {
+            socket: uws::InternalSocket::Pipe,
+        }
     }
 }
 
@@ -151,36 +157,46 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: `s` is kept alive by the +1 ref taken in `create()`.
         // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe)) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe))
+        });
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { NewSocket::on_data(s, socket_from_named_pipe::<SSL>(pipe), decoded_data) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            NewSocket::on_data(s, socket_from_named_pipe::<SSL>(pipe), decoded_data)
+        });
     }
 
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { _ = NewSocket::on_handshake(s, socket_from_named_pipe::<SSL>(pipe), success as i32, ssl_error) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            _ = NewSocket::on_handshake(
+                s,
+                socket_from_named_pipe::<SSL>(pipe),
+                success as i32,
+                ssl_error,
+            )
+        });
     }
 
     fn on_end(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe)) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe))
+        });
     }
 
     fn on_writable(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { NewSocket::on_writable(s, socket_from_named_pipe::<SSL>(pipe)) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            NewSocket::on_writable(s, socket_from_named_pipe::<SSL>(pipe))
+        });
     }
 
     fn on_error(this: *mut Self, err: SysError) {
@@ -193,16 +209,18 @@ impl WindowsNamedPipeContext {
                 unsafe { (*s).handle_error(js_err) };
             });
         } else {
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-                unsafe { _ = NewSocket::handle_connect_error(s, err.errno as i32) });
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+                _ = NewSocket::handle_connect_error(s, err.errno as i32)
+            });
         }
     }
 
     fn on_timeout(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-            unsafe { NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe)) });
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe))
+        });
     }
 
     fn on_close(this: *mut Self) {
@@ -254,14 +272,19 @@ impl WindowsNamedPipeContext {
         unsafe { (*vm).enqueue_task(Task::init(task)) };
     }
 
-    pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
+    pub fn create(
+        global_this: &JSGlobalObject,
+        socket: SocketType,
+    ) -> *mut WindowsNamedPipeContext {
         let global_this = GlobalRef::from(global_this);
         let vm: &'static VirtualMachine = global_this.bun_vm();
         // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
         // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.
-        let this: *mut WindowsNamedPipeContext =
-            bun_core::heap::into_raw(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
+        let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
+            core::mem::MaybeUninit<WindowsNamedPipeContext>,
+        >::new_uninit())
+        .cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
@@ -320,16 +343,19 @@ impl WindowsNamedPipeContext {
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
         // every field exactly once before any read.
         unsafe {
-            ptr::write(this, WindowsNamedPipeContext {
-                ref_count: Cell::new(1),
-                socket,
-                named_pipe,
-                vm,
-                global_this,
-                task,
-                task_event: EventState::None,
-                is_open: false,
-            });
+            ptr::write(
+                this,
+                WindowsNamedPipeContext {
+                    ref_count: Cell::new(1),
+                    socket,
+                    named_pipe,
+                    vm,
+                    global_this,
+                    task,
+                    task_event: EventState::None,
+                    is_open: false,
+                },
+            );
         }
 
         // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
@@ -360,8 +386,9 @@ impl WindowsNamedPipeContext {
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-                unsafe { _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32) });
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
+            });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
             unsafe { Self::deref(this) };
@@ -389,8 +416,9 @@ impl WindowsNamedPipeContext {
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
-                unsafe { _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32) });
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
+            });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
             unsafe { Self::deref(this) };
@@ -420,7 +448,6 @@ impl WindowsNamedPipeContext {
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
         Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
     }
-
 }
 
 impl Drop for WindowsNamedPipeContext {
@@ -428,8 +455,10 @@ impl Drop for WindowsNamedPipeContext {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
         // Zig `deinit`: deref the wrapped socket, then `named_pipe.deinit()`.
         // SAFETY: +1 ref taken in `create()`; this is the matching release.
-        match_socket!(core::mem::replace(&mut self.socket, SocketType::None),
-            |s: NewSocket<SSL>| unsafe { (*s).deref() });
+        match_socket!(
+            core::mem::replace(&mut self.socket, SocketType::None),
+            |s: NewSocket<SSL>| unsafe { (*s).deref() }
+        );
         // `named_pipe` drops via field destructor after this.
     }
 }

@@ -18,7 +18,10 @@ impl Ratio {
             1.0
         };
 
-        Ok(Ratio { numerator: first, denominator: second })
+        Ok(Ratio {
+            numerator: first,
+            denominator: second,
+        })
     }
 
     /// Parses a ratio where both operands are required.
@@ -26,7 +29,10 @@ impl Ratio {
         let first = CSSNumberFns::parse(input)?;
         input.expect_delim(b'/')?;
         let second = CSSNumberFns::parse(input)?;
-        Ok(Ratio { numerator: first, denominator: second })
+        Ok(Ratio {
+            numerator: first,
+            denominator: second,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -40,7 +46,10 @@ impl Ratio {
 
     // PORT NOTE: dropped unused `std.mem.Allocator` param (was `_` in Zig).
     pub fn add_f32(self, other: f32) -> Ratio {
-        Ratio { numerator: self.numerator + other, denominator: self.denominator }
+        Ratio {
+            numerator: self.numerator + other,
+            denominator: self.denominator,
+        }
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {

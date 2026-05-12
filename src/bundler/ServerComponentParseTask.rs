@@ -11,26 +11,24 @@ use bun_collections::VecExt;
 use bun_ast::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
-use bun_ast::{
-    self as js_ast, symbol, Binding, Expr, Stmt, B, E, G, S,
-};
 use bun_ast::ast_result::NamedExports;
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_resolver as _resolver;
 
+use crate::AstBuilder::AstBuilder;
+use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Loader, Target};
-use crate::parse_task::{self, on_complete, ResultValue, Success, WatcherData};
+use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 use crate::ungate_support::JSAst;
-use crate::AstBuilder::AstBuilder;
-use crate::Worker;
 
 pub use crate::ThreadPool;
 
-pub use crate::parse_task::ParseTask;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::parse_task::ParseTask;
 use bun_ast::{Index, Ref};
 
 pub struct ServerComponentParseTask {
@@ -79,7 +77,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
-    let ctx = task.ctx.expect("ServerComponentParseTask.ctx set at enqueue");
+    let ctx = task
+        .ctx
+        .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
     // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
@@ -116,10 +116,10 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         }
         Some(bun_event_loop::AnyEventLoop::Js { owner }) => {
             owner.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                    result,
-                    |p| { on_complete(p); Ok(()) },
-                ),
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
+                    on_complete(p);
+                    Ok(())
+                }),
             );
         }
         Some(bun_event_loop::AnyEventLoop::Mini(mini)) => {
@@ -145,16 +145,15 @@ fn task_callback(
     bump: &Arena,
 ) -> Result<Success, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
-    let ctx: &BundleV2 = task.ctx.as_deref().expect("ServerComponentParseTask.ctx set at enqueue");
+    let ctx: &BundleV2 = task
+        .ctx
+        .as_deref()
+        .expect("ServerComponentParseTask.ctx set at enqueue");
     // PORT NOTE: `Source` is not `Clone`; the original is consumed here
     // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
-    let mut ab = AstBuilder::init(
-        bump,
-        &source,
-        ctx.transpiler().options.hot_module_reloading,
-    )?;
+    let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,
@@ -203,17 +202,16 @@ impl Default for ServerComponentParseTask {
                 node: Default::default(),
                 callback: task_callback_wrap,
             },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper { path: Box::default() }),
+            data: Data::ClientEntryWrapper(ClientEntryWrapper {
+                path: Box::default(),
+            }),
             ctx: None,
             source: Source::default(),
         }
     }
 }
 
-fn generate_client_entry_wrapper(
-    data: &ClientEntryWrapper,
-    b: &mut AstBuilder,
-) -> Result<(), OOM> {
+fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
     // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
     // outlives the bundle pass (owned by the heap-allocated task). Route through
     // `StoreStr` so the lifetime erasure goes through one audited unsafe.
@@ -360,7 +358,10 @@ fn generate_client_reference_proxy(
             // export default registerClientReference(...);
             b.append_stmt(S::ExportDefault {
                 value: StmtOrExpr::Expr(value),
-                default_name: LocRef { loc: Loc::EMPTY, ref_: Some(ref_) },
+                default_name: LocRef {
+                    loc: Loc::EMPTY,
+                    ref_: Some(ref_),
+                },
             })?;
         } else {
             // export const Component = registerClientReference(...);

@@ -40,9 +40,7 @@ impl Position {
                 PositionComponent::Length(x) => {
                     // If we got a length as the first component, then the second must
                     // be a keyword or length (not a side offset).
-                    if let Some(y_keyword) =
-                        input.try_parse(VerticalPositionKeyword::parse).ok()
-                    {
+                    if let Some(y_keyword) = input.try_parse(VerticalPositionKeyword::parse).ok() {
                         let y = VerticalPosition::Side(PositionComponentSide {
                             side: y_keyword,
                             offset: None,
@@ -85,9 +83,7 @@ impl Position {
                     }
 
                     // e.g. `left top`, `left top 20px`, `left 20px top`, or `left 20px top 20px`
-                    if let Some(y_keyword) =
-                        input.try_parse(VerticalPositionKeyword::parse).ok()
-                    {
+                    if let Some(y_keyword) = input.try_parse(VerticalPositionKeyword::parse).ok() {
                         let y_lp = match input.try_parse(LengthPercentage::parse) {
                             Ok(vv) => Some(vv),
                             Err(_) => None,

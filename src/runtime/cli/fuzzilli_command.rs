@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use bun_core::{zstr, Environment, Global, Output};
+use bun_core::{Environment, Global, Output, zstr};
 use bun_sys::{self as sys, Fd, FdExt, O};
 
 use super::run_command::RunCommand;

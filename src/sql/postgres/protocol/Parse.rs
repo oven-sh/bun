@@ -3,7 +3,7 @@ use core::mem::size_of;
 use super::new_writer::NewWriter;
 use super::write_wrap::WriteWrap;
 use super::z_helpers::z_count;
-use crate::postgres::types::int_types::{int32, Int4};
+use crate::postgres::types::int_types::{Int4, int32};
 
 // PORT NOTE: Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
 // borrowed for the lifetime of the write. PORTING.md says "never put a lifetime

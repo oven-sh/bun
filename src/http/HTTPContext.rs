@@ -2,12 +2,15 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
+use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::{
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
+    get_cert_error_from_no, h2,
+};
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
-use crate::{self as http, get_cert_error_from_no, h2, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel};
-use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 // TODO(b0): SSLConfig arrives from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::{self, SSLConfig};
@@ -94,7 +97,9 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
     const NAME: &'static str = "DeadSocket";
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for HTTPClient<'static> {
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+    for HTTPClient<'static>
+{
     const TAG: bun_ptr::tagged_pointer::TagType = 1023;
     const NAME: &'static str = "HTTPClient";
 }
@@ -200,7 +205,9 @@ pub struct PooledSocket<const SSL: bool> {
 /// shared by `PooledSocket::h2_session_mut`, `ExistingSocket::h2_session_mut`,
 /// and the `active_h2_sessions` registry scan in `connect`.
 #[inline]
-fn h2_session_as_mut<'a>(s: Option<NonNull<h2::ClientSession>>) -> Option<&'a mut h2::ClientSession> {
+fn h2_session_as_mut<'a>(
+    s: Option<NonNull<h2::ClientSession>>,
+) -> Option<&'a mut h2::ClientSession> {
     // SAFETY: see INVARIANT above.
     s.map(|mut s| unsafe { s.as_mut() })
 }
@@ -296,9 +303,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
             unsafe {
-                Handler::<SSL>::add_memory_back_to_pool(
-                    tagged.as_unchecked::<PooledSocket<SSL>>(),
-                );
+                Handler::<SSL>::add_memory_back_to_pool(tagged.as_unchecked::<PooledSocket<SSL>>());
             }
         }
 
@@ -386,8 +391,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         session: *const h2::ClientSession,
     ) {
         debug_assert!(
-            (idx as usize) < list.len()
-                && core::ptr::eq(list[idx as usize].cast_const(), session)
+            (idx as usize) < list.len() && core::ptr::eq(list[idx as usize].cast_const(), session)
         );
         let _ = list.swap_remove(idx as usize);
         if (idx as usize) < list.len() {
@@ -638,7 +642,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // `PooledSocket::drop` (which would otherwise drop garbage in
                 // `ssl_config: Option<Arc>` / `target_hostname: Box<[u8]>`).
                 let pending_addr = slot.addr();
-                Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(pending_addr.as_ptr().cast_const()));
+                Self::set_socket_ext(
+                    socket,
+                    ActiveSocket::<SSL>::init(pending_addr.as_ptr().cast_const()),
+                );
                 socket.flush();
                 socket.timeout(0);
                 socket.set_timeout_minutes(5);
@@ -815,7 +822,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     "+ Keep-Alive reuse {}:{}{}",
                     bstr::BStr::new(hostname),
                     port,
-                    if tunnel.is_some() { " (with tunnel)" } else { "" }
+                    if tunnel.is_some() {
+                        " (with tunnel)"
+                    } else {
+                        ""
+                    }
                 );
                 return Some(ExistingSocket {
                     socket: http_socket,
@@ -834,13 +845,22 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket_path: &[u8],
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
         // TODO(port): narrow error set
-        client.connected_url = client.http_proxy.clone().unwrap_or_else(|| client.url.clone());
+        client.connected_url = client
+            .http_proxy
+            .clone()
+            .unwrap_or_else(|| client.url.clone());
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
             if SSL { self.secure } else { None },
             socket_path,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
+            ActiveSocket::<SSL>::init(
+                client
+                    .as_erased_ptr()
+                    .as_ptr()
+                    .cast::<HTTPClient<'static>>(),
+            )
+            .ptr(),
             false, // dont allow half-open sockets
         )?;
         client.allow_retry = false;
@@ -861,7 +881,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 hostname_
             };
 
-        client.connected_url = client.http_proxy.clone().unwrap_or_else(|| client.url.clone());
+        client.connected_url = client
+            .http_proxy
+            .clone()
+            .unwrap_or_else(|| client.url.clone());
         // TODO(port): URL.hostname is a borrowed slice — assigning a local
         // overwrites lifetime. Preserved as-is via raw lifetime erasure matching
         // the Zig pointer assignment semantics.
@@ -902,13 +925,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
             let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
             // CONNECT TCP target (writeProxyConnect line 346). The SNI
             // override (client.hostname) is hashed into proxyAuthHash.
-            let target_hostname: &[u8] = if want_tunnel { client.url.hostname } else { b"" };
+            let target_hostname: &[u8] = if want_tunnel {
+                client.url.hostname
+            } else {
+                b""
+            };
             let target_port: u16 = if want_tunnel {
                 client.url.get_port_auto()
             } else {
                 0
             };
-            let proxy_auth_hash: u64 = if want_tunnel { client.proxy_auth_hash() } else { 0 };
+            let proxy_auth_hash: u64 = if want_tunnel {
+                client.proxy_auth_hash()
+            } else {
+                0
+            };
 
             if let Some(mut found) = self.existing_socket(
                 client.flags.reject_unauthorized,
@@ -919,13 +950,20 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 target_hostname,
                 target_port,
                 proxy_auth_hash,
-                if SSL { client.alpn_offer() } else { AlpnOffer::H1 },
+                if SSL {
+                    client.alpn_offer()
+                } else {
+                    AlpnOffer::H1
+                },
             ) {
                 let sock = found.socket;
                 Self::set_socket_ext(
                     sock,
                     ActiveSocket::<SSL>::init(
-                        client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>(),
+                        client
+                            .as_erased_ptr()
+                            .as_ptr()
+                            .cast::<HTTPClient<'static>>(),
                     ),
                 );
                 client.allow_retry = true;
@@ -980,7 +1018,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if SSL { self.secure } else { None },
             hostname,
             port as c_int,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
+            ActiveSocket::<SSL>::init(
+                client
+                    .as_erased_ptr()
+                    .as_ptr()
+                    .cast::<HTTPClient<'static>>(),
+            )
+            .ptr(),
             false,
         )?;
         client.allow_retry = false;
@@ -1017,7 +1061,9 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         {
             let mut iter = self.pending_sockets.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
-                let pooled_ptr = self.pending_sockets.at(u16::try_from(idx).expect("int cast"));
+                let pooled_ptr = self
+                    .pending_sockets
+                    .at(u16::try_from(idx).expect("int cast"));
                 let pooled = pooled_socket_mut(pooled_ptr);
                 // Do NOT call rp.data.shutdown() here — it drives
                 // SSLWrapper.shutdown → triggerCloseCallback →
@@ -1111,7 +1157,8 @@ impl<const SSL: bool> Handler<SSL> {
                         .get_native_handle()
                         .map(|h| h.cast::<bun_boringssl_sys::SSL>())
                         .unwrap_or(core::ptr::null_mut());
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true) {
+                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
+                    {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

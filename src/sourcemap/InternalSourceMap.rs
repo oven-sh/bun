@@ -84,7 +84,7 @@
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
 
-use core::mem::{size_of, MaybeUninit};
+use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
@@ -92,7 +92,7 @@ use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
-use crate::{append_mapping_to_buffer, LineColumnOffset, Mapping, SourceMapState, VLQ};
+use crate::{LineColumnOffset, Mapping, SourceMapState, VLQ, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub const SYNC_INTERVAL: usize = 64;
@@ -129,8 +129,7 @@ const _: () = assert!(size_of::<SyncEntry>() == 24);
 impl SyncEntry {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
-        self.generated_line < line
-            || (self.generated_line == line && self.generated_column <= col)
+        self.generated_line < line || (self.generated_line == line && self.generated_column <= col)
     }
 
     #[inline]
@@ -235,10 +234,7 @@ impl InternalSourceMap {
     /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`
     /// (Zig: `pub fn fromVLQ` is a decl on the file-struct `@This()`).
     #[inline]
-    pub fn from_vlq(
-        vlq: &[u8],
-        input_line_count_hint: u32,
-    ) -> Result<Box<[u8]>, FromVlqError> {
+    pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
         from_vlq(vlq, input_line_count_hint)
     }
 }
@@ -252,7 +248,9 @@ pub fn is_valid_blob(blob: &[u8]) -> bool {
     if blob.len() < HEADER_SIZE {
         return false;
     }
-    let this = InternalSourceMap { data: blob.as_ptr() };
+    let this = InternalSourceMap {
+        data: blob.as_ptr(),
+    };
     let total = this.total_len();
     if total != blob.len() {
         return false;
@@ -284,8 +282,7 @@ struct State {
 impl State {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
-        self.generated_line < line
-            || (self.generated_line == line && self.generated_column <= col)
+        self.generated_line < line || (self.generated_line == line && self.generated_column <= col)
     }
 
     fn to_mapping(self) -> Mapping {
@@ -457,11 +454,14 @@ impl WindowReader {
 
         // SAFETY: u16 LE fields at fixed header offsets within the 32-byte header.
         let gen_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
+                as usize;
         let orig_line_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
+                as usize;
         let orig_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
+                as usize;
 
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
         self.orig_line_exc_pos = self.gen_col_pos + gen_col_len;
@@ -542,7 +542,13 @@ impl WindowReader {
     }
 
     #[cold]
-    fn next_rare(&mut self, delta_idx: u8, d_gen_line: &mut i32, d_orig_line: &mut i32, state: &mut State) {
+    fn next_rare(
+        &mut self,
+        delta_idx: u8,
+        d_gen_line: &mut i32,
+        d_orig_line: &mut i32,
+        state: &mut State,
+    ) {
         let bytes = self.bytes();
         if self.gen_line_exc_next_idx == delta_idx {
             let mut p = self.gen_line_exc_pos + 1;
@@ -596,7 +602,10 @@ struct FindCacheKey {
 
 impl Default for FindCacheKey {
     fn default() -> Self {
-        FindCacheKey { data: ptr::null(), sync_idx: 0 }
+        FindCacheKey {
+            data: ptr::null(),
+            sync_idx: 0,
+        }
     }
 }
 
@@ -694,7 +703,12 @@ impl InternalSourceMap {
         reader.parse(self.stream(), se.byte_offset as usize);
     }
 
-    pub fn find_with_cache(self, line: Ordinal, column: Ordinal, set: &mut FindCache) -> Option<Mapping> {
+    pub fn find_with_cache(
+        self,
+        line: Ordinal,
+        column: Ordinal,
+        set: &mut FindCache,
+    ) -> Option<Mapping> {
         let target_line = line.zero_based();
         let target_col = column.zero_based();
 
@@ -840,7 +854,8 @@ impl Cursor {
             }
             self.sync_idx += 1;
             let mut seed = State::default();
-            self.map.seed_window(self.sync_idx, &mut seed, &mut self.reader);
+            self.map
+                .seed_window(self.sync_idx, &mut seed, &mut self.reader);
             return Some(seed);
         }
         let mut nxt = self.peek.unwrap_or(self.state);
@@ -889,7 +904,12 @@ impl InternalSourceMap {
     }
 }
 
-fn emit_vlq(state: &State, prev: &mut SourceMapState, generated_line: &mut i32, out: &mut MutableString) {
+fn emit_vlq(
+    state: &State,
+    prev: &mut SourceMapState,
+    generated_line: &mut i32,
+    out: &mut MutableString,
+) {
     while *generated_line < state.generated_line {
         out.list.push(b';');
         prev.generated_column = 0;
@@ -1035,8 +1055,13 @@ impl Builder {
             // n_deltas <= SYNC_INTERVAL-1 == deltas_buf.len(). Elides the
             // per-delta bounds check so this loop matches Zig's unchecked
             // `deltas[k] = .{...}` and stays vectorizable.
-            unsafe { deltas_buf.get_unchecked_mut(k) }
-                .write(Delta { d_gen_line, d_gen_col, d_orig_line, d_orig_col, d_src_idx });
+            unsafe { deltas_buf.get_unchecked_mut(k) }.write(Delta {
+                d_gen_line,
+                d_gen_col,
+                d_orig_line,
+                d_orig_col,
+                d_src_idx,
+            });
             if d_gen_line > 1 || d_gen_line < 0 {
                 flags |= FLAG_HAS_GEN_LINE_EXCEPTIONS;
             }
@@ -1046,9 +1071,8 @@ impl Builder {
             prev = *cur;
         }
         // SAFETY: deltas_buf[0..n_deltas] fully initialized above; Delta is repr(Rust) POD.
-        let deltas: &[Delta] = unsafe {
-            core::slice::from_raw_parts(deltas_buf.as_ptr().cast::<Delta>(), n_deltas)
-        };
+        let deltas: &[Delta] =
+            unsafe { core::slice::from_raw_parts(deltas_buf.as_ptr().cast::<Delta>(), n_deltas) };
 
         let mut cap: usize = win_hdr::GEN_COL_LANE_OFF + 3 * n_deltas * MAX_VARINT_LEN;
         if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
@@ -1186,16 +1210,17 @@ impl Builder {
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
             blob[0..24].fill(0);
-            blob[24..28].copy_from_slice(&u32::try_from(self.sync_entries.len()).expect("int cast").to_ne_bytes());
+            blob[24..28].copy_from_slice(
+                &u32::try_from(self.sync_entries.len())
+                    .expect("int cast")
+                    .to_ne_bytes(),
+            );
             blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
             if sync_bytes > 0 {
                 // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
                 // 6×4-byte fields); reinterpreting as bytes is sound.
                 let src = unsafe {
-                    core::slice::from_raw_parts(
-                        self.sync_entries.as_ptr().cast::<u8>(),
-                        sync_bytes,
-                    )
+                    core::slice::from_raw_parts(self.sync_entries.as_ptr().cast::<u8>(), sync_bytes)
                 };
                 blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(src);
             }
@@ -1321,7 +1346,8 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let out = builder.finalize();
     let blob = out.list.as_mut_slice();
     let total_len: u64 = blob.len() as u64;
-    let input_lines: u64 = (input_line_count_hint as u64).max(u64::try_from(max_original_line).expect("int cast") + 1);
+    let input_lines: u64 =
+        (input_line_count_hint as u64).max(u64::try_from(max_original_line).expect("int cast") + 1);
     blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
     blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());

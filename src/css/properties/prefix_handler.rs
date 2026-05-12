@@ -1,11 +1,11 @@
 #![allow(dead_code, unused_imports, unused_macros)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::generics::{DeepClone as _, IsCompatible as _};
-use crate::css_properties::custom::UnparsedProperty;
-use crate::prefixes::Feature;
-use crate::css_properties::{Property, PropertyIdTag};
 use crate::VendorPrefix;
+use crate::css_properties::custom::UnparsedProperty;
+use crate::css_properties::{Property, PropertyIdTag};
+use crate::generics::{DeepClone as _, IsCompatible as _};
+use crate::prefixes::Feature;
+use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
@@ -90,9 +90,13 @@ impl FallbackHandler {
 
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
-            color, Color,
+            color,
+            Color,
             deep_clone = |c: &css::css_values::color::CssColor, a| c.deep_clone(a),
-            fallbacks = |v: &mut css::css_values::color::CssColor, a: &bun_alloc::Arena, t, d: &mut css::DeclarationList| {
+            fallbacks = |v: &mut css::css_values::color::CssColor,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
                 let fbs = v.get_fallbacks(a, t);
                 for fb in fbs.to_owned_slice().into_vec() {
                     d.push(Property::Color(fb));
@@ -102,14 +106,23 @@ impl FallbackHandler {
         );
         // PropertyIdTag::TextShadow has no vendor prefix.
         handle_unprefixed!(
-            text_shadow, TextShadow,
-            deep_clone = |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a| l.deep_clone(a),
-            fallbacks = |v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>, a: &bun_alloc::Arena, t, d: &mut css::DeclarationList| {
-                for fb in css::small_list::get_fallbacks_text_shadow(v, a, t).to_owned_slice().into_vec() {
+            text_shadow,
+            TextShadow,
+            deep_clone =
+                |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a| l.deep_clone(a),
+            fallbacks = |v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
+                for fb in css::small_list::get_fallbacks_text_shadow(v, a, t)
+                    .to_owned_slice()
+                    .into_vec()
+                {
                     d.push(Property::TextShadow(fb));
                 }
             },
-            is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| v.is_compatible(b)
+            is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| v
+                .is_compatible(b)
         );
 
         if let Property::Unparsed(val) = property {
@@ -129,11 +142,7 @@ impl FallbackHandler {
                             // PORT NOTE: Zig accessed `@field(val.property_id, field.name)[1]`
                             // to get the VendorPrefix from the PropertyId payload. Mapped to
                             // the generated `PropertyId::prefix()` accessor.
-                            let newval = if val
-                                .property_id
-                                .prefix()
-                                .contains(VendorPrefix::NONE)
-                            {
+                            let newval = if val.property_id.prefix().contains(VendorPrefix::NONE) {
                                 val.get_prefixed(arena, context.targets, Feature::$FeatureVariant)
                             } else {
                                 val.deep_clone(arena)
@@ -153,7 +162,7 @@ impl FallbackHandler {
 
             // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
             // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-            
+
             context.add_unparsed_fallbacks(arena, &mut unparsed);
             let _ = &mut unparsed;
             if let Some(i) = *index {

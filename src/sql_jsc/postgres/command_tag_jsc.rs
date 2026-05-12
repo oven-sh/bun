@@ -1,6 +1,6 @@
 //! CommandTag.to_js_tag / to_js_number.
 
-use crate::jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_sql::postgres::CommandTag;
 
 pub trait CommandTagJsc {

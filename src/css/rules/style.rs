@@ -27,8 +27,7 @@ pub struct StyleRule<R> {
 impl<R> StyleRule<R> {
     /// Returns whether the rule is empty.
     pub fn is_empty(&self) -> bool {
-        self.selectors.v.is_empty()
-            || (self.declarations.is_empty() && self.rules.v.len() == 0)
+        self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
 }
 
@@ -112,8 +111,8 @@ impl<R> StyleRule<R> {
         let supports_nesting = self.rules.v.len() == 0
             || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
 
-        let len = self.declarations.declarations.len()
-            + self.declarations.important_declarations.len();
+        let len =
+            self.declarations.declarations.len() + self.declarations.important_declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
         if has_declarations {
@@ -174,10 +173,7 @@ impl<R> StyleRule<R> {
                             };
                             dest.css_module = cm;
                             if let Some(error_kind) = err {
-                                return dest.new_error(
-                                    error_kind,
-                                    Some(composes.cssparser_loc),
-                                );
+                                return dest.new_error(error_kind, Some(composes.cssparser_loc));
                             }
                             continue;
                         }
@@ -185,9 +181,7 @@ impl<R> StyleRule<R> {
 
                     dest.newline()?;
                     decl.to_css(dest, important)?;
-                    if i != len - 1
-                        || !dest.minify
-                        || (supports_nesting && self.rules.v.len() > 0)
+                    if i != len - 1 || !dest.minify || (supports_nesting && self.rules.v.len() > 0)
                     {
                         dest.write_char(b';')?;
                     }
@@ -258,7 +252,7 @@ impl<R> StyleRule<R> {
         // style.rs::minify un-gates — single key type, Borrow<[u8]> lookup").
         // The reconciliation lives in rules/mod.rs + selectors/selector.rs, not
         // here; gate the body until those agree.
-        
+
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
                 self.selectors.v.slice(),
@@ -304,9 +298,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            let mut handler_context = context
-                .handler_context
-                .child(DeclarationContext::StyleRule);
+            let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
             core::mem::swap::<PropertyHandlerContext<'_>>(
                 &mut context.handler_context,
                 &mut handler_context,

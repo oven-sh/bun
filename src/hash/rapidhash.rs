@@ -131,7 +131,11 @@ mod tests {
             0x4b575f5bf25600d6,
         ];
         for (s, e) in SIZES.iter().zip(OUTCOMES.iter()) {
-            assert_eq!(RapidHash::hash(RapidHash::RAPID_SEED, &bytes[..*s as usize]), *e, "size={s}");
+            assert_eq!(
+                RapidHash::hash(RapidHash::RAPID_SEED, &bytes[..*s as usize]),
+                *e,
+                "size={s}"
+            );
         }
     }
 }

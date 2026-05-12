@@ -9,7 +9,9 @@ pub struct BackendKeyData {
 
 impl BackendKeyData {
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
-    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        context: Container,
+    ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 

@@ -13,10 +13,8 @@ pub trait DecoderWrap: Sized {
     /// The Zig `decodeFn(this, comptime Context, NewReader(Context){ .wrapped = context })`.
     /// Paired `(comptime Context: type, reader: NewReader(Context))` collapses to a
     /// single generic `reader: NewReader<C>` per PORTING.md.
-    fn decode_fn<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyPostgresError>;
+    fn decode_fn<C: ReaderContext>(&mut self, reader: NewReader<C>)
+    -> Result<(), AnyPostgresError>;
 
     fn decode<C: ReaderContext>(&mut self, context: C) -> Result<(), AnyPostgresError> {
         self.decode_fn(NewReader::<C> { wrapped: context })

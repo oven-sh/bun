@@ -1,10 +1,10 @@
 //! `Bun.CSRF.generate` / `Bun.CSRF.verify` host fns. The pure
 //! `generate()`/`verify()` halves stay in `src/csrf/`.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_boringssl_sys as boring;
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_csrf as csrf;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -88,7 +88,9 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
             return Err(global.throw_invalid_arguments(format_args!("Secret is required")));
         }
         if !js_secret.is_string() || js_secret.get_length(global)? == 0 {
-            return Err(global.throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"))
+            );
         }
         secret = Some(js_secret.to_slice(global)?);
     }
@@ -110,8 +112,11 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
         // Extract encoding (optional)
         if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) =
-                NodeEncoding::from_js_with_default_on_empty(encoding_js, global, NodeEncoding::Base64url)?
+            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
+                encoding_js,
+                global,
+                NodeEncoding::Base64url,
+            )?
             else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Invalid format: must be 'base64', 'base64url', or 'hex'"
@@ -131,7 +136,11 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {
-                return Err(global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js));
+                return Err(global.throw_invalid_argument_type_value(
+                    "algorithm",
+                    "string",
+                    algorithm_js,
+                ));
             }
             let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
                 return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
@@ -145,7 +154,9 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
                 | EvpAlgorithm::Sha512
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
-                    return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
+                    );
                 }
             }
         }
@@ -161,9 +172,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
                 Some(s) => s.slice(),
                 // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
                 // on the JS thread so the VM singleton is exclusively reachable here.
-                None => global.bun_vm().as_mut()
-                    .rare_data()
-                    .default_csrf_secret(),
+                None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
             },
             expires_in_ms: expires_in,
             encoding,
@@ -202,7 +211,9 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     // We should have at least one argument (token)
     let args = frame.arguments();
     if args.len() < 1 {
-        return Err(global.throw_invalid_arguments(format_args!("Missing required token parameter")));
+        return Err(
+            global.throw_invalid_arguments(format_args!("Missing required token parameter"))
+        );
     }
     let js_token: JSValue = args[0];
     // Extract the token (required)
@@ -210,7 +221,9 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         return Err(global.throw_invalid_arguments(format_args!("Token is required")));
     }
     if !js_token.is_string() || js_token.get_length(global)? == 0 {
-        return Err(global.throw_invalid_arguments(format_args!("Token must be a non-empty string")));
+        return Err(
+            global.throw_invalid_arguments(format_args!("Token must be a non-empty string"))
+        );
     }
     let token = js_token.to_slice(global)?;
     // `defer token.deinit();` — handled by Drop on ZigStringSlice
@@ -230,7 +243,8 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         // Extract the secret (required)
         if let Some(secret_slice) = get_optional_slice(options_value, global, b"secret")? {
             if secret_slice.slice().is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
             }
             secret = Some(secret_slice);
         }
@@ -242,8 +256,11 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
         // Extract encoding (optional)
         if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) =
-                NodeEncoding::from_js_with_default_on_empty(encoding_js, global, NodeEncoding::Base64url)?
+            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
+                encoding_js,
+                global,
+                NodeEncoding::Base64url,
+            )?
             else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Invalid format: must be 'base64', 'base64url', or 'hex'"
@@ -262,7 +279,11 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         }
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {
-                return Err(global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js));
+                return Err(global.throw_invalid_argument_type_value(
+                    "algorithm",
+                    "string",
+                    algorithm_js,
+                ));
             }
             let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
                 return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
@@ -276,7 +297,9 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 | EvpAlgorithm::Sha512
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
-                    return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
+                    );
                 }
             }
         }
@@ -288,9 +311,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             Some(s) => s.slice(),
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
             // on the JS thread so the VM singleton is exclusively reachable here.
-            None => global.bun_vm().as_mut()
-                .rare_data()
-                .default_csrf_secret(),
+            None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
         },
         max_age_ms: max_age,
         encoding,

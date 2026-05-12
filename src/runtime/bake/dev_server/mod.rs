@@ -18,7 +18,7 @@ use core::sync::atomic::Ordering;
 
 use core::ptr::NonNull;
 
-use bun_collections::{bit_set::DynamicBitSet, HashMap, StringArrayHashMap};
+use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
 use super::framework_router::{self, OpaqueFileId};
@@ -29,18 +29,25 @@ use crate::server::StaticRoute;
 // ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
 // Each draft is a faithful port of the `.zig` sibling but depends on
 // `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
- // Assets body draft dissolved into `assets.rs`.
- #[path = "../DevServer/DirectoryWatchStore.rs"] pub(crate) mod directory_watch_store_body;
- #[path = "../DevServer/ErrorReportRequest.rs"]  pub(crate) mod error_report_request_body;
- #[path = "../DevServer/HmrSocket.rs"]           pub(crate) mod hmr_socket_body;
- // HotReloadEvent body draft dissolved into this file (see struct + impl below).
- #[path = "../DevServer/IncrementalGraph.rs"]    pub(crate) mod incremental_graph_body;
- // PackedMap body draft dissolved into `packed_map.rs`.
- #[path = "../DevServer/RouteBundle.rs"]         pub(crate) mod route_bundle_body;
- // SerializedFailure body draft dissolved into `serialized_failure.rs`.
- // SourceMapStore body draft dissolved into `source_map_store.rs`.
- #[path = "../DevServer/WatcherAtomics.rs"]      pub(crate) mod watcher_atomics_body;
- #[path = "../DevServer/memory_cost.rs"]         pub(crate) mod memory_cost_body;
+// Assets body draft dissolved into `assets.rs`.
+#[path = "../DevServer/DirectoryWatchStore.rs"]
+pub(crate) mod directory_watch_store_body;
+#[path = "../DevServer/ErrorReportRequest.rs"]
+pub(crate) mod error_report_request_body;
+#[path = "../DevServer/HmrSocket.rs"]
+pub(crate) mod hmr_socket_body;
+// HotReloadEvent body draft dissolved into this file (see struct + impl below).
+#[path = "../DevServer/IncrementalGraph.rs"]
+pub(crate) mod incremental_graph_body;
+// PackedMap body draft dissolved into `packed_map.rs`.
+#[path = "../DevServer/RouteBundle.rs"]
+pub(crate) mod route_bundle_body;
+// SerializedFailure body draft dissolved into `serialized_failure.rs`.
+// SourceMapStore body draft dissolved into `source_map_store.rs`.
+#[path = "../DevServer/memory_cost.rs"]
+pub(crate) mod memory_cost_body;
+#[path = "../DevServer/WatcherAtomics.rs"]
+pub(crate) mod watcher_atomics_body;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
 // `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
@@ -60,9 +67,9 @@ pub type DebuggerId = jsc::DebuggerId;
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{
-    deferred_request, CacheEntry, CurrentBundle, DeferredPromise,
-    DeferredRequest, DevServer, EntryPointList, entry_point_list, HTMLRouter, Magic, NextBundle,
-    Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch, TestingBatchEvents,
+    CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
+    HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
+    TestingBatchEvents, deferred_request, entry_point_list,
 };
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
@@ -76,7 +83,8 @@ pub enum FileKind {
     Css = 3,
 }
 impl FileKind {
-    #[inline] pub fn has_inline_js_code_chunk(self) -> bool {
+    #[inline]
+    pub fn has_inline_js_code_chunk(self) -> bool {
         matches!(self, FileKind::Js | FileKind::Asset)
     }
 }
@@ -122,7 +130,10 @@ pub enum MessageId {
     TestingWatchSynchronization = b'r',
 }
 impl MessageId {
-    #[inline] pub fn char(self) -> u8 { self as u8 }
+    #[inline]
+    pub fn char(self) -> u8 {
+        self as u8
+    }
 }
 
 /// `DevServer.IncomingMessageId` — first byte of every client→server HMR frame.
@@ -248,8 +259,12 @@ pub struct GraphTraceState {
     pub server_bits: DynamicBitSet,
 }
 impl GraphTraceState {
-    #[inline] pub fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
-        match side { Side::Client => &mut self.client_bits, Side::Server => &mut self.server_bits }
+    #[inline]
+    pub fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
+        match side {
+            Side::Client => &mut self.client_bits,
+            Side::Server => &mut self.server_bits,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -269,8 +284,12 @@ impl GraphTraceState {
     }
 
     pub fn clear_and_free(&mut self) {
-        self.client_bits.resize(0, false).expect("freeing memory can not fail");
-        self.server_bits.resize(0, false).expect("freeing memory can not fail");
+        self.client_bits
+            .resize(0, false)
+            .expect("freeing memory can not fail");
+        self.server_bits
+            .resize(0, false)
+            .expect("freeing memory can not fail");
     }
 }
 
@@ -279,13 +298,13 @@ pub use super::dev_server_body::init;
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule types (struct shapes un-gated; method bodies stay in drafts)
 // ──────────────────────────────────────────────────────────────────────────
-pub mod route_bundle;
-pub mod incremental_graph;
 pub mod assets;
-pub mod source_map_store;
-pub mod serialized_failure;
-pub mod packed_map;
+pub mod incremental_graph;
 mod lifecycle;
+pub mod packed_map;
+pub mod route_bundle;
+pub mod serialized_failure;
+pub mod source_map_store;
 
 pub use assets::Assets;
 pub use incremental_graph::IncrementalGraph;
@@ -330,11 +349,13 @@ impl ResponseLike for bun_uws::AnyResponse {
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
         // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
         // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
-        (*self).get_remote_socket_info().map(|a| bun_uws::SocketAddress {
-            ip: a.ip.to_vec().into_boxed_slice(),
-            port: a.port,
-            is_ipv6: a.is_ipv6,
-        })
+        (*self)
+            .get_remote_socket_info()
+            .map(|a| bun_uws::SocketAddress {
+                ip: a.ip.to_vec().into_boxed_slice(),
+                port: a.port,
+                is_ipv6: a.is_ipv6,
+            })
     }
     fn upgrade<D>(
         &mut self,
@@ -441,11 +462,7 @@ impl HotReloadEvent {
 
     /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    pub fn process_file_list(
-        &mut self,
-        dev: &mut DevServer,
-        entry_points: &mut EntryPointList,
-    ) {
+    pub fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
@@ -453,8 +470,9 @@ impl HotReloadEvent {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
-                let changed_dir =
-                    bun_paths::string_paths::without_trailing_slash_windows_path(changed_dir_with_slash);
+                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
+                    changed_dir_with_slash,
+                );
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
@@ -465,9 +483,7 @@ impl HotReloadEvent {
                     .bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
-                if let Some(watcher_index) =
-                    dev.directory_watchers.watches.get_index(changed_dir)
-                {
+                if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
                     // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
                     // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
                     let mut new_chain: Option<u32> = None;
@@ -534,8 +550,14 @@ impl HotReloadEvent {
 
         let changed_file_paths = self.files.keys();
         // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
-        bun_core::handle_oom(dev.server_graph.invalidate(changed_file_paths, entry_points));
-        bun_core::handle_oom(dev.client_graph.invalidate(changed_file_paths, entry_points));
+        bun_core::handle_oom(
+            dev.server_graph
+                .invalidate(changed_file_paths, entry_points),
+        );
+        bun_core::handle_oom(
+            dev.client_graph
+                .invalidate(changed_file_paths, entry_points),
+        );
 
         if entry_points.set.count() == 0 {
             bun_core::Output::debug_warn(format_args!("nothing to bundle"));
@@ -592,7 +614,9 @@ impl HotReloadEvent {
         }
         bun_core::handle_oom(self.dirs.get_or_put(dir_path));
 
-        let Some(sub_path) = maybe_sub_path else { return };
+        let Some(sub_path) = maybe_sub_path else {
+            return;
+        };
         if sub_path.is_empty() {
             return;
         }
@@ -672,7 +696,11 @@ impl HotReloadEvent {
             // disjoint per the note above.
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
-            match unsafe { (*dev).watcher_atomics.recycle_event_from_dev_server(current) } {
+            match unsafe {
+                (*dev)
+                    .watcher_atomics
+                    .recycle_event_from_dev_server(current)
+            } {
                 Some(next) => {
                     current = next;
                     #[cfg(debug_assertions)]
@@ -712,7 +740,6 @@ impl HotReloadEvent {
         }
     }
 }
-
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
@@ -905,10 +932,8 @@ impl WatcherAtomics {
         // There are files to be processed.
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
-        let ev_index: u8 = u8::try_from(unsafe {
-            ev.offset_from(self.events.as_ptr().cast_mut())
-        })
-        .unwrap();
+        let ev_index: u8 =
+            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
         match old_next {
             NextEvent::DONE => {
@@ -917,7 +942,8 @@ impl WatcherAtomics {
                 self.pending_event = None;
                 // Relaxed because the dev server is not running events right now.
                 // (could technically be made non-atomic)
-                self.next_event.store(NextEvent::WAITING.0, Ordering::Relaxed);
+                self.next_event
+                    .store(NextEvent::WAITING.0, Ordering::Relaxed);
                 #[cfg(debug_assertions)]
                 {
                     debug_assert!(
@@ -982,7 +1008,11 @@ impl DirectoryWatchStore {
         // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
         // field of a heap-allocated `DevServer` (never moved post-init).
         unsafe {
-            bun_core::from_field_ptr!(DevServer, directory_watchers, std::ptr::from_mut::<Self>(self))
+            bun_core::from_field_ptr!(
+                DevServer,
+                directory_watchers,
+                std::ptr::from_mut::<Self>(self)
+            )
         }
     }
 
@@ -1015,7 +1045,12 @@ impl DirectoryWatchStore {
     pub fn free_entry(&mut self, entry_index: usize) {
         let entry = self.watches.values()[entry_index];
 
-        bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({}, {:?})", entry_index, entry.dir);
+        bun_core::scoped_log!(
+            DevServer,
+            "DirectoryWatchStore.freeEntry({}, {:?})",
+            entry_index,
+            entry.dir
+        );
 
         self.dev_bun_watcher().remove_at_index(
             bun_watcher::WatchItemKind::File,
@@ -1083,7 +1118,6 @@ pub mod directory_watch_store {
         }
     }
 }
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK §Dispatch — DevServerVTable impl (high tier provides static)
@@ -1243,12 +1277,16 @@ impl DirectoryWatchStore {
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
-            Graph::Client => unsafe { &mut (*dev).client_graph }
-                .insert_empty(import_source, FileKind::Unknown)?
-                .key,
-            Graph::Server | Graph::Ssr => unsafe { &mut (*dev).server_graph }
-                .insert_empty(import_source, FileKind::Unknown)?
-                .key,
+            Graph::Client => {
+                unsafe { &mut (*dev).client_graph }
+                    .insert_empty(import_source, FileKind::Unknown)?
+                    .key
+            }
+            Graph::Server | Graph::Ssr => {
+                unsafe { &mut (*dev).server_graph }
+                    .insert_empty(import_source, FileKind::Unknown)?
+                    .key
+            }
         };
 
         match self.insert(dir, owned_file_path, specifier) {
@@ -1288,20 +1326,21 @@ impl DirectoryWatchStore {
 
         // PORT NOTE: reshaped for borrowck — capture gop scalars before
         // calling self methods that need &mut self.
-        let gop = self
-            .watches
-            .get_or_put(bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
+        let gop = self.watches.get_or_put(
+            bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
+        )?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        let specifier_cloned: Box<[u8]> = if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
-            Box::<[u8]>::from(specifier)
-        } else {
-            let mut v = Vec::with_capacity(2 + specifier.len());
-            v.extend_from_slice(b"./");
-            v.extend_from_slice(specifier);
-            v.into_boxed_slice()
-        };
+        let specifier_cloned: Box<[u8]> =
+            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+                Box::<[u8]>::from(specifier)
+            } else {
+                let mut v = Vec::with_capacity(2 + specifier.len());
+                v.extend_from_slice(b"./");
+                v.extend_from_slice(specifier);
+                v.into_boxed_slice()
+            };
         // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
 
         if found_existing {
@@ -1317,7 +1356,8 @@ impl DirectoryWatchStore {
 
         // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
-        let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> = &raw mut self.watches;
+        let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> =
+            &raw mut self.watches;
         let watches_guard = scopeguard::guard(gop_index, move |idx| {
             // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
             // the error path no other borrow of `self.watches` is outstanding.
@@ -1327,16 +1367,17 @@ impl DirectoryWatchStore {
         // Try to use an existing open directory handle
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
         // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> = match unsafe { (*dev).server_transpiler.assume_init_mut() }
-            .resolver
-            .read_dir_info(dir_name_to_watch)
-        {
-            Ok(Some(cache)) => {
-                let fd = cache.get_file_descriptor();
-                if fd.is_valid() { Some(fd) } else { None }
-            }
-            Ok(None) | Err(_) => None,
-        };
+        let cache_fd: Option<bun_sys::Fd> =
+            match unsafe { (*dev).server_transpiler.assume_init_mut() }
+                .resolver
+                .read_dir_info(dir_name_to_watch)
+            {
+                Ok(Some(cache)) => {
+                    let fd = cache.get_file_descriptor();
+                    if fd.is_valid() { Some(fd) } else { None }
+                }
+                Ok(None) | Err(_) => None,
+            };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {
@@ -1348,7 +1389,11 @@ impl DirectoryWatchStore {
                 }
                 let mut zbuf = bun_paths::path_buffer_pool::get();
                 let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
-                match bun_sys::open(zpath, bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS, 0) {
+                match bun_sys::open(
+                    zpath,
+                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
+                    0,
+                ) {
                     Ok(fd) => (fd, true),
                     Err(err) => match err.get_errno() {
                         // If this directory doesn't exist, a watcher should be placed
@@ -1380,10 +1425,11 @@ impl DirectoryWatchStore {
         // boxed the trimmed key on insert above, so the reassignment is a
         // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
 
-        let watch_index = match self
-            .dev_bun_watcher()
-            .add_directory::<false>(fd, &dir_name, bun_watcher::Watcher::get_hash(&dir_name))
-        {
+        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+            fd,
+            &dir_name,
+            bun_watcher::Watcher::get_hash(&dir_name),
+        ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
         };

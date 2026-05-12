@@ -3,31 +3,33 @@ use core::ptr;
 
 use bstr::BStr;
 
-use bun_core::{Global, Output};
 use bun_ast::{Loc, Log};
+use bun_core::ZBox;
+use bun_core::{Global, Output};
+use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_core::{strings, ZStr};
-use bun_core::ZBox;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
+use bun_threading::thread_pool::{
+    self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask,
+};
 use bun_wyhash::Wyhash11;
 
-use crate::{
-    bun_hash_tag, lockfile::Lockfile, lockfile::Package, resolution::Resolution, DependencyID,
-    PackageID, PackageManager,
-};
 use crate::package_install::PackageInstall;
 use crate::package_manager;
+use crate::{
+    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Lockfile, lockfile::Package,
+    resolution::Resolution,
+};
 
 // Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
 pub use crate::lockfile::PatchedDep;
 pub use crate::resolution::Resolution as ResolutionExport;
 pub use crate::{
-    bun_hash_tag as bun_hash_tag_export, DependencyID as DependencyIDExport,
-    PackageID as PackageIDExport, PackageInstall as PackageInstallExport,
+    DependencyID as DependencyIDExport, PackageID as PackageIDExport,
+    PackageInstall as PackageInstallExport, bun_hash_tag as bun_hash_tag_export,
 };
 // TODO(port): the Zig file re-exports these under the same names; Rust cannot re-export and `use`
 // the same identifier twice in one module without aliasing. Phase B should collapse the duplicate
@@ -206,7 +208,9 @@ impl PatchTask {
         // holds an exclusive borrow on.
         let mgr = self.manager.as_ptr();
         unsafe {
-            (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
+            (*mgr)
+                .patch_task_queue
+                .push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -255,7 +259,9 @@ impl PatchTask {
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
-            let _ = apply.logger.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = apply
+                .logger
+                .print(std::ptr::from_mut(Output::error_writer()));
             // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
             // field and will be dropped with the task; explicit early drop is skipped to avoid
             // double-drop. If `Log::deinit` is reset-to-empty (idempotent), Phase B can restore
@@ -278,7 +284,9 @@ impl PatchTask {
         let Some(hash) = calc_hash.result else {
             if log_level != LogLevel::Silent {
                 if calc_hash.logger.has_errors() {
-                    let _ = calc_hash.logger.print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = calc_hash
+                        .logger
+                        .print(std::ptr::from_mut(Output::error_writer()));
                 } else {
                     Output::err_generic(
                         "Failed to calculate hash for patch <b>{}<r>",
@@ -343,18 +351,13 @@ impl PatchTask {
                     // `pkg_resolution_tag` switch below — Zig only reads
                     // `pkg.resolution.value.npm.version` here, line 183).
                     let pkg_npm_version = unsafe {
-                        manager
-                            .lockfile
-                            .packages
-                            .items_resolution()[pkg_id as usize]
+                        manager.lockfile.packages.items_resolution()[pkg_id as usize]
                             .value
                             .npm
                             .version
                     };
-                    let task_id = TaskId::for_npm_package(
-                        manager.lockfile.str(&pkg_name),
-                        pkg_npm_version,
-                    );
+                    let task_id =
+                        TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
@@ -432,23 +435,21 @@ impl PatchTask {
         );
         // TODO: can the patch file be anything other than utf-8?
 
-        let patchfile_txt = match sys::File::read_from(Fd::cwd(), absolute_patchfile_path.as_bytes()) {
-            sys::Result::Ok(txt) => txt,
-            sys::Result::Err(e) => {
-                log.add_sys_error(&e, format_args!("failed to read patchfile"));
-                return Ok(());
-            }
-        };
+        let patchfile_txt =
+            match sys::File::read_from(Fd::cwd(), absolute_patchfile_path.as_bytes()) {
+                sys::Result::Ok(txt) => txt,
+                sys::Result::Err(e) => {
+                    log.add_sys_error(&e, format_args!("failed to read patchfile"));
+                    return Ok(());
+                }
+            };
         // PORT NOTE: `defer this.manager.allocator.free(patchfile_txt)` — `patchfile_txt` is owned
         // (`Vec<u8>`/`Box<[u8]>`) and drops at end of scope.
         let patchfile = match bun_patch::parse_patch_file(&patchfile_txt) {
             Ok(p) => p,
             Err(e) => {
                 log.add_error_fmt_opts(
-                    format_args!(
-                        "failed to parse patchfile: {}",
-                        <&'static str>::from(e)
-                    ),
+                    format_args!("failed to parse patchfile: {}", <&'static str>::from(e)),
                     Default::default(),
                 );
                 return Ok(());
@@ -590,7 +591,10 @@ impl PatchTask {
             let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
-                    format_args!("failed adding bun tag: {}", e.with_path(buntag_zstr.as_bytes())),
+                    format_args!(
+                        "failed adding bun tag: {}",
+                        e.with_path(buntag_zstr.as_bytes())
+                    ),
                     Default::default(),
                 );
                 return Ok(());
@@ -617,8 +621,7 @@ impl PatchTask {
                 move_fallback: true,
                 ..Default::default()
             },
-        )
-        {
+        ) {
             log.add_error_fmt_opts(
                 format_args!(
                     "renaming changes to cache dir: {}",
@@ -749,7 +752,9 @@ impl PatchTask {
         // only touches the lock-free queue and event-loop wake atomics.
         let mgr = self.manager.as_ptr();
         unsafe {
-            (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
+            (*mgr)
+                .patch_task_queue
+                .push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -768,11 +773,8 @@ impl PatchTask {
             .patched_dependencies
             .get(&name_and_version_hash)
             .unwrap_or_else(|| panic!("This is a bug"));
-        let patchfile_path: Box<[u8]> = Box::from(
-            patchdep
-                .path
-                .slice(&manager.lockfile.buffers.string_bytes),
-        );
+        let patchfile_path: Box<[u8]> =
+            Box::from(patchdep.path.slice(&manager.lockfile.buffers.string_bytes));
         // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
         // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
 
@@ -810,8 +812,9 @@ impl PatchTask {
         // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
         // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
         // Clone the slice/resolution out first.
-        let pkg_name_slice =
-            pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes).to_vec();
+        let pkg_name_slice = pkg_name
+            .slice(&pkg_manager.lockfile.buffers.string_bytes)
+            .to_vec();
         // PORT NOTE: `Resolution` is `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
@@ -880,8 +883,8 @@ impl PatchTask {
 // TODO(port): these enum/type references are placeholders for cross-file types that live in
 // `bun_install`. Phase B should replace with the real paths once those modules are ported.
 use crate::PreinstallState;
-use crate::package_install::{Method as InstallMethod, InstallResult};
 use crate::network_task::Authorization;
+use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;
 

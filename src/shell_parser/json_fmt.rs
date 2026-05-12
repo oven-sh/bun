@@ -16,11 +16,11 @@
 
 use core::fmt::{self, Write};
 
+use super::parse::SmolList;
 use super::parse::ast::{
     Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, CondExprOp, Expr, If,
     JSBuf, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
 };
-use super::parse::SmolList;
 
 // ───────────────────────────── primitives ─────────────────────────────
 
@@ -124,10 +124,13 @@ fn write_expr(w: &mut impl Write, e: &Expr<'_>) -> fmt::Result {
 
 fn write_binary(w: &mut impl Write, b: &Binary<'_>) -> fmt::Result {
     w.write_str("{\"op\":")?;
-    encode_json_string(w, match b.op {
-        BinaryOp::And => b"And",
-        BinaryOp::Or => b"Or",
-    })?;
+    encode_json_string(
+        w,
+        match b.op {
+            BinaryOp::And => b"And",
+            BinaryOp::Or => b"Or",
+        },
+    )?;
     w.write_str(",\"left\":")?;
     write_expr(w, &b.left)?;
     w.write_str(",\"right\":")?;

@@ -1,10 +1,10 @@
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
-use bun_threading::{work_pool::WorkPool, IntrusiveWorkTask as _, WorkPoolTask};
+use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
+use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
 use crate::event_loop::EventLoop;
-use crate::JSGlobalObject;
 use bun_ptr::BackRef;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
@@ -140,7 +140,11 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(this_ref.concurrent_task.from(this, AutoDeinit::ManualDeinit));
+        let task = std::ptr::from_mut(
+            this_ref
+                .concurrent_task
+                .from(this, AutoDeinit::ManualDeinit),
+        );
         event_loop.enqueue_task_concurrent(task);
     }
 }

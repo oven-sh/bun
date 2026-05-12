@@ -191,10 +191,7 @@ type ForEachFunction = extern "C" fn(
 /// [`DOMFormData::for_each`]).
 pub enum FormDataEntry<'a, B> {
     String(ZigString),
-    File {
-        blob: &'a B,
-        filename: ZigString,
-    },
+    File { blob: &'a B, filename: ZigString },
 }
 
 // ported from: src/jsc/DOMFormData.zig

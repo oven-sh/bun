@@ -2,8 +2,8 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_core::String as BunString;
 use crate::VirtualMachineRef as VirtualMachine;
+use bun_core::String as BunString;
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
@@ -36,7 +36,8 @@ impl HTTPServerAgent {
     /// `opaque_mut` proof so callers stay safe.
     #[inline]
     pub fn agent_mut(&mut self) -> Option<&mut InspectorHTTPServerAgent> {
-        self.agent.map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
+        self.agent
+            .map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
     }
 
     // #region Events

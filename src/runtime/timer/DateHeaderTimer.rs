@@ -17,8 +17,8 @@ use bun_core::Timespec;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
 
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::jsc_hooks::timer_all;
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(DateHeaderTimer, visible);
 
@@ -49,7 +49,10 @@ impl DateHeaderTimer {
 
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
         // (same {sec,nsec} layout) until bun_event_loop switches to bun_core::Timespec.
-        let last_update = Timespec { sec: self.event_loop_timer.next.sec, nsec: self.event_loop_timer.next.nsec };
+        let last_update = Timespec {
+            sec: self.event_loop_timer.next.sec,
+            nsec: self.event_loop_timer.next.nsec,
+        };
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
@@ -83,7 +86,10 @@ impl DateHeaderTimer {
         let now = Timespec::now_allow_mocked_time();
 
         // Record when we last ran it.
-        self.event_loop_timer.next = ElTimespec { sec: now.sec, nsec: now.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: now.sec,
+            nsec: now.nsec,
+        };
         bun_output::scoped_log!(DateHeaderTimer, "run");
 
         // update_date() is an expensive function.
@@ -92,7 +98,10 @@ impl DateHeaderTimer {
         if loop_.internal_loop_data.sweep_timer_count > 0 {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(MS_PER_S);
-            self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+            self.event_loop_timer.next = ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.

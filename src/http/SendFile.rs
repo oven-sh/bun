@@ -95,7 +95,11 @@ impl SendFile {
             }
         }
 
-        #[cfg(all(unix, not(any(target_os = "linux", target_os = "android")), not(target_os = "freebsd")))]
+        #[cfg(all(
+            unix,
+            not(any(target_os = "linux", target_os = "android")),
+            not(target_os = "freebsd")
+        ))]
         {
             let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // std.posix.off_t
             // Zig: `@as(i64, @bitCast(self.offset))` — same-width `as` is the bitcast.

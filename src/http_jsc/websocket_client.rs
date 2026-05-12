@@ -12,16 +12,16 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Output;
+use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
+use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_ptr::{IntrusiveRc, ThisPtr};
-use bun_core::{strings, ZigString};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -30,11 +30,16 @@ use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
 // ─── Submodules ──────────────────────────────────────────────────────────
-#[path = "websocket_client/CppWebSocket.rs"]            pub mod cpp_websocket;
-#[path = "websocket_client/WebSocketDeflate.rs"]        pub mod websocket_deflate;
-#[path = "websocket_client/WebSocketProxy.rs"]          pub mod websocket_proxy;
-#[path = "websocket_client/WebSocketProxyTunnel.rs"]    pub mod websocket_proxy_tunnel;
-#[path = "websocket_client/WebSocketUpgradeClient.rs"]  pub mod websocket_upgrade_client;
+#[path = "websocket_client/CppWebSocket.rs"]
+pub mod cpp_websocket;
+#[path = "websocket_client/WebSocketDeflate.rs"]
+pub mod websocket_deflate;
+#[path = "websocket_client/WebSocketProxy.rs"]
+pub mod websocket_proxy;
+#[path = "websocket_client/WebSocketProxyTunnel.rs"]
+pub mod websocket_proxy_tunnel;
+#[path = "websocket_client/WebSocketUpgradeClient.rs"]
+pub mod websocket_upgrade_client;
 
 bun_core::define_scoped_log!(log, WebSocketClient, visible);
 bun_core::declare_scope!(alloc, hidden);
@@ -344,7 +349,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: Zig poked `head = 0; count = 0` directly; LinearFifo's
         // fields are private in Rust so discard everything readable instead
         // (same observable state — empty, head realigned to 0).
-        self.receive_buffer.discard(self.receive_buffer.readable_length());
+        self.receive_buffer
+            .discard(self.receive_buffer.readable_length());
 
         if free {
             // TODO(port): LinearFifo::deinit → Drop semantics; reset to fresh state
@@ -487,8 +493,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.message_is_compressed = false;
                 }
             } else {
-                self.receive_pending_chunk_len =
-                    self.receive_pending_chunk_len.saturating_sub(left_in_fragment);
+                self.receive_pending_chunk_len = self
+                    .receive_pending_chunk_len
+                    .saturating_sub(left_in_fragment);
             }
             return data.len();
         }
@@ -548,8 +555,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.message_is_compressed = false;
             }
         } else {
-            self.receive_pending_chunk_len =
-                self.receive_pending_chunk_len.saturating_sub(left_in_fragment);
+            self.receive_pending_chunk_len = self
+                .receive_pending_chunk_len
+                .saturating_sub(left_in_fragment);
         }
         data.len()
     }
@@ -763,7 +771,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                         && receive_state == ReceiveState::NeedBody
                         && is_final
                     {
-                        let _ = self.consume(b"", receive_body_remain, last_receive_data_type, is_final);
+                        let _ = self.consume(
+                            b"",
+                            receive_body_remain,
+                            last_receive_data_type,
+                            is_final,
+                        );
 
                         // Return to the header state to read the next frame
                         receive_state = ReceiveState::NeedHeader;
@@ -801,7 +814,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     let start = self.payload_length_frame_len as usize;
                     self.payload_length_frame_bytes[start..start + total_received]
                         .copy_from_slice(&data[..total_received]);
-                    self.payload_length_frame_len += u8::try_from(total_received).expect("int cast");
+                    self.payload_length_frame_len +=
+                        u8::try_from(total_received).expect("int cast");
                     data = &data[total_received..];
 
                     // short read on payload length - we need to wait for more data
@@ -962,8 +976,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                             receive_body_remain = 0;
                             self.close_frame_buffering = true;
                         }
-                        let to_copy =
-                            data.len().min(self.ping_len as usize - receive_body_remain);
+                        let to_copy = data.len().min(self.ping_len as usize - receive_body_remain);
                         self.ping_frame_bytes[6 + receive_body_remain..][..to_copy]
                             .copy_from_slice(&data[..to_copy]);
                         receive_body_remain += to_copy;
@@ -1068,7 +1081,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return false;
             }
 
-            let _ = self.copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
+            let _ = self
+                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
             return true;
         }
 
@@ -1181,7 +1195,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             .send_buffer
             .writable_with_size(write_len)
             .expect("unreachable");
-        bytes.copy(&self.global_this, &mut writable[..write_len], content_byte_len, opcode);
+        bytes.copy(
+            &self.global_this,
+            &mut writable[..write_len],
+            content_byte_len,
+            opcode,
+        );
         self.send_buffer.update(write_len);
 
         if do_write {
@@ -1230,7 +1249,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                 Err(false)
             } else {
                 let w = self.tcp.write(out_buf);
-                if w < 0 { Err(true) } else { Ok(usize::try_from(w).expect("int cast")) }
+                if w < 0 {
+                    Err(true)
+                } else {
+                    Ok(usize::try_from(w).expect("int cast"))
+                }
             }
         };
         match wrote {
@@ -1275,7 +1298,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         if ping_len > 0 {
             // PORT NOTE: reshaped for borrowck — Mask::fill needs disjoint borrows of ping_frame_bytes
             let (head, tail) = self.ping_frame_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
+            let mask_buf: &mut [u8; 4] = (&mut head[2..6])
+                .try_into()
+                .expect("infallible: size matches");
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
             Mask::fill_in_place(&self.global_this, mask_buf, to_mask);
@@ -1296,12 +1321,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn send_close_with_body(
-        &mut self,
-        code: u16,
-        body: Option<&mut [u8; 125]>,
-        body_len: usize,
-    ) {
+    fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
         log!("Sending close with code {}", code);
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1347,7 +1367,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let slice_len = 8 + body_len;
         {
             let (head, tail) = final_body_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
+            let mask_buf: &mut [u8; 4] = (&mut head[2..6])
+                .try_into()
+                .expect("infallible: size matches");
             let payload = &mut tail[..slice_len - 6];
             Mask::fill_in_place(&self.global_this, mask_buf, payload);
         }
@@ -1424,7 +1446,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(len);
         if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-            bytes.copy(&this.global_this, &mut inline_buf[..frame_size], slice.len(), opcode);
+            bytes.copy(
+                &this.global_this,
+                &mut inline_buf[..frame_size],
+                slice.len(),
+                opcode,
+            );
             let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
             return;
         }
@@ -1480,7 +1507,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             let frame_size = WebsocketHeader::frame_size_including_mask(data.len());
             if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
                 let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-                bytes.copy(&this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
+                bytes.copy(
+                    &this.global_this,
+                    &mut inline_buf[..frame_size],
+                    data.len(),
+                    opcode,
+                );
                 let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
@@ -1520,7 +1552,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-                    bytes.copy(&this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
+                    bytes.copy(
+                        &this.global_this,
+                        &mut inline_buf[..frame_size],
+                        byte_len,
+                        opcode,
+                    );
                     let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                     return;
                 }
@@ -1530,7 +1567,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 debug_assert!(frame_size <= STACK_FRAME_SIZE);
-                bytes.copy(&this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
+                bytes.copy(
+                    &this.global_this,
+                    &mut inline_buf[..frame_size],
+                    byte_len,
+                    opcode,
+                );
                 let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
@@ -1716,7 +1758,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !Socket::<SSL>::adopt_group(
             tcp,
             group,
-            if SSL { uws::DispatchKind::WsClientTls } else { uws::DispatchKind::WsClient },
+            if SSL {
+                uws::DispatchKind::WsClientTls
+            } else {
+                uws::DispatchKind::WsClient
+            },
             ws,
             // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
             // write avoids materializing a second `&mut` that would alias
@@ -1741,7 +1787,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                    buffered_data,
+                    buffered_data_len,
+                ))
             };
             let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
@@ -1853,7 +1902,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
             // directly so it is freed (not leaked) when the handler drops.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                    buffered_data,
+                    buffered_data_len,
+                ))
             };
             let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
@@ -2001,9 +2053,7 @@ macro_rules! export_websocket_client {
             WebSocket::<$ssl>::cancel(this)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $close(
-            this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString,
-        ) {
+        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString) {
             WebSocket::<$ssl>::close(this, code, reason)
         }
         #[unsafe(no_mangle)]
@@ -2021,8 +2071,13 @@ macro_rules! export_websocket_client {
             secure_ptr: *mut c_void,
         ) -> *mut c_void {
             WebSocket::<$ssl>::init(
-                outgoing, input_socket, global_this, buffered_data,
-                buffered_data_len, deflate_params, secure_ptr,
+                outgoing,
+                input_socket,
+                global_this,
+                buffered_data,
+                buffered_data_len,
+                deflate_params,
+                secure_ptr,
             )
         }
         #[unsafe(no_mangle)]
@@ -2035,8 +2090,12 @@ macro_rules! export_websocket_client {
             deflate_params: Option<&websocket_deflate::Params>,
         ) -> *mut c_void {
             WebSocket::<$ssl>::init_with_tunnel(
-                outgoing, tunnel_ptr, global_this, buffered_data,
-                buffered_data_len, deflate_params,
+                outgoing,
+                tunnel_ptr,
+                global_this,
+                buffered_data,
+                buffered_data_len,
+                deflate_params,
             )
         }
         #[unsafe(no_mangle)]
@@ -2045,19 +2104,22 @@ macro_rules! export_websocket_client {
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $write_binary_data(
-            this: *mut WebSocket<$ssl>, ptr: *const u8, len: usize, op: u8,
+            this: *mut WebSocket<$ssl>,
+            ptr: *const u8,
+            len: usize,
+            op: u8,
         ) {
             WebSocket::<$ssl>::write_binary_data(this, ptr, len, op)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $write_blob(
-            this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8,
-        ) {
+        pub extern "C" fn $write_blob(this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8) {
             WebSocket::<$ssl>::write_blob(this, blob_value, op)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $write_string(
-            this: *mut WebSocket<$ssl>, str_: *const ZigString, op: u8,
+            this: *mut WebSocket<$ssl>,
+            str_: *const ZigString,
+            op: u8,
         ) {
             WebSocket::<$ssl>::write_string(this, str_, op)
         }
@@ -2066,27 +2128,27 @@ macro_rules! export_websocket_client {
 
 export_websocket_client!(
     false,
-    cancel            = Bun__WebSocketClient__cancel,
-    close             = Bun__WebSocketClient__close,
-    finalize          = Bun__WebSocketClient__finalize,
-    init              = Bun__WebSocketClient__init,
-    init_with_tunnel  = Bun__WebSocketClient__initWithTunnel,
-    memory_cost       = Bun__WebSocketClient__memoryCost,
+    cancel = Bun__WebSocketClient__cancel,
+    close = Bun__WebSocketClient__close,
+    finalize = Bun__WebSocketClient__finalize,
+    init = Bun__WebSocketClient__init,
+    init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
+    memory_cost = Bun__WebSocketClient__memoryCost,
     write_binary_data = Bun__WebSocketClient__writeBinaryData,
-    write_blob        = Bun__WebSocketClient__writeBlob,
-    write_string      = Bun__WebSocketClient__writeString,
+    write_blob = Bun__WebSocketClient__writeBlob,
+    write_string = Bun__WebSocketClient__writeString,
 );
 export_websocket_client!(
     true,
-    cancel            = Bun__WebSocketClientTLS__cancel,
-    close             = Bun__WebSocketClientTLS__close,
-    finalize          = Bun__WebSocketClientTLS__finalize,
-    init              = Bun__WebSocketClientTLS__init,
-    init_with_tunnel  = Bun__WebSocketClientTLS__initWithTunnel,
-    memory_cost       = Bun__WebSocketClientTLS__memoryCost,
+    cancel = Bun__WebSocketClientTLS__cancel,
+    close = Bun__WebSocketClientTLS__close,
+    finalize = Bun__WebSocketClientTLS__finalize,
+    init = Bun__WebSocketClientTLS__init,
+    init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
+    memory_cost = Bun__WebSocketClientTLS__memoryCost,
     write_binary_data = Bun__WebSocketClientTLS__writeBinaryData,
-    write_blob        = Bun__WebSocketClientTLS__writeBlob,
-    write_string      = Bun__WebSocketClientTLS__writeString,
+    write_blob = Bun__WebSocketClientTLS__writeBlob,
+    write_string = Bun__WebSocketClientTLS__writeString,
 );
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2442,7 +2504,9 @@ impl<'a> Copy<'a> {
         // `Mask::fill*` don't alias. Zig wrote through one pointer.
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
         let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().expect("infallible: size matches");
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4])
+            .try_into()
+            .expect("infallible: size matches");
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         match self {
@@ -2451,11 +2515,16 @@ impl<'a> Copy<'a> {
                 let encode_into_result = strings::copy_utf16_into_utf8_impl::<true>(to_mask, utf16);
                 debug_assert_eq!(encode_into_result.written as usize, content_byte_len);
                 debug_assert_eq!(encode_into_result.read as usize, utf16.len());
-                header.set_len(WebsocketHeader::pack_length(encode_into_result.written as usize));
+                header.set_len(WebsocketHeader::pack_length(
+                    encode_into_result.written as usize,
+                ));
                 // TODO(port): Zig used std.io.fixedBufferStream + header.writeHeader.
                 // WebsocketHeader::write_header should write into &mut head[..2+len_int].
                 header
-                    .write_header(&mut &mut header_part[..], encode_into_result.written as usize)
+                    .write_header(
+                        &mut &mut header_part[..],
+                        encode_into_result.written as usize,
+                    )
                     .expect("unreachable");
 
                 Mask::fill_in_place(global_this, mask_buf, to_mask);
@@ -2467,9 +2536,14 @@ impl<'a> Copy<'a> {
                 // latin1 can contain non-ascii
                 debug_assert_eq!(encode_into_result.read as usize, latin1.len());
 
-                header.set_len(WebsocketHeader::pack_length(encode_into_result.written as usize));
+                header.set_len(WebsocketHeader::pack_length(
+                    encode_into_result.written as usize,
+                ));
                 header
-                    .write_header(&mut &mut header_part[..], encode_into_result.written as usize)
+                    .write_header(
+                        &mut &mut header_part[..],
+                        encode_into_result.written as usize,
+                    )
                     .expect("unreachable");
                 Mask::fill_in_place(global_this, mask_buf, to_mask);
             }
@@ -2527,7 +2601,9 @@ impl<'a> Copy<'a> {
         // PORT NOTE: reshaped for borrowck — three disjoint regions (see `copy`).
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
         let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().expect("infallible: size matches");
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4])
+            .try_into()
+            .expect("infallible: size matches");
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         header

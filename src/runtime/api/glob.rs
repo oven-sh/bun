@@ -1,16 +1,16 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
+use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
     StringJsc as _, SysErrorJsc as _,
 };
-use bun_jsc::bun_string_jsc;
-use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};
 use bun_paths::resolve_path::join_string_buf;
-use bun_core::String as BunString;
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
@@ -112,7 +112,8 @@ impl ScanOpts {
         if !opts_obj.is_object() {
             if opts_obj.is_string() {
                 {
-                    let result = Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
+                    let result =
+                        Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
                     if !result.is_empty() {
                         out.cwd = Some(result);
                     }
@@ -126,24 +127,44 @@ impl ScanOpts {
         }
 
         if let Some(only_files) = opts_obj.get_truthy(global_this, "onlyFiles")? {
-            out.only_files = if only_files.is_boolean() { only_files.as_boolean() } else { false };
+            out.only_files = if only_files.is_boolean() {
+                only_files.as_boolean()
+            } else {
+                false
+            };
         }
 
-        if let Some(error_on_broken) = opts_obj.get_truthy(global_this, "throwErrorOnBrokenSymlink")? {
-            out.error_on_broken_symlinks = if error_on_broken.is_boolean() { error_on_broken.as_boolean() } else { false };
+        if let Some(error_on_broken) =
+            opts_obj.get_truthy(global_this, "throwErrorOnBrokenSymlink")?
+        {
+            out.error_on_broken_symlinks = if error_on_broken.is_boolean() {
+                error_on_broken.as_boolean()
+            } else {
+                false
+            };
         }
 
         if let Some(follow_symlinks_val) = opts_obj.get_truthy(global_this, "followSymlinks")? {
-            out.follow_symlinks = if follow_symlinks_val.is_boolean() { follow_symlinks_val.as_boolean() } else { false };
+            out.follow_symlinks = if follow_symlinks_val.is_boolean() {
+                follow_symlinks_val.as_boolean()
+            } else {
+                false
+            };
         }
 
         if let Some(absolute_val) = opts_obj.get_truthy(global_this, "absolute")? {
-            out.absolute = if absolute_val.is_boolean() { absolute_val.as_boolean() } else { false };
+            out.absolute = if absolute_val.is_boolean() {
+                absolute_val.as_boolean()
+            } else {
+                false
+            };
         }
 
         if let Some(cwd_val) = opts_obj.get_truthy(global_this, "cwd")? {
             if !cwd_val.is_string() {
-                return Err(global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name)));
+                return Err(
+                    global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name))
+                );
             }
 
             {
@@ -155,7 +176,11 @@ impl ScanOpts {
         }
 
         if let Some(dot) = opts_obj.get_truthy(global_this, "dot")? {
-            out.dot = if dot.is_boolean() { dot.as_boolean() } else { false };
+            out.dot = if dot.is_boolean() {
+                dot.as_boolean()
+            } else {
+                false
+            };
         }
 
         Ok(Some(out))
@@ -180,7 +205,9 @@ impl WalkTaskErr {
     pub fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
-            WalkTaskErr::Unknown(err) => bun_string_jsc::create_utf8_for_js(global_this, err.name().as_bytes()),
+            WalkTaskErr::Unknown(err) => {
+                bun_string_jsc::create_utf8_for_js(global_this, err.name().as_bytes())
+            }
         }
     }
 }
@@ -252,7 +279,10 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
     }
 }
 
-fn glob_walk_result_to_js(glob_walk: &mut GlobWalker, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+fn glob_walk_result_to_js(
+    glob_walk: &mut GlobWalker,
+    global_this: &JSGlobalObject,
+) -> JsResult<JSValue> {
     let keys = glob_walk.matched_paths.keys();
     if keys.is_empty() {
         return JSValue::create_empty_array(global_this, 0);
@@ -343,14 +373,21 @@ impl Glob {
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
         // `arguments` drops at scope exit (was `defer arguments.deinit()`).
         let Some(pat_arg) = arguments.next_eat() else {
-            return Err(global_this.throw(format_args!("Glob.constructor: expected 1 arguments, got 0")));
+            return Err(global_this.throw(format_args!(
+                "Glob.constructor: expected 1 arguments, got 0"
+            )));
         };
 
         if !pat_arg.is_string() {
-            return Err(global_this.throw(format_args!("Glob.constructor: first argument is not a string")));
+            return Err(global_this.throw(format_args!(
+                "Glob.constructor: first argument is not a string"
+            )));
         }
 
-        let pat_str: Box<[u8]> = pat_arg.to_slice_clone(global_this)?.into_vec().into_boxed_slice();
+        let pat_str: Box<[u8]> = pat_arg
+            .to_slice_clone(global_this)?
+            .into_vec()
+            .into_boxed_slice();
 
         Ok(Box::new(Glob {
             pattern: pat_str,
@@ -391,17 +428,18 @@ impl Glob {
         let mut arena = Arena::new();
         // PORT NOTE: GlobWalker::init/init_with_cwd own their allocations (Box) in
         // the Rust port; the arena here is vestigial and only mirrors Zig structure.
-        let glob_walker = match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
-            Err(err) => {
-                drop(arena);
-                return Err(err);
-            }
-            Ok(None) => {
-                drop(arena);
-                return Ok(JSValue::UNDEFINED);
-            }
-            Ok(Some(gw)) => gw,
-        };
+        let glob_walker =
+            match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
+                Err(err) => {
+                    drop(arena);
+                    return Err(err);
+                }
+                Ok(None) => {
+                    drop(arena);
+                    return Ok(JSValue::UNDEFINED);
+                }
+                Ok(Some(gw)) => gw,
+            };
 
         incr_pending_activity_flag(&self.has_pending_activity);
         // PORT NOTE: Zig `catch { decr; deinit; throwOOM }` handled alloc failure.
@@ -421,23 +459,28 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn __scan_sync(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn __scan_sync(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
 
         let mut arena = Arena::new();
-        let mut glob_walker = match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {
-            Err(err) => {
-                drop(arena);
-                return Err(err);
-            }
-            Ok(None) => {
-                drop(arena);
-                return Ok(JSValue::UNDEFINED);
-            }
-            Ok(Some(gw)) => gw,
-        };
+        let mut glob_walker =
+            match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {
+                Err(err) => {
+                    drop(arena);
+                    return Err(err);
+                }
+                Ok(None) => {
+                    drop(arena);
+                    return Ok(JSValue::UNDEFINED);
+                }
+                Ok(Some(gw)) => gw,
+            };
         // Zig: `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
         // drops at scope exit (`GlobWalker::Drop` ≡ `deinit(true)`).
 
@@ -454,7 +497,11 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn r#match(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
         // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
 
@@ -462,17 +509,23 @@ impl Glob {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
         let Some(str_arg) = arguments.next_eat() else {
-            return Err(global_this.throw(format_args!("Glob.matchString: expected 1 arguments, got 0")));
+            return Err(global_this.throw(format_args!(
+                "Glob.matchString: expected 1 arguments, got 0"
+            )));
         };
 
         if !str_arg.is_string() {
-            return Err(global_this.throw(format_args!("Glob.matchString: first argument is not a string")));
+            return Err(global_this.throw(format_args!(
+                "Glob.matchString: first argument is not a string"
+            )));
         }
 
         let str = str_arg.to_slice(global_this)?;
         // `str` drops at scope exit (was `defer str.deinit()`).
 
-        Ok(JSValue::from(bun_glob::r#match(&self.pattern, str.slice()).matches()))
+        Ok(JSValue::from(
+            bun_glob::r#match(&self.pattern, str.slice()).matches(),
+        ))
     }
 }
 

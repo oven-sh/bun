@@ -9,26 +9,29 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 
-use bun_alloc::Arena;
-use crate::bake as bake;
+use super::PatternBuffer;
+use crate::bake;
 use crate::bake::bake_body;
 use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
-use super::PatternBuffer;
-use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
-use bun_bundler::output_file::Index as OutputFileIndex;
+use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
+use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
+use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
+use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
-use bun_jsc::{self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult, StringJsc as _};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
+    StringJsc as _,
+};
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
-use bun_core::{String as BunString};
 
 use crate::cli::command::{Context, HotReload};
 use bun_options_types::context::MacroOptions;
@@ -146,14 +149,20 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.resolver.opts.install =
             install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
+        b.resolver.opts.prefer_offline_install = ctx
+            .debug
+            .offline_mode_setting
+            .unwrap_or(OfflineMode::Online)
+            == OfflineMode::Offline;
         // PORT NOTE: `bun_resolver::options::BundleOptions` has no
         // `prefer_latest_install` field in the Rust port; compute the value once
         // and assign only to `b.options` (which does carry it). The Zig source
         // mirrored it onto resolver.opts but the resolver never reads it.
-        let prefer_latest =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
+        let prefer_latest = ctx
+            .debug
+            .offline_mode_setting
+            .unwrap_or(OfflineMode::Online)
+            == OfflineMode::Latest;
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = prefer_latest;
@@ -233,9 +242,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             let err_value = global.take_exception(jsc::JsError::Thrown);
             // SAFETY: see above.
             unsafe {
-                (*vm_ptr).print_error_like_object_to_console(
-                    err_value.to_error().unwrap_or(err_value),
-                )
+                (*vm_ptr)
+                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
             };
             // SAFETY: see above.
             let vm = unsafe { &mut *vm_ptr };
@@ -371,7 +379,9 @@ pub fn build_with_vm(
     vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
     let jsc_vm = vm.jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
-    let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
+        .unwrap(jsc_vm, UnwrapMode::MarkHandled)
+    {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             let default = BakeGetDefaultExportFromModule(
@@ -380,9 +390,8 @@ pub fn build_with_vm(
             );
 
             if !default.is_object() {
-                return Err(js_err(global
-                    .throw_invalid_arguments(format_args!(
-                        "Your config file's default export must be an object.\n\
+                return Err(js_err(global.throw_invalid_arguments(format_args!(
+                    "Your config file's default export must be an object.\n\
                          \n\
                          Example:\n\
                          {}export default {{\n\
@@ -392,14 +401,13 @@ pub fn build_with_vm(
                          {}}}\n\
                          \n\
                          Learn more at https://bun.com/docs/ssg",
-                        "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    ))));
+                    "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
+                ))));
             }
 
             let Some(app) = default.get(global, "app").map_err(js_err)? else {
-                return Err(js_err(global
-                    .throw_invalid_arguments(format_args!(
-                        "Your config file's default export must contain an \"app\" property.\n\
+                return Err(js_err(global.throw_invalid_arguments(format_args!(
+                    "Your config file's default export must contain an \"app\" property.\n\
                          \n\
                          Example:\n\
                          {}export default {{\n\
@@ -409,8 +417,8 @@ pub fn build_with_vm(
                          {}}}\n\
                          \n\
                          Learn more at https://bun.com/docs/ssg",
-                        "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    ))));
+                    "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
+                ))));
             };
 
             bake_body::UserOptions::from_js(app, global).map_err(js_err)?
@@ -544,7 +552,9 @@ pub fn build_with_vm(
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            let _ = server_transpiler.log().print(std::ptr::from_mut(Output::error_writer()));
+            let _ = server_transpiler
+                .log()
+                .print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
     };
@@ -556,11 +566,8 @@ pub fn build_with_vm(
     let public_path: &[u8] = b"/";
 
     let mut root_dir_buf = PathBuffer::uninit();
-    let root_dir_path = resolve_path::join_abs_string_buf::<platform::Auto>(
-        cwd,
-        &mut root_dir_buf.0,
-        &[b"dist"],
-    );
+    let root_dir_path =
+        resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // PORT NOTE: reshaped for borrowck — copy out so root_dir_buf can drop.
     let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
 
@@ -583,8 +590,8 @@ pub fn build_with_vm(
         else {
             continue;
         };
-        let server_file = entry_points
-            .get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
+        let server_file =
+            entry_points.get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
         let client_file = if let Some(client) = fsr.entry_client {
             Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
         } else {
@@ -679,9 +686,8 @@ pub fn build_with_vm(
 
     // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
     // `OwnedDir` closes the fd on Drop (Zig: `defer root_dir.close()`).
-    let root_dir = bun_sys::OwnedDir::new(
-        bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?,
-    );
+    let root_dir =
+        bun_sys::OwnedDir::new(bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?);
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -692,8 +698,7 @@ pub fn build_with_vm(
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> =
-        vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -702,9 +707,7 @@ pub fn build_with_vm(
             log!(
                 "src_index={:?} side={} src={} dest={} - {:?}\n",
                 file.source_index,
-                file.side
-                    .map(side_name)
-                    .unwrap_or("null"),
+                file.side.map(side_name).unwrap_or("null"),
                 BStr::new(&file.src_path.text),
                 BStr::new(&file.dest_path),
                 file.entry_point_index,
@@ -799,7 +802,8 @@ pub fn build_with_vm(
                             );
 
                             let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
+                            write!(&mut key, "bake:/{}", BStr::new(without_prefix))
+                                .expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
@@ -855,9 +859,12 @@ pub fn build_with_vm(
     pt.attach();
 
     // Static site generator
-    let server_render_funcs = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
-    let server_param_funcs = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
-    let client_entry_urls = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
+    let server_render_funcs =
+        JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
+    let server_param_funcs =
+        JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
+    let client_entry_urls =
+        JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
@@ -866,10 +873,15 @@ pub fn build_with_vm(
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
-            .to_js(global).map_err(js_err)?;
-            client_entry_urls.put_index(global, u32::try_from(i).expect("int cast"), str).map_err(js_err)?;
+            .to_js(global)
+            .map_err(js_err)?;
+            client_entry_urls
+                .put_index(global, u32::try_from(i).expect("int cast"), str)
+                .map_err(js_err)?;
         } else {
-            client_entry_urls.put_index(global, u32::try_from(i).expect("int cast"), JSValue::NULL).map_err(js_err)?;
+            client_entry_urls
+                .put_index(global, u32::try_from(i).expect("int cast"), JSValue::NULL)
+                .map_err(js_err)?;
         }
 
         let server_file = router_type.server_file;
@@ -925,8 +937,20 @@ pub fn build_with_vm(
         } else {
             JSValue::NULL
         };
-        server_render_funcs.put_index(global, u32::try_from(i).expect("int cast"), server_render_func).map_err(js_err)?;
-        server_param_funcs.put_index(global, u32::try_from(i).expect("int cast"), server_param_func).map_err(js_err)?;
+        server_render_funcs
+            .put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                server_render_func,
+            )
+            .map_err(js_err)?;
+        server_param_funcs
+            .put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                server_param_func,
+            )
+            .map_err(js_err)?;
     }
 
     let mut navigatable_routes: Vec<framework_router::RouteIndex> = Vec::new();
@@ -934,7 +958,9 @@ pub fn build_with_vm(
         if route.file_page.is_none() {
             continue;
         }
-        navigatable_routes.push(framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")));
+        navigatable_routes.push(framework_router::RouteIndex::init(
+            u32::try_from(i).expect("int cast"),
+        ));
     }
 
     let mut css_chunk_js_strings: Vec<JSValue> = vec![JSValue::ZERO; css_chunks_count];
@@ -954,32 +980,39 @@ pub fn build_with_vm(
             BStr::new(public_path),
             BStr::new(&output_file.dest_path),
         ))
-        .to_js(global).map_err(js_err)?;
+        .to_js(global)
+        .map_err(js_err)?;
     }
 
     // Route URL patterns with parameter placeholders.
     // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
-    let route_patterns = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_patterns =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // File indices for each route's components (page, layouts).
     // Example: [2, 5, 0] = page at index 2, layout at 5, root layout at 0
-    let route_nested_files = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_nested_files =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Router type index (lower 8 bits) and flags (upper 24 bits).
     // Example: 0x00000001 = router type 1, no flags
-    let route_type_and_flags = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_type_and_flags =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Source file paths relative to project root.
     // Examples: "pages/index.tsx", "pages/blog/[slug].tsx"
-    let route_source_files = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_source_files =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Parameter names for dynamic routes (reversed order), null for static routes.
     // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
-    let route_param_info = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_param_info =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // CSS chunk URLs for each route.
     // Example: ["/assets/main.css", "/assets/blog.css"]
-    let route_style_references = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
+    let route_style_references =
+        JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
@@ -1042,8 +1075,8 @@ pub fn build_with_vm(
                 _ => {}
             }
             if let Some(file) = parent.file_layout {
-                css_file_count +=
-                    u32::try_from(pt.output_file(file).referenced_css_chunks.len()).expect("int cast");
+                css_file_count += u32::try_from(pt.output_file(file).referenced_css_chunks.len())
+                    .expect("int cast");
                 file_count += 1;
             }
             next = parent.parent;
@@ -1056,23 +1089,44 @@ pub fn build_with_vm(
         next = route.parent;
         file_count = 1;
         css_file_count = 0;
-        file_list.put_index(global, 0, pt.preload_bundled_module(main_file_route_index).map_err(js_err)?).map_err(js_err)?;
-        for r#ref in pt.output_file(main_file_route_index).referenced_css_chunks.iter() {
-            styles.put_index(
+        file_list
+            .put_index(
                 global,
-                css_file_count,
-                css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
-            ).map_err(js_err)?;
-            css_file_count += 1;
-        }
-        if let Some(file) = route.file_layout {
-            file_list.put_index(global, file_count, pt.preload_bundled_module(file).map_err(js_err)?).map_err(js_err)?;
-            for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                styles.put_index(
+                0,
+                pt.preload_bundled_module(main_file_route_index)
+                    .map_err(js_err)?,
+            )
+            .map_err(js_err)?;
+        for r#ref in pt
+            .output_file(main_file_route_index)
+            .referenced_css_chunks
+            .iter()
+        {
+            styles
+                .put_index(
                     global,
                     css_file_count,
                     css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
-                ).map_err(js_err)?;
+                )
+                .map_err(js_err)?;
+            css_file_count += 1;
+        }
+        if let Some(file) = route.file_layout {
+            file_list
+                .put_index(
+                    global,
+                    file_count,
+                    pt.preload_bundled_module(file).map_err(js_err)?,
+                )
+                .map_err(js_err)?;
+            for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
+                styles
+                    .put_index(
+                        global,
+                        css_file_count,
+                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
+                    )
+                    .map_err(js_err)?;
                 css_file_count += 1;
             }
             file_count += 1;
@@ -1081,13 +1135,21 @@ pub fn build_with_vm(
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
-                file_list.put_index(global, file_count, pt.preload_bundled_module(file).map_err(js_err)?).map_err(js_err)?;
-                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                    styles.put_index(
+                file_list
+                    .put_index(
                         global,
-                        css_file_count,
-                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
-                    ).map_err(js_err)?;
+                        file_count,
+                        pt.preload_bundled_module(file).map_err(js_err)?,
+                    )
+                    .map_err(js_err)?;
+                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
+                    styles
+                        .put_index(
+                            global,
+                            css_file_count,
+                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
+                        )
+                        .map_err(js_err)?;
                     css_file_count += 1;
                 }
                 file_count += 1;
@@ -1098,53 +1160,80 @@ pub fn build_with_vm(
         // Init the items
         let pattern_string = BunString::clone_utf8(pattern.slice());
         // defer pattern_string.deref() — Drop handles deref
-        route_patterns.put_index(
-            global,
-            u32::try_from(nav_index).expect("int cast"),
-            pattern_string.to_js(global).map_err(js_err)?,
-        ).map_err(js_err)?;
+        route_patterns
+            .put_index(
+                global,
+                u32::try_from(nav_index).expect("int cast"),
+                pattern_string.to_js(global).map_err(js_err)?,
+            )
+            .map_err(js_err)?;
 
         let mut src_path = BunString::clone_utf8(resolve_path::relative(
             cwd,
             pt.input_file(main_file_route_index).abs_path(),
         ));
-        route_source_files.put_index(
-            global,
-            u32::try_from(nav_index).expect("int cast"),
-            jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
-        ).map_err(js_err)?;
-
-        route_nested_files.put_index(global, u32::try_from(nav_index).expect("int cast"), file_list).map_err(js_err)?;
-        route_type_and_flags.put_index(
-            global,
-            u32::try_from(nav_index).expect("int cast"),
-            JSValue::js_number_from_int32(
-                TypeAndFlags::new(
-                    route.r#type.get(),
-                    pt.output_file(main_file_route_index).bake_extra.fully_static,
-                )
-                .bits(),
-            ),
-        ).map_err(js_err)?;
-
-        if !params_buf.is_empty() {
-            let param_info_array = JSValue::create_empty_array(global, params_buf.len()).map_err(js_err)?;
-            for (i, param) in params_buf.iter().enumerate() {
-                param_info_array.put_index(
-                    global,
-                    u32::try_from(params_buf.len() - i - 1).expect("int cast"),
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param).map_err(js_err)?,
-                ).map_err(js_err)?;
-            }
-            route_param_info.put_index(
+        route_source_files
+            .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                param_info_array,
-            ).map_err(js_err)?;
+                jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
+            )
+            .map_err(js_err)?;
+
+        route_nested_files
+            .put_index(
+                global,
+                u32::try_from(nav_index).expect("int cast"),
+                file_list,
+            )
+            .map_err(js_err)?;
+        route_type_and_flags
+            .put_index(
+                global,
+                u32::try_from(nav_index).expect("int cast"),
+                JSValue::js_number_from_int32(
+                    TypeAndFlags::new(
+                        route.r#type.get(),
+                        pt.output_file(main_file_route_index)
+                            .bake_extra
+                            .fully_static,
+                    )
+                    .bits(),
+                ),
+            )
+            .map_err(js_err)?;
+
+        if !params_buf.is_empty() {
+            let param_info_array =
+                JSValue::create_empty_array(global, params_buf.len()).map_err(js_err)?;
+            for (i, param) in params_buf.iter().enumerate() {
+                param_info_array
+                    .put_index(
+                        global,
+                        u32::try_from(params_buf.len() - i - 1).expect("int cast"),
+                        jsc::bun_string_jsc::create_utf8_for_js(global, param).map_err(js_err)?,
+                    )
+                    .map_err(js_err)?;
+            }
+            route_param_info
+                .put_index(
+                    global,
+                    u32::try_from(nav_index).expect("int cast"),
+                    param_info_array,
+                )
+                .map_err(js_err)?;
         } else {
-            route_param_info.put_index(global, u32::try_from(nav_index).expect("int cast"), JSValue::NULL).map_err(js_err)?;
+            route_param_info
+                .put_index(
+                    global,
+                    u32::try_from(nav_index).expect("int cast"),
+                    JSValue::NULL,
+                )
+                .map_err(js_err)?;
         }
-        route_style_references.put_index(global, u32::try_from(nav_index).expect("int cast"), styles).map_err(js_err)?;
+        route_style_references
+            .put_index(global, u32::try_from(nav_index).expect("int cast"), styles)
+            .map_err(js_err)?;
     }
 
     // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
@@ -1208,7 +1297,9 @@ fn load_module(
     //
     let _ = vm;
     let vm_ref = VirtualMachine::get();
-    vm_ref.as_mut().wait_for_promise(AnyPromise::Internal(promise));
+    vm_ref
+        .as_mut()
+        .wait_for_promise(AnyPromise::Internal(promise));
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
@@ -1219,9 +1310,7 @@ fn load_module(
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
-        Unwrapped::Rejected(err) => {
-            Err(js_err(vm_ref.global().throw_value(err)))
-        }
+        Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
     }
 }
 
@@ -1245,7 +1334,8 @@ fn bake_get_on_module_namespace(
         // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
         // carries a caller-side validity precondition.
         #[link_name = "BakeGetOnModuleNamespace"]
-        fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize) -> JSValue;
+        fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize)
+        -> JSValue;
     }
     // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
     // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
@@ -1572,7 +1662,9 @@ impl PerThread {
         load_module(
             self.vm.as_ptr(),
             global,
-            self.module_keys[id.get() as usize].to_js(global).map_err(js_err)?,
+            self.module_keys[id.get() as usize]
+                .to_js(global)
+                .map_err(js_err)?,
         )
     }
 
@@ -1624,7 +1716,9 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
         // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
         // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
-        return pt.bundled_outputs[value.get() as usize].value.to_bun_string_ref();
+        return pt.bundled_outputs[value.get() as usize]
+            .value
+            .to_bun_string_ref();
     }
     BunString::dead()
 }
@@ -1637,7 +1731,9 @@ pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunSt
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize].value.to_bun_string_ref();
+        return pt.bundled_outputs[value.get() as usize]
+            .value
+            .to_bun_string_ref();
     }
     BunString::dead()
 }

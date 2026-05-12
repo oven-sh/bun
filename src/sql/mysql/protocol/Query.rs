@@ -95,17 +95,17 @@ impl<'a> Execute<'a> {
     // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw context
     // and calls `write_internal`. Here `writer` is already wrapped, so forward
     // directly — `write_wrap`'s only job (the wrapping) is done by the caller.
-    pub fn write<C: WriterContext>(
-        &self,
-        writer: NewWriter<C>,
-    ) -> Result<(), bun_core::Error> {
+    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), bun_core::Error> {
         self.write_internal(writer)
     }
 }
 
 // Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
 // concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
-pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(), bun_core::Error> {
+pub fn execute<C: WriterContext>(
+    query: &[u8],
+    writer: NewWriter<C>,
+) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_QUERY as u8)?;

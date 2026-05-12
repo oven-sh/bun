@@ -4,10 +4,10 @@ use bun_alloc::AllocError;
 
 use bun_core::strings;
 
+use crate::RenderOptions;
 use crate::helpers;
 use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
-use crate::RenderOptions;
 
 // TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
 // source buffer for the renderer's lifetime (never freed in Zig `deinit`).
@@ -123,7 +123,9 @@ impl<'src> HtmlRenderer<'src> {
                     if types::is_task_checked(task_mark) {
                         self.write(b"<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>");
                     } else {
-                        self.write(b"<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>");
+                        self.write(
+                            b"<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>",
+                        );
                     }
                 } else {
                     self.write(b"<li>");
@@ -713,7 +715,6 @@ impl RendererImpl for HtmlRenderer<'_> {
         Ok(())
     }
 }
-
 
 /// GFM 6.11: Check if HTML content starts with a disallowed tag.
 /// Disallowed tags have their leading `<` replaced with `&lt;`.

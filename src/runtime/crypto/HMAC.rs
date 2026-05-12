@@ -73,7 +73,8 @@ impl HMAC {
         let mut outlen: c_uint = 0;
         // SAFETY: self.ctx is initialized; out is a valid writable buffer of at least
         // HMAC_size(&self.ctx) bytes (caller invariant, same as Zig).
-        let _ = unsafe { boringssl::HMAC_Final(&raw mut self.ctx, out.as_mut_ptr(), &raw mut outlen) };
+        let _ =
+            unsafe { boringssl::HMAC_Final(&raw mut self.ctx, out.as_mut_ptr(), &raw mut outlen) };
         &mut out[..outlen as usize]
     }
 }

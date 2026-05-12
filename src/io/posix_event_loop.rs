@@ -147,7 +147,13 @@ type KQueueEvent = bun_sys::freebsd::Kevent;
 /// against older/newer libc ABI variants. Start from zeroed and assign.
 #[cfg(target_os = "freebsd")]
 #[inline]
-fn make_kevent(ident: usize, filter: i16, flags: u16, fflags: u32, udata: *mut core::ffi::c_void) -> KQueueEvent {
+fn make_kevent(
+    ident: usize,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    udata: *mut core::ffi::c_void,
+) -> KQueueEvent {
     // SAFETY: all-zero is a valid `struct kevent` (POD).
     let mut ev: KQueueEvent = bun_core::ffi::zeroed();
     ev.ident = ident;
@@ -228,7 +234,10 @@ pub struct Owner {
 }
 
 impl Owner {
-    pub const NULL: Owner = Owner { tag: PollTag::Null, ptr: core::ptr::null_mut() };
+    pub const NULL: Owner = Owner {
+        tag: PollTag::Null,
+        ptr: core::ptr::null_mut(),
+    };
     #[inline]
     pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
         Owner { tag, ptr }
@@ -448,7 +457,8 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx.loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        event_loop_ctx
+            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -487,7 +497,10 @@ impl FilePoll {
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(loop_, self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        loop_sub_active(
+            loop_,
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -502,7 +515,10 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(loop_, (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+            loop_add_active(
+                loop_,
+                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+            );
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -549,7 +565,12 @@ impl FilePoll {
         poll
     }
 
-    pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
+    pub fn init_with_owner(
+        vm: EventLoopCtx,
+        fd: Fd,
+        flags: FlagsSet,
+        owner: Owner,
+    ) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
         let poll = vm.alloc_file_poll(value).as_ptr();
@@ -606,7 +627,11 @@ impl FilePoll {
         self.register_with_fd(
             loop_,
             flag,
-            if one_shot { OneShotFlag::OneShot } else { OneShotFlag::None },
+            if one_shot {
+                OneShotFlag::OneShot
+            } else {
+                OneShotFlag::None
+            },
             self.fd,
         )
     }
@@ -701,7 +726,7 @@ impl FilePoll {
         }
         #[cfg(target_os = "macos")]
         {
-            use bun_sys::darwin::{kevent64_s, EV, EVFILT, NOTE};
+            use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64_s};
             // SAFETY: all-zero is a valid kevent64_s
             let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
             let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
@@ -801,7 +826,7 @@ impl FilePoll {
         }
         #[cfg(target_os = "freebsd")]
         {
-            use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
+            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 1] = bun_core::ffi::zeroed();
             let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
@@ -815,14 +840,24 @@ impl FilePoll {
             let ident = usize::try_from(fd.native()).expect("int cast");
             let udata = Pollable::init(self).ptr();
             changelist[0] = match flag {
-                Flags::Readable => make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata),
-                Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::ADD | one_shot_flag, 0, udata),
-                Flags::Process => make_kevent(ident, EVFILT::PROC, EV::ADD | one_shot_flag, NOTE::EXIT, udata),
+                Flags::Readable => {
+                    make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata)
+                }
+                Flags::Writable => {
+                    make_kevent(ident, EVFILT::WRITE, EV::ADD | one_shot_flag, 0, udata)
+                }
+                Flags::Process => make_kevent(
+                    ident,
+                    EVFILT::PROC,
+                    EV::ADD | one_shot_flag,
+                    NOTE::EXIT,
+                    udata,
+                ),
                 Flags::Machport => {
                     return sys::Result::Err(sys::Error::from_code(
                         sys::E::EOPNOTSUPP,
                         sys::Tag::kevent,
-                    ))
+                    ));
                 }
                 _ => unreachable!(),
             };
@@ -892,7 +927,10 @@ impl FilePoll {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
-        let result: sys::Result<()> = { let _ = (fd, force_unregister); sys::Result::Ok(()) };
+        let result: sys::Result<()> = {
+            let _ = (fd, force_unregister);
+            sys::Result::Ok(())
+        };
         self.deactivate(loop_);
         result
     }
@@ -963,7 +1001,9 @@ impl FilePoll {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
             // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut()) };
+            let ctl = unsafe {
+                linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
+            };
 
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 return errno;
@@ -971,7 +1011,7 @@ impl FilePoll {
         }
         #[cfg(target_os = "macos")]
         {
-            use bun_sys::darwin::{kevent64, kevent64_s, EV, EVFILT, NOTE};
+            use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64, kevent64_s};
             // SAFETY: all-zero is a valid kevent64_s
             let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
 
@@ -1074,7 +1114,7 @@ impl FilePoll {
         }
         #[cfg(target_os = "freebsd")]
         {
-            use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
+            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 2] = bun_core::ffi::zeroed();
             let ident = usize::try_from(fd.native()).expect("int cast");
@@ -1363,7 +1403,10 @@ impl Store {
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
         );
-        vm.set_after_event_loop_callback(Some(callback), std::ptr::from_mut::<Store>(self).cast::<c_void>());
+        vm.set_after_event_loop_callback(
+            Some(callback),
+            std::ptr::from_mut::<Store>(self).cast::<c_void>(),
+        );
     }
 
     // Safe fn item: module-private thunk, only coerced to the C-ABI
@@ -1398,12 +1441,16 @@ impl Pollable {
 
     #[inline]
     pub fn init(ptr: *const crate::FilePoll) -> Self {
-        Self { repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG) }
+        Self {
+            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+        }
     }
 
     #[inline]
     pub fn from(val: *mut c_void) -> Self {
-        Self { repr: bun_collections::TaggedPointer::from(val) }
+        Self {
+            repr: bun_collections::TaggedPointer::from(val),
+        }
     }
 
     #[inline]
@@ -1425,7 +1472,12 @@ impl Pollable {
 // `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
 // on Windows the libuv loop drives readiness, so this entry point is never
 // linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "freebsd"
+))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
@@ -1456,7 +1508,10 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec { tv_sec: 0, tv_nsec: 0 };
+static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
+    tv_sec: 0,
+    tv_nsec: 0,
+};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1468,7 +1523,6 @@ pub enum OneShotFlag {
 
 const INVALID_FD: Fd = Fd::INVALID;
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Waker / Closer — canonical impls live in this crate's `mod waker` /
 // `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
@@ -1478,11 +1532,11 @@ const INVALID_FD: Fd = Fd::INVALID;
 // the `bun_io::*` shim) keep resolving for downstream callers.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use crate::waker::Waker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::LinuxWaker;
+pub use crate::closer::Closer;
 #[cfg(target_os = "macos")]
 pub use crate::waker::KEventWaker;
-pub use crate::closer::Closer;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+pub use crate::waker::LinuxWaker;
+pub use crate::waker::Waker;
 
 // ported from: src/aio/posix_event_loop.zig

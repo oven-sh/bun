@@ -6,13 +6,13 @@
 
 use bstr::BStr;
 use bun_bundler::options;
-use bun_core::{self, env_var, Global, Output};
-use bun_options_types::command_tag::{Tag as CommandTag, ALWAYS_LOADS_CONFIG};
-use bun_options_types::context::Context;
-use bun_paths::resolve_path::{self, platform};
-use bun_paths::PathBuffer;
-use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 use bun_core::ZStr;
+use bun_core::{self, Global, Output, env_var};
+use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
+use bun_options_types::context::Context;
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
+use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::Bunfig;
 
@@ -42,23 +42,21 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    let source = match bun_ast::to_source(
-        config_path,
-        bun_ast::ToSourceOptions { convert_bom: true },
-    ) {
-        Ok(s) => s,
-        Err(err) => {
-            if auto_loaded {
-                return Ok(());
+    let source =
+        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
+            Ok(s) => s,
+            Err(err) => {
+                if auto_loaded {
+                    return Ok(());
+                }
+                Output::pretty_errorln(format_args!(
+                    "{}\nwhile reading config \"{}\"",
+                    err,
+                    BStr::new(config_path.as_bytes()),
+                ));
+                Global::exit(1);
             }
-            Output::pretty_errorln(format_args!(
-                "{}\nwhile reading config \"{}\"",
-                err,
-                BStr::new(config_path.as_bytes()),
-            ));
-            Global::exit(1);
-        }
-    };
+        };
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();
@@ -145,9 +143,9 @@ pub fn load_config(
     if user_config_path_.is_none() {
         if let Some(graph) = StandaloneModuleGraph::get() {
             // SAFETY: `get()` returns a non-null process-global pointer when Some.
-            if unsafe { (*graph).flags }
-                .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG)
-            {
+            if unsafe { (*graph).flags }.contains(
+                bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG,
+            ) {
                 return Ok(());
             }
         }

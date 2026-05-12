@@ -1,10 +1,10 @@
-use bun_core::{strings, MutableString};
 use bun_ast::{Loc, Source};
-use bun_paths::{fs::FileSystem, PathBuffer};
+use bun_core::{MutableString, strings};
+use bun_paths::{PathBuffer, fs::FileSystem};
 
 use crate::{
-    append_mapping_to_buffer, internal_source_map, line_offset_table, InternalSourceMap,
-    LineOffsetTable, SourceMapState,
+    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
+    internal_source_map, line_offset_table,
 };
 
 #[derive(Clone)]
@@ -418,8 +418,9 @@ impl NewBuilder<VLQSourceMap> {
     // generated line and column numbers
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
-        let mut needs_mapping =
-            self.cover_lines_without_mappings && !self.line_starts_with_mapping && self.has_prev_state;
+        let mut needs_mapping = self.cover_lines_without_mappings
+            && !self.line_starts_with_mapping
+            && self.has_prev_state;
 
         let mut i: usize = 0;
         let n: usize = slice.len();
@@ -438,9 +439,10 @@ impl NewBuilder<VLQSourceMap> {
 
             match c {
                 14..=127 => {
-                    if let Some(j) =
-                        strings::index_of_newline_or_non_ascii(slice, u32::try_from(i).expect("int cast"))
-                    {
+                    if let Some(j) = strings::index_of_newline_or_non_ascii(
+                        slice,
+                        u32::try_from(i).expect("int cast"),
+                    ) {
                         self.generated_column +=
                             i32::try_from((j as usize - i) + 1).expect("int cast");
                         i = j as usize;
@@ -477,7 +479,9 @@ impl NewBuilder<VLQSourceMap> {
                     self.prev_state.generated_line += 1;
                     self.prev_state.generated_column = 0;
                     self.generated_column = 0;
-                    self.source_map.append_line_separator().expect("unreachable");
+                    self.source_map
+                        .append_line_separator()
+                        .expect("unreachable");
 
                     // This new line doesn't have a mapping yet
                     self.line_starts_with_mapping = false;

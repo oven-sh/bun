@@ -4,9 +4,9 @@ use core::cmp::Ordering;
 use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_install::{Dependency, Lockfile, PackageManager};
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
+use bun_install::{Dependency, Lockfile, PackageManager};
 // PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
 // but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
 // the lower-tier `bun_ast::js_ast` shape (re-exported via `crate::bun_json`).
@@ -34,7 +34,10 @@ pub struct CatalogMap {
 /// (not on `bun_semver::String`) to avoid a `bun_semver → bun_install` back-edge.
 #[inline]
 fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
-    ArrayHashContext { arg_buf: buf, existing_buf: buf }
+    ArrayHashContext {
+        arg_buf: buf,
+        existing_buf: buf,
+    }
 }
 
 impl CatalogMap {
@@ -100,7 +103,10 @@ impl CatalogMap {
 
         self.groups.get_ptr_adapted(
             &catalog_name,
-            ArrayHashContext { arg_buf: catalog_name_buf, existing_buf: map_buf },
+            ArrayHashContext {
+                arg_buf: catalog_name_buf,
+                existing_buf: map_buf,
+            },
         )
     }
 
@@ -112,8 +118,16 @@ impl CatalogMap {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
                     let key = item.key.as_ref().expect("infallible: prop has key");
-                    builder.count(key.as_utf8_string_literal().expect("infallible: is_string checked"));
-                    if let ExprData::EString(version_str) = &item.value.as_ref().expect("infallible: prop has value").data {
+                    builder.count(
+                        key.as_utf8_string_literal()
+                            .expect("infallible: is_string checked"),
+                    );
+                    if let ExprData::EString(version_str) = &item
+                        .value
+                        .as_ref()
+                        .expect("infallible: prop has value")
+                        .data
+                    {
                         builder.count(&version_str.data);
                     }
                 }
@@ -124,13 +138,23 @@ impl CatalogMap {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
                     let catalog_key = catalog.key.as_ref().unwrap();
-                    builder.count(catalog_key.as_utf8_string_literal().expect("infallible: is_string checked"));
+                    builder.count(
+                        catalog_key
+                            .as_utf8_string_literal()
+                            .expect("infallible: is_string checked"),
+                    );
                     if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
                             let key = item.key.as_ref().expect("infallible: prop has key");
-                            builder.count(key.as_utf8_string_literal().expect("infallible: is_string checked"));
-                            if let ExprData::EString(version_str) =
-                                &item.value.as_ref().expect("infallible: prop has value").data
+                            builder.count(
+                                key.as_utf8_string_literal()
+                                    .expect("infallible: is_string checked"),
+                            );
+                            if let ExprData::EString(version_str) = &item
+                                .value
+                                .as_ref()
+                                .expect("infallible: prop has value")
+                                .data
                             {
                                 builder.count(&version_str.data);
                             }
@@ -162,7 +186,9 @@ impl CatalogMap {
                 for item in obj.properties.slice() {
                     let key = item.key.as_ref().expect("infallible: prop has key");
                     let value = item.value.as_ref().expect("infallible: prop has value");
-                    let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
+                    let dep_name_str = key
+                        .as_utf8_string_literal()
+                        .expect("infallible: is_string checked");
 
                     let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                     let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
@@ -181,11 +207,7 @@ impl CatalogMap {
                             &mut *log,
                             Some(&mut *pm),
                         ) else {
-                            log.add_error(
-                                Some(source),
-                                value.loc,
-                                b"Invalid dependency version",
-                            );
+                            log.add_error(Some(source), value.loc, b"Invalid dependency version");
                             continue;
                         };
 
@@ -214,7 +236,9 @@ impl CatalogMap {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
                     let catalog_key = catalog.key.as_ref().unwrap();
-                    let catalog_name_str = catalog_key.as_utf8_string_literal().expect("infallible: is_string checked");
+                    let catalog_name_str = catalog_key
+                        .as_utf8_string_literal()
+                        .expect("infallible: is_string checked");
                     let catalog_name = builder.append::<String>(catalog_name_str);
 
                     let group =
@@ -224,13 +248,14 @@ impl CatalogMap {
                         for item in obj.properties.slice() {
                             let key = item.key.as_ref().expect("infallible: prop has key");
                             let value = item.value.as_ref().expect("infallible: prop has value");
-                            let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
+                            let dep_name_str = key
+                                .as_utf8_string_literal()
+                                .expect("infallible: is_string checked");
                             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                             let dep_name =
                                 builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
                             if let ExprData::EString(version_str) = &value.data {
-                                let version_literal =
-                                    builder.append::<String>(&version_str.data);
+                                let version_literal = builder.append::<String>(&version_str.data);
                                 let buf = builder.string_bytes.as_slice();
                                 let version_sliced = version_literal.sliced(buf);
 
@@ -254,11 +279,7 @@ impl CatalogMap {
                                 let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                                 if entry.found_existing {
-                                    log.add_error(
-                                        Some(source),
-                                        key.loc,
-                                        b"Duplicate catalog",
-                                    );
+                                    log.add_error(Some(source), key.loc, b"Duplicate catalog");
                                     continue;
                                 }
 
@@ -311,8 +332,7 @@ impl CatalogMap {
                 )?;
             } else {
                 let group_name = string_buf.append(group_name_str)?;
-                let group =
-                    catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
+                let group = catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
                 put_entries_from_pnpm_lockfile(group, log, entries_obj, string_buf)?;
             }
         }
@@ -336,9 +356,10 @@ impl CatalogMap {
             catalog.sort(dep_less_than);
         }
 
-        self.groups.sort(|names: &[String], _: &[Map], l: usize, r: usize| -> bool {
-            names[l].order(&names[r], buf, buf) == Ordering::Less
-        });
+        self.groups
+            .sort(|names: &[String], _: &[Map], l: usize, r: usize| -> bool {
+                names[l].order(&names[r], buf, buf) == Ordering::Less
+            });
     }
 
     // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
@@ -380,7 +401,9 @@ impl CatalogMap {
     ) -> Result<CatalogMap, bun_core::Error> {
         let mut new_catalog = CatalogMap::default();
 
-        new_catalog.default.ensure_total_capacity(self.default.count())?;
+        new_catalog
+            .default
+            .ensure_total_capacity(self.default.count())?;
 
         // Zig re-reads `new.buffers.string_bytes.items` at every
         // `putAssumeCapacityContext` call. Mirror that here: per insert,
@@ -399,7 +422,9 @@ impl CatalogMap {
             );
         }
 
-        new_catalog.groups.ensure_total_capacity(self.groups.count())?;
+        new_catalog
+            .groups
+            .ensure_total_capacity(self.groups.count())?;
 
         for (catalog_name, deps) in self.groups.keys().iter().zip(self.groups.values()) {
             let mut new_group = Map::default();

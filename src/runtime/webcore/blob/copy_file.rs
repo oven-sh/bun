@@ -5,23 +5,22 @@ use core::marker::ConstParamTy;
 #[cfg(windows)]
 use core::mem::offset_of;
 
+use crate::node::fs as node_fs;
+use crate::node::types::PathLikeExt as _;
+#[allow(unused_imports)]
+use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, Store, StoreRef, store};
+use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
-use crate::node::fs as node_fs;
-#[allow(unused_imports)]
-use crate::webcore::blob::{self, SizeType, Store, StoreRef, store, MkdirpTarget, Retry, MAX_SIZE};
-use crate::webcore::node_types::PathOrFileDescriptor;
-use crate::node::types::PathLikeExt as _;
-use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
-#[cfg(windows)]
-use bun_sys::windows::libuv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
+use bun_sys::windows::libuv;
+use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
+#[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
-
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
 // the same Zig `jsc.SystemError` extern struct; map field-by-field because the
@@ -75,9 +74,15 @@ pub type ResultType = Result<SizeType, bun_core::Error>;
 pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
 impl MkdirpTarget for CopyFile<'_> {
-    fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
-    fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
-    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+    fn mkdirp_if_not_exists(&self) -> bool {
+        self.mkdirp_if_not_exists
+    }
+    fn set_mkdirp_if_not_exists(&mut self, v: bool) {
+        self.mkdirp_if_not_exists = v;
+    }
+    fn set_system_error(&mut self, e: SystemError) {
+        self.system_error = Some(e);
+    }
 }
 
 impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
@@ -124,12 +129,11 @@ impl<'a> CopyFile<'a> {
 
     pub fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         let global_this = self.global_this;
-        let mut system_error: SystemError = self
-            .system_error
-            .take()
-            .unwrap_or_default();
-        if matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Path(_))
-            && system_error.path.is_empty()
+        let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
+        if matches!(
+            self.source_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        ) && system_error.path.is_empty()
         {
             system_error.path =
                 bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
@@ -154,7 +158,10 @@ impl<'a> CopyFile<'a> {
             return self.reject(promise);
         }
 
-        promise.resolve(self.global_this, JSValue::js_number_from_uint64(self.read_len as u64))
+        promise.resolve(
+            self.global_this,
+            JSValue::js_number_from_uint64(self.read_len as u64),
+        )
     }
 
     pub fn run(&mut self) {
@@ -166,10 +173,8 @@ impl<'a> CopyFile<'a> {
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Fd(_)
         ) && self.destination_fd != Fd::INVALID;
-        let close_output = !matches!(
-            self.source_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) && self.source_fd != Fd::INVALID;
+        let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
+            && self.source_fd != Fd::INVALID;
 
         // Apply destination mode using fchmod before closing (for POSIX platforms)
         // This ensures mode is applied even when overwriting existing files, since
@@ -221,12 +226,18 @@ impl<'a> CopyFile<'a> {
         // if it fails, we don't want the extra destination file hanging out
         if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
             self.source_fd = match bun_sys::open(
-                self.source_file_store.pathlike.path().slice_z(&mut path_buf1),
+                self.source_file_store
+                    .pathlike
+                    .path()
+                    .slice_z(&mut path_buf1),
                 OPEN_SOURCE_FLAGS,
                 0,
             ) {
                 bun_sys::Result::Ok(result) => {
-                    match result.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
+                    match result.make_lib_uv_owned_for_syscall(
+                        bun_sys::Tag::open,
+                        bun_sys::ErrorCase::CloseOnFail,
+                    ) {
                         bun_sys::Result::Ok(result_fd) => result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
@@ -257,7 +268,10 @@ impl<'a> CopyFile<'a> {
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
-                        match result.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
+                        match result.make_lib_uv_owned_for_syscall(
+                            bun_sys::Tag::open,
+                            bun_sys::ErrorCase::CloseOnFail,
+                        ) {
                             bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
@@ -266,7 +280,8 @@ impl<'a> CopyFile<'a> {
                         }
                     }
                     bun_sys::Result::Err(errno) => {
-                        match blob::mkdir_if_not_exists(self, errno.clone(), dest, dest.as_bytes()) {
+                        match blob::mkdir_if_not_exists(self, errno.clone(), dest, dest.as_bytes())
+                        {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 if matches!(WHICH, IOWhich::Both) {
@@ -349,7 +364,10 @@ impl<'a> CopyFile<'a> {
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                     let _ = unsafe {
-                        libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
+                        libc::ftruncate(
+                            dest_fd.native(),
+                            i64::try_from(total_written).expect("int cast"),
+                        )
                     };
                     return Ok(());
                 }
@@ -374,7 +392,14 @@ impl<'a> CopyFile<'a> {
                 }
                 TryWith::Sendfile => {
                     // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe { linux::sendfile(dest_fd.native(), src_fd.native(), core::ptr::null_mut(), remain) }
+                    unsafe {
+                        linux::sendfile(
+                            dest_fd.native(),
+                            src_fd.native(),
+                            core::ptr::null_mut(),
+                            remain,
+                        )
+                    }
                 }
                 TryWith::Splice => {
                     // SAFETY: raw splice(2); both fds owned by caller, null offsets.
@@ -400,8 +425,8 @@ impl<'a> CopyFile<'a> {
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
                     match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
                         src_fd,
                         dest_fd,
                         if unknown_size { 0 } else { remain },
@@ -414,7 +439,10 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                             let _ = unsafe {
-                                libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
+                                libc::ftruncate(
+                                    dest_fd.native(),
+                                    i64::try_from(total_written).expect("int cast"),
+                                )
                             };
                             return Ok(());
                         }
@@ -431,7 +459,8 @@ impl<'a> CopyFile<'a> {
                             // this messes up sendfile()
                             has_unset_append = true;
                             // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                            let flags = unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
+                            let flags =
+                                unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
                             if (flags & bun_sys::O::APPEND) != 0 {
                                 // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
                                 let _ = unsafe {
@@ -453,8 +482,8 @@ impl<'a> CopyFile<'a> {
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+                            bun_core::ZStr::EMPTY,
+                            bun_core::ZStr::EMPTY,
                             src_fd,
                             dest_fd,
                             if unknown_size { 0 } else { remain },
@@ -467,7 +496,10 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                 let _ = unsafe {
-                                    libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
+                                    libc::ftruncate(
+                                        dest_fd.native(),
+                                        i64::try_from(total_written).expect("int cast"),
+                                    )
                                 };
                                 return Ok(());
                             }
@@ -510,13 +542,15 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_fcopy_file_with_read_write_loop_fallback(
-        &mut self,
-    ) -> Result<(), bun_core::Error> {
+    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), bun_core::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
-            bun_sys::darwin::COPYFILE { data: true, ..Default::default() }.bits(),
+            bun_sys::darwin::COPYFILE {
+                data: true,
+                ..Default::default()
+            }
+            .bits(),
         ) {
             bun_sys::Result::Err(errno) => {
                 match errno.get_errno() {
@@ -530,8 +564,8 @@ impl<'a> CopyFile<'a> {
 
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+                            bun_core::ZStr::EMPTY,
+                            bun_core::ZStr::EMPTY,
                             self.source_fd,
                             self.destination_fd,
                             0,
@@ -575,7 +609,10 @@ impl<'a> CopyFile<'a> {
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
             let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
             match bun_sys::clonefile(
-                self.source_file_store.pathlike.path().slice_z(&mut source_buf),
+                self.source_file_store
+                    .pathlike
+                    .path()
+                    .slice_z(&mut source_buf),
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
@@ -636,7 +673,10 @@ impl<'a> CopyFile<'a> {
                             // stat the output file, make sure it:
                             // 1. Exists
                             match bun_sys::stat(
-                                self.source_file_store.pathlike.path().slice_z(&mut path_buf),
+                                self.source_file_store
+                                    .pathlike
+                                    .path()
+                                    .slice_z(&mut path_buf),
                             ) {
                                 bun_sys::Result::Ok(result) => {
                                     stat_ = Some(result);
@@ -679,7 +719,8 @@ impl<'a> CopyFile<'a> {
                                         self.read_len =
                                             SizeType::try_from(self.max_length).expect("int cast");
                                     } else {
-                                        self.read_len = SizeType::try_from(stat_size).expect("int cast");
+                                        self.read_len =
+                                            SizeType::try_from(stat_size).expect("int cast");
                                     }
                                     // Apply destination mode if specified (clonefile copies source permissions)
                                     if let Some(mode) = self.destination_mode {
@@ -763,8 +804,10 @@ impl<'a> CopyFile<'a> {
             }
 
             if stat.st_size != 0 {
-                self.max_length = (SizeType::try_from(stat.st_size).expect("int cast").min(self.max_length))
-                    .max(self.offset)
+                self.max_length = (SizeType::try_from(stat.st_size)
+                    .expect("int cast")
+                    .min(self.max_length))
+                .max(self.offset)
                     - self.offset;
                 if self.max_length == 0 {
                     self.do_close();
@@ -860,8 +903,8 @@ impl<'a> CopyFile<'a> {
             {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+                    bun_core::ZStr::EMPTY,
+                    bun_core::ZStr::EMPTY,
                     self.source_fd,
                     self.destination_fd,
                     0,
@@ -881,8 +924,7 @@ impl<'a> CopyFile<'a> {
                         self.destination_fd,
                         i64::try_from(self.max_length).expect("int cast"),
                     );
-                    self.read_len =
-                        total_written.min(self.max_length as u64) as SizeType;
+                    self.read_len = total_written.min(self.max_length as u64) as SizeType;
                 } else {
                     self.read_len = total_written as SizeType;
                 }
@@ -996,7 +1038,10 @@ impl Default for ReadWriteLoop {
             written: 0,
             read_buf: Vec::new(),
             // Zig: `.{ .base = undefined, .len = 0 }`
-            uv_buf: libuv::uv_buf_t { len: 0, base: core::ptr::null_mut() },
+            uv_buf: libuv::uv_buf_t {
+                len: 0,
+                base: core::ptr::null_mut(),
+            },
         }
     }
 }
@@ -1108,7 +1153,12 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     let rc = this.io_request.result;
 
-    bun_sys::syslog!("uv_fs_read({}, {}) = {}", source_fd, read_buf.len(), rc.int());
+    bun_sys::syslog!(
+        "uv_fs_read({}, {}) = {}",
+        source_fd,
+        read_buf.len(),
+        rc.int()
+    );
     if let Some(err) = rc.to_error(bun_sys::Tag::read) {
         this.err = Some(err);
         this.on_read_write_loop_complete();
@@ -1162,7 +1212,12 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
     let rc = this.io_request.result;
 
-    bun_sys::syslog!("uv_fs_write({}, {}) = {}", destination_fd, buf_len, rc.int());
+    bun_sys::syslog!(
+        "uv_fs_write({}, {}) = {}",
+        destination_fd,
+        buf_len,
+        rc.int()
+    );
 
     if let Some(err) = rc.to_error(bun_sys::Tag::write) {
         this.err = Some(err);
@@ -1319,7 +1374,11 @@ impl<'a> CopyFileWindows<'a> {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self.destination_file_store.data_mut().as_file_mut().pathlike,
+            &mut self
+                .destination_file_store
+                .data_mut()
+                .as_file_mut()
+                .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1383,7 +1442,10 @@ impl<'a> CopyFileWindows<'a> {
         let new_path: &bun_core::ZStr = 'brk: {
             match &destination_file_store.pathlike {
                 PathOrFileDescriptor::Path(_) => {
-                    break 'brk destination_file_store.pathlike.path().slice_z(&mut pathbuf1);
+                    break 'brk destination_file_store
+                        .pathlike
+                        .path()
+                        .slice_z(&mut pathbuf1);
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
@@ -1780,9 +1842,10 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-    ));
+    this.event_loop
+        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
+            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+        ));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1816,7 +1879,8 @@ fn unsupported_non_regular_file_error() -> SystemError {
 // TODO(port): Zig had these as `const` values; SystemError contains bun.String which
 // is not const-constructible in Rust. Using fns here. Phase B: consider lazy_static.
 
-pub type CopyFilePromiseTask<'a> = jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
+pub type CopyFilePromiseTask<'a> =
+    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
 // TODO(port): Zig `CopyFilePromiseTask.EventLoopTask` — exact Rust associated-type
 // path depends on bun_jsc::ConcurrentPromiseTask shape; using `jsc::EventLoopTask` for now.
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;

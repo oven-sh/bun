@@ -11,8 +11,8 @@ use core::ffi::{c_char, c_int, c_ushort, c_void};
 use core::ptr;
 
 use crate::{
-    us_bun_verify_error_t, us_socket_t, ConnectingSocket, ListenSocket, Loop, SocketKind, SslCtx,
-    LIBUS_SOCKET_DESCRIPTOR,
+    ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, SocketKind, SslCtx,
+    us_bun_verify_error_t, us_socket_t,
 };
 
 #[repr(C)]
@@ -41,17 +41,21 @@ pub struct SocketGroup {
 
 #[repr(C)]
 pub struct VTable {
-    pub on_open: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut u8, c_int) -> *mut us_socket_t>,
+    pub on_open:
+        Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut u8, c_int) -> *mut us_socket_t>,
     pub on_data: Option<unsafe extern "C" fn(*mut us_socket_t, *mut u8, c_int) -> *mut us_socket_t>,
     pub on_fd: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
     pub on_writable: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_close: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
+    pub on_close:
+        Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
     pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
-    pub on_connecting_error: Option<unsafe extern "C" fn(*mut ConnectingSocket, c_int) -> *mut ConnectingSocket>,
-    pub on_handshake: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, us_bun_verify_error_t, *mut c_void)>,
+    pub on_connecting_error:
+        Option<unsafe extern "C" fn(*mut ConnectingSocket, c_int) -> *mut ConnectingSocket>,
+    pub on_handshake:
+        Option<unsafe extern "C" fn(*mut us_socket_t, c_int, us_bun_verify_error_t, *mut c_void)>,
 }
 
 // Must match `struct us_socket_group_t` in libusockets.h.
@@ -72,11 +76,15 @@ unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
 unsafe impl bun_core::ffi::Zeroable for VTable {}
 
 impl Default for SocketGroup {
-    fn default() -> Self { bun_core::ffi::zeroed() }
+    fn default() -> Self {
+        bun_core::ffi::zeroed()
+    }
 }
 
 impl Default for VTable {
-    fn default() -> Self { bun_core::ffi::zeroed() }
+    fn default() -> Self {
+        bun_core::ffi::zeroed()
+    }
 }
 
 pub enum ConnectResult {
@@ -274,7 +282,14 @@ impl SocketGroup {
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
         unsafe {
-            us_socket_from_fd(self, kind as u8, ssl_ctx.unwrap_or(ptr::null_mut()), socket_ext_size, fd, ipc as c_int)
+            us_socket_from_fd(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                socket_ext_size,
+                fd,
+                ipc as c_int,
+            )
         }
     }
 

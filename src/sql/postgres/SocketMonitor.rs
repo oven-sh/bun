@@ -50,7 +50,10 @@ macro_rules! debug_socket_monitor {
 
 #[cfg(debug_assertions)]
 mod debug_socket_monitor_writer {
-    debug_socket_monitor!(bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR, "writing to {}");
+    debug_socket_monitor!(
+        bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+        "writing to {}"
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -62,7 +65,11 @@ mod debug_socket_monitor_reader {
 }
 
 pub fn write(data: &[u8]) {
-    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: write {}", bun_core::fmt::hex_lower(data));
+    bun_core::scoped_log!(
+        SocketMonitor,
+        "SocketMonitor: write {}",
+        bun_core::fmt::hex_lower(data)
+    );
     #[cfg(debug_assertions)]
     {
         debug_socket_monitor_writer::CHECK.call_once(debug_socket_monitor_writer::load);
@@ -73,7 +80,11 @@ pub fn write(data: &[u8]) {
 }
 
 pub fn read(data: &[u8]) {
-    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: read {}", bun_core::fmt::hex_lower(data));
+    bun_core::scoped_log!(
+        SocketMonitor,
+        "SocketMonitor: read {}",
+        bun_core::fmt::hex_lower(data)
+    );
     #[cfg(debug_assertions)]
     {
         debug_socket_monitor_reader::CHECK.call_once(debug_socket_monitor_reader::load);

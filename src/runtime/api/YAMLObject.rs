@@ -1,21 +1,24 @@
 use bun_collections::VecExt;
 use core::ffi::c_void;
 
+use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_parsers::yaml::{YamlParseError, YAML};
-use bun_jsc::{
-    self as jsc, wtf, CallFrame, JSGlobalObject, JSPropertyIterator,
-    JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer,
-};
-use bun_ast::{expr::Data as ExprData, Expr};
 use bun_core::{OwnedString, String as BunString};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    JsError, JsResult, MarkedArgumentBuffer, wtf,
+};
+use bun_parsers::yaml::{YAML, YamlParseError};
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(global_this, &[
-        ("parse", __jsc_host_parse, 1),
-        ("stringify", __jsc_host_stringify, 3),
-    ])
+    jsc::create_host_function_object(
+        global_this,
+        &[
+            ("parse", __jsc_host_parse, 1),
+            ("stringify", __jsc_host_stringify, 3),
+        ],
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -122,7 +125,11 @@ impl Default for AnchorAlias {
         // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
         // left it `undefined`; this is the closest legal Rust equivalent and is
         // immediately overwritten by the caller (see `find_anchors_and_aliases`).
-        AnchorAlias { anchored: false, used: false, name: AnchorAliasName::Root }
+        AnchorAlias {
+            anchored: false,
+            used: false,
+            name: AnchorAliasName::Root,
+        }
     }
 }
 
@@ -570,7 +577,8 @@ impl Stringifier {
             Space::Number(space_num) => {
                 let space_num = *space_num as usize;
                 self.builder.append_lchar(b'\n');
-                self.builder.ensure_unused_capacity(indent_count * space_num);
+                self.builder
+                    .ensure_unused_capacity(indent_count * space_num);
                 for _ in 0..indent_count * space_num {
                     self.builder.append_lchar(b' ');
                 }
@@ -635,10 +643,10 @@ impl Stringifier {
                 0x22 => self.builder.append_latin1(b"\\\""), // "
                 0x5c => self.builder.append_latin1(b"\\\\"), // \
                 0x7f => self.builder.append_latin1(b"\\x7f"), // delete
-                0x85 => self.builder.append_latin1(b"\\N"), // next line
-                0xa0 => self.builder.append_latin1(b"\\_"), // non-breaking space
-                0xa8 => self.builder.append_latin1(b"\\L"), // line separator
-                0xa9 => self.builder.append_latin1(b"\\P"), // paragraph separator
+                0x85 => self.builder.append_latin1(b"\\N"),  // next line
+                0xa0 => self.builder.append_latin1(b"\\_"),  // non-breaking space
+                0xa8 => self.builder.append_latin1(b"\\L"),  // line separator
+                0xa9 => self.builder.append_latin1(b"\\P"),  // paragraph separator
 
                 0x20..=0x21
                 | 0x23..=0x5b
@@ -717,8 +725,8 @@ fn string_needs_quotes(str: &BunString) -> bool {
 
     const KEYWORDS: &[&[u8]] = &[
         b"true", b"True", b"TRUE", b"false", b"False", b"FALSE", b"yes", b"Yes", b"YES", b"no",
-        b"No", b"NO", b"on", b"On", b"ON", b"off", b"Off", b"OFF", b"n", b"N", b"y", b"Y",
-        b"null", b"Null", b"NULL", b"~", b".inf", b".Inf", b".INF", b".nan", b".NaN", b".NAN",
+        b"No", b"NO", b"on", b"On", b"ON", b"off", b"Off", b"OFF", b"n", b"N", b"y", b"Y", b"null",
+        b"Null", b"NULL", b"~", b".inf", b".Inf", b".INF", b".nan", b".NaN", b".NAN",
     ];
 
     for keyword in KEYWORDS {
@@ -884,7 +892,9 @@ fn string_is_number(str: &BunString) -> bool {
         Oct,
     }
     let mut base = Base::Dec;
-    if i + 1 < len && str.char_at(i) == 0x30 /* '0' */ {
+    if i + 1 < len && str.char_at(i) == 0x30
+    /* '0' */
+    {
         match str.char_at(i + 1) {
             0x78 | 0x58 /* 'x' | 'X' */ => {
                 base = Base::Hex;
@@ -968,45 +978,52 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
     let a = str.char_at(i + 1);
     let b = str.char_at(i + 2);
     let c = str.char_at(i + 3);
-    (a == 0x69 /* 'i' */ && b == 0x6e /* 'n' */ && c == 0x66 /* 'f' */)
-        || (a == 0x49 /* 'I' */ && b == 0x6e /* 'n' */ && c == 0x66 /* 'f' */)
-        || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46 /* 'F' */)
+    (a == 0x69 /* 'i' */ && b == 0x6e /* 'n' */ && c == 0x66/* 'f' */)
+        || (a == 0x49 /* 'I' */ && b == 0x6e /* 'n' */ && c == 0x66/* 'f' */)
+        || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
 #[bun_jsc::host_fn]
 pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
-    super::with_text_format_source(global, call_frame, b"input.yaml", true, false, |arena, log, source| {
-        let root = match YAML::parse(source, log, arena) {
-            Ok(root) => root,
-            Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
-            Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
-            Err(YamlParseError::SyntaxError) => {
-                if !log.msgs.is_empty() {
-                    let first_msg = &log.msgs[0];
-                    let error_text = &first_msg.data.text;
+    super::with_text_format_source(
+        global,
+        call_frame,
+        b"input.yaml",
+        true,
+        false,
+        |arena, log, source| {
+            let root = match YAML::parse(source, log, arena) {
+                Ok(root) => root,
+                Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+                Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+                Err(YamlParseError::SyntaxError) => {
+                    if !log.msgs.is_empty() {
+                        let first_msg = &log.msgs[0];
+                        let error_text = &first_msg.data.text;
+                        return Err(global.throw_value(global.create_syntax_error_instance(
+                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                        )));
+                    }
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                        format_args!("YAML Parse error: Unable to parse YAML string"),
                     )));
                 }
-                return Err(global.throw_value(global.create_syntax_error_instance(
-                    format_args!("YAML Parse error: Unable to parse YAML string"),
-                )));
-            }
-        };
+            };
 
-        let mut ctx = ParserCtx {
-            seen_objects: HashMap::default(),
-            stack_check: StackCheck::init(),
-            global,
-            root,
-            result: JSValue::ZERO,
-        };
+            let mut ctx = ParserCtx {
+                seen_objects: HashMap::default(),
+                stack_check: StackCheck::init(),
+                global,
+                root,
+                result: JSValue::ZERO,
+            };
 
-        MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
+            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
 
-        Ok(ctx.result)
-    })
+            Ok(ctx.result)
+        },
+    )
 }
 
 pub struct ParserCtx<'a> {
@@ -1097,16 +1114,18 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
-            ExprData::EString(str) => {
-                Ok(bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?)
-            }
+            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
+                str.get(),
+                self.global,
+            )?),
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {
                     return Ok(*arr);
                 }
 
-                let arr = JSValue::create_empty_array(self.global, e_array.items.len_u32() as usize)?;
+                let arr =
+                    JSValue::create_empty_array(self.global, e_array.items.len_u32() as usize)?;
 
                 args.append(arr);
                 self.seen_objects.put(key, arr)?;
@@ -1125,8 +1144,10 @@ impl<'a> ParserCtx<'a> {
                     return Ok(*obj);
                 }
 
-                let obj =
-                    JSValue::create_empty_object(self.global, e_object.properties.len_u32() as usize);
+                let obj = JSValue::create_empty_object(
+                    self.global,
+                    e_object.properties.len_u32() as usize,
+                );
 
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;

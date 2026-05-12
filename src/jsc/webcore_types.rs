@@ -23,8 +23,8 @@ use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
 use std::sync::Arc;
 
+use bun_core::{PathString, immutable::AsciiStatus};
 use bun_http_types::MimeType::MimeType;
-use bun_core::{immutable::AsciiStatus, PathString};
 
 use crate::JsCell;
 
@@ -137,8 +137,7 @@ const _: () = {
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js(value)
-                .or_else(|| __bun_blob_from_build_artifact(value))
+            JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value))
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)
@@ -241,7 +240,8 @@ impl Blob {
             // via `heap::alloc(_.into_boxed_slice())` and is solely owned
             // by this `Blob`.
             unsafe { drop(bun_core::heap::take(self.content_type.get().cast_mut())) };
-            self.content_type.set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+            self.content_type
+                .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
             self.content_type_allocated.set(false);
         }
     }
@@ -273,7 +273,11 @@ impl Blob {
     /// ownership of `bytes`.
     pub fn init(bytes: Vec<u8>, global_this: &JSGlobalObject) -> Blob {
         let size = bytes.len() as SizeType;
-        let store = if !bytes.is_empty() { Some(Store::init(bytes)) } else { None };
+        let store = if !bytes.is_empty() {
+            Some(Store::init(bytes))
+        } else {
+            None
+        };
         Blob {
             size: Cell::new(size),
             store: JsCell::new(store),
@@ -285,14 +289,19 @@ impl Blob {
     /// `Blob.initEmpty(globalThis)` (Blob.zig:3660).
     #[inline]
     pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
-        Blob { global_this: Cell::new(global_this), ..Default::default() }
+        Blob {
+            global_this: Cell::new(global_this),
+            ..Default::default()
+        }
     }
 
     /// `Blob.sharedView()` (Blob.zig:3737) — borrowed view of the in-memory
     /// bytes (`offset..offset+size` of the backing store). Empty for
     /// file-/S3-backed or zero-length blobs.
     pub fn shared_view(&self) -> &[u8] {
-        let Some(store) = self.store() else { return b"" };
+        let Some(store) = self.store() else {
+            return b"";
+        };
         if self.size.get() == 0 {
             return b"";
         }
@@ -490,13 +499,19 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__ref(self_: &mut Blob) {
-    debug_assert!(self_.is_heap_allocated(), "cannot ref: this Blob is not heap-allocated");
+    debug_assert!(
+        self_.is_heap_allocated(),
+        "cannot ref: this Blob is not heap-allocated"
+    );
     self_.ref_count.increment();
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__deref(self_: &mut Blob) {
-    debug_assert!(self_.is_heap_allocated(), "cannot deref: this Blob is not heap-allocated");
+    debug_assert!(
+        self_.is_heap_allocated(),
+        "cannot deref: this Blob is not heap-allocated"
+    );
     if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
         // `deinit` has its own `is_heap_allocated()` guard around the
         // `drop(heap::take)`, so re-arm so it returns true (Blob.zig:5112).
@@ -655,7 +670,9 @@ pub mod store {
             // `ManuallyDrop` suppresses the `Drop` impl that would otherwise
             // free it again.
             unsafe { this.stored_name.deinit_owned() };
-            let Some(ptr) = this.ptr else { return Box::new([]) };
+            let Some(ptr) = this.ptr else {
+                return Box::new([]);
+            };
             debug_assert!(
                 core::ptr::eq(this.allocator.vtable, bun_alloc::basic::C_ALLOCATOR.vtable),
                 "Bytes::into_boxed_slice on non-global allocator",
@@ -690,7 +707,10 @@ pub mod store {
 
         #[inline]
         pub fn init_empty_with_name(name: PathString) -> Bytes {
-            Bytes { stored_name: name, ..Default::default() }
+            Bytes {
+                stored_name: name,
+                ..Default::default()
+            }
         }
 
         #[inline]
@@ -836,7 +856,11 @@ pub mod store {
 
         pub fn estimated_size(&self) -> usize {
             self.pathlike.estimated_size()
-                + self.credentials.as_ref().map(|c| c.estimated_size()).unwrap_or(0)
+                + self
+                    .credentials
+                    .as_ref()
+                    .map(|c| c.estimated_size())
+                    .unwrap_or(0)
         }
 
         pub fn path(&self) -> &[u8] {
@@ -969,7 +993,9 @@ pub mod store {
         pub fn ref_(&self) {
             // SAFETY: `self` is live; `ref_` only touches the interior-mutable
             // atomic counter, never mutates through the pointer.
-            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+            unsafe {
+                bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
+            };
         }
 
         /// `Store.hasOneRef()` (Store.zig:48).
@@ -999,7 +1025,9 @@ pub mod store {
             _: *mut core::ffi::c_void,
             _: usize,
         ) {
-            let Some(this) = NonNull::new(ptr.cast::<Store>()) else { return };
+            let Some(this) = NonNull::new(ptr.cast::<Store>()) else {
+                return;
+            };
             // SAFETY: caller passes a `*Store` (originally leaked via
             // `heap::alloc`) as the opaque pointer; mirrors Zig
             // `bun.cast(*Store, ptr)`.
@@ -1124,7 +1152,9 @@ pub mod store {
         #[inline]
         fn from(b: Box<Store>) -> Self {
             // `Store::new` initializes `ref_count` to 1 — adopt that +1.
-            Self { ptr: bun_core::heap::into_raw_nn(b) }
+            Self {
+                ptr: bun_core::heap::into_raw_nn(b),
+            }
         }
     }
 

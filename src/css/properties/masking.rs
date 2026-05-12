@@ -1,30 +1,30 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
-use crate::Printer;
 use crate::PrintErr;
+use crate::Printer;
 
-use crate::css_values::length::LengthPercentage;
 use crate::css_values::image::Image;
+use crate::css_values::length::LengthOrNumber;
+use crate::css_values::length::LengthPercentage;
+use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
 use crate::css_values::url::Url;
-use crate::css_values::length::LengthOrNumber;
-use crate::css_values::position::Position;
 
 use crate::css_properties::border_radius::BorderRadius;
 // `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
 
 use crate::css_properties::shape::FillRule;
 
-use crate::css_properties::background::BackgroundSize;
 use crate::css_properties::background::BackgroundRepeat;
-use crate::css_properties::border_image::BorderImageSlice;
-use crate::css_properties::border_image::BorderImageSideWidth;
-use crate::css_properties::border_image::BorderImageRepeat;
+use crate::css_properties::background::BackgroundSize;
 use crate::css_properties::border_image::BorderImage;
+use crate::css_properties::border_image::BorderImageRepeat;
+use crate::css_properties::border_image::BorderImageSideWidth;
+use crate::css_properties::border_image::BorderImageSlice;
 
-use crate::generics::{CssEql, DeepClone};
 use crate::VendorPrefix;
+use crate::generics::{CssEql, DeepClone};
 use crate::properties::PropertyId;
 use crate::properties::PropertyIdTag;
 
@@ -271,14 +271,8 @@ impl Mask {
 
     // TODO(port): VendorPrefixMap was a Zig anon-struct const of bools consumed by
     // comptime reflection. Represent as field-name slice; Phase B may replace with trait/derive.
-    pub const VENDOR_PREFIX_MAP: &'static [&'static str] = &[
-        "image",
-        "position",
-        "size",
-        "repeat",
-        "clip",
-        "origin",
-    ];
+    pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
+        &["image", "position", "size", "repeat", "clip", "origin"];
 
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut image: Option<Image> = None;
@@ -574,7 +568,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
- // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
+// blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
     // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.

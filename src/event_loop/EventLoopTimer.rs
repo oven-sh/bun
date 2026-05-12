@@ -5,8 +5,8 @@ use core::ptr::NonNull;
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
 // `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
 // — to convert at every assignment and risked silent layout drift).
-pub use bun_core::Timespec;
 use Timespec as timespec;
+pub use bun_core::Timespec;
 
 // Re-export so higher tiers see the *same* type they pass to
 // `bun_io::heap::Intrusive<EventLoopTimer, _>` (was a zero-sized local stub
@@ -172,7 +172,11 @@ impl EventLoopTimer {
     /// `this` is a live timer just popped from `All.timers`; `now` is the
     /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
     /// may free the container — caller must not touch `this` after.
-    pub unsafe fn fire(this: *mut Self, now: &timespec, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+    pub unsafe fn fire(
+        this: *mut Self,
+        now: &timespec,
+        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
+    ) {
         // SAFETY: per fn contract.
         unsafe { __bun_fire_timer(this, now, vm) };
     }
@@ -384,13 +388,18 @@ impl TimerFlags {
     /// global epoch is incremented and the new epoch is set on the timer. For
     /// JS timers, the epoch breaks ties between equal-deadline timers so that
     /// refreshing a timer makes it fire after its peers (Node.js semantics).
-    #[inline] pub fn epoch(self) -> u32 { self.0 & Self::EPOCH_MASK }
-    #[inline] pub fn set_epoch(&mut self, v: u32) {
+    #[inline]
+    pub fn epoch(self) -> u32 {
+        self.0 & Self::EPOCH_MASK
+    }
+    #[inline]
+    pub fn set_epoch(&mut self, v: u32) {
         self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
     }
     /// Kind does not include AbortSignal's timeout since it has no
     /// corresponding ID callback.
-    #[inline] pub fn kind(self) -> Kind {
+    #[inline]
+    pub fn kind(self) -> Kind {
         // stored value always written via set_kind (range 0..=2)
         match ((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8 {
             0 => Kind::SetTimeout,
@@ -399,33 +408,74 @@ impl TimerFlags {
             _ => unreachable!(),
         }
     }
-    #[inline] pub fn set_kind(&mut self, k: Kind) {
+    #[inline]
+    pub fn set_kind(&mut self, k: Kind) {
         self.0 = (self.0 & !Self::KIND_MASK) | ((k as u32) << Self::KIND_SHIFT);
     }
     /// We do not allow the timer to be refreshed after clearInterval/clearTimeout.
-    #[inline] pub fn has_cleared_timer(self) -> bool { self.0 & Self::HAS_CLEARED_TIMER != 0 }
-    #[inline] pub fn set_has_cleared_timer(&mut self, v: bool) {
-        if v { self.0 |= Self::HAS_CLEARED_TIMER } else { self.0 &= !Self::HAS_CLEARED_TIMER }
+    #[inline]
+    pub fn has_cleared_timer(self) -> bool {
+        self.0 & Self::HAS_CLEARED_TIMER != 0
     }
-    #[inline] pub fn is_keeping_event_loop_alive(self) -> bool { self.0 & Self::IS_KEEPING_EVENT_LOOP_ALIVE != 0 }
-    #[inline] pub fn set_is_keeping_event_loop_alive(&mut self, v: bool) {
-        if v { self.0 |= Self::IS_KEEPING_EVENT_LOOP_ALIVE } else { self.0 &= !Self::IS_KEEPING_EVENT_LOOP_ALIVE }
+    #[inline]
+    pub fn set_has_cleared_timer(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::HAS_CLEARED_TIMER
+        } else {
+            self.0 &= !Self::HAS_CLEARED_TIMER
+        }
+    }
+    #[inline]
+    pub fn is_keeping_event_loop_alive(self) -> bool {
+        self.0 & Self::IS_KEEPING_EVENT_LOOP_ALIVE != 0
+    }
+    #[inline]
+    pub fn set_is_keeping_event_loop_alive(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::IS_KEEPING_EVENT_LOOP_ALIVE
+        } else {
+            self.0 &= !Self::IS_KEEPING_EVENT_LOOP_ALIVE
+        }
     }
     /// If they never access the timer by integer, don't create a hashmap entry.
-    #[inline] pub fn has_accessed_primitive(self) -> bool { self.0 & Self::HAS_ACCESSED_PRIMITIVE != 0 }
-    #[inline] pub fn set_has_accessed_primitive(&mut self, v: bool) {
-        if v { self.0 |= Self::HAS_ACCESSED_PRIMITIVE } else { self.0 &= !Self::HAS_ACCESSED_PRIMITIVE }
+    #[inline]
+    pub fn has_accessed_primitive(self) -> bool {
+        self.0 & Self::HAS_ACCESSED_PRIMITIVE != 0
     }
-    #[inline] pub fn has_js_ref(self) -> bool { self.0 & Self::HAS_JS_REF != 0 }
-    #[inline] pub fn set_has_js_ref(&mut self, v: bool) {
-        if v { self.0 |= Self::HAS_JS_REF } else { self.0 &= !Self::HAS_JS_REF }
+    #[inline]
+    pub fn set_has_accessed_primitive(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::HAS_ACCESSED_PRIMITIVE
+        } else {
+            self.0 &= !Self::HAS_ACCESSED_PRIMITIVE
+        }
+    }
+    #[inline]
+    pub fn has_js_ref(self) -> bool {
+        self.0 & Self::HAS_JS_REF != 0
+    }
+    #[inline]
+    pub fn set_has_js_ref(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::HAS_JS_REF
+        } else {
+            self.0 &= !Self::HAS_JS_REF
+        }
     }
     /// Set to `true` only during execution of the JavaScript function so that
     /// `_destroyed` can be false during the callback even though `state` will
     /// be `FIRED`.
-    #[inline] pub fn in_callback(self) -> bool { self.0 & Self::IN_CALLBACK != 0 }
-    #[inline] pub fn set_in_callback(&mut self, v: bool) {
-        if v { self.0 |= Self::IN_CALLBACK } else { self.0 &= !Self::IN_CALLBACK }
+    #[inline]
+    pub fn in_callback(self) -> bool {
+        self.0 & Self::IN_CALLBACK != 0
+    }
+    #[inline]
+    pub fn set_in_callback(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::IN_CALLBACK
+        } else {
+            self.0 &= !Self::IN_CALLBACK
+        }
     }
 }
 

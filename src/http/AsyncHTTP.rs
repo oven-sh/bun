@@ -2,8 +2,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_core::FeatureFlags;
 use bun_ast::{Loc, Log};
+use bun_core::FeatureFlags;
 use bun_core::{MutableString, ZigStringSlice};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
@@ -14,11 +14,11 @@ use bun_http_types::Encoding::Encoding;
 use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
-use crate::{HTTPClientResult, HTTPClientResultCallback};
 use crate::{
     FetchRedirect, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel, InternalState, Method,
     Signals, ThreadlocalAsyncHTTP,
 };
+use crate::{HTTPClientResult, HTTPClientResultCallback};
 
 use crate::ssl_config::SharedPtr as SSLConfigSharedPtr;
 
@@ -265,14 +265,13 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
             }
         };
         if max == 0 {
-            logger
-                .add_warning_fmt(
-                    None,
-                    Loc::EMPTY,
-                    format_args!(
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535"
-                    ),
-                );
+            logger.add_warning_fmt(
+                None,
+                Loc::EMPTY,
+                format_args!(
+                    "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535"
+                ),
+            );
             return;
         }
         MAX_SIMULTANEOUS_REQUESTS.store(usize::from(max), Ordering::Relaxed);
@@ -308,7 +307,9 @@ impl<'a> AsyncHTTP<'a> {
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
-        std::ptr::from_ref::<Self>(self).cast_mut().cast::<AsyncHTTP<'static>>()
+        std::ptr::from_ref::<Self>(self)
+            .cast_mut()
+            .cast::<AsyncHTTP<'static>>()
     }
 
     /// Accessor for the global concurrent-request cap (Zig:
@@ -320,13 +321,19 @@ impl<'a> AsyncHTTP<'a> {
     }
 
     pub fn signal_header_progress(&mut self) {
-        self.signals
-            .store(crate::signals::Field::HeaderProgress, true, Ordering::Release);
+        self.signals.store(
+            crate::signals::Field::HeaderProgress,
+            true,
+            Ordering::Release,
+        );
     }
 
     pub fn enable_response_body_streaming(&mut self) {
-        self.signals
-            .store(crate::signals::Field::ResponseBodyStreaming, true, Ordering::Release);
+        self.signals.store(
+            crate::signals::Field::ResponseBodyStreaming,
+            true,
+            Ordering::Release,
+        );
     }
 
     /// Copy HTTP-thread progress state into the JS-thread "real" instance.
@@ -844,7 +851,8 @@ impl<'a> AsyncHTTP<'a> {
                 // `ThreadlocalAsyncHTTP::new` (heap::alloc); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
-                let threadlocal_http: *mut ThreadlocalAsyncHTTP = bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
+                let threadlocal_http: *mut ThreadlocalAsyncHTTP =
+                    bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
                 // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
                 // any field destructors. Reclaiming as `Box<_>` here would
@@ -958,9 +966,8 @@ pub struct HTTPChannelContext<'a> {
 impl HTTPChannelContext<'_> {
     pub fn callback(data: HTTPCallbackPair) {
         // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
-        let this: &mut HTTPChannelContext = unsafe {
-            &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0))
-        };
+        let this: &mut HTTPChannelContext =
+            unsafe { &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0)) };
         let boxed = bun_core::heap::into_raw(Box::new(data));
         // `channel` is a set-once `BackRef`; `write_item` takes `&self`, so the
         // safe `Deref` impl covers the access (no open-coded `unsafe as_ref`).

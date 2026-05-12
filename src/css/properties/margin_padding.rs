@@ -1,12 +1,12 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
+use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
-use crate::{DeclarationList, PropertyHandlerContext};
 use crate::properties::{Property, PropertyId, PropertyIdTag};
-use crate::compat::Feature;
+use crate::{DeclarationList, PropertyHandlerContext};
+use bun_alloc::ArenaVecExt as _;
 
 // `RectShorthand`/`SizeShorthand` mirror Zig's `css.DefineRectShorthand` /
 // `css.DefineSizeShorthand` comptime mixins. The marker traits stay (some
@@ -16,19 +16,58 @@ use crate::compat::Feature;
 // structs keep hand-written bodies and get parse/to_css from
 // `impl_size_shorthand!`. Both macros live in the parent `properties/mod.rs`
 // (shared with `border.rs`).
-pub trait RectShorthand { type Value; }
-pub trait SizeShorthand { type Value; }
+pub trait RectShorthand {
+    type Value;
+}
+pub trait SizeShorthand {
+    type Value;
+}
 
 impl_size_shorthand!(InsetBlock, LengthPercentageOrAuto, block_start, block_end);
-impl_size_shorthand!(InsetInline, LengthPercentageOrAuto, inline_start, inline_end);
+impl_size_shorthand!(
+    InsetInline,
+    LengthPercentageOrAuto,
+    inline_start,
+    inline_end
+);
 impl_size_shorthand!(MarginBlock, LengthPercentageOrAuto, block_start, block_end);
-impl_size_shorthand!(MarginInline, LengthPercentageOrAuto, inline_start, inline_end);
+impl_size_shorthand!(
+    MarginInline,
+    LengthPercentageOrAuto,
+    inline_start,
+    inline_end
+);
 impl_size_shorthand!(PaddingBlock, LengthPercentageOrAuto, block_start, block_end);
-impl_size_shorthand!(PaddingInline, LengthPercentageOrAuto, inline_start, inline_end);
-impl_size_shorthand!(ScrollMarginBlock, LengthPercentageOrAuto, block_start, block_end);
-impl_size_shorthand!(ScrollMarginInline, LengthPercentageOrAuto, inline_start, inline_end);
-impl_size_shorthand!(ScrollPaddingBlock, LengthPercentageOrAuto, block_start, block_end);
-impl_size_shorthand!(ScrollPaddingInline, LengthPercentageOrAuto, inline_start, inline_end);
+impl_size_shorthand!(
+    PaddingInline,
+    LengthPercentageOrAuto,
+    inline_start,
+    inline_end
+);
+impl_size_shorthand!(
+    ScrollMarginBlock,
+    LengthPercentageOrAuto,
+    block_start,
+    block_end
+);
+impl_size_shorthand!(
+    ScrollMarginInline,
+    LengthPercentageOrAuto,
+    inline_start,
+    inline_end
+);
+impl_size_shorthand!(
+    ScrollPaddingBlock,
+    LengthPercentageOrAuto,
+    block_start,
+    block_end
+);
+impl_size_shorthand!(
+    ScrollPaddingInline,
+    LengthPercentageOrAuto,
+    inline_start,
+    inline_end
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shorthand value types
@@ -75,7 +114,6 @@ impl InsetBlock {
         ("block_start", PropertyIdTag::InsetBlockStart),
         ("block_end", PropertyIdTag::InsetBlockEnd),
     ];
-
 }
 impl SizeShorthand for InsetBlock {
     type Value = LengthPercentageOrAuto;
@@ -98,7 +136,6 @@ impl InsetInline {
 
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
-
 }
 impl SizeShorthand for InsetInline {
     type Value = LengthPercentageOrAuto;
@@ -121,7 +158,6 @@ impl MarginBlock {
         ("block_start", PropertyIdTag::MarginBlockStart),
         ("block_end", PropertyIdTag::MarginBlockEnd),
     ];
-
 }
 impl SizeShorthand for MarginBlock {
     type Value = LengthPercentageOrAuto;
@@ -144,7 +180,6 @@ impl MarginInline {
         ("inline_start", PropertyIdTag::MarginInlineStart),
         ("inline_end", PropertyIdTag::MarginInlineEnd),
     ];
-
 }
 impl SizeShorthand for MarginInline {
     type Value = LengthPercentageOrAuto;
@@ -176,7 +211,6 @@ impl PaddingBlock {
         ("block_start", PropertyIdTag::PaddingBlockStart),
         ("block_end", PropertyIdTag::PaddingBlockEnd),
     ];
-
 }
 impl SizeShorthand for PaddingBlock {
     type Value = LengthPercentageOrAuto;
@@ -199,7 +233,6 @@ impl PaddingInline {
         ("inline_start", PropertyIdTag::PaddingInlineStart),
         ("inline_end", PropertyIdTag::PaddingInlineEnd),
     ];
-
 }
 impl SizeShorthand for PaddingInline {
     type Value = LengthPercentageOrAuto;
@@ -231,7 +264,6 @@ impl ScrollMarginBlock {
         ("block_start", PropertyIdTag::ScrollMarginBlockStart),
         ("block_end", PropertyIdTag::ScrollMarginBlockEnd),
     ];
-
 }
 impl SizeShorthand for ScrollMarginBlock {
     type Value = LengthPercentageOrAuto;
@@ -254,7 +286,6 @@ impl ScrollMarginInline {
         ("inline_start", PropertyIdTag::ScrollMarginInlineStart),
         ("inline_end", PropertyIdTag::ScrollMarginInlineEnd),
     ];
-
 }
 impl SizeShorthand for ScrollMarginInline {
     type Value = LengthPercentageOrAuto;
@@ -286,7 +317,6 @@ impl ScrollPaddingBlock {
         ("block_start", PropertyIdTag::ScrollPaddingBlockStart),
         ("block_end", PropertyIdTag::ScrollPaddingBlockEnd),
     ];
-
 }
 impl SizeShorthand for ScrollPaddingBlock {
     type Value = LengthPercentageOrAuto;
@@ -309,7 +339,6 @@ impl ScrollPaddingInline {
         ("inline_start", PropertyIdTag::ScrollPaddingInlineStart),
         ("inline_end", PropertyIdTag::ScrollPaddingInlineEnd),
     ];
-
 }
 impl SizeShorthand for ScrollPaddingInline {
     type Value = LengthPercentageOrAuto;
@@ -1109,18 +1138,12 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             // The Zig also `@compileError`ed if the value type had >2 fields;
             // that invariant is upheld structurally by `make_*_shorthand`.
             let start_v = match pair {
-                LogicalSidePair::Block => {
-                    S::extract_block_start(start.as_ref().unwrap()).clone()
-                }
-                LogicalSidePair::Inline => {
-                    S::extract_inline_start(start.as_ref().unwrap()).clone()
-                }
+                LogicalSidePair::Block => S::extract_block_start(start.as_ref().unwrap()).clone(),
+                LogicalSidePair::Inline => S::extract_inline_start(start.as_ref().unwrap()).clone(),
             };
             let end_v = match pair {
                 LogicalSidePair::Block => S::extract_block_end(end.as_ref().unwrap()).clone(),
-                LogicalSidePair::Inline => {
-                    S::extract_inline_end(end.as_ref().unwrap()).clone()
-                }
+                LogicalSidePair::Inline => S::extract_inline_end(end.as_ref().unwrap()).clone(),
             };
             let prop = match pair {
                 LogicalSidePair::Block => S::make_block_shorthand(start_v, end_v),
@@ -1192,43 +1215,145 @@ macro_rules! size_handler_spec_projections {
         const LEFT_ID: PropertyId = PropertyId::$Left;
         const RIGHT_ID: PropertyId = PropertyId::$Right;
 
-        fn extract_top(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Top(v) => v, _ => unreachable!() } }
-        fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Bottom(v) => v, _ => unreachable!() } }
-        fn extract_left(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Left(v) => v, _ => unreachable!() } }
-        fn extract_right(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Right(v) => v, _ => unreachable!() } }
-        fn extract_block_start(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$BlockStart(v) => v, _ => unreachable!() } }
-        fn extract_block_end(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$BlockEnd(v) => v, _ => unreachable!() } }
-        fn extract_inline_start(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$InlineStart(v) => v, _ => unreachable!() } }
-        fn extract_inline_end(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$InlineEnd(v) => v, _ => unreachable!() } }
-        fn extract_shorthand(p: &Property) -> &Self::Shorthand { match p { Property::$Shorthand(v) => v, _ => unreachable!() } }
-        fn extract_block_shorthand(p: &Property) -> &Self::BlockShorthand { match p { Property::$BlockShorthand(v) => v, _ => unreachable!() } }
-        fn extract_inline_shorthand(p: &Property) -> &Self::InlineShorthand { match p { Property::$InlineShorthand(v) => v, _ => unreachable!() } }
-        fn make_top(v: LengthPercentageOrAuto) -> Property { Property::$Top(v) }
-        fn make_bottom(v: LengthPercentageOrAuto) -> Property { Property::$Bottom(v) }
-        fn make_left(v: LengthPercentageOrAuto) -> Property { Property::$Left(v) }
-        fn make_right(v: LengthPercentageOrAuto) -> Property { Property::$Right(v) }
-        fn make_block_start(v: LengthPercentageOrAuto) -> Property { Property::$BlockStart(v) }
-        fn make_block_end(v: LengthPercentageOrAuto) -> Property { Property::$BlockEnd(v) }
-        fn make_inline_start(v: LengthPercentageOrAuto) -> Property { Property::$InlineStart(v) }
-        fn make_inline_end(v: LengthPercentageOrAuto) -> Property { Property::$InlineEnd(v) }
+        fn extract_top(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$Top(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$Bottom(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_left(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$Left(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_right(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$Right(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_block_start(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$BlockStart(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_block_end(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$BlockEnd(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_inline_start(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$InlineStart(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_inline_end(p: &Property) -> &LengthPercentageOrAuto {
+            match p {
+                Property::$InlineEnd(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_shorthand(p: &Property) -> &Self::Shorthand {
+            match p {
+                Property::$Shorthand(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_block_shorthand(p: &Property) -> &Self::BlockShorthand {
+            match p {
+                Property::$BlockShorthand(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn extract_inline_shorthand(p: &Property) -> &Self::InlineShorthand {
+            match p {
+                Property::$InlineShorthand(v) => v,
+                _ => unreachable!(),
+            }
+        }
+        fn make_top(v: LengthPercentageOrAuto) -> Property {
+            Property::$Top(v)
+        }
+        fn make_bottom(v: LengthPercentageOrAuto) -> Property {
+            Property::$Bottom(v)
+        }
+        fn make_left(v: LengthPercentageOrAuto) -> Property {
+            Property::$Left(v)
+        }
+        fn make_right(v: LengthPercentageOrAuto) -> Property {
+            Property::$Right(v)
+        }
+        fn make_block_start(v: LengthPercentageOrAuto) -> Property {
+            Property::$BlockStart(v)
+        }
+        fn make_block_end(v: LengthPercentageOrAuto) -> Property {
+            Property::$BlockEnd(v)
+        }
+        fn make_inline_start(v: LengthPercentageOrAuto) -> Property {
+            Property::$InlineStart(v)
+        }
+        fn make_inline_end(v: LengthPercentageOrAuto) -> Property {
+            Property::$InlineEnd(v)
+        }
         fn make_shorthand(
-            top: LengthPercentageOrAuto, bottom: LengthPercentageOrAuto,
-            left: LengthPercentageOrAuto, right: LengthPercentageOrAuto,
-        ) -> Property { Property::$Shorthand($ShorthandTy { top, right, bottom, left }) }
+            top: LengthPercentageOrAuto,
+            bottom: LengthPercentageOrAuto,
+            left: LengthPercentageOrAuto,
+            right: LengthPercentageOrAuto,
+        ) -> Property {
+            Property::$Shorthand($ShorthandTy {
+                top,
+                right,
+                bottom,
+                left,
+            })
+        }
         fn make_block_shorthand(s: LengthPercentageOrAuto, e: LengthPercentageOrAuto) -> Property {
-            Property::$BlockShorthand($BlockShorthandTy { block_start: s, block_end: e })
+            Property::$BlockShorthand($BlockShorthandTy {
+                block_start: s,
+                block_end: e,
+            })
         }
         fn make_inline_shorthand(s: LengthPercentageOrAuto, e: LengthPercentageOrAuto) -> Property {
-            Property::$InlineShorthand($InlineShorthandTy { inline_start: s, inline_end: e })
+            Property::$InlineShorthand($InlineShorthandTy {
+                inline_start: s,
+                inline_end: e,
+            })
         }
-        fn shorthand_top(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.top }
-        fn shorthand_right(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.right }
-        fn shorthand_bottom(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.bottom }
-        fn shorthand_left(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.left }
-        fn block_shorthand_start(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { &v.block_start }
-        fn block_shorthand_end(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { &v.block_end }
-        fn inline_shorthand_start(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { &v.inline_start }
-        fn inline_shorthand_end(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { &v.inline_end }
+        fn shorthand_top(v: &Self::Shorthand) -> &LengthPercentageOrAuto {
+            &v.top
+        }
+        fn shorthand_right(v: &Self::Shorthand) -> &LengthPercentageOrAuto {
+            &v.right
+        }
+        fn shorthand_bottom(v: &Self::Shorthand) -> &LengthPercentageOrAuto {
+            &v.bottom
+        }
+        fn shorthand_left(v: &Self::Shorthand) -> &LengthPercentageOrAuto {
+            &v.left
+        }
+        fn block_shorthand_start(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto {
+            &v.block_start
+        }
+        fn block_shorthand_end(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto {
+            &v.block_end
+        }
+        fn inline_shorthand_start(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto {
+            &v.inline_start
+        }
+        fn inline_shorthand_end(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto {
+            &v.inline_end
+        }
     };
 }
 
@@ -1252,10 +1377,20 @@ impl SizeHandlerSpec for MarginSpec {
     type BlockShorthand = MarginBlock;
     type InlineShorthand = MarginInline;
     size_handler_spec_projections!(
-        MarginTop, MarginBottom, MarginLeft, MarginRight,
-        MarginBlockStart, MarginBlockEnd, MarginInlineStart, MarginInlineEnd,
-        Margin, MarginBlock, MarginInline,
-        Margin, MarginBlock, MarginInline
+        MarginTop,
+        MarginBottom,
+        MarginLeft,
+        MarginRight,
+        MarginBlockStart,
+        MarginBlockEnd,
+        MarginInlineStart,
+        MarginInlineEnd,
+        Margin,
+        MarginBlock,
+        MarginInline,
+        Margin,
+        MarginBlock,
+        MarginInline
     );
 }
 
@@ -1279,10 +1414,20 @@ impl SizeHandlerSpec for PaddingSpec {
     type BlockShorthand = PaddingBlock;
     type InlineShorthand = PaddingInline;
     size_handler_spec_projections!(
-        PaddingTop, PaddingBottom, PaddingLeft, PaddingRight,
-        PaddingBlockStart, PaddingBlockEnd, PaddingInlineStart, PaddingInlineEnd,
-        Padding, PaddingBlock, PaddingInline,
-        Padding, PaddingBlock, PaddingInline
+        PaddingTop,
+        PaddingBottom,
+        PaddingLeft,
+        PaddingRight,
+        PaddingBlockStart,
+        PaddingBlockEnd,
+        PaddingInlineStart,
+        PaddingInlineEnd,
+        Padding,
+        PaddingBlock,
+        PaddingInline,
+        Padding,
+        PaddingBlock,
+        PaddingInline
     );
 }
 
@@ -1306,10 +1451,20 @@ impl SizeHandlerSpec for ScrollMarginSpec {
     type BlockShorthand = ScrollMarginBlock;
     type InlineShorthand = ScrollMarginInline;
     size_handler_spec_projections!(
-        ScrollMarginTop, ScrollMarginBottom, ScrollMarginLeft, ScrollMarginRight,
-        ScrollMarginBlockStart, ScrollMarginBlockEnd, ScrollMarginInlineStart, ScrollMarginInlineEnd,
-        ScrollMargin, ScrollMarginBlock, ScrollMarginInline,
-        ScrollMargin, ScrollMarginBlock, ScrollMarginInline
+        ScrollMarginTop,
+        ScrollMarginBottom,
+        ScrollMarginLeft,
+        ScrollMarginRight,
+        ScrollMarginBlockStart,
+        ScrollMarginBlockEnd,
+        ScrollMarginInlineStart,
+        ScrollMarginInlineEnd,
+        ScrollMargin,
+        ScrollMarginBlock,
+        ScrollMarginInline,
+        ScrollMargin,
+        ScrollMarginBlock,
+        ScrollMarginInline
     );
 }
 
@@ -1333,10 +1488,20 @@ impl SizeHandlerSpec for InsetSpec {
     type BlockShorthand = InsetBlock;
     type InlineShorthand = InsetInline;
     size_handler_spec_projections!(
-        Top, Bottom, Left, Right,
-        InsetBlockStart, InsetBlockEnd, InsetInlineStart, InsetInlineEnd,
-        Inset, InsetBlock, InsetInline,
-        Inset, InsetBlock, InsetInline
+        Top,
+        Bottom,
+        Left,
+        Right,
+        InsetBlockStart,
+        InsetBlockEnd,
+        InsetInlineStart,
+        InsetInlineEnd,
+        Inset,
+        InsetBlock,
+        InsetInline,
+        Inset,
+        InsetBlock,
+        InsetInline
     );
 }
 

@@ -1,8 +1,8 @@
+use crate::StoreRef;
 use crate::base::Ref;
 use crate::binding::Binding;
 use crate::expr::Expr;
-use crate::StoreRef;
-use crate::{flags, ExprNodeIndex};
+use crate::{ExprNodeIndex, flags};
 // Re-exported so callers can spell `js_ast::b::ArrayBinding` (Zig: `B.Array.Item`).
 pub use crate::ArrayBinding;
 
@@ -97,7 +97,9 @@ pub struct Missing {}
 // (single-threaded parser; arena slice valid for `'a`).
 impl Array {
     #[inline]
-    pub fn items(&self) -> &[ArrayBinding] { self.items.slice() }
+    pub fn items(&self) -> &[ArrayBinding] {
+        self.items.slice()
+    }
     #[inline]
     pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
         self.items.slice_mut()
@@ -105,7 +107,9 @@ impl Array {
 }
 impl Object {
     #[inline]
-    pub fn properties(&self) -> &[Property] { self.properties.slice() }
+    pub fn properties(&self) -> &[Property] {
+        self.properties.slice()
+    }
     #[inline]
     pub fn properties_mut(&mut self) -> &mut [Property] {
         self.properties.slice_mut()

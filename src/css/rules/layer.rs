@@ -1,8 +1,8 @@
 use core::fmt;
 
 use bun_alloc::Arena;
-use bun_collections::{ArrayHashMap, VecExt};
 use bun_ast::ImportRecord;
+use bun_collections::{ArrayHashMap, VecExt};
 
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
@@ -51,11 +51,7 @@ impl Clone for LayerName {
 }
 
 impl LayerName {
-    pub fn clone_with_import_records(
-        &self,
-        _bump: &Arena,
-        _: &mut Vec<ImportRecord>,
-    ) -> Self {
+    pub fn clone_with_import_records(&self, _bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
         // `[]const u8` segments are arena-borrowed, not owned, so the Zig
         // `deepClone` here was a shallow `SmallList` copy. No import records to
         // rewrite — layer names contain no URLs.
@@ -81,22 +77,21 @@ impl LayerName {
 
         loop {
             // Zig: `const Fn = struct { pub fn tryParseFn(...) ... }`
-            let try_parse_fn = |i: &mut css::css_parser::Parser<'_>|
-                -> css::css_parser::CssResult<&'static [u8]>
-            {
-                let start_location = i.current_source_location();
-                let tok = i.next_including_whitespace()?.clone();
-                if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
-                    return Err(start_location.new_basic_unexpected_token_error(tok));
-                }
+            let try_parse_fn =
+                |i: &mut css::css_parser::Parser<'_>| -> css::css_parser::CssResult<&'static [u8]> {
+                    let start_location = i.current_source_location();
+                    let tok = i.next_including_whitespace()?.clone();
+                    if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
+                        return Err(start_location.new_basic_unexpected_token_error(tok));
+                    }
 
-                let start_location = i.current_source_location();
-                let tok = i.next_including_whitespace()?.clone();
-                if let css::Token::Ident(ident) = tok {
-                    return Ok(ident);
-                }
-                Err(start_location.new_basic_unexpected_token_error(tok))
-            };
+                    let start_location = i.current_source_location();
+                    let tok = i.next_including_whitespace()?.clone();
+                    if let css::Token::Ident(ident) = tok {
+                        return Ok(ident);
+                    }
+                    Err(start_location.new_basic_unexpected_token_error(tok))
+                };
 
             match input.try_parse(try_parse_fn) {
                 Ok(name) => parts.append(name),
@@ -106,7 +101,11 @@ impl LayerName {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_separated(self.v.slice(), |d| d.write_char(b'.'), |d, name| d.serialize_identifier(name))
+        dest.write_separated(
+            self.v.slice(),
+            |d| d.write_char(b'.'),
+            |d, name| d.serialize_identifier(name),
+        )
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
@@ -199,7 +198,10 @@ impl LayerStatementRule {
         for n in self.names.slice() {
             names.append(n.deep_clone(bump));
         }
-        Self { names, loc: self.loc }
+        Self {
+            names,
+            loc: self.loc,
+        }
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

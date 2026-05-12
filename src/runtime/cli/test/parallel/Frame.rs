@@ -92,7 +92,11 @@ impl Frame {
             self.buf.extend_from_slice(s);
             return;
         }
-        let keep: usize = if room > TRUNC.len() { room - TRUNC.len() } else { 0 };
+        let keep: usize = if room > TRUNC.len() {
+            room - TRUNC.len()
+        } else {
+            0
+        };
         self.u32_(u32::try_from(keep + TRUNC.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
         self.buf.extend_from_slice(TRUNC);

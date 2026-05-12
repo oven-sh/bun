@@ -1,15 +1,13 @@
 use bun_collections::HashMap;
-use bun_core::{feature_flags, Output};
 use bun_core::strings;
+use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
-use super::{
-    ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle,
-};
+use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle};
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
@@ -79,7 +77,8 @@ impl HmrSocket {
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
             if let Some(agent) = unsafe { dev.inspector() } {
                 self.inspector_connection_id = agent.next_connection_id();
-                agent.notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
+                agent
+                    .notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
             }
         }
     }
@@ -162,9 +161,10 @@ impl HmrSocket {
                                         // `bun_runtime::init()`; JS-thread only, sole
                                         // `&mut` to `timer` in this scope.
                                         unsafe {
-                                            (*state)
-                                                .timer
-                                                .update(&raw mut dev.memory_visualizer_timer, &next);
+                                            (*state).timer.update(
+                                                &raw mut dev.memory_visualizer_timer,
+                                                &next,
+                                            );
                                         }
                                     }
                                 }

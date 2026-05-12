@@ -199,7 +199,9 @@ impl Qpack {
                 _ => return None,
             },
             19 => match &*lower {
-                b"content-disposition" => Class::idx(b"content-disposition", Qpack::ContentDisposition),
+                b"content-disposition" => {
+                    Class::idx(b"content-disposition", Qpack::ContentDisposition)
+                }
                 _ => return None,
             },
             _ => return None,
@@ -221,23 +223,59 @@ mod classify_tests {
         (b"transfer-encoding", Class::Forbidden),
         (b"upgrade", Class::Forbidden),
         (b"accept", Class::idx(b"accept", Qpack::Accept)),
-        (b"accept-encoding", Class::idx(b"accept-encoding", Qpack::AcceptEncoding)),
-        (b"accept-language", Class::idx(b"accept-language", Qpack::AcceptLanguage)),
-        (b"accept-ranges", Class::idx(b"accept-ranges", Qpack::AcceptRanges)),
-        (b"authorization", Class::idx(b"authorization", Qpack::Authorization)),
-        (b"cache-control", Class::idx(b"cache-control", Qpack::CacheControl)),
-        (b"content-disposition", Class::idx(b"content-disposition", Qpack::ContentDisposition)),
-        (b"content-encoding", Class::idx(b"content-encoding", Qpack::ContentEncoding)),
-        (b"content-length", Class::idx(b"content-length", Qpack::ContentLength)),
-        (b"content-type", Class::idx(b"content-type", Qpack::ContentType)),
+        (
+            b"accept-encoding",
+            Class::idx(b"accept-encoding", Qpack::AcceptEncoding),
+        ),
+        (
+            b"accept-language",
+            Class::idx(b"accept-language", Qpack::AcceptLanguage),
+        ),
+        (
+            b"accept-ranges",
+            Class::idx(b"accept-ranges", Qpack::AcceptRanges),
+        ),
+        (
+            b"authorization",
+            Class::idx(b"authorization", Qpack::Authorization),
+        ),
+        (
+            b"cache-control",
+            Class::idx(b"cache-control", Qpack::CacheControl),
+        ),
+        (
+            b"content-disposition",
+            Class::idx(b"content-disposition", Qpack::ContentDisposition),
+        ),
+        (
+            b"content-encoding",
+            Class::idx(b"content-encoding", Qpack::ContentEncoding),
+        ),
+        (
+            b"content-length",
+            Class::idx(b"content-length", Qpack::ContentLength),
+        ),
+        (
+            b"content-type",
+            Class::idx(b"content-type", Qpack::ContentType),
+        ),
         (b"cookie", Class::idx(b"cookie", Qpack::Cookie)),
         (b"date", Class::idx(b"date", Qpack::Date)),
         (b"etag", Class::idx(b"etag", Qpack::Etag)),
         (b"forwarded", Class::idx(b"forwarded", Qpack::Forwarded)),
-        (b"if-modified-since", Class::idx(b"if-modified-since", Qpack::IfModifiedSince)),
-        (b"if-none-match", Class::idx(b"if-none-match", Qpack::IfNoneMatch)),
+        (
+            b"if-modified-since",
+            Class::idx(b"if-modified-since", Qpack::IfModifiedSince),
+        ),
+        (
+            b"if-none-match",
+            Class::idx(b"if-none-match", Qpack::IfNoneMatch),
+        ),
         (b"if-range", Class::idx(b"if-range", Qpack::IfRange)),
-        (b"last-modified", Class::idx(b"last-modified", Qpack::LastModified)),
+        (
+            b"last-modified",
+            Class::idx(b"last-modified", Qpack::LastModified),
+        ),
         (b"link", Class::idx(b"link", Qpack::Link)),
         (b"location", Class::idx(b"location", Qpack::Location)),
         (b"origin", Class::idx(b"origin", Qpack::Origin)),
@@ -247,15 +285,25 @@ mod classify_tests {
         (b"set-cookie", Class::idx(b"set-cookie", Qpack::SetCookie)),
         (b"user-agent", Class::idx(b"user-agent", Qpack::UserAgent)),
         (b"vary", Class::idx(b"vary", Qpack::Vary)),
-        (b"x-forwarded-for", Class::idx(b"x-forwarded-for", Qpack::XForwardedFor)),
+        (
+            b"x-forwarded-for",
+            Class::idx(b"x-forwarded-for", Qpack::XForwardedFor),
+        ),
     ];
 
     fn eq(a: Class, b: Class) -> bool {
         match (a, b) {
             (Class::Forbidden, Class::Forbidden) | (Class::Host, Class::Host) => true,
-            (Class::Indexed { name: an, index: ai }, Class::Indexed { name: bn, index: bi }) => {
-                an == bn && ai == bi
-            }
+            (
+                Class::Indexed {
+                    name: an,
+                    index: ai,
+                },
+                Class::Indexed {
+                    name: bn,
+                    index: bi,
+                },
+            ) => an == bn && ai == bi,
             _ => false,
         }
     }
@@ -268,7 +316,11 @@ mod classify_tests {
             // Mixed-case must fold.
             let upper: Vec<u8> = k.iter().map(u8::to_ascii_uppercase).collect();
             let got = Qpack::classify(&upper).expect("uppercase must hit");
-            assert!(eq(got, v), "case-fold mismatch for {:?}", bstr::BStr::new(k));
+            assert!(
+                eq(got, v),
+                "case-fold mismatch for {:?}",
+                bstr::BStr::new(k)
+            );
         }
     }
 

@@ -4,10 +4,8 @@
 use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ushort, c_void};
 
 pub use crate::shared::{
-    DataType, FlushValue, ReturnCode,
-    z_stream, z_streamp, zStream_struct, struct_z_stream_s, z_stream_s,
-    struct_internal_state, internal_state,
-    alloc_func, free_func, z_alloc_func, z_free_func,
+    DataType, FlushValue, ReturnCode, alloc_func, free_func, internal_state, struct_internal_state,
+    struct_z_stream_s, z_alloc_func, z_free_func, z_stream, z_stream_s, z_streamp, zStream_struct,
 };
 
 pub type rsize_t = usize;
@@ -69,18 +67,40 @@ unsafe extern "C" {
     pub fn deflateEnd(strm: z_streamp) -> ReturnCode;
     pub fn inflate(strm: z_streamp, flush: FlushValue) -> ReturnCode;
     pub fn inflateEnd(strm: z_streamp) -> ReturnCode;
-    pub fn deflateSetDictionary(strm: z_streamp, dictionary: *const Bytef, dictLength: uInt) -> ReturnCode;
-    pub fn deflateGetDictionary(strm: z_streamp, dictionary: *mut Bytef, dictLength: *mut uInt) -> ReturnCode;
+    pub fn deflateSetDictionary(
+        strm: z_streamp,
+        dictionary: *const Bytef,
+        dictLength: uInt,
+    ) -> ReturnCode;
+    pub fn deflateGetDictionary(
+        strm: z_streamp,
+        dictionary: *mut Bytef,
+        dictLength: *mut uInt,
+    ) -> ReturnCode;
     pub fn deflateCopy(dest: z_streamp, source: z_streamp) -> ReturnCode;
     pub fn deflateReset(strm: z_streamp) -> ReturnCode;
     pub fn deflateParams(strm: z_streamp, level: c_int, strategy: c_int) -> ReturnCode;
-    pub fn deflateTune(strm: z_streamp, good_length: c_int, max_lazy: c_int, nice_length: c_int, max_chain: c_int) -> ReturnCode;
+    pub fn deflateTune(
+        strm: z_streamp,
+        good_length: c_int,
+        max_lazy: c_int,
+        nice_length: c_int,
+        max_chain: c_int,
+    ) -> ReturnCode;
     pub fn deflateBound(strm: z_streamp, sourceLen: uLong) -> uLong;
     pub fn deflatePending(strm: z_streamp, pending: *mut c_uint, bits: *mut c_int) -> ReturnCode;
     pub fn deflatePrime(strm: z_streamp, bits: c_int, value: c_int) -> ReturnCode;
     pub fn deflateSetHeader(strm: z_streamp, head: gz_headerp) -> ReturnCode;
-    pub fn inflateSetDictionary(strm: z_streamp, dictionary: *const Bytef, dictLength: uInt) -> ReturnCode;
-    pub fn inflateGetDictionary(strm: z_streamp, dictionary: *mut Bytef, dictLength: *mut uInt) -> ReturnCode;
+    pub fn inflateSetDictionary(
+        strm: z_streamp,
+        dictionary: *const Bytef,
+        dictLength: uInt,
+    ) -> ReturnCode;
+    pub fn inflateGetDictionary(
+        strm: z_streamp,
+        dictionary: *mut Bytef,
+        dictLength: *mut uInt,
+    ) -> ReturnCode;
     pub fn inflateSync(strm: z_streamp) -> ReturnCode;
     pub fn inflateCopy(dest: z_streamp, source: z_streamp) -> ReturnCode;
     pub fn inflateReset(strm: z_streamp) -> ReturnCode;
@@ -88,14 +108,41 @@ unsafe extern "C" {
     pub fn inflatePrime(strm: z_streamp, bits: c_int, value: c_int) -> ReturnCode;
     pub fn inflateMark(strm: z_streamp) -> c_long;
     pub fn inflateGetHeader(strm: z_streamp, head: gz_headerp) -> ReturnCode;
-    pub fn inflateBack(strm: z_streamp, in_: in_func, in_desc: *mut c_void, out: out_func, out_desc: *mut c_void) -> ReturnCode;
+    pub fn inflateBack(
+        strm: z_streamp,
+        in_: in_func,
+        in_desc: *mut c_void,
+        out: out_func,
+        out_desc: *mut c_void,
+    ) -> ReturnCode;
     pub fn inflateBackEnd(strm: z_streamp) -> ReturnCode;
     pub safe fn zlibCompileFlags() -> uLong;
-    pub fn compress(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong) -> ReturnCode;
-    pub fn compress2(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong, level: c_int) -> ReturnCode;
+    pub fn compress(
+        dest: *mut Bytef,
+        destLen: *mut uLongf,
+        source: *const Bytef,
+        sourceLen: uLong,
+    ) -> ReturnCode;
+    pub fn compress2(
+        dest: *mut Bytef,
+        destLen: *mut uLongf,
+        source: *const Bytef,
+        sourceLen: uLong,
+        level: c_int,
+    ) -> ReturnCode;
     pub safe fn compressBound(sourceLen: uLong) -> uLong;
-    pub fn uncompress(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong) -> ReturnCode;
-    pub fn uncompress2(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: *mut uLong) -> ReturnCode;
+    pub fn uncompress(
+        dest: *mut Bytef,
+        destLen: *mut uLongf,
+        source: *const Bytef,
+        sourceLen: uLong,
+    ) -> ReturnCode;
+    pub fn uncompress2(
+        dest: *mut Bytef,
+        destLen: *mut uLongf,
+        source: *const Bytef,
+        sourceLen: *mut uLong,
+    ) -> ReturnCode;
     pub fn gzdopen(fd: c_int, mode: *const u8) -> gzFile;
     pub fn gzbuffer(file: gzFile, size: c_uint) -> ReturnCode;
     pub fn gzsetparams(file: gzFile, level: c_int, strategy: c_int) -> ReturnCode;
@@ -123,11 +170,36 @@ unsafe extern "C" {
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
     pub fn crc32_z(crc: uLong, buf: *const Bytef, len: z_size_t) -> uLong;
     pub safe fn crc32_combine_op(crc1: uLong, crc2: uLong, op: uLong) -> uLong;
-    pub fn deflateInit_(strm: z_streamp, level: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit_(
+        strm: z_streamp,
+        level: c_int,
+        version: *const c_char,
+        stream_size: c_int,
+    ) -> ReturnCode;
     pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
-    pub fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
-    pub fn inflateInit2_(strm: z_streamp, windowBits: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
-    pub fn inflateBackInit_(strm: z_streamp, windowBits: c_int, window: *mut u8, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit2_(
+        strm: z_streamp,
+        level: c_int,
+        method: c_int,
+        windowBits: c_int,
+        memLevel: c_int,
+        strategy: c_int,
+        version: *const c_char,
+        stream_size: c_int,
+    ) -> ReturnCode;
+    pub fn inflateInit2_(
+        strm: z_streamp,
+        windowBits: c_int,
+        version: *const c_char,
+        stream_size: c_int,
+    ) -> ReturnCode;
+    pub fn inflateBackInit_(
+        strm: z_streamp,
+        windowBits: c_int,
+        window: *mut u8,
+        version: *const c_char,
+        stream_size: c_int,
+    ) -> ReturnCode;
     pub fn gzgetc_(file: gzFile) -> ReturnCode;
     pub fn gzopen(path: *const u8, mode: *const u8) -> gzFile;
     pub fn gzseek(file: gzFile, offset: c_long, whence: c_int) -> c_long;
@@ -182,27 +254,77 @@ pub const Z_NULL: c_int = 0;
 #[inline]
 pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer; zlib reads version/stream_size for ABI check.
-    unsafe { deflateInit_(strm, level, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
+    unsafe {
+        deflateInit_(
+            strm,
+            level,
+            zlibVersion(),
+            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
+        )
+    }
 }
 #[inline]
 pub unsafe fn inflate_init(strm: z_streamp) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { inflateInit_(strm, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
+    unsafe {
+        inflateInit_(
+            strm,
+            zlibVersion(),
+            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
+        )
+    }
 }
 #[inline]
-pub unsafe fn deflate_init2(strm: z_streamp, level: c_int, method: c_int, window_bits: c_int, mem_level: c_int, strategy: c_int) -> ReturnCode {
+pub unsafe fn deflate_init2(
+    strm: z_streamp,
+    level: c_int,
+    method: c_int,
+    window_bits: c_int,
+    mem_level: c_int,
+    strategy: c_int,
+) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { deflateInit2_(strm, level, method, window_bits, mem_level, strategy, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
+    unsafe {
+        deflateInit2_(
+            strm,
+            level,
+            method,
+            window_bits,
+            mem_level,
+            strategy,
+            zlibVersion(),
+            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
+        )
+    }
 }
 #[inline]
 pub unsafe fn inflate_init2(strm: z_streamp, window_bits: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { inflateInit2_(strm, window_bits, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
+    unsafe {
+        inflateInit2_(
+            strm,
+            window_bits,
+            zlibVersion(),
+            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
+        )
+    }
 }
 #[inline]
-pub unsafe fn inflate_back_init(strm: z_streamp, window_bits: c_int, window: *mut u8) -> ReturnCode {
+pub unsafe fn inflate_back_init(
+    strm: z_streamp,
+    window_bits: c_int,
+    window: *mut u8,
+) -> ReturnCode {
     // SAFETY: caller guarantees `strm` and `window` are valid.
-    unsafe { inflateBackInit_(strm, window_bits, window, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
+    unsafe {
+        inflateBackInit_(
+            strm,
+            window_bits,
+            window,
+            zlibVersion(),
+            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
+        )
+    }
 }
 
 pub type gz_header_s = struct_gz_header_s;

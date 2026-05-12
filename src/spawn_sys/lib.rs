@@ -67,7 +67,8 @@ const _: () = assert!(core::mem::align_of::<*const c_char>() == core::mem::align
 // Negative guard: `Option<*const c_char>` is **not** word-sized — it carries a
 // discriminant. Any `[Option<*const c_char>; N]` cast to `Argv` is a layout bug.
 // Use `Option<NonNull<c_char>>` for niche-optimized nullable storage instead.
-const _: () = assert!(core::mem::size_of::<Option<*const c_char>>() != core::mem::size_of::<usize>());
+const _: () =
+    assert!(core::mem::size_of::<Option<*const c_char>>() != core::mem::size_of::<usize>());
 const _: () = assert!(
     core::mem::size_of::<Option<core::ptr::NonNull<c_char>>>() == core::mem::size_of::<usize>()
 );
@@ -169,11 +170,11 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use spawn_process::{
-    rusage_zeroed, Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions,
-    PosixSpawnResult, PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval,
-};
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process::uv_getrusage;
+pub use spawn_process::{
+    Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
+    PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,
+};

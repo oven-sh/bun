@@ -1,14 +1,14 @@
 use crate as css;
-use bun_ast::ImportKind;
-use crate::css_parser::{CssResult as Result};
+use crate::css_parser::CssResult as Result;
 use crate::dependencies::UrlDependency;
+use crate::generics::DeepClone as _;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
-use crate::generics::DeepClone as _;
 use crate::values::url::Url;
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
+use bun_ast::ImportKind;
 use bun_core::strings;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
@@ -34,21 +34,24 @@ impl Image {
         match self {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
-                    css::Feature::LinearGradient.is_compatible(browsers) && linear.is_compatible(browsers)
+                    css::Feature::LinearGradient.is_compatible(browsers)
+                        && linear.is_compatible(browsers)
                 }
                 Gradient::RepeatingLinear(repeating_linear) => {
                     css::Feature::RepeatingLinearGradient.is_compatible(browsers)
                         && repeating_linear.is_compatible(browsers)
                 }
                 Gradient::Radial(radial) => {
-                    css::Feature::RadialGradient.is_compatible(browsers) && radial.is_compatible(browsers)
+                    css::Feature::RadialGradient.is_compatible(browsers)
+                        && radial.is_compatible(browsers)
                 }
                 Gradient::RepeatingRadial(repeating_radial) => {
                     css::Feature::RepeatingRadialGradient.is_compatible(browsers)
                         && repeating_radial.is_compatible(browsers)
                 }
                 Gradient::Conic(conic) => {
-                    css::Feature::ConicGradient.is_compatible(browsers) && conic.is_compatible(browsers)
+                    css::Feature::ConicGradient.is_compatible(browsers)
+                        && conic.is_compatible(browsers)
                 }
                 Gradient::RepeatingConic(repeating_conic) => {
                     css::Feature::RepeatingConicGradient.is_compatible(browsers)
@@ -120,7 +123,10 @@ impl Image {
         // TODO(port): was `css.implementDeepClone(@This(), this, arena)` (comptime field-walk).
         match self {
             Image::None => Image::None,
-            Image::Url(u) => Image::Url(Url { import_record_idx: u.import_record_idx, loc: u.loc }),
+            Image::Url(u) => Image::Url(Url {
+                import_record_idx: u.import_record_idx,
+                loc: u.loc,
+            }),
             Image::Gradient(g) => Image::Gradient(g.deep_clone(arena)),
             Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
         }
@@ -133,13 +139,19 @@ impl Image {
         match self {
             Image::Gradient(gradient) => {
                 // PERF(port): was arena bulk-free — profile in Phase B
-                Some(Image::Gradient(Box::new(gradient.get_legacy_webkit(arena)?)))
+                Some(Image::Gradient(Box::new(
+                    gradient.get_legacy_webkit(arena)?,
+                )))
             }
             _ => Some(self.deep_clone(arena)),
         }
     }
 
-    pub fn get_fallbacks(&mut self, arena: &Arena, targets: css::targets::Targets) -> css::SmallList<Image, 6> {
+    pub fn get_fallbacks(
+        &mut self,
+        arena: &Arena,
+        targets: css::targets::Targets,
+    ) -> css::SmallList<Image, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
         let fallbacks = self.get_necessary_fallbacks(targets);
@@ -227,9 +239,12 @@ impl Image {
     // variant in Zig field order (none/url/gradient/image-set).
     // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
     // gradient/image-set arms are real; the url arm un-gates with url.rs.
-    
+
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
-        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"none"))
+            .is_ok()
+        {
             return Ok(Image::None);
         }
         if let Ok(url) = input.try_parse(Url::parse) {
@@ -260,7 +275,9 @@ impl Default for Image {
 
 impl crate::small_list::ImageFallback for Image {
     #[inline]
-    fn get_image(&self) -> &Image { Image::get_image(self) }
+    fn get_image(&self) -> &Image {
+        Image::get_image(self)
+    }
     #[inline]
     fn with_image(&self, arena: &Arena, image: Image) -> Self {
         Image::with_image(self, arena, image)
@@ -343,7 +360,11 @@ impl ImageSet {
         // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq in Phase B
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
-            && self.options.iter().zip(other.options.iter()).all(|(a, b)| a.eql(b))
+            && self
+                .options
+                .iter()
+                .zip(other.options.iter())
+                .all(|(a, b)| a.eql(b))
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
@@ -384,7 +405,10 @@ impl ImageSetOption {
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
         // — token slices are arena-static (see `css_parser::src_str`).
         let image = if let Some(url) = input
-            .try_parse(|p| p.expect_url_or_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
+            .try_parse(|p| {
+                p.expect_url_or_string()
+                    .map(|s| std::ptr::from_ref::<[u8]>(s))
+            })
             .ok()
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
@@ -424,7 +448,9 @@ impl ImageSetOption {
         is_prefixed: bool,
     ) -> core::result::Result<(), PrintErr> {
         if matches!(self.image, Image::Url(_)) && !is_prefixed {
-            let Image::Url(url) = &self.image else { unreachable!() };
+            let Image::Url(url) = &self.image else {
+                unreachable!()
+            };
             let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
                 // PORT NOTE: hoist `get_import_records` (mut borrow) out of the
                 // arg list so `filename()` (shared borrow) can run; result is `&'a _`.

@@ -99,7 +99,11 @@ pub struct Array {
 
 impl Default for Array {
     fn default() -> Self {
-        Self { ptr: ptr::null_mut(), len: 0, cap: 0 }
+        Self {
+            ptr: ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        }
     }
 }
 
@@ -155,7 +159,10 @@ pub struct Raw {
 
 impl Default for Raw {
     fn default() -> Self {
-        Self { ptr: ptr::null(), len: 0 }
+        Self {
+            ptr: ptr::null(),
+            len: 0,
+        }
     }
 }
 
@@ -216,9 +223,7 @@ impl SQLDataCell {
                 // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
                 // via the global allocator (Zig: bun.default_allocator).
                 // TODO(port): verify allocation size == len (Zig free() uses slice.len).
-                unsafe {
-                    drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len)))
-                };
+                unsafe { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
             }
             Tag::Array => {
                 // SAFETY: tag == Array ⇒ `array` is the active union field.
@@ -297,8 +302,7 @@ impl SQLDataCell {
         names_ptr: impl Into<Option<*mut ExternColumnIdentifier>>,
         names_count: u32,
     ) -> JsResult<JSValue> {
-        let names_ptr: *mut ExternColumnIdentifier =
-            names_ptr.into().unwrap_or(ptr::null_mut());
+        let names_ptr: *mut ExternColumnIdentifier = names_ptr.into().unwrap_or(ptr::null_mut());
         // Zig spec gates this on `bun.Environment.ci_assert`: open an
         // `ExceptionValidationScope` so the C++ `DECLARE_THROW_SCOPE` inside
         // SQLClient.cpp's `toJS` (depth 0 → depth 1) has its post-call

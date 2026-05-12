@@ -50,7 +50,11 @@ impl HTTPCertError {
         Self {
             error_no: ssl_error.error_no,
             code: zstr(ssl_error.code),
-            reason: if ssl_error.code.is_null() { ZStr::EMPTY } else { zstr(ssl_error.reason) },
+            reason: if ssl_error.code.is_null() {
+                ZStr::EMPTY
+            } else {
+                zstr(ssl_error.reason)
+            },
         }
     }
 }

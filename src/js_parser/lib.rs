@@ -16,7 +16,6 @@
 #![feature(adt_const_params, generic_const_exprs, allocator_api)]
 #![allow(incomplete_features)]
 
-
 pub use bun_collections::VecExt as _VecExtReexport;
 
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
@@ -25,14 +24,14 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
+pub mod fold;
+pub mod lower;
 pub mod p;
 pub mod parse;
-pub mod visit;
-pub mod lower;
-pub mod scan;
-pub mod fold;
-pub mod typescript;
 pub mod repl_transforms;
+pub mod scan;
+pub mod typescript;
+pub mod visit;
 
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
@@ -98,7 +97,10 @@ pub mod Macro {
     impl Default for MacroContext {
         #[inline]
         fn default() -> Self {
-            Self { javascript_object: MacroJSCtx::ZERO, data: core::ptr::null_mut() }
+            Self {
+                javascript_object: MacroJSCtx::ZERO,
+                data: core::ptr::null_mut(),
+            }
         }
     }
     unsafe extern "Rust" {
@@ -211,7 +213,7 @@ pub mod Macro {
     /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
     pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
 }
-use bun_ast::{Ref, Ast};
+use bun_ast::{Ast, Ref};
 
 // NOTE: shadows the prelude `Result` for this module — all error-union return
 // types in this file are spelled `core::result::Result<T, E>` to disambiguate.
@@ -240,15 +242,18 @@ pub enum AlreadyBundled {
 
 pub type BindingList = Vec<Binding>;
 
-
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, J: crate::JsxT, const SCAN: bool> bun_ast::expr::EqlParser
     for crate::p::P<'a, IS_TS, J, SCAN>
 {
     #[inline]
-    fn arena(&self) -> &bun_alloc::Arena { self.arena }
+    fn arena(&self) -> &bun_alloc::Arena {
+        self.arena
+    }
     #[inline]
-    fn module_ref(&self) -> Ref { self.module_ref }
+    fn module_ref(&self) -> Ref {
+        self.module_ref
+    }
 }
 
 pub mod defines_table;
@@ -264,9 +269,9 @@ pub mod defines {
     use bun_collections::{StringArrayHashMap, StringHashMap};
     use bun_core::strings;
 
-    use bun_ast::expr::Data as ExprData;
-    use bun_ast::StoreRef;
     use bun_ast::E;
+    use bun_ast::StoreRef;
+    use bun_ast::expr::Data as ExprData;
 
     // Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
@@ -305,7 +310,8 @@ pub mod defines {
         }
         #[inline]
         pub fn set_valueless(&mut self, v: bool) {
-            self.0 = (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
+            self.0 =
+                (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
         }
         #[inline]
         pub const fn can_be_removed_if_unused(self) -> bool {
@@ -328,8 +334,8 @@ pub mod defines {
         }
         #[inline]
         pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
-            self.0 =
-                (self.0 & !Self::CALL_UNWRAP_MASK) | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
+            self.0 = (self.0 & !Self::CALL_UNWRAP_MASK)
+                | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
         }
         #[inline]
         pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
@@ -455,7 +461,11 @@ pub mod defines {
         pub fn init_boolean(value: bool) -> DefineData {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
-            DefineData { value: ExprData::EBoolean(E::Boolean { value }), flags, ..Default::default() }
+            DefineData {
+                value: ExprData::EBoolean(E::Boolean { value }),
+                flags,
+                ..Default::default()
+            }
         }
 
         pub fn init_static_string(str: &'static E::EString) -> DefineData {
@@ -585,9 +595,9 @@ pub mod defines_full_draft {
     use bun_ast::base::Ref;
     use bun_ast::e as E;
     use bun_ast::expr;
-    
-    use bun_ast::StoreRef;
+
     use crate::lexer as js_lexer;
+    use bun_ast::StoreRef;
 
     // Zig: `bun.StringArrayHashMap(string)` / `bun.StringHashMap(DefineData)`
     pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
@@ -657,7 +667,8 @@ pub mod defines_full_draft {
         /// does not have any observable side effects.
         #[inline]
         pub fn can_be_removed_if_unused(&self) -> bool {
-            self.flags.contains(DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED)
+            self.flags
+                .contains(DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED)
         }
 
         /// True if a call to this value is known to not have any side effects. For
@@ -676,7 +687,8 @@ pub mod defines_full_draft {
 
         #[inline]
         pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
-            self.flags.contains(DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED)
+            self.flags
+                .contains(DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED)
         }
 
         #[inline]
@@ -739,7 +751,8 @@ pub mod defines_full_draft {
                 &bun_ast::Source,
                 &mut bun_ast::Log,
                 &bun_alloc::Arena,
-            ) -> core::result::Result<bun_ast::Expr, bun_core::Error>,
+            )
+                -> core::result::Result<bun_ast::Expr, bun_core::Error>,
         ) -> core::result::Result<DefineData, bun_core::Error> {
             for part in key.split(|&c| c == b'.') {
                 if !js_lexer::is_identifier(part) {
@@ -747,7 +760,10 @@ pub mod defines_full_draft {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::default(),
-                            format_args!("define key \"{}\" must be a valid identifier", BStr::new(key)),
+                            format_args!(
+                                "define key \"{}\" must be a valid identifier",
+                                BStr::new(key)
+                            ),
                         );
                     } else {
                         log.add_error_fmt(
@@ -794,7 +810,11 @@ pub mod defines_full_draft {
                 flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
                 return Ok(DefineData {
                     value,
-                    original_name: if value_str.is_empty() { None } else { Some(Box::<[u8]>::from(value_str)) },
+                    original_name: if value_str.is_empty() {
+                        None
+                    } else {
+                        Some(Box::<[u8]>::from(value_str))
+                    },
                     flags,
                 });
             }
@@ -815,7 +835,11 @@ pub mod defines_full_draft {
             }
             Ok(DefineData {
                 value: cloned,
-                original_name: if value_str.is_empty() { None } else { Some(Box::<[u8]>::from(value_str)) },
+                original_name: if value_str.is_empty() {
+                    None
+                } else {
+                    Some(Box::<[u8]>::from(value_str))
+                },
                 flags,
             })
         }
@@ -933,11 +957,11 @@ pub mod defines_full_draft {
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
-    use bun_collections::VecExt;
+    use bun_ast::SlotCounts;
     use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
-    use bun_ast::symbol::{self, Symbol, SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
-    use bun_ast::SlotCounts;
+    use bun_ast::symbol::{self, INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
+    use bun_collections::VecExt;
 
     // Round-C alias kept for P.rs/Parser.rs callers.
     pub type SymbolMap = bun_ast::symbol::Map;
@@ -976,7 +1000,8 @@ pub mod renamer {
         // Then set the nested scope slots of top-level symbols back to zero. Top-
         // level symbols are not supposed to have nested scope slots.
         for member in module_scope.members.values() {
-            symbols[member.ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
+            symbols[member.ref_.inner_index() as usize].nested_scope_slot =
+                INVALID_NESTED_SCOPE_SLOT;
         }
         for ref_ in module_scope.generated.slice() {
             symbols[ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
@@ -1058,10 +1083,18 @@ pub mod renamer {
 
     impl StableSymbolCount {
         pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
-            if i.count > j.count { return true; }
-            if i.count < j.count { return false; }
-            if i.stable_source_index < j.stable_source_index { return true; }
-            if i.stable_source_index > j.stable_source_index { return false; }
+            if i.count > j.count {
+                return true;
+            }
+            if i.count < j.count {
+                return false;
+            }
+            if i.stable_source_index < j.stable_source_index {
+                return true;
+            }
+            if i.stable_source_index > j.stable_source_index {
+                return false;
+            }
             i.ref_.inner_index() < j.ref_.inner_index()
         }
     }

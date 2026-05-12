@@ -2,16 +2,18 @@ use crate::mal_prelude::*;
 use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
-use bun_threading::thread_pool as ThreadPoolLib;
-use bun_js_printer::{self as js_printer, PrintResult};
 use bun_ast::Scope;
+use bun_js_printer::{self as js_printer, PrintResult};
+use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::linker_context_mod::{LinkerContext, PendingPartRange};
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
 use crate::{BundleV2, Chunk, CompileResult, Index, PartRange};
 
-use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_js, DeclCollector};
+use super::generate_code_for_file_in_chunk_js::{
+    DeclCollector, generate_code_for_file_in_chunk_js,
+};
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
@@ -32,7 +34,8 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     let _crash_guard = {
         // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
         // borrows for the crash-trace vtable only.
-        let (c, chunk): (&LinkerContext, &Chunk) = (part_range.ctx.c.get(), part_range.ctx.chunk.get());
+        let (c, chunk): (&LinkerContext, &Chunk) =
+            (part_range.ctx.c.get(), part_range.ctx.chunk.get());
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
@@ -105,15 +108,27 @@ fn generate_compile_result_for_js_chunk_impl(
         .expect("Worker.stmt_list set in create()");
     stmt_list.reset();
 
-    let runtime_scope: &mut Scope =
-        &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
+    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()
+        [c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
     let runtime_members = &runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS".as_slice()).unwrap().ref_);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM".as_slice()).unwrap().ref_);
+    let to_common_js_ref = c.graph.symbols.follow(
+        runtime_members
+            .get(b"__toCommonJS".as_slice())
+            .unwrap()
+            .ref_,
+    );
+    let to_esm_ref = c
+        .graph
+        .symbols
+        .follow(runtime_members.get(b"__toESM".as_slice()).unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_))
+        Some(
+            c.graph
+                .symbols
+                .follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_),
+        )
     };
 
     let collect_decls = c.options.generate_bytecode_cache
@@ -122,7 +137,10 @@ fn generate_compile_result_for_js_chunk_impl(
     // PORT NOTE: Zig threaded `arena` (dev_server or default) into
     // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
     // worker heap for now (see TODO above re: dev_server arena).
-    let mut dc = DeclCollector { arena: worker.arena.as_ptr(), ..Default::default() };
+    let mut dc = DeclCollector {
+        arena: worker.arena.as_ptr(),
+        ..Default::default()
+    };
 
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so

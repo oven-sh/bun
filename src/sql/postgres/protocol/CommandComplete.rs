@@ -8,7 +8,9 @@ pub struct CommandComplete {
 
 impl Default for CommandComplete {
     fn default() -> Self {
-        Self { command_tag: Data::Empty }
+        Self {
+            command_tag: Data::Empty,
+        }
     }
 }
 

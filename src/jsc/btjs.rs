@@ -3,9 +3,9 @@ use core::ffi::c_char;
 use std::io::Write as _;
 
 #[cfg(debug_assertions)]
-use bun_core::{self, err, Error};
-#[cfg(debug_assertions)]
 use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
+#[cfg(debug_assertions)]
+use bun_core::{self, Error, err};
 
 // Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
 // `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup helpers. The frame-pointer
@@ -19,7 +19,7 @@ mod zig_std_debug {
     #[cfg(target_os = "linux")]
     use core::sync::atomic::{AtomicI32, Ordering};
 
-    use bun_core::{err, Error};
+    use bun_core::{Error, err};
 
     // ── ThreadContext / have_ucontext ────────────────────────────────────
     // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
@@ -32,8 +32,11 @@ mod zig_std_debug {
     pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
     // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
     // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
-    const HAVE_GETCONTEXT: bool =
-        cfg!(all(not(windows), not(target_os = "android"), not(target_os = "openbsd")));
+    const HAVE_GETCONTEXT: bool = cfg!(all(
+        not(windows),
+        not(target_os = "android"),
+        not(target_os = "openbsd")
+    ));
 
     // DWARF unwinding requires the full `Dwarf` parser (not ported). Zig falls back to
     // fp-walking when `SelfInfo.supports_unwinding == false`; we hard-code that here.
@@ -101,14 +104,18 @@ mod zig_std_debug {
         {
             let fp: usize;
             // SAFETY: reading rbp is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            unsafe {
+                core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags))
+            };
             fp
         }
         #[cfg(target_arch = "aarch64")]
         {
             let fp: usize;
             // SAFETY: reading x29 (fp) is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            unsafe {
+                core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags))
+            };
             fp
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -158,11 +165,25 @@ mod zig_std_debug {
                             }
                             pid => pid,
                         };
-                        let local = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
-                        let remote = libc::iovec { iov_base: address as *mut c_void, iov_len: buf.len() };
+                        let local = libc::iovec {
+                            iov_base: buf.as_mut_ptr().cast(),
+                            iov_len: buf.len(),
+                        };
+                        let remote = libc::iovec {
+                            iov_base: address as *mut c_void,
+                            iov_len: buf.len(),
+                        };
                         // SAFETY: iovecs point to valid memory for their stated lengths.
-                        let bytes_read =
-                            unsafe { libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0) };
+                        let bytes_read = unsafe {
+                            libc::process_vm_readv(
+                                pid,
+                                &raw const local,
+                                1,
+                                &raw const remote,
+                                1,
+                                0,
+                            )
+                        };
                         if bytes_read >= 0 {
                             return bytes_read as usize == buf.len();
                         }
@@ -190,7 +211,12 @@ mod zig_std_debug {
                     fd => {
                         // SAFETY: fd is a valid open file descriptor; buf is writable.
                         let n = unsafe {
-                            libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), address as libc::off_t)
+                            libc::pread(
+                                fd,
+                                buf.as_mut_ptr().cast(),
+                                buf.len(),
+                                address as libc::off_t,
+                            )
                         };
                         return n >= 0 && n as usize == buf.len();
                     }
@@ -208,7 +234,11 @@ mod zig_std_debug {
 
         fn load_usize(&mut self, address: usize) -> Option<usize> {
             let mut result = [0u8; core::mem::size_of::<usize>()];
-            if self.read(address, &mut result) { Some(usize::from_ne_bytes(result)) } else { None }
+            if self.read(address, &mut result) {
+                Some(usize::from_ne_bytes(result))
+            } else {
+                None
+            }
         }
     }
 
@@ -276,7 +306,8 @@ mod zig_std_debug {
         #[cfg(not(windows))]
         {
             // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
-            let rc = unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
+            let rc =
+                unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
             if rc != 0 {
                 return bun_sys::last_errno() != libc::ENOMEM;
             }
@@ -359,7 +390,10 @@ mod zig_std_debug {
             }
             if let Some(unwind_state) = &mut self.unwind_state {
                 if let Some(e) = unwind_state.last_error.take() {
-                    return Some(LastUnwindError { err: e, address: unwind_state.pc });
+                    return Some(LastUnwindError {
+                        err: e,
+                        address: unwind_state.pc,
+                    });
                 }
             }
             None
@@ -416,11 +450,13 @@ mod zig_std_debug {
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
     pub use bun_crash_handler::debug::{
-        get_self_debug_info, Module, SelfInfo, SourceLocation, SymbolInfo,
+        Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
     };
 }
 #[cfg(debug_assertions)]
-use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};
+use zig_std_debug::{
+    Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError,
+};
 
 // Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
 // (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
@@ -446,7 +482,11 @@ mod tty {
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
             unsafe extern "system" {
-                fn GetEnvironmentVariableW(lpName: *const u16, lpBuffer: *mut u16, nSize: u32) -> u32;
+                fn GetEnvironmentVariableW(
+                    lpName: *const u16,
+                    lpBuffer: *mut u16,
+                    nSize: u32,
+                ) -> u32;
             }
             // `name` is a compile-time ASCII C string (c"NO_COLOR" / c"CLICOLOR_FORCE");
             // widen byte-by-byte into a NUL-terminated WCHAR buffer on the stack.
@@ -464,7 +504,9 @@ mod tty {
             // written, excluding NUL); not-found also returns 0; any non-empty
             // value returns >=1 (either chars written, or required size if it
             // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
-            let rc = unsafe { GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+            let rc = unsafe {
+                GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
+            };
             return rc != 0;
         }
         #[cfg(not(windows))]
@@ -499,7 +541,11 @@ mod tty {
             return Config::EscapeCodes;
         }
 
-        if force_color == Some(true) { Config::EscapeCodes } else { Config::NoColor }
+        if force_color == Some(true) {
+            Config::EscapeCodes
+        } else {
+            Config::NoColor
+        }
     }
 }
 #[cfg(debug_assertions)]
@@ -524,7 +570,9 @@ pub extern "C" fn dumpBtjsTrace() -> *const c_char {
     }
     #[cfg(not(debug_assertions))]
     {
-        b"btjs is disabled in release builds\0".as_ptr().cast::<c_char>()
+        b"btjs is disabled in release builds\0"
+            .as_ptr()
+            .cast::<c_char>()
     }
 }
 
@@ -547,7 +595,9 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
                 return b"<oom>\0".as_ptr().cast::<c_char>();
             }
             // leak intentionally — caller is lldb and never frees
-            return bun_core::heap::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const();
+            return bun_core::heap::into_raw(result_writer.into_boxed_slice())
+                .cast::<c_char>()
+                .cast_const();
         }
     };
 
@@ -592,7 +642,9 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // add null terminator
     result_writer.push(0);
     // leak intentionally — caller is lldb and never frees
-    bun_core::heap::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const()
+    bun_core::heap::into_raw(result_writer.into_boxed_slice())
+        .cast::<c_char>()
+        .cast_const()
 }
 
 #[cfg(debug_assertions)]
@@ -646,7 +698,11 @@ fn print_source_at_address(
         // JS frame can be on the stack to inspect.
         let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global());
         tty_config.set_color(out_stream, Color::Bold)?;
-        write!(out_stream, "{}:{}:{}: ", srcloc.str, srcloc.line, srcloc.column)?;
+        write!(
+            out_stream,
+            "{}:{}:{}: ",
+            srcloc.str, srcloc.line, srcloc.column
+        )?;
         tty_config.set_color(out_stream, Color::Reset)?;
     }
 
@@ -785,8 +841,13 @@ fn print_line_from_file_any_os(
     // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
     // forbids std::fs; using bun_sys here. Phase B: confirm bun_sys::File is safe to call
     // from inside a crash handler / lldb (must not re-enter event loop).
-    let f = bun_sys::File::open_at(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
-        .map_err(Into::<Error>::into)?;
+    let f = bun_sys::File::open_at(
+        bun_sys::Fd::cwd(),
+        &source_location.file_name,
+        bun_sys::O::RDONLY,
+        0,
+    )
+    .map_err(Into::<Error>::into)?;
     // defer f.close() — handled by Drop
     // TODO fstat and make sure that the file has the correct size
 

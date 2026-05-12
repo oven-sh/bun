@@ -162,11 +162,7 @@ impl OSLog {
         // or null; the literals are NUL-terminated.
         unsafe {
             let ptr = os_log_create(c"com.bun.bun".as_ptr(), c"PointsOfInterest".as_ptr());
-            if ptr.is_null() {
-                None
-            } else {
-                Some(&*ptr)
-            }
+            if ptr.is_null() { None } else { Some(&*ptr) }
         }
     }
 
@@ -190,7 +186,13 @@ impl<'a> Signpost<'a> {
     pub fn emit(&self, category: Category) {
         // SAFETY: self.log is a valid os_log_t handle for 'a.
         unsafe {
-            bun_signpost_emit(self.log, self.id, SignpostType::Event, self.name, category as u8);
+            bun_signpost_emit(
+                self.log,
+                self.id,
+                SignpostType::Event,
+                self.name,
+                category as u8,
+            );
         }
     }
 
@@ -205,7 +207,10 @@ impl<'a> Signpost<'a> {
                 category as u8,
             );
         }
-        Interval { signpost: self, category }
+        Interval {
+            signpost: self,
+            category,
+        }
     }
 }
 

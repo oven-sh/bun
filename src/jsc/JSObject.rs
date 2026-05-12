@@ -10,8 +10,12 @@ unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
     safe static JSC__JSObject__maxInlineCapacity: c_uint;
 
-    safe fn JSC__JSObject__getIndex(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JSValue;
-    safe fn Bun__JSObject__getCodePropertyVMInquiry(global: &JSGlobalObject, obj: &JSObject) -> JSValue;
+    safe fn JSC__JSObject__getIndex(this: JSValue, global_this: &JSGlobalObject, i: u32)
+    -> JSValue;
+    safe fn Bun__JSObject__getCodePropertyVMInquiry(
+        global: &JSGlobalObject,
+        obj: &JSObject,
+    ) -> JSValue;
     fn JSC__createStructure(
         global: *mut JSGlobalObject,
         owner: *mut JSCell,
@@ -61,7 +65,10 @@ impl JSObject {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create<T: PojoFields>(pojo: &T, global: &JSGlobalObject) -> JsResult<&'static mut JSObject> {
+    pub fn create<T: PojoFields>(
+        pojo: &T,
+        global: &JSGlobalObject,
+    ) -> JsResult<&'static mut JSObject> {
         Self::create_from_struct_with_prototype::<T, false>(pojo, global)
     }
 
@@ -73,7 +80,10 @@ impl JSObject {
     ///
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
-    pub fn create_null_proto<T: PojoFields>(pojo: &T, global: &JSGlobalObject) -> JsResult<&'static mut JSObject> {
+    pub fn create_null_proto<T: PojoFields>(
+        pojo: &T,
+        global: &JSGlobalObject,
+    ) -> JsResult<&'static mut JSObject> {
         Self::create_from_struct_with_prototype::<T, true>(pojo, global)
     }
 
@@ -123,18 +133,31 @@ impl JSObject {
         Ok(obj)
     }
 
-    pub fn get(&self, global: &JSGlobalObject, prop: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
+    pub fn get(
+        &self,
+        global: &JSGlobalObject,
+        prop: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
         self.to_js().get(global, prop.as_ref())
     }
 
     #[inline]
-    pub fn put(&self, global: &JSGlobalObject, key: impl AsRef<[u8]>, value: JSValue) -> JsResult<()> {
+    pub fn put(
+        &self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsResult<()> {
         self.to_js().put(global, key.as_ref(), value);
         Ok(())
     }
 
     #[inline]
-    pub fn put_all_from_struct<T: JSValueFields>(&self, global: &JSGlobalObject, properties: &T) -> JsResult<()> {
+    pub fn put_all_from_struct<T: JSValueFields>(
+        &self,
+        global: &JSGlobalObject,
+        properties: &T,
+    ) -> JsResult<()> {
         // TODO(port): Zig used `std.meta.fieldNames(@TypeOf(properties))` +
         // `@field(properties, field)`. Relies on the `JSValueFields` derive.
         // PORT NOTE: Zig's `put` signature forces each field to already be a JSValue —
@@ -166,14 +189,7 @@ impl JSObject {
         // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
         // no `&`-derived view of any field C++ mutates.
-        unsafe {
-            JSC__createStructure(
-                global.as_ptr(),
-                owner_cell,
-                length,
-                names,
-            )
-        }
+        unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
     pub fn create_with_initializer<Ctx: ObjectInitializer>(
@@ -205,11 +221,24 @@ impl JSObject {
     }
 
     #[track_caller]
-    pub fn put_record(&mut self, global: &JSGlobalObject, key: &mut ZigString, values: &mut [ZigString]) -> JsResult<()> {
+    pub fn put_record(
+        &mut self,
+        global: &JSGlobalObject,
+        key: &mut ZigString,
+        values: &mut [ZigString],
+    ) -> JsResult<()> {
         // Zig calls `bun.cpp.JSC__JSObject__putRecord` (`[[ZIG_EXPORT(check_slow)]]`).
         // SAFETY: pointers are valid for the duration of the call; C++ does not
         // retain them.
-        unsafe { crate::cpp::JSC__JSObject__putRecord(self, global, key, values.as_mut_ptr(), values.len()) }
+        unsafe {
+            crate::cpp::JSC__JSObject__putRecord(
+                self,
+                global,
+                key,
+                values.as_mut_ptr(),
+                values.len(),
+            )
+        }
     }
 
     /// This will not call getters or be observable from JavaScript.
@@ -236,7 +265,10 @@ pub union ExternColumnIdentifierValue {
 
 impl Default for ExternColumnIdentifier {
     fn default() -> Self {
-        Self { tag: 0, value: ExternColumnIdentifierValue { index: 0 } }
+        Self {
+            tag: 0,
+            value: ExternColumnIdentifierValue { index: 0 },
+        }
     }
 }
 
@@ -258,7 +290,8 @@ impl Drop for ExternColumnIdentifier {
     }
 }
 
-pub type InitializeCallback = extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
+pub type InitializeCallback =
+    extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
 
 /// Zig's `Initializer(comptime Ctx, comptime func)` returned a type with a
 /// single `extern "C" fn call`. In Rust the contract is a trait: implement

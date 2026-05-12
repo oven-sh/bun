@@ -30,7 +30,10 @@ impl Default for PrepareOK {
 
 impl PrepareOK {
     // TODO(port): narrow error set
-    pub fn decode_internal<C: ReaderContext>(&mut self, reader: NewReader<C>) -> Result<(), bun_core::Error> {
+    pub fn decode_internal<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+    ) -> Result<(), bun_core::Error> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
             return Err(bun_core::err!("InvalidPrepareOKPacket"));
@@ -45,7 +48,10 @@ impl PrepareOK {
     }
 
     // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
-    pub fn decode<C: ReaderContext>(&mut self, reader: NewReader<C>) -> Result<(), bun_core::Error> {
+    pub fn decode<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+    ) -> Result<(), bun_core::Error> {
         self.decode_internal(reader)
     }
 }
@@ -80,8 +86,11 @@ pub struct ExecuteParams<'a> {
     /// `param == .null`
     pub is_null: fn(*mut core::ffi::c_void, usize) -> bool,
     /// `param.toData(field_type)`
-    pub to_data:
-        fn(*mut core::ffi::c_void, usize, FieldType) -> Result<crate::shared::Data, any_mysql_error::Error>,
+    pub to_data: fn(
+        *mut core::ffi::c_void,
+        usize,
+        FieldType,
+    ) -> Result<crate::shared::Data, any_mysql_error::Error>,
     pub _marker: core::marker::PhantomData<&'a ()>,
 }
 
@@ -89,7 +98,10 @@ pub struct ExecuteParams<'a> {
 // Ownership of params stays with the caller (borrowed slice) — no Drop here.
 
 impl<'a> Execute<'a> {
-    fn write_null_bitmap<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
+    fn write_null_bitmap<C: WriterContext>(
+        &self,
+        writer: NewWriter<C>,
+    ) -> Result<(), any_mysql_error::Error> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
@@ -107,7 +119,10 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    pub fn write_internal<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
+    pub fn write_internal<C: WriterContext>(
+        &self,
+        writer: NewWriter<C>,
+    ) -> Result<(), any_mysql_error::Error> {
         writer.int1(CommandType::COM_STMT_EXECUTE as u8)?;
         writer.int4(self.statement_id)?;
         writer.int1(self.flags)?;
@@ -156,7 +171,10 @@ impl<'a> Execute<'a> {
     }
 
     // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
-    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
+    pub fn write<C: WriterContext>(
+        &self,
+        writer: NewWriter<C>,
+    ) -> Result<(), any_mysql_error::Error> {
         self.write_internal(writer)
     }
 }

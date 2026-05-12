@@ -57,11 +57,16 @@ fn ptr_without_panic(buf: &[u8]) -> *const u8 {
 /// already check. That lets callers store the lol-html-owned pointer as
 /// `*mut T` (nullable after detach) and recover a usable `&mut T` without a
 /// per-call `unsafe { }` at every method site.
-mod sealed { pub trait Sealed {} }
+mod sealed {
+    pub trait Sealed {}
+}
 pub trait Opaque: sealed::Sealed {
     /// Null-checked deref. See trait doc for the soundness argument.
     #[inline(always)]
-    fn from_ptr<'a>(p: *mut Self) -> Option<&'a mut Self> where Self: Sized {
+    fn from_ptr<'a>(p: *mut Self) -> Option<&'a mut Self>
+    where
+        Self: Sized,
+    {
         // SAFETY: `Self` is a zero-sized `UnsafeCell<[u8; 0]>` opaque (sealed
         // impls only); a non-null pointer to a ZST is always dereferenceable
         // for 0 bytes and `&mut` over `UnsafeCell` carries no `noalias`.
@@ -71,14 +76,30 @@ pub trait Opaque: sealed::Sealed {
 macro_rules! lol_opaque {
     ($($t:ty),* $(,)?) => { $( impl sealed::Sealed for $t {} impl Opaque for $t {} )* };
 }
-lol_opaque!(HTMLRewriter, HTMLRewriterBuilder, HTMLSelector, TextChunk, Element, EndTag, Attribute, AttributeIterator, Comment, DocEnd, DocType);
+lol_opaque!(
+    HTMLRewriter,
+    HTMLRewriterBuilder,
+    HTMLSelector,
+    TextChunk,
+    Element,
+    EndTag,
+    Attribute,
+    AttributeIterator,
+    Comment,
+    DocEnd,
+    DocType
+);
 
 // ─── HTMLRewriter ─────────────────────────────────────────────────────────
 
 bun_opaque::opaque_ffi! { pub struct HTMLRewriter; }
 
 unsafe extern "C" {
-    fn lol_html_rewriter_write(rewriter: *mut HTMLRewriter, chunk: *const u8, chunk_len: usize) -> c_int;
+    fn lol_html_rewriter_write(
+        rewriter: *mut HTMLRewriter,
+        chunk: *const u8,
+        chunk_len: usize,
+    ) -> c_int;
     fn lol_html_rewriter_end(rewriter: *mut HTMLRewriter) -> c_int;
     fn lol_html_rewriter_free(rewriter: *mut HTMLRewriter);
 }
@@ -239,7 +260,8 @@ impl HTMLRewriterBuilder {
                 comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
                 comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
+                text_chunk_handler_data
+                    .map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 end_tag_handler_data.map(|_| directive_handler::<DocEnd, DE> as _),
                 end_tag_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
             );
@@ -300,7 +322,8 @@ impl HTMLRewriterBuilder {
                 comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
                 comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
+                text_chunk_handler_data
+                    .map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
             )
         };
         match rc {
@@ -355,7 +378,11 @@ pub trait OutputSink {
     fn done(&mut self);
 }
 
-unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: usize, user_data: *mut c_void) {
+unsafe extern "C" fn output_sink_function<S: OutputSink>(
+    ptr: *const u8,
+    len: usize,
+    user_data: *mut c_void,
+) {
     auto_disable();
 
     // Zig: @setRuntimeSafety(false)
@@ -435,9 +462,24 @@ impl TextChunkContent {
 unsafe extern "C" {
     safe fn lol_html_text_chunk_content_get(chunk: &TextChunk) -> TextChunkContent;
     safe fn lol_html_text_chunk_is_last_in_text_node(chunk: &TextChunk) -> bool;
-    fn lol_html_text_chunk_before(chunk: *mut TextChunk, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_text_chunk_after(chunk: *mut TextChunk, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_text_chunk_replace(chunk: *mut TextChunk, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_text_chunk_before(
+        chunk: *mut TextChunk,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_text_chunk_after(
+        chunk: *mut TextChunk,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_text_chunk_replace(
+        chunk: *mut TextChunk,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_text_chunk_remove(chunk: &mut TextChunk);
     safe fn lol_html_text_chunk_is_removed(chunk: &TextChunk) -> bool;
     safe fn lol_html_text_chunk_user_data_set(chunk: &TextChunk, user_data: *mut c_void);
@@ -463,7 +505,10 @@ impl TextChunk {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_before(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        if unsafe {
+            lol_html_text_chunk_before(self, ptr_without_panic(content), content.len(), is_html)
+        } < 0
+        {
             return Err(Error::Fail);
         }
         Ok(())
@@ -477,7 +522,10 @@ impl TextChunk {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_after(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        if unsafe {
+            lol_html_text_chunk_after(self, ptr_without_panic(content), content.len(), is_html)
+        } < 0
+        {
             return Err(Error::Fail);
         }
         Ok(())
@@ -492,7 +540,10 @@ impl TextChunk {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_replace(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        if unsafe {
+            lol_html_text_chunk_replace(self, ptr_without_panic(content), content.len(), is_html)
+        } < 0
+        {
             return Err(Error::Fail);
         }
         Ok(())
@@ -508,12 +559,21 @@ impl TextChunk {
     }
     pub fn set_user_data<T>(&self, value: Option<&mut T>) {
         auto_disable();
-        lol_html_text_chunk_user_data_set(self, value.map_or(core::ptr::null_mut(), |v| std::ptr::from_mut::<T>(v).cast::<c_void>()))
+        lol_html_text_chunk_user_data_set(
+            self,
+            value.map_or(core::ptr::null_mut(), |v| {
+                std::ptr::from_mut::<T>(v).cast::<c_void>()
+            }),
+        )
     }
     pub fn get_user_data<T>(&self) -> Option<*mut T> {
         auto_disable();
         let p = lol_html_text_chunk_user_data_get(self);
-        if p.is_null() { None } else { Some(p.cast::<T>()) }
+        if p.is_null() {
+            None
+        } else {
+            Some(p.cast::<T>())
+        }
     }
     pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
         auto_disable();
@@ -528,16 +588,64 @@ bun_opaque::opaque_ffi! { pub struct Element; }
 // `Element` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale. (ptr,len) shims stay `unsafe`.
 unsafe extern "C" {
-    fn lol_html_element_get_attribute(element: *const Element, name: *const u8, name_len: usize) -> HTMLString;
-    fn lol_html_element_has_attribute(element: *const Element, name: *const u8, name_len: usize) -> c_int;
-    fn lol_html_element_set_attribute(element: *mut Element, name: *const u8, name_len: usize, value: *const u8, value_len: usize) -> c_int;
-    fn lol_html_element_remove_attribute(element: *mut Element, name: *const u8, name_len: usize) -> c_int;
-    fn lol_html_element_before(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_element_prepend(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_element_append(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_element_after(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_element_set_inner_content(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_element_replace(element: *mut Element, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_element_get_attribute(
+        element: *const Element,
+        name: *const u8,
+        name_len: usize,
+    ) -> HTMLString;
+    fn lol_html_element_has_attribute(
+        element: *const Element,
+        name: *const u8,
+        name_len: usize,
+    ) -> c_int;
+    fn lol_html_element_set_attribute(
+        element: *mut Element,
+        name: *const u8,
+        name_len: usize,
+        value: *const u8,
+        value_len: usize,
+    ) -> c_int;
+    fn lol_html_element_remove_attribute(
+        element: *mut Element,
+        name: *const u8,
+        name_len: usize,
+    ) -> c_int;
+    fn lol_html_element_before(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_element_prepend(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_element_append(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_element_after(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_element_set_inner_content(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_element_replace(
+        element: *mut Element,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_element_remove(element: &Element);
     safe fn lol_html_element_remove_and_keep_content(element: &Element);
     safe fn lol_html_element_is_removed(element: &Element) -> bool;
@@ -545,12 +653,20 @@ unsafe extern "C" {
     safe fn lol_html_element_can_have_content(element: &Element) -> bool;
     safe fn lol_html_element_user_data_set(element: &Element, user_data: *mut c_void);
     safe fn lol_html_element_user_data_get(element: &Element) -> *mut c_void;
-    safe fn lol_html_element_add_end_tag_handler(element: &mut Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: *mut c_void) -> c_int;
+    safe fn lol_html_element_add_end_tag_handler(
+        element: &mut Element,
+        end_tag_handler: lol_html_end_tag_handler_t,
+        user_data: *mut c_void,
+    ) -> c_int;
     safe fn lol_html_element_clear_end_tag_handlers(element: &mut Element);
     safe fn lol_html_element_source_location_bytes(element: &Element) -> SourceLocationBytes;
 
     safe fn lol_html_element_tag_name_get(element: &Element) -> HTMLString;
-    fn lol_html_element_tag_name_set(element: *mut Element, name: *const u8, name_len: usize) -> c_int;
+    fn lol_html_element_tag_name_set(
+        element: *mut Element,
+        name: *const u8,
+        name_len: usize,
+    ) -> c_int;
     safe fn lol_html_element_namespace_uri_get(element: &Element) -> *const c_char;
     safe fn lol_html_attributes_iterator_get(element: &Element) -> *mut AttributeIterator;
 }
@@ -574,7 +690,15 @@ impl Element {
     pub fn set_attribute(&mut self, name: &[u8], value: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: name/value ptr/len describe valid slices
-        match unsafe { lol_html_element_set_attribute(self, ptr_without_panic(name), name.len(), ptr_without_panic(value), value.len()) } {
+        match unsafe {
+            lol_html_element_set_attribute(
+                self,
+                ptr_without_panic(name),
+                name.len(),
+                ptr_without_panic(value),
+                value.len(),
+            )
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -583,7 +707,9 @@ impl Element {
     pub fn remove_attribute(&mut self, name: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: name ptr/len describe a valid slice
-        match unsafe { lol_html_element_remove_attribute(self, ptr_without_panic(name), name.len()) } {
+        match unsafe {
+            lol_html_element_remove_attribute(self, ptr_without_panic(name), name.len())
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -592,7 +718,9 @@ impl Element {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_before(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -601,7 +729,9 @@ impl Element {
     pub fn prepend(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_prepend(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_prepend(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -610,7 +740,9 @@ impl Element {
     pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_append(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_append(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -619,7 +751,9 @@ impl Element {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_after(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -628,7 +762,14 @@ impl Element {
     pub fn set_inner_content(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_set_inner_content(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_set_inner_content(
+                self,
+                ptr_without_panic(content),
+                content.len(),
+                is_html,
+            )
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -643,7 +784,9 @@ impl Element {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_element_replace(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_element_replace(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -677,9 +820,17 @@ impl Element {
     pub fn get_user_data<T>(&self) -> Option<*mut T> {
         auto_disable();
         let p = lol_html_element_user_data_get(self);
-        if p.is_null() { None } else { Some(p.cast::<T>()) }
+        if p.is_null() {
+            None
+        } else {
+            Some(p.cast::<T>())
+        }
     }
-    pub fn on_end_tag(&mut self, end_tag_handler: lol_html_end_tag_handler_t, user_data: *mut c_void) -> Result<(), Error> {
+    pub fn on_end_tag(
+        &mut self,
+        end_tag_handler: lol_html_end_tag_handler_t,
+        user_data: *mut c_void,
+    ) -> Result<(), Error> {
         auto_disable();
         lol_html_element_clear_end_tag_handlers(self);
         match lol_html_element_add_end_tag_handler(self, end_tag_handler, user_data) {
@@ -762,7 +913,12 @@ impl HTMLString {
     pub extern "C" fn deinit_external(_: *mut u8, ptr: *mut c_void, len: usize) {
         auto_disable();
         // SAFETY: ptr/len were the original HTMLString fields passed to createExternal
-        unsafe { lol_html_str_free(HTMLString { ptr: ptr as *const u8, len }) };
+        unsafe {
+            lol_html_str_free(HTMLString {
+                ptr: ptr as *const u8,
+                len,
+            })
+        };
     }
 
     // `to_string(self) -> bun.String` and `to_js` live in the higher-tier
@@ -778,9 +934,24 @@ bun_opaque::opaque_ffi! { pub struct EndTag; }
 // `EndTag` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale.
 unsafe extern "C" {
-    fn lol_html_end_tag_before(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_end_tag_after(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_end_tag_replace(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_end_tag_before(
+        end_tag: *mut EndTag,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_end_tag_after(
+        end_tag: *mut EndTag,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_end_tag_replace(
+        end_tag: *mut EndTag,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_end_tag_remove(end_tag: &mut EndTag);
     safe fn lol_html_end_tag_name_get(end_tag: &EndTag) -> HTMLString;
     fn lol_html_end_tag_name_set(end_tag: *mut EndTag, name: *const u8, name_len: usize) -> c_int;
@@ -791,7 +962,9 @@ impl EndTag {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_end_tag_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_end_tag_before(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -801,7 +974,9 @@ impl EndTag {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_end_tag_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_end_tag_after(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -811,7 +986,9 @@ impl EndTag {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_end_tag_replace(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_end_tag_replace(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -869,7 +1046,8 @@ bun_opaque::opaque_ffi! { pub struct AttributeIterator; }
 // `TextChunk` extern block comment for the `safe fn` rationale.
 unsafe extern "C" {
     safe fn lol_html_attributes_iterator_free(iterator: &mut AttributeIterator);
-    safe fn lol_html_attributes_iterator_next(iterator: &mut AttributeIterator) -> *const Attribute;
+    safe fn lol_html_attributes_iterator_next(iterator: &mut AttributeIterator)
+    -> *const Attribute;
 }
 
 impl AttributeIterator {
@@ -881,7 +1059,11 @@ impl AttributeIterator {
         // SAFETY: lol-html guarantees the returned pointer (when non-null) is
         // valid until the next call to `next` or `free`; `Attribute` is an
         // opaque `UnsafeCell<[u8; 0]>` so `&Attribute` carries no `dereferenceable`.
-        if p.is_null() { None } else { Some(unsafe { &*p }) }
+        if p.is_null() {
+            None
+        } else {
+            Some(unsafe { &*p })
+        }
     }
 
     // TODO(port): opaque FFI handle — see HTMLRewriter::destroy note
@@ -900,9 +1082,24 @@ bun_opaque::opaque_ffi! { pub struct Comment; }
 unsafe extern "C" {
     safe fn lol_html_comment_text_get(comment: &Comment) -> HTMLString;
     fn lol_html_comment_text_set(comment: *mut Comment, text: *const u8, text_len: usize) -> c_int;
-    fn lol_html_comment_before(comment: *mut Comment, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_comment_after(comment: *mut Comment, content: *const u8, content_len: usize, is_html: bool) -> c_int;
-    fn lol_html_comment_replace(comment: *mut Comment, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_comment_before(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_comment_after(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_comment_replace(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_comment_remove(comment: &mut Comment);
     safe fn lol_html_comment_is_removed(comment: &Comment) -> bool;
     safe fn lol_html_comment_user_data_set(comment: &Comment, user_data: *mut c_void);
@@ -929,7 +1126,9 @@ impl Comment {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -940,7 +1139,9 @@ impl Comment {
         auto_disable();
         // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -950,7 +1151,9 @@ impl Comment {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_comment_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_comment_after(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -982,7 +1185,8 @@ pub enum Directive {
 #[allow(non_camel_case_types)]
 pub type lol_html_comment_handler_t = unsafe extern "C" fn(*mut Comment, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_text_handler_handler_t = unsafe extern "C" fn(*mut TextChunk, *mut c_void) -> Directive;
+pub type lol_html_text_handler_handler_t =
+    unsafe extern "C" fn(*mut TextChunk, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
 pub type lol_html_element_handler_t = unsafe extern "C" fn(*mut Element, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
@@ -995,14 +1199,21 @@ pub type lol_html_end_tag_handler_t = unsafe extern "C" fn(*mut EndTag, *mut c_v
 bun_opaque::opaque_ffi! { pub struct DocEnd; }
 
 unsafe extern "C" {
-    fn lol_html_doc_end_append(doc_end: *mut DocEnd, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_doc_end_append(
+        doc_end: *mut DocEnd,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
 }
 
 impl DocEnd {
     pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe { lol_html_doc_end_append(self, ptr_without_panic(content), content.len(), is_html) } {
+        match unsafe {
+            lol_html_doc_end_append(self, ptr_without_panic(content), content.len(), is_html)
+        } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -1012,7 +1223,8 @@ impl DocEnd {
 
 // ─── Directive handler trampolines ────────────────────────────────────────
 
-pub type DirectiveFunctionType<Container> = unsafe extern "C" fn(*mut Container, *mut c_void) -> Directive;
+pub type DirectiveFunctionType<Container> =
+    unsafe extern "C" fn(*mut Container, *mut c_void) -> Directive;
 
 // Zig: fn DirectiveFunctionTypeForHandler(comptime Container, comptime UserDataType) type
 //      = *const fn (*UserDataType, *Container) bool;
@@ -1037,7 +1249,11 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
     // SAFETY: user_data was set to &mut U when registering; this is valid for the handler call
     let result = unsafe { (&mut *user_data.cast::<U>()).call(&mut *this) };
     // @enumFromInt(@intFromBool(result))
-    if result { Directive::Stop } else { Directive::Continue }
+    if result {
+        Directive::Stop
+    } else {
+        Directive::Continue
+    }
 }
 
 // ─── DocType ──────────────────────────────────────────────────────────────

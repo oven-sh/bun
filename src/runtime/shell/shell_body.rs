@@ -1,7 +1,12 @@
 //! Port of src/shell/shell.zig
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
-#![allow(non_camel_case_types, non_snake_case, dead_code, clippy::too_many_arguments)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    dead_code,
+    clippy::too_many_arguments
+)]
 
 use core::ffi::{c_char, c_int};
 use core::fmt;
@@ -9,19 +14,19 @@ use core::mem::size_of;
 use std::io::Write as _;
 
 use bun_alloc::{Arena as Bump, ArenaVec};
-use bun_collections::{VecExt, IntegerBitSet};
+use bun_collections::{IntegerBitSet, VecExt};
 use bun_core::{self, Output};
 use bun_jsc::{
-    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    PlatformEventLoop,
+    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
+    MarkedArgumentBuffer, PlatformEventLoop,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 // `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::MiniEventLoop::MiniEventLoop;
-use bun_simdutf_sys::simdutf;
-use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_core::strings;
+use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_jsc::MiniEventLoop::MiniEventLoop;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -29,8 +34,8 @@ use bun_sys::{self as sys, Fd, SystemError};
 pub use super::interpreter as interpret; // ./interpreter.zig → crate::shell::interpret
 pub use super::subproc; // ./subproc.zig — declared once in `shell/mod.rs`
 
-pub use interpret::{ExitCode, Interpreter, unreachable_state};
 pub use super::{EnvMap, EnvStr, ParsedShellScript};
+pub use interpret::{ExitCode, Interpreter, unreachable_state};
 pub use subproc::ShellSubprocess as Subprocess;
 // In Zig these hang off `Interpreter` as namespaced decls; in Rust they are
 // sibling modules re-exported through `interpret`.
@@ -44,22 +49,21 @@ pub use yield_::Yield;
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::{
-    assert_special_char, ast, escape_8bit, escape_bun_str, escape_utf16, has_eq_sign,
-    is_valid_var_name, needs_escape_bunstr, needs_escape_utf16, needs_escape_utf8_ascii_latin1,
-    BacktrackSnapshot, CharState, EscapeUtf16Result, IfClauseTok, InputChar, JSValueRaw,
-    LexError, LexResult, Lexer, LexerAscii, LexerError, LexerUnicode, ParseError, Parser,
-    ParserError, ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding,
-    SubShellKind, SubshellKind, TextRange, Token, TokenTag, BACKSLASHABLE_CHARS,
-    LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
-};
 pub use bun_shell_parser::parse::ast as AST;
+pub use bun_shell_parser::parse::{
+    BACKSLASHABLE_CHARS, BacktrackSnapshot, CharState, EscapeUtf16Result, IfClauseTok, InputChar,
+    JSValueRaw, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii,
+    LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
+    ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
+    TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
+    escape_utf16, has_eq_sign, is_valid_var_name, needs_escape_bunstr,
+    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
+};
 
 // Spec: `bun.glob.GlobWalker(null, true)` → SyscallAccessor + sentinel paths.
 pub type GlobWalker = bun_glob::BunGlobWalkerZ;
 
-pub const SUBSHELL_TODO_ERROR: &str =
-    "Subshells are not implemented, please open GitHub issue!";
+pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
 
 /// Using these instead of the file descriptor decl literals to make sure we use LibUV fds on Windows
 pub const STDIN_FD: Fd = Fd::from_uv(0);
@@ -215,8 +219,6 @@ pub enum ShellError {
     Spawn,
 }
 
-
-
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     // PRECONDITION: `name`/`value` must be valid NUL-terminated C strings for
@@ -263,7 +265,9 @@ impl<'a> GlobalJS<'a> {
     pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::InvalidArguments { val: v.into_boxed_slice() }
+        ShellErr::InvalidArguments {
+            val: v.into_boxed_slice(),
+        }
     }
 
     #[inline]
@@ -297,7 +301,11 @@ impl<'a> GlobalJS<'a> {
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
-        unsafe { (*self.global_this.bun_vm().as_mut().transpiler.env).map.create_null_delimited_env_map() }
+        unsafe {
+            (*self.global_this.bun_vm().as_mut().transpiler.env)
+                .map
+                .create_null_delimited_env_map()
+        }
     }
 
     #[inline]
@@ -306,9 +314,12 @@ impl<'a> GlobalJS<'a> {
         //   `globalThis.bunVMConcurrently().enqueueTaskConcurrent(ConcurrentTask.create(Task.init(task)))`
         // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
         // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
-        let vm = self.global_this.bun_vm_concurrently().cast_const().cast_mut();
-        let concurrent =
-            bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
+        let vm = self
+            .global_this
+            .bun_vm_concurrently()
+            .cast_const()
+            .cast_mut();
+        let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
         // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
         unsafe { (*vm).enqueue_task_concurrent(concurrent) };
     }
@@ -331,10 +342,14 @@ impl<'a> GlobalJS<'a> {
         let vm = self.event_loop_ctx();
         #[cfg(windows)]
         // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
-        unsafe { return &*vm.uv_loop(); }
+        unsafe {
+            return &*vm.uv_loop();
+        }
         #[cfg(not(windows))]
         // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
-        unsafe { &*vm.event_loop_handle.expect("event_loop_handle is null") }
+        unsafe {
+            &*vm.event_loop_handle.expect("event_loop_handle is null")
+        }
     }
 
     #[inline]
@@ -380,7 +395,9 @@ impl<'a> GlobalMini<'a> {
     pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::InvalidArguments { val: v.into_boxed_slice() }
+        ShellErr::InvalidArguments {
+            val: v.into_boxed_slice(),
+        }
     }
 
     #[inline]
@@ -395,7 +412,9 @@ impl<'a> GlobalMini<'a> {
         self,
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
-        unsafe { self.mini.env.unwrap().as_mut() }.map.create_null_delimited_env_map()
+        unsafe { self.mini.env.unwrap().as_mut() }
+            .map
+            .create_null_delimited_env_map()
     }
 
     #[inline]
@@ -445,14 +464,16 @@ impl<'a> GlobalMini<'a> {
         #[cfg(windows)]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
         // embedded libuv loop, set once by `us_create_loop` and immutable.
-        unsafe { return &*(*self.mini.loop_ptr()).uv_loop; }
+        unsafe {
+            return &*(*self.mini.loop_ptr()).uv_loop;
+        }
         #[cfg(not(windows))]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-        unsafe { &*self.mini.loop_ptr() }
+        unsafe {
+            &*self.mini.loop_ptr()
+        }
     }
 }
-
-
 
 // ───────────────────────────── CmdEnvIter ─────────────────────────────
 
@@ -511,10 +532,16 @@ impl<'a> CmdEnvIter<'a> {
 
     pub fn next(&mut self) -> Result<Option<CmdEnvEntry<'a>>, bun_core::Error> {
         // TODO(port): narrow error set — Zig sig is `!?Entry` but body never errors.
-        let Some(entry) = self.iter.next() else { return Ok(None) };
+        let Some(entry) = self.iter.next() else {
+            return Ok(None);
+        };
         Ok(Some(CmdEnvEntry {
-            key: CmdEnvKey { val: &**entry.key_ptr },
-            value: CmdEnvValue { val: &**entry.value_ptr },
+            key: CmdEnvKey {
+                val: &**entry.key_ptr,
+            },
+            value: CmdEnvValue {
+                val: &**entry.value_ptr,
+            },
         }))
     }
 }
@@ -605,9 +632,7 @@ pub mod test {
         pub fn write_json(&self, w: &mut impl core::fmt::Write) -> core::fmt::Result {
             use TestToken as T;
             macro_rules! unit {
-                ($tag:literal) => {{
-                    w.write_str(concat!("{\"", $tag, "\":{}}"))
-                }};
+                ($tag:literal) => {{ w.write_str(concat!("{\"", $tag, "\":{}}")) }};
             }
             match self {
                 T::Pipe => unit!("Pipe"),
@@ -742,17 +767,13 @@ pub fn shell_cmd_from_js(
     let last = string_iter.len.saturating_sub(1);
     while let Some(js_value) = string_iter.next()? {
         if !builder.append_js_value_str::<false>(js_value)? {
-            return Err(global.throw(format_args!(
-                "Shell script string contains invalid UTF-16"
-            )));
+            return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
         }
         if i < last {
             let template_value = match template_args.next()? {
                 Some(v) => v,
                 None => {
-                    return Err(global.throw(format_args!(
-                        "Shell script is missing JSValue arg"
-                    )));
+                    return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
                 }
             };
             // PORT NOTE: reshaped for borrowck — builder holds &mut out_script/jsstrings;
@@ -866,9 +887,9 @@ pub fn handle_template_value(
 
         if template_value.is_string() {
             if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(global.throw(format_args!(
-                    "Shell script string contains invalid UTF-16"
-                )));
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
             }
             return Ok(());
         }
@@ -892,9 +913,8 @@ pub fn handle_template_value(
                     let str = BunString::static_(b" ");
                     let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
                     if !b.append_bun_str::<false>(str)? {
-                        return Err(global.throw(format_args!(
-                            "Shell script string contains invalid UTF-16"
-                        )));
+                        return Err(global
+                            .throw(format_args!("Shell script string contains invalid UTF-16")));
                     }
                 }
                 i += 1;
@@ -917,9 +937,9 @@ pub fn handle_template_value(
                 }
 
                 if !builder.append_bun_str::<false>(bunstr.get())? {
-                    return Err(global.throw(format_args!(
-                        "Shell script string contains invalid UTF-16"
-                    )));
+                    return Err(
+                        global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                    );
                 }
                 return Ok(());
             }
@@ -928,18 +948,18 @@ pub fn handle_template_value(
         // Spec `JSValue.isPrimitive()` — `!isObject()` (covers number/bool/null/undef/symbol).
         if !template_value.is_object() {
             if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(global.throw(format_args!(
-                    "Shell script string contains invalid UTF-16"
-                )));
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
             }
             return Ok(());
         }
 
         if template_value.implements_to_string(global)? {
             if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(global.throw(format_args!(
-                    "Shell script string contains invalid UTF-16"
-                )));
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
             }
             return Ok(());
         }
@@ -986,10 +1006,13 @@ impl<'a> ShellSrcBuilder<'a> {
         if bunstr.index_of_ascii_char(0).is_some() {
             return Err(self
                 .global_this
-                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                    "The shell argument must be a string without null bytes. Received \"{}\"",
-                    bunstr.to_zig_string()
-                ))
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The shell argument must be a string without null bytes. Received \"{}\"",
+                        bunstr.to_zig_string()
+                    ),
+                )
                 .throw());
         }
 
@@ -1083,8 +1106,7 @@ impl<'a> ShellSrcBuilder<'a> {
     pub fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_alloc::AllocError> {
         let idx = self.jsstrs_to_escape.len();
         let mut cursor = std::io::Cursor::new(&mut self.jsstr_ref_buf[..]);
-        write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx)
-            .expect("Impossible");
+        write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx).expect("Impossible");
         let n = cursor.position() as usize;
         self.outbuf.extend_from_slice(&self.jsstr_ref_buf[..n]);
         bunstr.ref_();
@@ -1092,10 +1114,6 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 }
-
-
-
-
 
 // ───────────────────────────── TestingAPIs ─────────────────────────────
 
@@ -1146,10 +1164,7 @@ pub mod testing_apis {
     /// Spec shell.zig `TestingAPIs.shellLex` (`MarkedArgumentBuffer.wrap(_shellLex)`).
     /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
     /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
-    pub fn shell_lex(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
     }
 
@@ -1165,9 +1180,7 @@ pub mod testing_apis {
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
-                return Err(global.throw(format_args!(
-                    "shell_parse: expected 2 arguments, got 0"
-                )));
+                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
             }
         };
 
@@ -1202,18 +1215,13 @@ pub mod testing_apis {
                 let mut lexer =
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
-                    return Err(
-                        global.throw_error(bun_core::err!(from err), "failed to lex shell"),
-                    );
+                    return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
                 }
                 break 'brk lexer.get_result();
             }
-            let mut lexer =
-                LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
+            let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
-                return Err(
-                    global.throw_error(bun_core::err!(from err), "failed to lex shell"),
-                );
+                return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
             }
             lexer.get_result()
         };
@@ -1223,8 +1231,7 @@ pub mod testing_apis {
             return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
         }
 
-        let mut test_tokens: Vec<test::TestToken> =
-            Vec::with_capacity(lex_result.tokens.len());
+        let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
         for &tok in lex_result.tokens {
             let test_tok = test::TestToken::from_real(tok, lex_result.strpool);
             test_tokens.push(test_tok);
@@ -1237,10 +1244,7 @@ pub mod testing_apis {
     }
 
     /// Spec shell.zig `TestingAPIs.shellParse` (`MarkedArgumentBuffer.wrap(_shellParse)`).
-    pub fn shell_parse(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
     }
 
@@ -1256,9 +1260,7 @@ pub mod testing_apis {
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
-                return Err(global.throw(format_args!(
-                    "shell_parse: expected 2 arguments, got 0"
-                )));
+                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
             }
         };
 
@@ -1303,16 +1305,12 @@ pub mod testing_apis {
                 // ⇔ out_lex_result was populated by `parse()`.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
-                    return Err(
-                        global.throw_pretty(format_args!("{}", bstr::BStr::new(str))),
-                    );
+                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
-                    return Err(
-                        global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))),
-                    );
+                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));
@@ -1322,7 +1320,10 @@ pub mod testing_apis {
         // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(script_ast, .{})})`.
         // `crate::shell::ast::Script` is a `'static`-erased alias of
         // `bun_shell_parser::ast::Script`, so it formats directly.
-        let str = format!("{}", bun_shell_parser::json_fmt::script_json_fmt(&script_ast));
+        let str = format!(
+            "{}",
+            bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
+        );
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }
 }

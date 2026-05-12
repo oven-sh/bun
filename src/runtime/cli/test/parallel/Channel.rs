@@ -25,11 +25,11 @@ use bun_sys::{Fd, FdExt as _};
 use bun_uws as uws;
 
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_sys::windows::libuv as uv;
 
 use super::frame;
 
@@ -108,7 +108,9 @@ pub struct PosixBackend {
 #[cfg(not(windows))]
 impl Default for PosixBackend {
     fn default() -> Self {
-        Self { socket: Socket::DETACHED }
+        Self {
+            socket: Socket::DETACHED,
+        }
     }
 }
 
@@ -200,7 +202,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // child end disagree on framing and the channel never delivers a
             // frame.
             let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-            if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
+            if let Some(e) = pipe
+                .init(uv::Loop::get(), true)
+                .to_error(bun_sys::Tag::pipe)
+            {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name().escape_ascii(),
@@ -314,7 +319,11 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 return;
             }
             let wrote = self.backend.socket.write(frame_bytes);
-            let w: usize = if wrote > 0 { usize::try_from(wrote).unwrap() } else { 0 };
+            let w: usize = if wrote > 0 {
+                usize::try_from(wrote).unwrap()
+            } else {
+                0
+            };
             if w < frame_bytes.len() {
                 self.out.extend_from_slice(&frame_bytes[w..]);
             }
@@ -328,7 +337,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             self.out.extend_from_slice(frame_bytes);
             return;
         }
-        let Some(pipe) = self.backend.pipe.as_mut() else { return };
+        let Some(pipe) = self.backend.pipe.as_mut() else {
+            return;
+        };
         // Try a synchronous write first. uv_try_write on a Windows
         // UV_NAMED_PIPE always returns EAGAIN (vendor/libuv/src/win/stream.c),
         // so this currently always falls through to submit_windows_write —
@@ -365,7 +376,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // taking any field borrows below (the borrow used by from_mut ends
         // immediately; raw pointers carry no lifetime).
         let this: *mut Self = core::ptr::from_mut(self);
-        let Some(pipe) = self.backend.pipe.as_mut() else { return };
+        let Some(pipe) = self.backend.pipe.as_mut() else {
+            return;
+        };
         // Swap: out → inflight (stable for uv_write), out becomes empty.
         core::mem::swap(&mut self.backend.inflight, &mut self.out);
         self.backend.write_buf = uv::uv_buf_t::init(self.backend.inflight.as_slice());

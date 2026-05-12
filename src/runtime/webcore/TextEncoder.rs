@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 
+use bun_core::strings;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
-use bun_core::strings;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
@@ -87,8 +87,7 @@ pub extern "C" fn TextEncoder__encode16(
             array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
             return uint8array;
         }
-        let Ok(uint8array) =
-            create_uninitialized_uint8_array(global_this, result.written as usize)
+        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
         else {
             return JSValue::ZERO;
         };
@@ -109,11 +108,7 @@ pub extern "C" fn TextEncoder__encode16(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn c(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
+pub extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
     // as much as possible, rely on jsc to own the memory
     // their code is more battle-tested than bun's code
     // so we do a stack allocation here
@@ -139,8 +134,7 @@ pub extern "C" fn c(
             array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
             return uint8array;
         }
-        let Ok(uint8array) =
-            create_uninitialized_uint8_array(global_this, result.written as usize)
+        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
         else {
             return JSValue::ZERO;
         };
@@ -203,8 +197,10 @@ impl<'a> RopeStringEncoder<'a> {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result =
-            strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(&mut this.buf[this.tail..], src);
+        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
+            &mut this.buf[this.tail..],
+            src,
+        );
         if result.read == u32::MAX && result.written == u32::MAX {
             it.stop = 1;
             this.any_non_ascii = true;

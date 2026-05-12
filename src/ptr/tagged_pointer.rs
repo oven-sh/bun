@@ -194,7 +194,10 @@ impl<Ts: TypeList> Copy for TaggedPtrUnion<Ts> {}
 impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     // pub type TagInt → use module-level TagType
 
-    pub const NULL: Self = Self { repr: TaggedPtr(0), _types: PhantomData };
+    pub const NULL: Self = Self {
+        repr: TaggedPtr(0),
+        _types: PhantomData,
+    };
 
     pub fn clear(&mut self) {
         *self = Self::NULL;
@@ -217,7 +220,11 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn get<Type: UnionMember<Ts>>(self) -> Option<*mut Type> {
-        if self.is::<Type>() { Some(self.as_unchecked::<Type>()) } else { None }
+        if self.is::<Type>() {
+            Some(self.as_unchecked::<Type>())
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -272,7 +279,10 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn from(ptr: Option<*mut c_void>) -> Self {
-        Self { repr: TaggedPtr::from(ptr), _types: PhantomData }
+        Self {
+            repr: TaggedPtr::from(ptr),
+            _types: PhantomData,
+        }
     }
 
     #[inline]
@@ -297,7 +307,10 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     #[inline]
     pub fn init_with_type<Type: UnionMember<Ts>>(ptr: *const Type) -> Self {
         // there will be a compiler error if the passed in type doesn't exist in the enum
-        Self { repr: TaggedPtr::init(ptr, Type::TAG), _types: PhantomData }
+        Self {
+            repr: TaggedPtr::init(ptr, Type::TAG),
+            _types: PhantomData,
+        }
     }
 
     #[inline]

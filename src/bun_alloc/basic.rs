@@ -42,7 +42,13 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
 pub(crate) fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
     // SAFETY: Allocator vtable invariant — `buf` was allocated by mimalloc with
     // the recorded len/alignment.
-    unsafe { mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), alignment.to_byte_units()) }
+    unsafe {
+        mi_free_checked(
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            alignment.to_byte_units(),
+        )
+    }
 }
 
 pub(crate) struct MimallocAllocator;
@@ -57,7 +63,10 @@ impl MimallocAllocator {
                 // SAFETY: ptr is non-null and was just returned by mimalloc
                 let usable = unsafe { mimalloc::mi_malloc_usable_size(ptr) };
                 if usable < len && !ptr.is_null() {
-                    panic!("mimalloc: allocated size is too small: {} < {}", usable, len);
+                    panic!(
+                        "mimalloc: allocated size is too small: {} < {}",
+                        usable, len
+                    );
                 }
             }
         }
@@ -94,8 +103,12 @@ impl MimallocAllocator {
     ) -> *mut u8 {
         // SAFETY: buf.ptr was allocated by mimalloc with this alignment
         unsafe {
-            mimalloc::mi_realloc_aligned(buf.as_mut_ptr().cast(), new_len, alignment.to_byte_units())
-                .cast::<u8>()
+            mimalloc::mi_realloc_aligned(
+                buf.as_mut_ptr().cast(),
+                new_len,
+                alignment.to_byte_units(),
+            )
+            .cast::<u8>()
         }
     }
 
@@ -126,7 +139,10 @@ impl ZAllocator {
                 // SAFETY: ptr is non-null and was just returned by mimalloc
                 let usable = unsafe { mimalloc::mi_malloc_usable_size(ptr) };
                 if usable < len {
-                    panic!("mimalloc: allocated size is too small: {} < {}", usable, len);
+                    panic!(
+                        "mimalloc: allocated size is too small: {} < {}",
+                        usable, len
+                    );
                 }
             }
         }

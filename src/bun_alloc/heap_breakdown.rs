@@ -9,8 +9,7 @@ type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
 // TODO(port): `enable_asan` mapped to a cargo feature; verify Phase B wires this the same way.
-pub const ENABLED: bool =
-    cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
+pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
 /// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
 ///
@@ -85,7 +84,10 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 // `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
-    debug_assert!(ENABLED, "heap_breakdown::get_zone called with ENABLED=false");
+    debug_assert!(
+        ENABLED,
+        "heap_breakdown::get_zone called with ENABLED=false"
+    );
 
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -190,7 +192,12 @@ impl Zone {
         }
     }
 
-    fn raw_alloc(zone: *mut c_void, len: usize, alignment: usize, _ret_addr: usize) -> Option<*mut u8> {
+    fn raw_alloc(
+        zone: *mut c_void,
+        len: usize,
+        alignment: usize,
+        _ret_addr: usize,
+    ) -> Option<*mut u8> {
         // SAFETY: zone was produced from `&Zone` via the vtable; cast back is the original pointer.
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
@@ -283,7 +290,12 @@ unsafe extern "C" {
     pub fn malloc_zone_realloc(zone: *mut Zone, ptr: *mut c_void, size: usize) -> *mut c_void;
     pub fn malloc_zone_from_ptr(ptr: *const c_void) -> *mut Zone;
     pub safe fn malloc_zone_memalign(zone: &Zone, alignment: usize, size: usize) -> *mut c_void;
-    pub fn malloc_zone_batch_malloc(zone: *mut Zone, size: usize, results: *mut *mut c_void, num_requested: c_uint) -> c_uint;
+    pub fn malloc_zone_batch_malloc(
+        zone: *mut Zone,
+        size: usize,
+        results: *mut *mut c_void,
+        num_requested: c_uint,
+    ) -> c_uint;
     pub fn malloc_zone_batch_free(zone: *mut Zone, to_be_freed: *mut *mut c_void, num: c_uint);
     /// No preconditions.
     pub safe fn malloc_default_purgeable_zone() -> *mut Zone;
@@ -302,14 +314,22 @@ unsafe extern "C" {
 #[allow(clippy::missing_safety_doc)]
 mod stubs {
     use super::*;
-    pub fn malloc_zone_malloc(_: &Zone, _: usize) -> *mut c_void { unreachable!() }
-    pub fn malloc_zone_calloc(_: &Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
-    pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
-    pub fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+    pub fn malloc_zone_malloc(_: &Zone, _: usize) -> *mut c_void {
+        unreachable!()
+    }
+    pub fn malloc_zone_calloc(_: &Zone, _: usize, _: usize) -> *mut c_void {
+        unreachable!()
+    }
+    pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) {
+        unreachable!()
+    }
+    pub fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void {
+        unreachable!()
+    }
 }
 #[cfg(not(target_os = "macos"))]
-pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
-#[cfg(not(target_os = "macos"))]
 use stubs::malloc_zone_memalign;
+#[cfg(not(target_os = "macos"))]
+pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
 
 // ported from: src/bun_alloc/heap_breakdown.zig

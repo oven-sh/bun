@@ -5,13 +5,13 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
-use bun_collections::VecExt;
 use bun_collections::HashMap;
+use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
 use bun_perf::system_timer::Timer as SystemTimer;
-use bun_resolver::{self as resolver, Resolver};
 use bun_resolver::fs as Fs;
+use bun_resolver::{self as resolver, Resolver};
 use bun_router::Router;
 
 use crate::options;
@@ -101,8 +101,7 @@ impl PluginRunner {
                 return true;
             }
         }
-        !bun_paths::is_absolute(specifier)
-            && bun_core::index_of_char(specifier, b':').is_some()
+        !bun_paths::is_absolute(specifier) && bun_core::index_of_char(specifier, b':').is_some()
     }
 }
 
@@ -386,9 +385,7 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:91 getPackageManager`.
     #[inline]
-    pub fn get_package_manager(
-        &mut self,
-    ) -> *mut dyn bun_resolver::install_types::AutoInstaller {
+    pub fn get_package_manager(&mut self) -> *mut dyn bun_resolver::install_types::AutoInstaller {
         self.resolver.get_package_manager()
     }
 
@@ -436,8 +433,7 @@ impl<'a> Transpiler<'a> {
                 // Relative entry points that were not resolved to a node_modules package are
                 // interpreted as relative to the current working directory.
                 if !bun_paths::is_absolute(entry_point)
-                    && !(entry_point.starts_with(b"./")
-                        || entry_point.starts_with(b".\\"))
+                    && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
                 {
                     // Spec: `strings.append(arena, "./", entry_point)`.
                     let mut prefixed = Vec::with_capacity(2 + entry_point.len());
@@ -478,17 +474,16 @@ impl<'a> Transpiler<'a> {
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<
-                            bun_paths::platform::Auto,
-                        >(entry_point);
+                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                            entry_point,
+                        );
                         if !dir.is_empty() {
                             // Normalized with trailing slash
-                            let buster_name =
-                                bun_paths::string_paths::normalize_slashes_only(
-                                    &mut cache_bust_buf[..],
-                                    dir,
-                                    bun_paths::SEP,
-                                );
+                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
+                                &mut cache_bust_buf[..],
+                                dir,
+                                bun_paths::SEP,
+                            );
                             break 'name self.resolver.bust_dir_cache(
                                 bun_paths::string_paths::without_trailing_slash_windows_path(
                                     buster_name,
@@ -542,8 +537,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if self.options.target == options::Target::BunMacro {
-            self.options.env.behavior =
-                bun_options_types::schema::api::DotEnvBehavior::Prefix;
+            self.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::Prefix;
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
@@ -603,7 +597,7 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     pub fn dump_environment_variables(&self) {
-        use bun_js_printer::{write_json_string, Encoding};
+        use bun_js_printer::{Encoding, write_json_string};
         // PORT NOTE: spec uses `std.json.Stringify` (`.whitespace = .indent_2`)
         // to dump `env.map.*`. The Rust `bun_dotenv::Map` doesn't impl
         // `serde::Serialize`, so iterate and emit the object by hand. Keys and
@@ -763,8 +757,7 @@ impl<'a> Transpiler<'a> {
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 // PERF(port): one tiny alloc — Zig passed the slice directly.
-                let env_files: Vec<&[u8]> =
-                    self.options.env.files.iter().map(|f| &**f).collect();
+                let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test
@@ -804,13 +797,13 @@ impl<'a> Transpiler<'a> {
 // `cache::JavaScript::parse`) un-gate.
 // ══════════════════════════════════════════════════════════════════════════
 
-use bun_sys::Fd as FD;
+use crate::cache::RuntimeTranspilerCacheExt as _;
+use crate::entry_points as EntryPoints;
+use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
+use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
-use crate::entry_points as EntryPoints;
-use bun_ast::RuntimeTranspilerCache;
-use crate::cache::RuntimeTranspilerCacheExt as _;
-use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
+use bun_sys::Fd as FD;
 
 /// Port of `transpiler.zig:ParseResult.AlreadyBundled` (tagged union).
 pub enum AlreadyBundled {
@@ -836,11 +829,17 @@ impl AlreadyBundled {
     }
 
     pub fn is_bytecode(&self) -> bool {
-        matches!(self, AlreadyBundled::Bytecode(_) | AlreadyBundled::BytecodeCjs(_))
+        matches!(
+            self,
+            AlreadyBundled::Bytecode(_) | AlreadyBundled::BytecodeCjs(_)
+        )
     }
 
     pub fn is_common_js(&self) -> bool {
-        matches!(self, AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_))
+        matches!(
+            self,
+            AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_)
+        )
     }
 }
 
@@ -930,7 +929,9 @@ impl ParseResult {
         // Spec transpiler.zig:43-47: scan `pending_imports.items(.import_record_id)` for `id`.
         // PORT NOTE: AoS scan (see field comment); SoA column iteration restored
         // when `PendingResolution: MultiArrayElement` lands.
-        self.pending_imports.iter().any(|p| p.import_record_id == id)
+        self.pending_imports
+            .iter()
+            .any(|p| p.import_record_id == id)
     }
 }
 
@@ -1078,9 +1079,7 @@ pub(crate) fn resolver_bundle_options_subset(
                 default: src.extension_order.node_modules.default.clone(),
                 esm: src.extension_order.node_modules.esm.clone(),
             },
-            css: ropts::owned_string_list(
-                ropts::bundle_options::defaults::CSS_EXTENSION_ORDER,
-            ),
+            css: ropts::owned_string_list(ropts::bundle_options::defaults::CSS_EXTENSION_ORDER),
         },
         conditions: ropts::Conditions {
             import: src.conditions.import.clone().expect("oom"),
@@ -1096,14 +1095,21 @@ pub(crate) fn resolver_bundle_options_subset(
             use crate::bake_types::BuiltInModule as B;
             use bun_options_types::BuiltInModule as R;
             let mut m = bun_collections::StringArrayHashMap::default();
-            for (k, v) in f.built_in_modules.keys().iter().zip(f.built_in_modules.values().iter()) {
+            for (k, v) in f
+                .built_in_modules
+                .keys()
+                .iter()
+                .zip(f.built_in_modules.values().iter())
+            {
                 let rv = match v {
                     B::Import(p) => R::Import(p.clone()),
                     B::Code(c) => R::Code(c.clone()),
                 };
                 m.put(k, rv).expect("oom");
             }
-            ropts::Framework { built_in_modules: m }
+            ropts::Framework {
+                built_in_modules: m,
+            }
         }),
         global_cache: src.global_cache,
         // Spec `options.zig:1753`: `?*const Api.BunInstall` → resolver's
@@ -1207,7 +1213,8 @@ impl<'a> Transpiler<'a> {
                     // TODO(port): replace with a `OnceLock`-backed
                     // `bun_dotenv::instance_or_init()` accessor once
                     // `bun_dotenv` grows one (PORTING.md §Concurrency).
-                    let map: *mut dot_env::Map = bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
+                    let map: *mut dot_env::Map =
+                        bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
                     // SAFETY: `map` is a fresh heap allocation with no other
                     // alias; `Loader` stores it for process lifetime and is
                     // itself installed into `dot_env::INSTANCE` below.
@@ -1241,8 +1248,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
         // `init_file_system` above; this short `&mut *fs` is the only live
         // borrow for the duration of `from_api`.
-        let bundle_options =
-            options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
+        let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
         // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
@@ -1478,8 +1484,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if source.contents.is_empty()
-            || (source.contents.len() < 33
-                && strings::trim(&source.contents, b"\n\r ").is_empty())
+            || (source.contents.len() < 33 && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult::empty_with(
@@ -1553,8 +1558,7 @@ impl<'a> Transpiler<'a> {
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).
                 // TC39 standard decorators have their own metadata mechanism.
                 opts.features.standard_decorators = !loader.is_typescript()
-                    || !(this_parse.experimental_decorators
-                        || this_parse.emit_decorator_metadata);
+                    || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;
@@ -1571,13 +1575,11 @@ impl<'a> Transpiler<'a> {
                 // from a single reborrow so they share one provenance tag —
                 // re-touching the parent `&mut` after the `*mut` cast would
                 // pop the raw pointer off the borrow stack (Stacked Borrows).
-                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> =
-                    this_parse
-                        .runtime_transpiler_cache
-                        .as_deref_mut()
-                        .map(core::ptr::NonNull::from);
-                opts.features.runtime_transpiler_cache =
-                    rtc_ptr.map(core::ptr::NonNull::as_ptr);
+                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> = this_parse
+                    .runtime_transpiler_cache
+                    .as_deref_mut()
+                    .map(core::ptr::NonNull::from);
+                opts.features.runtime_transpiler_cache = rtc_ptr.map(core::ptr::NonNull::as_ptr);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1594,8 +1596,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
-                opts.features.remove_cjs_module_wrapper =
-                    this_parse.remove_cjs_module_wrapper;
+                opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 // Spec transpiler.zig:925 forwards `transpiler.options
                 // .bundler_feature_flags`. Zig aliased a `*const StringSet`;
                 // `Features.bundler_feature_flags` is currently owned
@@ -1613,8 +1614,7 @@ impl<'a> Transpiler<'a> {
                 // this is incorrect for Node.js files which are CommonJS modules
                 opts.features.top_level_await = true;
 
-                opts.features.is_macro_runtime =
-                    target == crate::options_impl::Target::BunMacro;
+                opts.features.is_macro_runtime = target == crate::options_impl::Target::BunMacro;
                 // Spec transpiler.zig:943: `opts.features.replace_exports =
                 // this_parse.replace_exports`. B-3 UNIFIED —
                 // `bun_ast::runtime::ReplaceableExport` IS
@@ -1648,9 +1648,8 @@ impl<'a> Transpiler<'a> {
                 // (arena lifetime). Erase to `'a` to satisfy
                 // `JavaScript::parse`'s `&'a Define` param — the box is never
                 // dropped while a parse is in flight (Zig held `*const Define`).
-                let define: &'a js_ast::defines::Define = unsafe {
-                    &*(&raw const *self.options.define)
-                };
+                let define: &'a js_ast::defines::Define =
+                    unsafe { &*(&raw const *self.options.define) };
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
@@ -1693,9 +1692,7 @@ impl<'a> Transpiler<'a> {
                         ast: bun_ast::Ast::empty(),
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
-                            js_ast::AlreadyBundled::BunCjs => {
-                                AlreadyBundled::SourceCodeCjs
-                            }
+                            js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
                             js_ast::AlreadyBundled::BytecodeCjs
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
                                 // Spec transpiler.zig:971-984: when the parser
@@ -1703,10 +1700,8 @@ impl<'a> Transpiler<'a> {
                                 // sidecar `<path>.jsc` cached bytecode. Only
                                 // fall back to re-parsing source on read
                                 // failure / empty file.
-                                let is_cjs = matches!(
-                                    already_bundled,
-                                    js_ast::AlreadyBundled::BytecodeCjs
-                                );
+                                let is_cjs =
+                                    matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {
                                     AlreadyBundled::SourceCodeCjs
                                 } else {
@@ -1728,7 +1723,7 @@ impl<'a> Transpiler<'a> {
                                     // PathBuffer is zero-initialized so
                                     // `path_buf2[total] == 0` already; safe to
                                     // borrow as a NUL-terminated ZStr.
-                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total,);
+                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
                                     // PORT NOTE: spec calls
                                     // `bun.sys.File.toSourceAt(...)` which is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
@@ -1736,9 +1731,7 @@ impl<'a> Transpiler<'a> {
                                     // `read_from` directly (the `to_source_at`
                                     // wrapper is gated as a T1→T2 move-in,
                                     // sys/File.rs:446).
-                                    let dir = dirname_fd
-                                        .unwrap_valid()
-                                        .unwrap_or_else(FD::cwd);
+                                    let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
                                         Ok(contents) if !contents.is_empty() => {
                                             break 'brk if is_cjs {
@@ -1829,12 +1822,18 @@ impl<'a> Transpiler<'a> {
                     if this_parse.keep_json_and_toml_as_one_statement {
                         let stmt = bun_ast::Stmt::allocate(
                             arena,
-                            bun_ast::S::SExpr { value: expr, ..Default::default() },
+                            bun_ast::S::SExpr {
+                                value: expr,
+                                ..Default::default()
+                            },
                             bun_ast::Loc { start: 0 },
                         );
                         // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
                         let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-                        break 'parts Box::new([bun_ast::Part { stmts, ..Default::default() }]);
+                        break 'parts Box::new([bun_ast::Part {
+                            stmts,
+                            ..Default::default()
+                        }]);
                     }
 
                     if let Some(obj) = expr.data.e_object_mut() {
@@ -1872,8 +1871,11 @@ impl<'a> Transpiler<'a> {
                                 // `e_string` keys (Zig `.?.data.e_string`).
                                 let key = prop.key.as_mut().unwrap();
                                 let key_loc = key.loc;
-                                let name: &[u8] =
-                                    key.data.e_string_mut().expect("infallible: variant checked").slice(arena);
+                                let name: &[u8] = key
+                                    .data
+                                    .e_string_mut()
+                                    .expect("infallible: variant checked")
+                                    .slice(arena);
                                 // Do not make named exports for "default" exports
                                 if name == b"default" {
                                     continue;
@@ -1898,22 +1900,24 @@ impl<'a> Transpiler<'a> {
                                 *visited.value_ptr = count as u32;
 
                                 symbols[count] = bun_ast::Symbol {
-                                    original_name: match bun_core::MutableString::ensure_valid_identifier(name) {
-                                        // Spec transpiler.zig:1049 calls
-                                        // `MutableString.ensureValidIdentifier(name, arena)`
-                                        // — the identifier lives in the
-                                        // per-parse arena. Arena-copy the
-                                        // owned `Box<[u8]>` so it is freed
-                                        // with the arena instead of leaking
-                                        // (PORTING.md §Forbidden patterns
-                                        // bars `heap::alloc` for `&'static`).
-                                        // SAFETY: ARENA — `arena` outlives
-                                        // the returned `ParseResult.ast`.
-                                        Ok(boxed) => {
-                                            bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed))
-                                        }
-                                        Err(_) => return None,
-                                    },
+                                    original_name:
+                                        match bun_core::MutableString::ensure_valid_identifier(name)
+                                        {
+                                            // Spec transpiler.zig:1049 calls
+                                            // `MutableString.ensureValidIdentifier(name, arena)`
+                                            // — the identifier lives in the
+                                            // per-parse arena. Arena-copy the
+                                            // owned `Box<[u8]>` so it is freed
+                                            // with the arena instead of leaking
+                                            // (PORTING.md §Forbidden patterns
+                                            // bars `heap::alloc` for `&'static`).
+                                            // SAFETY: ARENA — `arena` outlives
+                                            // the returned `ParseResult.ast`.
+                                            Ok(boxed) => bun_ast::StoreStr::new(
+                                                arena.alloc_slice_copy(&boxed),
+                                            ),
+                                            Err(_) => return None,
+                                        },
                                     ..Default::default()
                                 };
 
@@ -1927,14 +1931,16 @@ impl<'a> Transpiler<'a> {
                                     value: Some(prop.value.expect("infallible: prop has value")),
                                 };
                                 export_clauses[count] = bun_ast::ClauseItem {
-                                    name: bun_ast::LocRef { ref_: Some(ref_), loc: key_loc },
+                                    name: bun_ast::LocRef {
+                                        ref_: Some(ref_),
+                                        loc: key_loc,
+                                    },
                                     alias: bun_ast::StoreStr::new(name),
                                     alias_loc: key_loc,
                                     ..Default::default()
                                 };
                                 let value_loc = prop.value.expect("infallible: prop has value").loc;
-                                prop.value =
-                                    Some(bun_ast::Expr::init_identifier(ref_, value_loc));
+                                prop.value = Some(bun_ast::Expr::init_identifier(ref_, value_loc));
                                 count += 1;
                             }
 
@@ -1949,7 +1955,9 @@ impl<'a> Transpiler<'a> {
                             );
                             let stmt1 = bun_ast::Stmt::alloc(
                                 bun_ast::S::ExportClause {
-                                    items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
+                                    items: bun_ast::StoreSlice::new_mut(
+                                        &mut export_clauses[..count],
+                                    ),
                                     is_single_line: false,
                                 },
                                 bun_ast::Loc { start: 0 },
@@ -1965,8 +1973,13 @@ impl<'a> Transpiler<'a> {
                                 bun_ast::Loc { start: 0 },
                             );
 
-                            let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
-                            break 'parts Box::new([bun_ast::Part { stmts, ..Default::default() }]);
+                            let stmts = bun_ast::StoreSlice::new_mut(
+                                arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]),
+                            );
+                            break 'parts Box::new([bun_ast::Part {
+                                stmts,
+                                ..Default::default()
+                            }]);
                         }
                     }
 
@@ -1982,14 +1995,15 @@ impl<'a> Transpiler<'a> {
                             bun_ast::Loc { start: 0 },
                         );
 
-                        let stmts =
-                            bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-                        break 'parts Box::new([bun_ast::Part { stmts, ..Default::default() }]);
+                        let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
+                        break 'parts Box::new([bun_ast::Part {
+                            stmts,
+                            ..Default::default()
+                        }]);
                     }
                 };
                 let mut ast = bun_ast::Ast::from_parts(parts);
-                ast.symbols =
-                    bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
+                ast.symbols = bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
 
                 return Some(ParseResult {
                     ast,
@@ -2021,8 +2035,10 @@ impl<'a> Transpiler<'a> {
                 );
                 // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
                 let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-                let parts: Box<[bun_ast::Part]> =
-                    Box::new([bun_ast::Part { stmts, ..Default::default() }]);
+                let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
+                    stmts,
+                    ..Default::default()
+                }]);
 
                 return Some(ParseResult {
                     ast: bun_ast::Ast::from_parts(parts),
@@ -2055,7 +2071,8 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
-                let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
+                let expr =
+                    bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
                 let stmt = bun_ast::Stmt::alloc(
                     bun_ast::S::ExportDefault {
                         value: bun_ast::StmtOrExpr::Expr(expr),
@@ -2067,8 +2084,10 @@ impl<'a> Transpiler<'a> {
                     bun_ast::Loc { start: 0 },
                 );
                 let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-                let parts: Box<[bun_ast::Part]> =
-                    Box::new([bun_ast::Part { stmts, ..Default::default() }]);
+                let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
+                    stmts,
+                    ..Default::default()
+                }]);
 
                 return Some(ParseResult {
                     ast: bun_ast::Ast::from_parts(parts),
@@ -2219,7 +2238,6 @@ impl<'a> Transpiler<'a> {
         // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
         // above), so the seam is gone. Spec: zig:663 — EsmAscii arm only.
 
-
         let exports_kind = ast.exports_kind;
 
         // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
@@ -2232,11 +2250,21 @@ impl<'a> Transpiler<'a> {
         // instantiation trees land in `.text.unlikely` instead.
         match format {
             js_printer::Format::Cjs => self.print_cjs_cold::<W, ENABLE_SOURCE_MAP>(
-                writer, &ast, symbols, source, source_map_context, runtime_transpiler_cache,
+                writer,
+                &ast,
+                symbols,
+                source,
+                source_map_context,
+                runtime_transpiler_cache,
             ),
 
             js_printer::Format::Esm => self.print_esm_cold::<W, ENABLE_SOURCE_MAP>(
-                writer, &ast, symbols, source, source_map_context, runtime_transpiler_cache,
+                writer,
+                &ast,
+                symbols,
+                source,
+                source_map_context,
+                runtime_transpiler_cache,
             ),
 
             js_printer::Format::EsmAscii => {
@@ -2246,13 +2274,25 @@ impl<'a> Transpiler<'a> {
                 // also drive `module_type`.
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, true>(
-                        writer, ast, symbols, source, source_map_context, exports_kind,
-                        runtime_transpiler_cache, module_info,
+                        writer,
+                        ast,
+                        symbols,
+                        source,
+                        source_map_context,
+                        exports_kind,
+                        runtime_transpiler_cache,
+                        module_info,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<W, ENABLE_SOURCE_MAP>(
-                        writer, ast, symbols, source, source_map_context, exports_kind,
-                        runtime_transpiler_cache, module_info,
+                        writer,
+                        ast,
+                        symbols,
+                        source,
+                        source_map_context,
+                        exports_kind,
+                        runtime_transpiler_cache,
+                        module_info,
                     )
                 }
             }
@@ -2348,11 +2388,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
             // `binary_expression_stack` arena) — same as the Cjs arm.
-            self.arena,
-            ast,
-            symbols,
-            source,
-            opts,
+            self.arena, ast, symbols, source, opts,
         )
     }
 
@@ -2378,8 +2414,14 @@ impl<'a> Transpiler<'a> {
         W: js_printer::WriterTrait,
     {
         self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
-            writer, ast, symbols, source, source_map_context, exports_kind,
-            runtime_transpiler_cache, module_info,
+            writer,
+            ast,
+            symbols,
+            source,
+            source_map_context,
+            exports_kind,
+            runtime_transpiler_cache,
+            module_info,
         )
     }
 
@@ -2443,11 +2485,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // PORT NOTE: thread the per-transpiler arena (mirrors the Cjs arm /
             // spec transpiler.zig:635 — same shape across all three arms).
-            self.arena,
-            &ast,
-            symbols,
-            source,
-            opts,
+            self.arena, &ast, symbols, source, opts,
         )
     }
 
@@ -2670,9 +2708,8 @@ impl<'a> Transpiler<'a> {
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
         // SAFETY: see above.
-        let mut final_result = options::TransformResult::init(outbase, output_files, unsafe {
-            &mut *log
-        })?;
+        let mut final_result =
+            options::TransformResult::init(outbase, output_files, unsafe { &mut *log })?;
         final_result.root_dir = self.options.output_dir_handle;
         Ok(final_result)
     }
@@ -2772,8 +2809,7 @@ impl<'a> Transpiler<'a> {
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
                 let dirname_fd = resolve_result.dirname_fd;
-                let emit_decorator_metadata =
-                    resolve_result.flags.emit_decorator_metadata();
+                let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 // TODO(port): `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
                 // has no nested `Clone` impl; the Zig copied it by value. Re-key
@@ -2781,9 +2817,7 @@ impl<'a> Transpiler<'a> {
                 let macro_remappings = {
                     let mut m = MacroRemap::default();
                     for (k, v) in self.options.macro_remap.iter() {
-                        let inner = v
-                            .clone()
-                            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                        let inner = v.clone().map_err(|_| bun_core::err!("OutOfMemory"))?;
                         m.insert(k, inner);
                     }
                     m
@@ -2909,27 +2943,25 @@ impl<'a> Transpiler<'a> {
                     let alloc: &'static Arena =
                         unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
-                    let (mut sheet, extra) = match bun_css::StyleSheet::<
-                        bun_css::DefaultAtRule,
-                    >::parse(
-                        alloc,
-                        entry.contents(),
-                        opts,
-                        None,
-                        bun_ast::Index::INVALID,
-                    ) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!("{} parsing", e),
-                            );
-                            return Ok(None);
-                        }
-                    };
-                    if let Err(e) =
-                        sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
+                    let (mut sheet, extra) =
+                        match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
+                            alloc,
+                            entry.contents(),
+                            opts,
+                            None,
+                            bun_ast::Index::INVALID,
+                        ) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let _ = self.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!("{} parsing", e),
+                                );
+                                return Ok(None);
+                            }
+                        };
+                    if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
                     {
                         self.log_mut().add_error_fmt(
                             None,
@@ -2942,9 +2974,7 @@ impl<'a> Transpiler<'a> {
                     let result = match sheet.to_css(
                         alloc,
                         bun_css::PrinterOptions {
-                            targets: bun_css::Targets::for_bundler_target(
-                                self.options.target,
-                            ),
+                            targets: bun_css::Targets::for_bundler_target(self.options.target),
                             minify: self.options.minify_whitespace,
                             ..bun_css::PrinterOptions::default()
                         },
@@ -2977,8 +3007,7 @@ impl<'a> Transpiler<'a> {
                 let hashed_name = self
                     .linker
                     .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
-                let mut pathname =
-                    Vec::with_capacity(hashed_name.len() + file_path_ext.len());
+                let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
                 pathname.extend_from_slice(&hashed_name);
                 pathname.extend_from_slice(file_path_ext);
 
@@ -3019,7 +3048,11 @@ pub struct BuildResolveResultPair {
 
 impl Default for BuildResolveResultPair {
     fn default() -> Self {
-        Self { written: 0, input_fd: None, empty: false }
+        Self {
+            written: 0,
+            input_fd: None,
+            empty: false,
+        }
     }
 }
 

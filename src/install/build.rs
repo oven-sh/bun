@@ -43,7 +43,10 @@ fn main() {
     let mut out = String::from("&[\n");
     for name in &names {
         // Package names are plain ASCII (npm scope/name charset); emit as b"..".
-        debug_assert!(name.bytes().all(|b| b.is_ascii() && b != b'"' && b != b'\\'));
+        debug_assert!(
+            name.bytes()
+                .all(|b| b.is_ascii() && b != b'"' && b != b'\\')
+        );
         writeln!(out, "    b\"{name}\",").unwrap();
     }
     out.push_str("]\n");
@@ -69,7 +72,8 @@ fn main() {
     if env::var("CARGO_CFG_WINDOWS").is_ok() {
         let exe = manifest.join("windows-shim").join("bun_shim_impl.exe");
         if !exe.exists() {
-            fs::write(&exe, []).unwrap_or_else(|e| panic!("failed to create {}: {e}", exe.display()));
+            fs::write(&exe, [])
+                .unwrap_or_else(|e| panic!("failed to create {}: {e}", exe.display()));
         }
         println!("cargo:rerun-if-changed={}", exe.display());
     }

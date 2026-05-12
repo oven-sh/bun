@@ -13,21 +13,33 @@ impl ProgressStrings {
     // PORT NOTE: base *_NO_EMOJI_ / *_EMOJI consts stay &str because concatcp! requires str
     // inputs; derived consts and fn returns are &[u8] per type-map ([]const u8 → &[u8]).
     pub const DOWNLOAD_NO_EMOJI_: &'static str = "Resolving";
-    const DOWNLOAD_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n").as_bytes();
-    const DOWNLOAD_WITH_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::DOWNLOAD_EMOJI, ProgressStrings::DOWNLOAD_NO_EMOJI_).as_bytes();
+    const DOWNLOAD_NO_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n").as_bytes();
+    const DOWNLOAD_WITH_EMOJI: &'static [u8] = concatcp!(
+        ProgressStrings::DOWNLOAD_EMOJI,
+        ProgressStrings::DOWNLOAD_NO_EMOJI_
+    )
+    .as_bytes();
     pub const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
 
     pub const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
-    const EXTRACT_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
-    const EXTRACT_WITH_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::EXTRACT_EMOJI, ProgressStrings::EXTRACT_NO_EMOJI_).as_bytes();
+    const EXTRACT_NO_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
+    const EXTRACT_WITH_EMOJI: &'static [u8] = concatcp!(
+        ProgressStrings::EXTRACT_EMOJI,
+        ProgressStrings::EXTRACT_NO_EMOJI_
+    )
+    .as_bytes();
     pub const EXTRACT_EMOJI: &'static str = "  🚚 ";
 
     pub const INSTALL_NO_EMOJI_: &'static str = "Installing";
-    const INSTALL_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::INSTALL_NO_EMOJI_, "\n").as_bytes();
-    const INSTALL_WITH_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::INSTALL_EMOJI, ProgressStrings::INSTALL_NO_EMOJI_).as_bytes();
+    const INSTALL_NO_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::INSTALL_NO_EMOJI_, "\n").as_bytes();
+    const INSTALL_WITH_EMOJI: &'static [u8] = concatcp!(
+        ProgressStrings::INSTALL_EMOJI,
+        ProgressStrings::INSTALL_NO_EMOJI_
+    )
+    .as_bytes();
     pub const INSTALL_EMOJI: &'static str = "  📦 ";
 
     pub const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
@@ -37,9 +49,13 @@ impl ProgressStrings {
     pub const SAVE_EMOJI: &'static str = "  🔒 ";
 
     pub const SCRIPT_NO_EMOJI_: &'static str = "Running script";
-    const SCRIPT_NO_EMOJI: &'static [u8] = concatcp!(ProgressStrings::SCRIPT_NO_EMOJI_, "\n").as_bytes();
-    const SCRIPT_WITH_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::SCRIPT_EMOJI, ProgressStrings::SCRIPT_NO_EMOJI_).as_bytes();
+    const SCRIPT_NO_EMOJI: &'static [u8] =
+        concatcp!(ProgressStrings::SCRIPT_NO_EMOJI_, "\n").as_bytes();
+    const SCRIPT_WITH_EMOJI: &'static [u8] = concatcp!(
+        ProgressStrings::SCRIPT_EMOJI,
+        ProgressStrings::SCRIPT_NO_EMOJI_
+    )
+    .as_bytes();
     pub const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
 
     #[inline]
@@ -111,8 +127,7 @@ impl PackageManager {
                 self.progress_name_buf[..name.len()].copy_from_slice(name);
                 name.len()
             };
-            (*node).name =
-                bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
+            (*node).name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
         }
     }
 

@@ -13,23 +13,23 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_io::Loop as AsyncLoop;
-use bun_core::SignalCode;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use crate::node::StringOrBuffer;
 use crate::webcore::blob::ZigStringBlobExt;
+use bun_core::SignalCode;
+use bun_core::ZigString;
+use bun_io::Loop as AsyncLoop;
+use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
 };
-use bun_core::ZigString;
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
-use bun_sys::windows;
-#[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+#[cfg(windows)]
+use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -477,13 +477,18 @@ impl Terminal {
 
         // Set reader parent
         let parent_ptr = terminal.as_ctx_ptr();
-        terminal.reader.with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
+        terminal
+            .reader
+            .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
 
         // Set writer parent
         terminal.writer.with_mut(|w| w.parent = parent_ptr);
 
         // Start writer with the write fd - adds a ref
-        match terminal.writer.with_mut(|w| w.start(pty_result.write_fd, true)) {
+        match terminal
+            .writer
+            .with_mut(|w| w.start(pty_result.write_fd, true))
+        {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
                 // POSIX: writer.start() may have allocated a poll holding write_fd
@@ -507,7 +512,10 @@ impl Terminal {
         }
 
         // Start reader with the read fd - adds a ref
-        match terminal.reader.with_mut(|r| r.start(pty_result.read_fd, true)) {
+        match terminal
+            .reader
+            .with_mut(|r| r.start(pty_result.read_fd, true))
+        {
             sys::Result::Err(_) => {
                 // Reader never started: closeInternal skips reader.close() but
                 // runs writer.close() → onWriterClose → deref (2→1). Then drop
@@ -525,7 +533,8 @@ impl Terminal {
                     terminal.reader.with_mut(|r| {
                         if let Some(poll) = r.handle.get_poll() {
                             // PTY behaves like a pipe, not a socket
-                            r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+                            r.flags
+                                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
                             poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
                     });
@@ -538,12 +547,13 @@ impl Terminal {
         terminal.reader.with_mut(|r| r.read());
 
         // Get or create the JS wrapper
-        let this_value =
-            existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
+        let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
 
         // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading.
         // The JS-side ref is the one taken by RefCount.init() above; released in finalize().
-        terminal.this_value.set(JsRef::init_strong(this_value, global_object));
+        terminal
+            .this_value
+            .set(JsRef::init_strong(this_value, global_object));
 
         // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
         // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
@@ -580,9 +590,9 @@ impl Terminal {
         let js_options = args[0];
 
         if !js_options.is_object() {
-            return Err(
-                global_object.throw(format_args!("Terminal constructor requires an options object"))
-            );
+            return Err(global_object.throw(format_args!(
+                "Terminal constructor requires an options object"
+            )));
         }
 
         let mut options = Options::parse_from_js(global_object, js_options)?;
@@ -599,8 +609,9 @@ impl Terminal {
                     InitError::OpenPtyFailed => {
                         global_object.throw(format_args!("Failed to open PTY"))
                     }
-                    InitError::DupFailed => global_object
-                        .throw(format_args!("Failed to duplicate PTY file descriptor")),
+                    InitError::DupFailed => {
+                        global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
+                    }
                     InitError::NotSupported => {
                         global_object.throw(format_args!("PTY not supported on this platform"))
                     }
@@ -969,11 +980,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         }
         Err(err) => {
             // tcgetattr failed, log in debug builds but continue without modifying termios
-            sys::syslog!(
-                "tcgetattr(slave_fd={}) failed: {:?}",
-                slave_fd,
-                err,
-            );
+            sys::syslog!("tcgetattr(slave_fd={}) failed: {:?}", slave_fd, err,);
         }
     }
 
@@ -1054,8 +1061,7 @@ fn create_overlapped_pipe_pair(
     let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
     name_w_buf[name_w_len] = 0;
     // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w =
-        bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
+    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {
@@ -1392,9 +1398,9 @@ impl Terminal {
 
         // Get bytes to write using StringOrBuffer
         let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, data)? else {
-            return Err(
-                global_object.throw(format_args!("write() argument must be a string or ArrayBuffer"))
-            );
+            return Err(global_object.throw(format_args!(
+                "write() argument must be a string or ArrayBuffer"
+            )));
         };
         // defer string_or_buffer.deinit() — Drop handles it.
 
@@ -1407,17 +1413,19 @@ impl Terminal {
         // Write using the streaming writer
         let write_result = self.writer.with_mut(|w| w.write(bytes));
         match write_result {
-            bun_io::WriteResult::Done(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).expect("int cast") as f64))
-            }
-            bun_io::WriteResult::Wrote(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).expect("int cast") as f64))
-            }
+            bun_io::WriteResult::Done(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
+            bun_io::WriteResult::Wrote(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
             // On Windows the streaming writer buffers and returns .pending=0; the
             // bytes were accepted, so report bytes.len to match POSIX semantics.
             bun_io::WriteResult::Pending(amt) => {
                 let n = if cfg!(windows) { bytes.len() } else { amt };
-                Ok(JSValue::js_number(i32::try_from(n).expect("int cast") as f64))
+                Ok(JSValue::js_number(
+                    i32::try_from(n).expect("int cast") as f64
+                ))
             }
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
@@ -1787,7 +1795,11 @@ impl Terminal {
             callback,
             global_this,
             this_jsvalue,
-            &[this_jsvalue, JSValue::js_number(exit_code as f64), signal_value],
+            &[
+                this_jsvalue,
+                JSValue::js_number(exit_code as f64),
+                signal_value,
+            ],
         );
     }
 
@@ -1903,7 +1915,8 @@ fn deinit_and_destroy(this: *mut Terminal) {
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
 bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::Terminal;
+    const KIND: bun_io::BufferedReaderParentLinkKind =
+        bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
@@ -1923,7 +1936,9 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this).event_loop_handle.as_event_loop_ctx()
+        Self::from_parent_ptr(this)
+            .event_loop_handle
+            .as_event_loop_ctx()
     }
 }
 
@@ -1947,7 +1962,9 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_writer_close()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this).event_loop_handle.as_event_loop_ctx()
+        Self::from_parent_ptr(this)
+            .event_loop_handle
+            .as_event_loop_ctx()
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         Self::from_parent_ptr(this).event_loop_handle.r#loop()

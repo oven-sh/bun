@@ -132,13 +132,21 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     }
     let lsd_packed = bytes[10];
     let has_gct = lsd_packed & 0x80 != 0;
-    let gct_size: u16 = if has_gct { 1u16 << ((lsd_packed & 7) + 1) } else { 0 };
+    let gct_size: u16 = if has_gct {
+        1u16 << ((lsd_packed & 7) + 1)
+    } else {
+        0
+    };
 
     let mut i: usize = 13 + (gct_size as usize) * 3;
     if i > bytes.len() {
         return Err(codecs::Error::DecodeFailed);
     }
-    let gct: &[u8] = if has_gct { &bytes[13..][..(gct_size as usize) * 3] } else { &[] };
+    let gct: &[u8] = if has_gct {
+        &bytes[13..][..(gct_size as usize) * 3]
+    } else {
+        &[]
+    };
 
     let mut trns: Option<u8> = None; // transparency index from the most recent GCE
 
@@ -182,7 +190,11 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 let ipacked = bytes[i + 9];
                 let interlace = ipacked & 0x40 != 0;
                 let has_lct = ipacked & 0x80 != 0;
-                let lct_size: usize = if has_lct { 1usize << ((ipacked & 7) + 1) } else { 0 };
+                let lct_size: usize = if has_lct {
+                    1usize << ((ipacked & 7) + 1)
+                } else {
+                    0
+                };
                 i += 10;
                 if w == 0 || h == 0 {
                     return Err(codecs::Error::DecodeFailed);
@@ -244,7 +256,14 @@ fn decode_frame(
     let mut idx = vec![0u8; npix];
     let mut written: usize = 0;
 
-    let mut bits = Bits { src: bytes, i: lzw_off, block: 0, acc: 0, nbits: 0, eof: false };
+    let mut bits = Bits {
+        src: bytes,
+        i: lzw_off,
+        block: 0,
+        acc: 0,
+        nbits: 0,
+        eof: false,
+    };
     while written < npix {
         let code = bits.read(size);
         if bits.eof && code == 0 {
@@ -348,7 +367,12 @@ fn decode_frame(
             y += 1;
         }
     }
-    Ok(codecs::Decoded { rgba: out.into_vec(), width: w, height: h, icc_profile: None })
+    Ok(codecs::Decoded {
+        rgba: out.into_vec(),
+        width: w,
+        height: h,
+        icc_profile: None,
+    })
 }
 
 /// One row of palette indices → RGBA. Scalar 4-byte copy per pixel — see file

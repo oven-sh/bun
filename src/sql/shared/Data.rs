@@ -1,6 +1,6 @@
-use bun_collections::{VecExt, BoundedArray};
-use bun_ptr::RawSlice;
+use bun_collections::{BoundedArray, VecExt};
 use bun_core::ZStr;
+use bun_ptr::RawSlice;
 
 pub type InlineStorage = BoundedArray<u8, 15>;
 
@@ -91,9 +91,9 @@ impl Data {
                 Data::Temporary(RawSlice::new(&temporary.slice()[start_index..end_index]))
             }
             Data::Empty => Data::Empty,
-            Data::InlineStorage(inline_storage) => {
-                Data::Temporary(RawSlice::new(&inline_storage.as_slice()[start_index..end_index]))
-            }
+            Data::InlineStorage(inline_storage) => Data::Temporary(RawSlice::new(
+                &inline_storage.as_slice()[start_index..end_index],
+            )),
         }
     }
 

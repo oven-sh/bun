@@ -174,7 +174,9 @@ mod windows_impl {
 
     impl Default for WindowsImpl {
         fn default() -> Self {
-            Self { condition: core::cell::UnsafeCell::new(windows::CONDITION_VARIABLE::default()) }
+            Self {
+                condition: core::cell::UnsafeCell::new(windows::CONDITION_VARIABLE::default()),
+            }
         }
     }
 
@@ -210,9 +212,13 @@ mod windows_impl {
                     self.condition.get(),
                     // TODO(port): Mutex internals — debug build wraps an inner impl with `srwlock`.
                     #[cfg(debug_assertions)]
-                    { mutex.impl_.impl_.srwlock.get() },
+                    {
+                        mutex.impl_.impl_.srwlock.get()
+                    },
                     #[cfg(not(debug_assertions))]
-                    { mutex.impl_.srwlock.get() },
+                    {
+                        mutex.impl_.srwlock.get()
+                    },
                     timeout_ms,
                     0, // the srwlock was assumed to acquired in exclusive mode not shared
                 )
@@ -221,7 +227,10 @@ mod windows_impl {
             {
                 // The internal state of the DebugMutex needs to be handled here as well.
                 // TODO(port): std.Thread.getCurrentId() equivalent in bun_threading.
-                mutex.impl_.locking_thread.store(crate::current_thread_id(), Ordering::Relaxed);
+                mutex
+                    .impl_
+                    .locking_thread
+                    .store(crate::current_thread_id(), Ordering::Relaxed);
             }
 
             // Return TimeoutError::Timeout if we know the timeout elapsed correctly.

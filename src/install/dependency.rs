@@ -1,13 +1,13 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
 
+use bun_paths::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
-use bun_paths::strings;
 
 use crate::hosted_git_info;
-use crate::{Features, PackageManager, PackageNameHash};
 use crate::repository::Repository;
+use crate::{Features, PackageManager, PackageNameHash};
 
 // ──────────────────────────────────────────────────────────────────────────
 // NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
@@ -159,7 +159,15 @@ impl DependencyExt for Dependency {
         log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
-        parse_with_optional_tag(alias, alias_hash, dependency, tag, sliced, log, package_manager)
+        parse_with_optional_tag(
+            alias,
+            alias_hash,
+            dependency,
+            tag,
+            sliced,
+            log,
+            package_manager,
+        )
     }
 
     /// Sorting order for dependencies is:
@@ -175,7 +183,7 @@ impl DependencyExt for Dependency {
 
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc(&(),lhs_name, rhs_name)
+        strings::cmp_strings_asc(&(), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
@@ -237,7 +245,9 @@ impl DependencyExt for Dependency {
             name: new_name,
             version: parse_with_tag(
                 new_name,
-                Some(Semver::string::Builder::string_hash(new_name.slice(out_slice))),
+                Some(Semver::string::Builder::string_hash(
+                    new_name.slice(out_slice),
+                )),
                 new_literal.slice(out_slice),
                 self.version.tag,
                 &sliced,
@@ -350,7 +360,8 @@ pub fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
         bytes: this[0..8].try_into().expect("infallible: size matches"),
     };
     // SAFETY: same-size POD bitcast
-    let name_hash: u64 = u64::from_ne_bytes(this[8..16].try_into().expect("infallible: size matches"));
+    let name_hash: u64 =
+        u64::from_ne_bytes(this[8..16].try_into().expect("infallible: size matches"));
     Dependency {
         name,
         name_hash,
@@ -397,7 +408,11 @@ pub fn is_scp_like_path(dependency: &[u8]) -> bool {
                 if dependency[i..].starts_with(b"://") {
                     return false;
                 }
-                return i > if let Some(index) = at_index { index + 1 } else { 0 };
+                return i > if let Some(index) = at_index {
+                    index + 1
+                } else {
+                    0
+                };
             }
             b'/' => {
                 return if let Some(index) = at_index {
@@ -631,7 +646,11 @@ impl VersionExt for Version {
 
     fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
+        strings::cmp_strings_asc(
+            &(),
+            lhs.literal.slice(string_buf),
+            rhs.literal.slice(string_buf),
+        )
     }
 
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
@@ -640,7 +659,11 @@ impl VersionExt for Version {
             return tag_order == Ordering::Less;
         }
 
-        strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
+        strings::cmp_strings_asc(
+            &(),
+            lhs.literal.slice(string_buf),
+            rhs.literal.slice(string_buf),
+        )
     }
 
     fn to_version(
@@ -707,18 +730,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => {
-                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
-            }
+            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
-            Tag::Github => {
-                Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf)
-            }
+            Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
-            Tag::Workspace => {
-                self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf)
-            }
+            Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             _ => true,
         }
     }
@@ -733,7 +750,6 @@ impl VersionExt for Version {
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
-
 
 // PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
 // in the Phase-A draft; rewritten as a length-gated match (cf. 12577e958d71
@@ -949,9 +965,7 @@ impl TagExt for Tag {
                             }
                             b'h' => {
                                 if url.starts_with(b"hub:") {
-                                    if hosted_git_info::is_github_shorthand(
-                                        &url[b"hub:".len()..],
-                                    ) {
+                                    if hosted_git_info::is_github_shorthand(&url[b"hub:".len()..]) {
                                         return Tag::Github;
                                     }
                                 }
@@ -992,8 +1006,7 @@ impl TagExt for Tag {
                             }
                         }
 
-                        if let Ok(Some(info)) =
-                            hosted_git_info::HostedGitInfo::from_url(dependency)
+                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
                         {
                             return hgi_to_tag(&info);
                         }
@@ -1018,8 +1031,7 @@ impl TagExt for Tag {
 
                         let _ = url; // PORT NOTE: Zig mutates `url` but doesn't use it after this point
 
-                        if let Ok(Some(info)) =
-                            hosted_git_info::HostedGitInfo::from_url(dependency)
+                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
                         {
                             return hgi_to_tag(&info);
                         }
@@ -1040,8 +1052,8 @@ impl TagExt for Tag {
             // npm:package@1.2.3
             b'n' => {
                 if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
-                    let remain = &dependency
-                        [b"npm:".len() + (dependency[b"npm:".len()] == b'@') as usize..];
+                    let remain =
+                        &dependency[b"npm:".len() + (dependency[b"npm:".len()] == b'@') as usize..];
                     for (i, &c) in remain.iter().enumerate() {
                         if c == b'@' {
                             return Tag::infer(&remain[i + 1..]);
@@ -1138,10 +1150,6 @@ impl TagExt for Tag {
 // Version payload types
 // ──────────────────────────────────────────────────────────────────────────
 
-
-
-
-
 pub trait ValueExt {
     fn clone_in<SB: StringBuilderLike>(
         &self,
@@ -1207,9 +1215,7 @@ pub fn parse<'a, 'b>(
         Tag::infer(dep),
         sliced,
         log.into(),
-        manager
-            .into()
-            .map(|m| m as &mut dyn NpmAliasRegistry),
+        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
     )
 }
 
@@ -1518,9 +1524,7 @@ pub fn parse_with_tag(
                         // something like this won't behave the same
                         // file://bar/../../foo
                         let maybe_dot_dot: &[u8] = 'maybe_dot_dot: {
-                            if dependency.len() > protocol + 1
-                                && dependency[protocol + 1] == b'/'
-                            {
+                            if dependency.len() > protocol + 1 && dependency[protocol + 1] == b'/' {
                                 if dependency.len() > protocol + 2
                                     && dependency[protocol + 2] == b'/'
                                 {
@@ -1680,7 +1684,6 @@ pub fn parse_with_tag(
 // `bun_install_types::resolver_hooks` so `bun_resolver` and `bun_install`
 // share one nominal type. Re-export it here for `crate::dependency::Behavior`.
 // ──────────────────────────────────────────────────────────────────────────
-
 
 // ──────────────────────────────────────────────────────────────────────────
 

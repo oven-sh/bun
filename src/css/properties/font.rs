@@ -21,12 +21,12 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
-use bun_alloc::ArenaVecExt as _;
-use crate::css_parser as css;
+use crate::PrintResult;
 use crate::compat::Feature;
+use crate::css_parser as css;
 use crate::error::ParserError;
 use crate::printer::Printer;
-use crate::PrintResult;
+use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
@@ -130,7 +130,9 @@ impl AbsoluteFontWeight {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(weight, dest),
-            AbsoluteFontWeight::Normal => dest.write_str(if dest.minify { "400" } else { "normal" }),
+            AbsoluteFontWeight::Normal => {
+                dest.write_str(if dest.minify { "400" } else { "normal" })
+            }
             AbsoluteFontWeight::Bold => dest.write_str(if dest.minify { "700" } else { "bold" }),
         }
     }
@@ -347,12 +349,14 @@ pub enum FontFamily {
 
 // TODO(port): Zig defined `pub fn HashMap(comptime V: type) type` wrapping std.ArrayHashMapUnmanaged
 // with a custom Wyhash hasher over the family-name bytes. Module-level alias (inherent assoc types are nightly-only).
- // blocked_on: ArrayHashMap key trait bounds for FontFamily
+// blocked_on: ArrayHashMap key trait bounds for FontFamily
 pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) = input.try_parse(|p| p.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))) {
+        if let Ok(value) =
+            input.try_parse(|p| p.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
+        {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
         }
@@ -367,7 +371,9 @@ impl FontFamily {
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s))) {
+        while let Ok(ident) =
+            input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s)))
+        {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
@@ -657,7 +663,10 @@ impl LineHeight {
     // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — keyword variant first
     // (`normal`), then payload variants in declaration order.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if input.try_parse(|p| p.expect_ident_matching(b"normal")).is_ok() {
+        if input
+            .try_parse(|p| p.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
             return Ok(LineHeight::Normal);
         }
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
@@ -724,7 +733,10 @@ impl Font {
         ("weight", crate::properties::PropertyIdTag::FontWeight),
         ("stretch", crate::properties::PropertyIdTag::FontStretch),
         ("line_height", crate::properties::PropertyIdTag::LineHeight),
-        ("variant_caps", crate::properties::PropertyIdTag::FontVariantCaps),
+        (
+            "variant_caps",
+            crate::properties::PropertyIdTag::FontVariantCaps,
+        ),
     ];
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Font> {
@@ -737,7 +749,10 @@ impl Font {
 
         loop {
             // Skip "normal" since it is valid for several properties, but we don't know which ones it will be used for yet.
-            if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
+            if input
+                .try_parse(|i| i.expect_ident_matching(b"normal"))
+                .is_ok()
+            {
                 count += 1;
                 continue;
             }
@@ -903,7 +918,9 @@ bitflags::bitflags! {
 impl FontProperty {
     const FONT: FontProperty = FontProperty::all();
 
-    pub fn try_from_property_id(property_id: crate::properties::PropertyIdTag) -> Option<FontProperty> {
+    pub fn try_from_property_id(
+        property_id: crate::properties::PropertyIdTag,
+    ) -> Option<FontProperty> {
         // TODO(port): Zig used `inline for` over std.meta.fields + @field; expanded by hand
         use crate::properties::PropertyIdTag;
         match property_id {
@@ -1000,9 +1017,8 @@ impl FontHandler {
             Property::Unparsed(val) => {
                 if is_font_property(&val.property_id) {
                     self.flush(dest, context);
-                    self.flushed_properties.insert(
-                        FontProperty::try_from_property_id(val.property_id.tag()).unwrap(),
-                    );
+                    self.flushed_properties
+                        .insert(FontProperty::try_from_property_id(val.property_id.tag()).unwrap());
                     // PERF(port): was dest.append(context.arena, property.*) on arena
                     dest.push(property.deep_clone(arena));
                 } else {
@@ -1015,7 +1031,6 @@ impl FontHandler {
         true
     }
 
-    
     pub fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
@@ -1025,7 +1040,6 @@ impl FontHandler {
         self.flushed_properties = FontProperty::empty();
     }
 
-    
     // blocked_on: FontFamilyHashMap, PropertyHandlerContext::arena(),
     // Vec::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
@@ -1057,7 +1071,9 @@ impl FontHandler {
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
             family = compatible_font_family(
                 family,
-                !context.targets.should_compile_same(Feature::FontFamilySystemUi),
+                !context
+                    .targets
+                    .should_compile_same(Feature::FontFamilySystemUi),
             );
         }
 
@@ -1088,15 +1104,7 @@ impl FontHandler {
             }
         }
 
-        if let (
-            Some(_),
-            Some(_),
-            Some(_),
-            Some(_),
-            Some(_),
-            Some(_),
-            Some(variant_caps_v),
-        ) = (
+        if let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
             family.as_ref(),
             size.as_ref(),
             style.as_ref(),
@@ -1115,7 +1123,11 @@ impl FontHandler {
                     weight: weight.unwrap(),
                     stretch: stretch.unwrap(),
                     line_height: line_height.unwrap(),
-                    variant_caps: if caps.is_css2() { caps } else { FontVariantCaps::default() },
+                    variant_caps: if caps.is_css2() {
+                        caps
+                    } else {
+                        FontVariantCaps::default()
+                    },
                 }
             );
 
@@ -1167,14 +1179,13 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"-apple-system",
     // #2: Supported as the 'BlinkMacSystemFont' value (macOS, Chrome < 56)
     b"BlinkMacSystemFont",
-    b"Segoe UI", // Windows >= Vista
-    b"Roboto", // Android >= 4
+    b"Segoe UI",  // Windows >= Vista
+    b"Roboto",    // Android >= 4
     b"Noto Sans", // Plasma >= 5.5
-    b"Ubuntu", // Ubuntu >= 10.10
+    b"Ubuntu",    // Ubuntu >= 10.10
     b"Cantarell", // GNOME >= 3
     b"Helvetica Neue",
 ];
-
 
 // blocked_on: Vec::insert arena threading + arena Bump param.
 #[inline]
@@ -1197,7 +1208,10 @@ fn compatible_font_family(
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
                 // TODO(port): families.insert(arena, idx, val) — Vec::insert with arena
-                families.insert(i + j + 1, FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)));
+                families.insert(
+                    i + j + 1,
+                    FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)),
+                );
             }
         }
     }

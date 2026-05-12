@@ -4,10 +4,10 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use bun_core::{StringPointer, ZigString};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
 use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
-use bun_core::{StringPointer, ZigString};
 
 /// Port of `Headers.from` (Headers.zig). Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -22,8 +22,7 @@ pub fn from_fetch_headers(
     // PORT NOTE: `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
     // are read-only FFI shims; cast through `*mut` (matching the prior
     // `link_interface!` impl which did `from_ref(h).cast_mut()`).
-    let h_ptr: Option<*mut FetchHeaders> =
-        fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
+    let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
 
     let mut header_count: u32 = 0;
     let mut buf_len: u32 = 0;
@@ -50,7 +49,11 @@ pub fn from_fetch_headers(
         }
         false
     };
-    if headers.entries.ensure_total_capacity(header_count as usize).is_err() {
+    if headers
+        .entries
+        .ensure_total_capacity(header_count as usize)
+        .is_err()
+    {
         bun_alloc::out_of_memory();
     }
     // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
@@ -114,8 +117,8 @@ pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
-    use bun_jsc::JsError;
     use bun_http_types::ETag::HeaderEntryColumns;
+    use bun_jsc::JsError;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
@@ -175,12 +178,16 @@ impl H3TestingAPIs {
         obj.put(
             global,
             b"sessions",
-            JSValue::js_number_from_uint64(u64::from(h3_client::live_sessions.load(Ordering::Relaxed))),
+            JSValue::js_number_from_uint64(u64::from(
+                h3_client::live_sessions.load(Ordering::Relaxed),
+            )),
         );
         obj.put(
             global,
             b"streams",
-            JSValue::js_number_from_uint64(u64::from(h3_client::live_streams.load(Ordering::Relaxed))),
+            JSValue::js_number_from_uint64(u64::from(
+                h3_client::live_streams.load(Ordering::Relaxed),
+            )),
         );
         Ok(obj)
     }

@@ -2,24 +2,24 @@ use core::cell::Cell;
 
 use bun_core::{Global, Output};
 use bun_paths::dirname;
-use bun_paths::resolve_path::join_abs_string_z;
 use bun_paths::platform;
+use bun_paths::resolve_path::join_abs_string_z;
 use bun_semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
 use crate::bun_json as json;
 use crate::bun_json::Expr;
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
 use crate::lockfile_real::StringBuilder;
+use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{
-    enqueue, resolution as pm_resolution, PackageManager, TaskCallbackList,
+    PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
 };
 use crate::repository_real::{Repository, RepositoryExt as _};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
-    initialize_store, DependencyID, ExtractData, Features, PackageID, Resolution,
-    TaskCallbackContext, INVALID_PACKAGE_ID,
+    DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
+    TaskCallbackContext, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -262,10 +262,8 @@ impl PackageManager {
 
                 let has_scripts = package.scripts.has_any() || {
                     let dir = dirname(&json.path).unwrap_or(b"");
-                    let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-                        dir,
-                        &[b"binding.gyp" as &[u8]],
-                    );
+                    let binding_dot_gyp_path =
+                        join_abs_string_z::<platform::Auto>(dir, &[b"binding.gyp" as &[u8]]);
                     sys::exists(binding_dot_gyp_path.as_bytes())
                 };
 

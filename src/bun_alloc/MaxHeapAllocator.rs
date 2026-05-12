@@ -3,8 +3,8 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
-use crate::{Alignment, Allocator};
 use crate::MAX_ALIGN_T as MAX_ALIGN;
+use crate::{Alignment, Allocator};
 
 /// Zig backed `array_list` with `std.array_list.AlignedManaged(u8, .of(std.c.max_align_t))`
 /// so the returned pointer is guaranteed aligned to `max_align_t`. Rust `Vec<u8>`
@@ -51,7 +51,13 @@ impl MaxHeapAllocator {
     }
 
     /// Zig: `fn resize(...) bool { @panic("not implemented") }`
-    pub fn resize(&mut self, _buf: &mut [u8], _alignment: Alignment, _new_len: usize, _ret_addr: usize) -> bool {
+    pub fn resize(
+        &mut self,
+        _buf: &mut [u8],
+        _alignment: Alignment,
+        _new_len: usize,
+        _ret_addr: usize,
+    ) -> bool {
         panic!("not implemented");
     }
 
@@ -73,7 +79,11 @@ impl MaxHeapAllocator {
     // both initialized `self` and returned a vtable+ptr pair. In Rust the caller constructs
     // `MaxHeapAllocator::init()` and obtains `&dyn Allocator` by borrowing the result.
     pub fn init() -> Self {
-        Self { ptr: None, capacity: 0, len: 0 }
+        Self {
+            ptr: None,
+            capacity: 0,
+            len: 0,
+        }
     }
 
     /// Zig: `pub fn isInstance(allocator) bool { return allocator.vtable == &vtable; }`
@@ -83,7 +93,9 @@ impl MaxHeapAllocator {
 }
 
 impl Default for MaxHeapAllocator {
-    fn default() -> Self { Self::init() }
+    fn default() -> Self {
+        Self::init()
+    }
 }
 
 /// RAII guard returned by [`MaxHeapAllocator::scope`]. Derefs to the underlying
@@ -95,11 +107,15 @@ pub struct MaxHeapScope<'a> {
 
 impl core::ops::Deref for MaxHeapScope<'_> {
     type Target = MaxHeapAllocator;
-    fn deref(&self) -> &Self::Target { self.inner }
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
 }
 
 impl core::ops::DerefMut for MaxHeapScope<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target { self.inner }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
+    }
 }
 
 impl Drop for MaxHeapScope<'_> {

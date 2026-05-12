@@ -43,7 +43,11 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_refresh(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_refresh(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.internals.do_refresh(global, frame.this())
     }
 
@@ -62,15 +66,29 @@ impl TimeoutObject {
         js::callback_get_cached(this_value).unwrap()
     }
 
-    pub fn set_on_timeout(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_on_timeout(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         js::callback_set_cached(this_value, global, value);
     }
 
-    pub fn get_idle_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_idle_timeout(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::idle_timeout_get_cached(this_value).unwrap()
     }
 
-    pub fn set_idle_timeout(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_idle_timeout(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         js::idle_timeout_set_cached(this_value, global, value);
     }
 
@@ -86,7 +104,12 @@ impl TimeoutObject {
         js::idle_start_get_cached(this_value).unwrap()
     }
 
-    pub fn set_idle_start(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_idle_start(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         js::idle_start_set_cached(this_value, global, value);
     }
 }

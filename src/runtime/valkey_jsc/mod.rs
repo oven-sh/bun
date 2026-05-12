@@ -37,16 +37,16 @@ pub mod index;
 // `*_body` names as aliases so sibling files (`valkey.rs` imports
 // `super::js_valkey_body`, `js_valkey.rs` imports `super::valkey_command_body`)
 // don't churn in this pass.
-pub use self::valkey as valkey_body;
 pub use self::js_valkey as js_valkey_body;
+pub use self::valkey as valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
-pub use valkey_context::ValkeyContext;
+pub use js_valkey::JSValkeyClient;
 pub use protocol_jsc::{
-    resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js, ToJSOptions,
+    ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
-pub use js_valkey::JSValkeyClient;
+pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 // Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
@@ -54,7 +54,7 @@ pub use js_valkey::JSValkeyClient;
 // the body's items so `command::PromisePair` / `command::Entry` resolve, and
 // alias it as `ValkeyCommand` for callers that match the Zig spelling.
 pub mod valkey_command {
-    pub use super::valkey_command_body::{entry, promise_pair, Entry, Meta, Promise, PromisePair};
+    pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
     // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.
     pub use super::ValkeyCommand;
 }

@@ -2,10 +2,10 @@
 //! `JSValue`. Used by the macro system. The AST types stay in `js_parser/`;
 //! only the JS-materialization lives here.
 
-use bun_collections::VecExt;
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
-use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError};
-use bun_core::{strings, String as BunString};
+use bun_collections::VecExt;
+use bun_core::{String as BunString, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
@@ -63,9 +63,7 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
         ExprData::EIdentifier(_)
         | ExprData::EImportIdentifier(_)
         | ExprData::EPrivateIdentifier(_)
-        | ExprData::ECommonjsExportIdentifier(_) => {
-            Err(ToJSError::CannotConvertIdentifierToJS)
-        }
+        | ExprData::ECommonjsExportIdentifier(_) => Err(ToJSError::CannotConvertIdentifierToJS),
 
         _ => Err(ToJSError::CannotConvertArgumentTypeToJS),
     }
@@ -113,8 +111,14 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
         {
             return Err(ToJSError::CannotConvertArgumentTypeToJS);
         }
-        let key = data_to_js(&prop.key.as_ref().expect("infallible: prop has key").data, global)?;
-        let value = expr_to_js(prop.value.as_ref().expect("infallible: prop has value"), global)?;
+        let key = data_to_js(
+            &prop.key.as_ref().expect("infallible: prop has key").data,
+            global,
+        )?;
+        let value = expr_to_js(
+            prop.value.as_ref().expect("infallible: prop has value"),
+            global,
+        )?;
         JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
     }
 

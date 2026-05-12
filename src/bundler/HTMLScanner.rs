@@ -1,15 +1,15 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use bun_collections::{VecExt, BoundedArray};
-use bun_ast::{Loc, Log, Range, Source};
-use bun_lolhtml_sys::lol_html as lol;
+use crate::bun_fs as fs;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
+use bun_ast::{Loc, Log, Range, Source};
+use bun_collections::{BoundedArray, VecExt};
+use bun_core::Error;
+use bun_lolhtml_sys::lol_html as lol;
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
-use crate::bun_fs as fs;
-use bun_core::Error;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
 
@@ -53,8 +53,7 @@ impl<'a> HTMLScanner<'a> {
                     break 'blk input_path;
                 }
                 // /foo/bar/index.html -> /foo/bar
-                let dirname =
-                    resolve_path::dirname::<platform::Auto>(self.source.path.text());
+                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
                 if dirname.is_empty() {
                     break 'blk input_path;
                 }
@@ -96,7 +95,9 @@ impl<'a> HTMLScanner<'a> {
         // bun.handleOom → Rust Vec/Box allocations abort on OOM; just call.
         // Zig `Log.addError` dupes via `log.msgs.allocator`; here `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
-        let _ = self.log.add_error(Some(self.source), Loc::EMPTY, message.to_vec());
+        let _ = self
+            .log
+            .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
     pub fn on_tag(
@@ -204,7 +205,12 @@ pub const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
     TagHandler::new(b"script[src]", false, b"src", ImportKind::Stmt),
     // CSS Stylesheets
-    TagHandler::new(b"link[rel='stylesheet'][href]", false, b"href", ImportKind::At),
+    TagHandler::new(
+        b"link[rel='stylesheet'][href]",
+        false,
+        b"href",
+        ImportKind::At,
+    ),
     // CSS Assets
     TagHandler::new(b"link[as='style'][href]", false, b"href", ImportKind::At),
     // Font files
@@ -226,7 +232,12 @@ pub const TAG_HANDLERS: [TagHandler; 16] = [
     // Web Workers
     TagHandler::new(b"link[as='worker'][href]", false, b"href", ImportKind::Stmt),
     // Manifest files
-    TagHandler::new(b"link[rel='manifest'][href]", false, b"href", ImportKind::Url),
+    TagHandler::new(
+        b"link[rel='manifest'][href]",
+        false,
+        b"href",
+        ImportKind::Url,
+    ),
     // Icons
     TagHandler::new(
         b"link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
@@ -271,7 +282,9 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
         let tag_info = &TAG_HANDLERS[self.tag_index];
         // Handle URL attribute if present
         if !tag_info.url_attribute.is_empty() {
-            let has = element.has_attribute(tag_info.url_attribute).unwrap_or(false);
+            let has = element
+                .has_attribute(tag_info.url_attribute)
+                .unwrap_or(false);
             if has {
                 let value = element.get_attribute(tag_info.url_attribute);
                 // Zig: defer value.deinit()
@@ -286,7 +299,12 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
                     // SAFETY: `self.this` was set from `&mut T` in `run` and is
                     // valid for the lifetime of the rewriter.
                     unsafe {
-                        (*self.this).on_tag(element, value.slice(), tag_info.url_attribute, tag_info.kind);
+                        (*self.this).on_tag(
+                            element,
+                            value.slice(),
+                            tag_info.url_attribute,
+                            tag_info.kind,
+                        );
                     }
                 }
             }
@@ -298,10 +316,14 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
 // Unused comment/text handlers — registered as `None`, but the generic
 // `add_element_content_handlers<EL, CM, TX>` still needs concrete types.
 impl<T> lol::DirectiveCallback<lol::Comment> for TagUserData<T> {
-    fn call(&mut self, _: &mut lol::Comment) -> bool { false }
+    fn call(&mut self, _: &mut lol::Comment) -> bool {
+        false
+    }
 }
 impl<T> lol::DirectiveCallback<lol::TextChunk> for TagUserData<T> {
-    fn call(&mut self, _: &mut lol::TextChunk) -> bool { false }
+    fn call(&mut self, _: &mut lol::TextChunk) -> bool {
+        false
+    }
 }
 
 struct DocTagUserData<T> {
@@ -324,10 +346,14 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for DocTagUse
     }
 }
 impl<T> lol::DirectiveCallback<lol::Comment> for DocTagUserData<T> {
-    fn call(&mut self, _: &mut lol::Comment) -> bool { false }
+    fn call(&mut self, _: &mut lol::Comment) -> bool {
+        false
+    }
 }
 impl<T> lol::DirectiveCallback<lol::TextChunk> for DocTagUserData<T> {
-    fn call(&mut self, _: &mut lol::TextChunk) -> bool { false }
+    fn call(&mut self, _: &mut lol::TextChunk) -> bool {
+        false
+    }
 }
 
 struct Sink<T>(*mut T);
@@ -377,9 +403,14 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         // Per-selector user-data records — must outlive the rewriter.
         let mut tag_user_datas: [TagUserData<T>; TAG_HANDLERS.len()] =
-            core::array::from_fn(|i| TagUserData { this: this_ptr, tag_index: i });
-        let mut doc_user_datas: [DocTagUserData<T>; 3] =
-            core::array::from_fn(|i| DocTagUserData { this: this_ptr, which: i as u8 });
+            core::array::from_fn(|i| TagUserData {
+                this: this_ptr,
+                tag_index: i,
+            });
+        let mut doc_user_datas: [DocTagUserData<T>; 3] = core::array::from_fn(|i| DocTagUserData {
+            this: this_ptr,
+            which: i as u8,
+        });
 
         // Add handlers for each tag type
         for i in 0..TAG_HANDLERS.len() {

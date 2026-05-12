@@ -21,11 +21,17 @@ impl Default for StringMap {
 impl StringMap {
     /// Zig `init(allocator, dupe_keys)` — allocator dropped (global mimalloc).
     pub fn init(dupe_keys: bool) -> Self {
-        Self { map: StringArrayHashMap::default(), dupe_keys }
+        Self {
+            map: StringArrayHashMap::default(),
+            dupe_keys,
+        }
     }
 
     pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self { map: self.map.clone()?, dupe_keys: self.dupe_keys })
+        Ok(Self {
+            map: self.map.clone()?,
+            dupe_keys: self.dupe_keys,
+        })
     }
 
     #[inline]

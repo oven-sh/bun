@@ -1,6 +1,6 @@
-use bun_core::{err, pretty_errorln, Error, Global};
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
+use bun_core::{Error, Global, err, pretty_errorln};
 
 // Zig: `pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type`
 //

@@ -1,8 +1,8 @@
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    closefd, log, Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind,
+    Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
 };
-use crate::shell::io::{InKind, OutKind, IO};
+use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::base::Base;
@@ -153,8 +153,7 @@ impl Pipeline {
                     }
                 }
             }
-            let cmds: Vec<CmdOrResult> =
-                (0..cmd_count).map(|_| CmdOrResult::Result(0)).collect();
+            let cmds: Vec<CmdOrResult> = (0..cmd_count).map(|_| CmdOrResult::Result(0)).collect();
             let me = interp.as_pipeline_mut(this);
             me.pipes = Some(pipes.into_boxed_slice());
             me.cmds = Some(cmds.into_boxed_slice());
@@ -207,9 +206,16 @@ impl Pipeline {
                     evtloop,
                 );
                 w.set_interp(interp_ptr);
-                OutKind::Fd(crate::shell::io::OutFd { writer: w, captured: None })
+                OutKind::Fd(crate::shell::io::OutFd {
+                    writer: w,
+                    captured: None,
+                })
             };
-            IO { stdin, stdout, stderr: me.io.stderr.clone() }
+            IO {
+                stdin,
+                stdout,
+                stderr: me.io.stderr.clone(),
+            }
         };
 
         // Each pipeline child gets its own duped env (var assignments
@@ -248,18 +254,15 @@ impl Pipeline {
 
         let child = match items[item_idx] {
             ast::PipelineItem::Cmd(c) => Cmd::init(interp, duped, c, this, child_io),
-            ast::PipelineItem::Subshell(s) => {
-                Subshell::init(interp, duped, s, this, child_io)
-            }
+            ast::PipelineItem::Subshell(s) => Subshell::init(interp, duped, s, this, child_io),
             ast::PipelineItem::If(f) => If::init(interp, duped, f, this, child_io),
-            ast::PipelineItem::CondExpr(c) => {
-                CondExpr::init(interp, duped, c, this, child_io)
-            }
+            ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, duped, c, this, child_io),
             ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
         };
         interp.as_pipeline_mut(this).cmds.as_mut().unwrap()[cmd_idx] = CmdOrResult::Cmd(child);
-        interp.as_pipeline_mut(this).state =
-            PipelineState::StartingCmds { idx: (item_idx + 1) as u32 };
+        interp.as_pipeline_mut(this).state = PipelineState::StartingCmds {
+            idx: (item_idx + 1) as u32,
+        };
 
         // Spawn exactly this one child. The trampoline will re-enter us via
         // `drain_pipelines` to spawn the next after this one yields.
@@ -291,7 +294,12 @@ impl Pipeline {
         child: NodeId,
         exit_code: ExitCode,
     ) -> Yield {
-        log!("Pipeline {} childDone (child={} exit={})", this, child, exit_code);
+        log!(
+            "Pipeline {} childDone (child={} exit={})",
+            this,
+            child,
+            exit_code
+        );
         // Find the child in `cmds` and replace with its result.
         let (all_done, n) = {
             let me = interp.as_pipeline_mut(this);
@@ -341,7 +349,10 @@ impl Pipeline {
     /// don't free `base.shell` themselves (spec: Pipeline.zig childDone()).
     fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
         let kind = interp.node(child).kind();
-        if matches!(kind, StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr) {
+        if matches!(
+            kind,
+            StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr
+        ) {
             if let Some(base) = interp.node_mut(child).base_mut() {
                 let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
                 if !shell.is_null() {

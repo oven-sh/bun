@@ -18,7 +18,10 @@ impl Default for EOFPacket {
 }
 
 impl EOFPacket {
-    pub fn decode_internal<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
+    pub fn decode_internal<Context: ReaderContext>(
+        &mut self,
+        reader: NewReader<Context>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {

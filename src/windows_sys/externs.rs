@@ -697,15 +697,15 @@ pub mod kernel32 {
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves
     // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.
     pub use super::{
-        GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SetCurrentDirectoryW,
-        SetFilePointerEx, CreateFileW, SYSTEM_INFO,
+        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
+        SetCurrentDirectoryW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
         SetConsoleOutputCP,
     };
 }
-pub use kernel32::{GetLastError, GetCurrentProcess, GetExitCodeProcess};
+pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
 // `std.os.windows.WaitForSingleObject` — Zig's wrapper returns `error.WaitFailed`
 // on `WAIT_FAILED`; provide that shape so `if let Err(..)` callers compile.
@@ -723,7 +723,11 @@ unsafe extern "system" {
 /// SAFETY: `handle` must be a valid waitable kernel object.
 pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
     let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
-    if rc == WAIT_FAILED { Err(Win32Error::get()) } else { Ok(rc) }
+    if rc == WAIT_FAILED {
+        Err(Win32Error::get())
+    } else {
+        Ok(rc)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -765,9 +769,13 @@ impl NTSTATUS {
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
     #[inline]
-    pub const fn from_raw(raw: u32) -> Self { NTSTATUS(raw) }
+    pub const fn from_raw(raw: u32) -> Self {
+        NTSTATUS(raw)
+    }
     #[inline]
-    pub const fn raw(self) -> u32 { self.0 }
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 #[inline]
@@ -805,7 +813,7 @@ pub mod ws2_32 {
         pub ai_family: c_int,
         pub ai_socktype: c_int,
         pub ai_protocol: c_int,
-        pub ai_addrlen: usize,          // size_t
+        pub ai_addrlen: usize, // size_t
         pub ai_canonname: *mut c_char,
         pub ai_addr: *mut sockaddr,
         pub ai_next: *mut addrinfo,
@@ -899,7 +907,10 @@ pub mod ws2_32 {
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct WinsockError(pub u16);
     impl WinsockError {
-        #[inline] pub const fn raw(self) -> u16 { self.0 }
+        #[inline]
+        pub const fn raw(self) -> u16 {
+            self.0
+        }
         pub const WSA_INVALID_HANDLE: Self = Self(6);
         pub const WSA_NOT_ENOUGH_MEMORY: Self = Self(8);
         pub const WSA_INVALID_PARAMETER: Self = Self(87);
@@ -1198,10 +1209,14 @@ impl Win32Error {
     }
 
     #[inline]
-    pub const fn from_raw(raw: u16) -> Win32Error { Win32Error(raw) }
+    pub const fn from_raw(raw: u16) -> Win32Error {
+        Win32Error(raw)
+    }
 
     #[inline]
-    pub const fn int(self) -> u16 { self.0 }
+    pub const fn int(self) -> u16 {
+        self.0
+    }
 
     /// Zig: `pub fn fromNTStatus(status) Win32Error { RtlNtStatusToDosError(status) }`
     #[inline]
@@ -1226,10 +1241,7 @@ pub type HPCON = *mut c_void;
 
 #[link(name = "shell32")]
 unsafe extern "system" {
-    pub fn CommandLineToArgvW(
-        lpCmdLine: LPCWSTR,
-        pNumArgs: *mut c_int,
-    ) -> *mut LPWSTR;
+    pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
 }
 
 #[link(name = "kernel32")]
@@ -1239,19 +1251,11 @@ unsafe extern "system" {
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
 
-    pub fn GetBinaryTypeW(
-        lpApplicationName: LPCWSTR,
-        lpBinaryType: LPDWORD,
-    ) -> BOOL;
+    pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
 
-    pub fn SetCurrentDirectoryW(
-        lpPathName: LPCWSTR,
-    ) -> BOOL;
+    pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
 
-    pub fn GetCurrentDirectoryW(
-        nBufferLength: DWORD,
-        lpBuffer: LPWSTR,
-    ) -> DWORD;
+    pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 
@@ -1303,25 +1307,16 @@ unsafe extern "system" {
 // callconv is correct on all targets. `GetProcAddress` takes `LPCSTR` (narrow), not wide.
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    pub fn GetProcAddress(
-        ptr: *mut c_void,
-        name: *const c_char,
-    ) -> *mut c_void;
+    pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
-    pub fn LoadLibraryA(
-        name: *const c_char,
-    ) -> *mut c_void;
+    pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
 }
 
 // PORT NOTE: the following kernel32 fns lacked `callconv(.winapi)` in the Zig (works on
 // x64 where winapi == C). Declared here as "system" for correctness on all targets.
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    pub fn CopyFileW(
-        source: LPCWSTR,
-        dest: LPCWSTR,
-        bFailIfExists: BOOL,
-    ) -> BOOL;
+    pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
     pub fn SetFileInformationByHandle(
         file: HANDLE,
@@ -1330,10 +1325,7 @@ unsafe extern "system" {
         bufferSize: DWORD,
     ) -> BOOL;
 
-    pub fn GetHostNameW(
-        lpBuffer: PWSTR,
-        nSize: c_int,
-    ) -> BOOL;
+    pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn GetTempPathW(
         nBufferLength: DWORD, // [in]
@@ -1346,12 +1338,11 @@ unsafe extern "system" {
     ) -> HANDLE;
 
     pub fn AssignProcessToJobObject(
-        hJob: HANDLE,    // [in]
+        hJob: HANDLE,     // [in]
         hProcess: HANDLE, // [in]
     ) -> BOOL;
 
-    pub fn ResumeThread(
-        hJob: HANDLE, // [in]
+    pub fn ResumeThread(hJob: HANDLE, // [in]
     ) -> DWORD;
 
     pub fn SetInformationJobObject(
@@ -1366,18 +1357,11 @@ unsafe extern "system" {
         lpName: LPCWSTR,
     ) -> HANDLE;
 
-    pub fn OpenProcess(
-        dwDesiredAccess: DWORD,
-        bInheritHandle: BOOL,
-        dwProcessId: DWORD,
-    ) -> HANDLE;
+    pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
 }
 
 unsafe extern "C" {
-    pub fn GetUserNameW(
-        lpBuffer: LPWSTR,
-        pcbBuffer: LPDWORD,
-    ) -> BOOL;
+    pub fn GetUserNameW(lpBuffer: LPWSTR, pcbBuffer: LPDWORD) -> BOOL;
 }
 
 // ── Job Object structures (`winnt.h`) ─────────────────────────────────────
@@ -1534,7 +1518,8 @@ const _: () = {
     assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, hStdInput) == 0x20);
     assert!(
         core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory)
-            + core::mem::offset_of!(CURDIR, Handle) == 0x48
+            + core::mem::offset_of!(CURDIR, Handle)
+            == 0x48
     );
     assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, ImagePathName) == 0x60);
 };
@@ -1645,13 +1630,13 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn GetModuleFileNameW(
-        hModule: HMODULE, // [in]
+        hModule: HMODULE,   // [in]
         lpFilename: LPWSTR, // [out]
-        nSize: DWORD,     // [in]
+        nSize: DWORD,       // [in]
     ) -> BOOL;
 
     pub fn GetThreadDescription(
-        thread: *mut c_void, // [in]
+        thread: *mut c_void,               // [in]
         ppszThreadDescription: *mut PWSTR, // [out]
     ) -> HRESULT;
 }
@@ -1686,13 +1671,13 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn UpdateProcThreadAttribute(
-        lpAttributeList: *mut u8,      // [in, out]
-        dwFlags: DWORD,                // [in]
-        Attribute: DWORD_PTR,          // [in]
-        lpValue: *const c_void,        // [in]
-        cbSize: usize,                 // [in]
-        lpPreviousValue: *mut c_void,  // [out, optional]
-        lpReturnSize: *mut usize,      // [in, optional]
+        lpAttributeList: *mut u8,     // [in, out]
+        dwFlags: DWORD,               // [in]
+        Attribute: DWORD_PTR,         // [in]
+        lpValue: *const c_void,       // [in]
+        cbSize: usize,                // [in]
+        lpPreviousValue: *mut c_void, // [out, optional]
+        lpReturnSize: *mut usize,     // [in, optional]
     ) -> BOOL;
 
     pub fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut BOOL) -> BOOL;
@@ -1705,32 +1690,51 @@ unsafe extern "system" {
         phPC: *mut HPCON,
     ) -> HRESULT;
 
-    pub fn ResizePseudoConsole(
-        hPC: HPCON,
-        size: COORD,
-    ) -> HRESULT;
+    pub fn ResizePseudoConsole(hPC: HPCON, size: COORD) -> HRESULT;
 
     pub fn ClosePseudoConsole(hPC: HPCON);
 
     pub fn CloseHandle(hObject: HANDLE) -> BOOL;
 
-    pub fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: *mut u16, cchFilePath: DWORD, dwFlags: DWORD) -> DWORD;
+    pub fn GetFinalPathNameByHandleW(
+        hFile: HANDLE,
+        lpszFilePath: *mut u16,
+        cchFilePath: DWORD,
+        dwFlags: DWORD,
+    ) -> DWORD;
 
     pub fn DeleteFileW(lpFileName: *const u16) -> BOOL;
 
-    pub fn CreateSymbolicLinkW(lpSymlinkFileName: *const u16, lpTargetFileName: *const u16, dwFlags: DWORD) -> BOOLEAN;
+    pub fn CreateSymbolicLinkW(
+        lpSymlinkFileName: *const u16,
+        lpTargetFileName: *const u16,
+        dwFlags: DWORD,
+    ) -> BOOLEAN;
 
     pub fn GetCurrentThread() -> HANDLE;
 
     pub fn GetCommandLineW() -> LPWSTR;
 
-    pub fn CreateDirectoryW(lpPathName: *const u16, lpSecurityAttributes: *mut SECURITY_ATTRIBUTES) -> BOOL;
+    pub fn CreateDirectoryW(
+        lpPathName: *const u16,
+        lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
+    ) -> BOOL;
 
     pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
-    pub fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *mut FILETIME, out_lpExitTime: *mut FILETIME, out_lpKernelTime: *mut FILETIME, out_lpUserTime: *mut FILETIME) -> BOOL;
+    pub fn GetProcessTimes(
+        in_hProcess: HANDLE,
+        out_lpCreationTime: *mut FILETIME,
+        out_lpExitTime: *mut FILETIME,
+        out_lpKernelTime: *mut FILETIME,
+        out_lpUserTime: *mut FILETIME,
+    ) -> BOOL;
 
-    pub fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID) -> BOOL;
+    pub fn GetFileAttributesExW(
+        lpFileName: LPCWSTR,
+        fInfoLevelId: GET_FILEEX_INFO_LEVELS,
+        lpFileInformation: LPVOID,
+    ) -> BOOL;
 }
 
 unsafe extern "C" {

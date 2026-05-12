@@ -4,14 +4,14 @@ use bun_io::Write;
 use bun_semver as semver;
 
 use bun_core::fmt::PathSep;
+use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, bin, resolution, Bin, Dependency, DependencyID, PackageID, PackageManager,
-    PackageNameHash, Resolution, INVALID_PACKAGE_ID,
+    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
+    PackageNameHash, Resolution, bin, resolution,
 };
-use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
 // PORT NOTE: Zig `slice.items(.field)` → trait-provided `items_<field>()`
 // accessors on `MultiArrayList<Package>` / its `Slice`.
-use crate::lockfile_real::package::{PackageColumns as _, PackageColumns as _};
+use crate::lockfile_real::package::{PackageColumns as _};
 use crate::package_manager_real::TrackInstalledBin;
 use bun_sys::{Dir as SysDir, Fd};
 
@@ -19,7 +19,11 @@ type Bitset = DynamicBitSet;
 
 // PORT NOTE: `comptime print_section_header: enum(u1) { print_section_header, dont_print_section_header }`
 // is a two-state comptime flag; mapped to `const PRINT_SECTION_HEADER: bool`.
-fn print_installed_workspace_section<W, const ENABLE_ANSI_COLORS: bool, const PRINT_SECTION_HEADER: bool>(
+fn print_installed_workspace_section<
+    W,
+    const ENABLE_ANSI_COLORS: bool,
+    const PRINT_SECTION_HEADER: bool,
+>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
@@ -41,7 +45,10 @@ where
     let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
     let names = packages_slice.items_name();
     let pkg_metas = packages_slice.items_meta();
-    debug_assert!(workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root);
+    debug_assert!(
+        workspace_res.tag == resolution::Tag::Workspace
+            || workspace_res.tag == resolution::Tag::Root
+    );
     let resolutions_list = packages_slice.items_resolutions();
     let mut printed_section_header = false;
     let mut printed_update = false;
@@ -112,7 +119,9 @@ where
         ) {
             ShouldPrintPackageInstallResult::Return => return Ok(()),
             ShouldPrintPackageInstallResult::Yes => {}
-            ShouldPrintPackageInstallResult::No | ShouldPrintPackageInstallResult::Update(_) => continue,
+            ShouldPrintPackageInstallResult::No | ShouldPrintPackageInstallResult::Update(_) => {
+                continue;
+            }
         }
 
         let dep = &dependencies[dep_id as usize];
@@ -221,7 +230,9 @@ fn should_print_package_install<'a>(
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     if resolution.tag == resolution::Tag::Npm {
         let npm_version = resolution.npm().version;
-        let name = dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice());
+        let name = dependency
+            .name
+            .slice(this.lockfile.buffers.string_bytes.as_slice());
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
@@ -249,7 +260,8 @@ where
 {
     // TODO(port): narrow error set
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-    let dependency = &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id as usize];
+    let dependency =
+        &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id as usize];
 
     // TODO(port): Output.prettyFmt comptime ANSI format string
     let fmt = if ENABLE_ANSI_COLORS {
@@ -454,8 +466,10 @@ where
         }
     } else {
         debug_assert_eq!(dependencies_buffer.len(), resolutions_buffer.len());
-        'outer: for (dep_id, (dependency, &package_id)) in
-            dependencies_buffer.iter().zip(resolutions_buffer).enumerate()
+        'outer: for (dep_id, (dependency, &package_id)) in dependencies_buffer
+            .iter()
+            .zip(resolutions_buffer)
+            .enumerate()
         {
             if package_id >= end {
                 continue;

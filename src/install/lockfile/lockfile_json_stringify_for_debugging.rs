@@ -4,16 +4,16 @@ use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
-use crate::{invalid_package_id, Dependency, DependencyID, Npm, Origin, PackageID};
-use crate::repository::Repository;
-use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
-use crate::dependency::Tag as DependencyVersionTag;
 use crate::bin::Tag as BinTag;
+use crate::dependency::Tag as DependencyVersionTag;
+use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
 use crate::integrity::Tag as IntegrityTag;
+use crate::repository::Repository;
+use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
 
-use super::{package_index, tree, FormatVersion, Lockfile, Package};
 use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
+use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
 // TODO(port): `w: anytype` is a `std.json.WriteStream`-shaped writer. Phase B should
 // introduce a `JsonWriter` trait in bun_core (or bun_collections) with the methods
@@ -686,7 +686,13 @@ pub struct WriteStream {
 
 impl WriteStream {
     pub fn new(opts: WriteStreamOptions) -> Self {
-        Self { out: Vec::new(), opts, depth: 0, had_element: Vec::new(), after_field: false }
+        Self {
+            out: Vec::new(),
+            opts,
+            depth: 0,
+            had_element: Vec::new(),
+            after_field: false,
+        }
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
@@ -757,7 +763,8 @@ impl JsonWriter for WriteStream {
     fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error> {
         self.value_start();
         encode_json_string(name, &mut self.out);
-        self.out.extend_from_slice(if self.opts.indent > 0 { b": " } else { b":" });
+        self.out
+            .extend_from_slice(if self.opts.indent > 0 { b": " } else { b":" });
         self.after_field = true;
         Ok(())
     }

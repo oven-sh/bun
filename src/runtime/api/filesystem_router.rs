@@ -23,27 +23,26 @@ use bun_paths::strings;
 use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
+use bun_ast as Log;
+use bun_core::{ZigString, ZigStringSlice};
+use bun_jsc::js_object::ObjectInitializer;
+use bun_jsc::ref_string::RefString;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsClass, JsResult, LogJsc,
     StringJsc,
 };
-use bun_jsc::js_object::ObjectInitializer;
-use bun_jsc::ref_string::RefString;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::BackRef;
-use bun_core::{ZigString, ZigStringSlice};
-use bun_ast as Log;
-use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
-
 
 use bun_http_types::URLPath;
-use bun_resolver::fs as Fs;
 use bun_resolver::Resolver;
+use bun_resolver::fs as Fs;
 use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
-use bun_url::{route_param, CombinedScanner, QueryStringMap, URL};
+use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
-use crate::webcore::{Request, Response};
 use crate::api::bun_object;
+use crate::webcore::{Request, Response};
 use bun_bundler as Transpiler;
 
 // PORT NOTE: `FrameworkFileSystemRouter` is declared in this file's
@@ -54,9 +53,7 @@ use bun_bundler as Transpiler;
 // codegen-generated thunks resolve without a stub.
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
-pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
-    b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
-];
+pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 // ── local shims ───────────────────────────────────────────────────────────
 // `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
@@ -160,9 +157,8 @@ impl FileSystemRouter {
 
         if let Some(dir) = argument.get(global_this, "dir")? {
             if !dir.is_string() {
-                return Err(
-                    global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
-                );
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected dir to be a string")));
             }
             let root_dir_path_ = dir.to_slice(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
@@ -222,9 +218,8 @@ impl FileSystemRouter {
 
         if let Some(asset_prefix) = argument.get_truthy(global_this, "assetPrefix")? {
             if !asset_prefix.is_string() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected assetPrefix to be a string"
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected assetPrefix to be a string")));
             }
 
             // TODO(port): `clone_if_borrowed` not on `ZigStringSlice` — copy into arena.
@@ -279,7 +274,10 @@ impl FileSystemRouter {
                 extensions: if !extensions.is_empty() {
                     extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
                 } else {
-                    DEFAULT_EXTENSIONS.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+                    DEFAULT_EXTENSIONS
+                        .iter()
+                        .map(|s| Box::<[u8]>::from(*s))
+                        .collect()
                 },
                 asset_prefix_path: Box::from(asset_prefix_slice.slice()),
                 ..Default::default()
@@ -305,9 +303,8 @@ impl FileSystemRouter {
 
         if let Some(origin) = argument.get(global_this, "origin")? {
             if !origin.is_string() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected origin to be a string"
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected origin to be a string")));
             }
             origin_str = origin.to_slice(global_this)?;
         }
@@ -340,13 +337,18 @@ impl FileSystemRouter {
         };
         let fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
-                Some(claim(vm.ref_counted_string::<true>(origin_str.slice(), None)))
+                Some(claim(
+                    vm.ref_counted_string::<true>(origin_str.slice(), None),
+                ))
             } else {
                 None
             },
             base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
-                Some(claim(vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None)))
+                Some(claim(vm.ref_counted_string::<true>(
+                    asset_prefix_slice.slice(),
+                    None,
+                )))
             } else {
                 None
             },
@@ -359,7 +361,9 @@ impl FileSystemRouter {
         // `Box<[u8]>`, so copy the bytes; the `claim` above already took our +1.
         // `base_dir` was just set to Some above.
         let base_dir = fs_router.base_dir.unwrap();
-        fs_router.router.with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
+        fs_router
+            .router
+            .with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
 
         Ok(fs_router)
     }
@@ -377,17 +381,15 @@ impl FileSystemRouter {
         {
             // PORT NOTE: Zig used a `ThreadlocalBuffers` slot. `with_borrow_mut` can't
             // hand back a slice that outlives the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
-                vm.fs().normalize_buf(&mut buf[..], input_path).to_vec()
-            });
+            normalized = WIN32_NORMALIZE_BUF
+                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
             path = normalized.as_slice();
         }
 
-        let root_dir_info =
-            match vm.as_mut().transpiler.resolver.read_dir_info(path) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
+        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
 
         if let Some(dir_ref) = root_dir_info {
             if let Some(entries) = dir_ref.get_entries_const() {
@@ -420,13 +422,9 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm
-                            .as_mut()
-                            .transpiler
-                            .resolver
-                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
-                                &full_path,
-                            ));
+                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
+                            strings::paths::without_trailing_slash_windows_path(&full_path),
+                        );
                         self.bust_dir_cache_recursive(global_this, &full_path);
                     }
                 }
@@ -437,7 +435,8 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir = strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
+        let dir =
+            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
         // PORT NOTE: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
         // recursive walk re-derives the path from the resolver per-iteration so a one-time
         // copy is sufficient.
@@ -476,7 +475,11 @@ impl FileSystemRouter {
         // released before `JsCell::set()` below installs the new router.
         let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
             let cfg = &this.router.get().config;
-            (cfg.dir.clone(), cfg.extensions.clone(), cfg.asset_prefix_path.clone())
+            (
+                cfg.dir.clone(),
+                cfg.extensions.clone(),
+                cfg.asset_prefix_path.clone(),
+            )
         };
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
@@ -537,24 +540,20 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let argument_ = callframe.arguments_old::<2>();
         if argument_.len == 0 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected string, Request or Response"
-            )));
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
         let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected string, Request or Response"
-            )));
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
         let mut path: ZigStringSlice = 'brk: {
             if argument.is_string() {
                 // TODO(port): `clone_if_borrowed` not on `ZigStringSlice`; force-own via into_vec.
-                break 'brk ZigStringSlice::init_owned(
-                    argument.to_slice(global_this)?.into_vec(),
-                );
+                break 'brk ZigStringSlice::init_owned(argument.to_slice(global_this)?.into_vec());
             }
 
             if argument.is_cell() {
@@ -571,9 +570,8 @@ impl FileSystemRouter {
                 }
             }
 
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected string, Request or Response"
-            )));
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {
@@ -876,10 +874,16 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(kind_enum::classify(this.route().name), global_this))
+        Ok(zs_to_js(
+            kind_enum::classify(this.route().name),
+            global_this,
+        ))
     }
 
-    pub fn create_query_object(ctx: &JSGlobalObject, map: &mut QueryStringMap) -> JsResult<JSValue> {
+    pub fn create_query_object(
+        ctx: &JSGlobalObject,
+        map: &mut QueryStringMap,
+    ) -> JsResult<JSValue> {
         struct QueryObjectCreator<'a> {
             query: &'a mut QueryStringMap,
         }
@@ -1000,7 +1004,8 @@ impl MatchedRoute {
                 route.name,
                 this.params(),
             );
-            this.param_map.set(QueryStringMap::init_with_scanner(scanner)?);
+            this.param_map
+                .set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
         // R-2: `create_query_object` writes only into a fresh plain JSObject (no

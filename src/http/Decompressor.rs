@@ -1,9 +1,9 @@
 use bun_collections::VecExt as _;
-use bun_http_types::Encoding::Encoding;
 use bun_core::MutableString;
+use bun_http_types::Encoding::Encoding;
 
-use bun_zlib::ZlibReaderArrayList;
 use bun_brotli::BrotliReaderArrayList;
+use bun_zlib::ZlibReaderArrayList;
 use bun_zstd::ZstdReaderArrayList;
 
 // PORT NOTE: the `*ReaderArrayList<'a>` types carry a `&'a mut Vec<u8>` borrow
@@ -112,7 +112,8 @@ impl Decompressor {
                 }
                 Encoding::Zstd => {
                     let reader = ZstdReaderArrayList::init_with_list_allocator(
-                        input, out,
+                        input,
+                        out,
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
                         // `bun.http.default_allocator`; dropped per §Allocators.
                     )?;

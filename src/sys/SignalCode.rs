@@ -90,7 +90,10 @@ impl SignalCode {
     }
 
     pub fn fmt(self, enable_ansi_colors: bool) -> Fmt {
-        Fmt { signal: self, enable_ansi_colors }
+        Fmt {
+            signal: self,
+            enable_ansi_colors,
+        }
     }
 }
 

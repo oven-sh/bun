@@ -29,16 +29,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         zig_str: &mut ZigString,
     );
-    safe fn JSC__JSString__eql(
-        this: &JSString,
-        global: &JSGlobalObject,
-        other: &JSString,
-    ) -> bool;
-    fn JSC__JSString__iterator(
-        this: &JSString,
-        global_object: &JSGlobalObject,
-        iter: *mut c_void,
-    );
+    safe fn JSC__JSString__eql(this: &JSString, global: &JSGlobalObject, other: &JSString) -> bool;
+    fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
 }
@@ -89,7 +81,7 @@ impl JSString {
     // callers a use-after-free once the cell is collected.
     // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_clone` is
     // ported; gated so wrong-semantics fallback cannot be called.
-    
+
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
@@ -101,7 +93,7 @@ impl JSString {
     // expects one reads past the buffer end.
     // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_z` is
     // ported; gated so wrong-semantics fallback cannot be called.
-    
+
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
@@ -127,14 +119,10 @@ impl JSString {
     }
 }
 
-pub type JStringIteratorAppend8Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u8, u32);
-pub type JStringIteratorAppend16Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u16, u32);
-pub type JStringIteratorWrite8Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u8, u32, u32);
-pub type JStringIteratorWrite16Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u16, u32, u32);
+pub type JStringIteratorAppend8Callback = unsafe extern "C" fn(*mut Iterator, *const u8, u32);
+pub type JStringIteratorAppend16Callback = unsafe extern "C" fn(*mut Iterator, *const u16, u32);
+pub type JStringIteratorWrite8Callback = unsafe extern "C" fn(*mut Iterator, *const u8, u32, u32);
+pub type JStringIteratorWrite16Callback = unsafe extern "C" fn(*mut Iterator, *const u16, u32, u32);
 
 #[repr(C)]
 pub struct Iterator {

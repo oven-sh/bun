@@ -80,23 +80,37 @@ where
             State::Chaining(state) => self.chainging(state),
             State::RestArePositional => {
                 let param = self.positional_param().unwrap_or_else(|| unreachable!());
-                let Some(value) = self.iter.next() else { return Ok(None) };
-                Ok(Some(Arg { param, value: Some(value) }))
+                let Some(value) = self.iter.next() else {
+                    return Ok(None);
+                };
+                Ok(Some(Arg {
+                    param,
+                    value: Some(value),
+                }))
             }
         }
     }
 
     fn normal(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
-        let Some(arg_info) = self.parse_next_arg()? else { return Ok(None) };
+        let Some(arg_info) = self.parse_next_arg()? else {
+            return Ok(None);
+        };
         let arg = arg_info.arg;
 
         match arg_info.kind {
             ArgKind::Long => {
                 let eql_index = arg.iter().position(|&b| b == b'=');
-                let name: &[u8] = if let Some(i) = eql_index { &arg[0..i] } else { arg };
+                let name: &[u8] = if let Some(i) = eql_index {
+                    &arg[0..i]
+                } else {
+                    arg
+                };
 
-                let maybe_value: Option<&[u8]> =
-                    if let Some(i) = eql_index { Some(&arg[i + 1..]) } else { None };
+                let maybe_value: Option<&[u8]> = if let Some(i) = eql_index {
+                    Some(&arg[i + 1..])
+                } else {
+                    None
+                };
 
                 // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
                 let params = self.params;
@@ -112,7 +126,10 @@ where
                             return Err(self.err(arg, None, Some(name), ArgError::DoesntTakeValue));
                         }
 
-                        return Ok(Some(Arg { param, value: maybe_value }));
+                        return Ok(Some(Arg {
+                            param,
+                            value: maybe_value,
+                        }));
                     }
 
                     let value = 'blk: {
@@ -123,12 +140,20 @@ where
                         break 'blk match self.iter.next() {
                             Some(v) => v,
                             None => {
-                                return Err(self.err(arg, None, Some(name), ArgError::MissingValue));
+                                return Err(self.err(
+                                    arg,
+                                    None,
+                                    Some(name),
+                                    ArgError::MissingValue,
+                                ));
                             }
                         };
                     };
 
-                    return Ok(Some(Arg { param, value: Some(value) }));
+                    return Ok(Some(Arg {
+                        param,
+                        value: Some(value),
+                    }));
                 }
 
                 // unrecognized command
@@ -137,7 +162,11 @@ where
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
                         Output::warn(&format_args!(
                             "unrecognized flag: {}{}\n",
-                            if arg_info.kind == ArgKind::Long { "--" } else { "-" },
+                            if arg_info.kind == ArgKind::Long {
+                                "--"
+                            } else {
+                                "-"
+                            },
                             bstr::BStr::new(name),
                         ));
                         Output::flush();
@@ -148,7 +177,10 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn(&format_args!("unrecognized argument: {}\n", bstr::BStr::new(name)));
+                    Output::warn(&format_args!(
+                        "unrecognized argument: {}\n",
+                        bstr::BStr::new(name)
+                    ));
                     Output::flush();
                 }
                 Ok(None)
@@ -162,11 +194,19 @@ where
                     if arg == b"--" {
                         self.state = State::RestArePositional;
                         // return null to terminate arg parsing
-                        let Some(value) = self.iter.next() else { return Ok(None) };
-                        return Ok(Some(Arg { param, value: Some(value) }));
+                        let Some(value) = self.iter.next() else {
+                            return Ok(None);
+                        };
+                        return Ok(Some(Arg {
+                            param,
+                            value: Some(value),
+                        }));
                     }
 
-                    Ok(Some(Arg { param, value: Some(arg) }))
+                    Ok(Some(Arg {
+                        param,
+                        value: Some(arg),
+                    }))
                 } else {
                     Err(self.err(arg, None, None, ArgError::InvalidArgument))
                 }
@@ -182,7 +222,9 @@ where
         // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
         let params = self.params;
         for param in params {
-            let Some(short) = param.names.short else { continue };
+            let Some(short) = param.names.short else {
+                continue;
+            };
             if short != arg[index] {
                 continue;
             }
@@ -193,10 +235,17 @@ where
             if arg.len() <= next_index || param.takes_value != clap::Values::None {
                 self.state = State::Normal;
             } else {
-                self.state = State::Chaining(Chaining { arg, index: next_index });
+                self.state = State::Chaining(Chaining {
+                    arg,
+                    index: next_index,
+                });
             }
 
-            let next_is_eql = if next_index < arg.len() { arg[next_index] == b'=' } else { false };
+            let next_is_eql = if next_index < arg.len() {
+                arg[next_index] == b'='
+            } else {
+                false
+            };
             if param.takes_value == clap::Values::None
                 || param.takes_value == clap::Values::OneOptional
             {
@@ -214,14 +263,23 @@ where
                     }
                 };
 
-                return Ok(Some(Arg { param, value: Some(value) }));
+                return Ok(Some(Arg {
+                    param,
+                    value: Some(value),
+                }));
             }
 
             if next_is_eql {
-                return Ok(Some(Arg { param, value: Some(&arg[next_index + 1..]) }));
+                return Ok(Some(Arg {
+                    param,
+                    value: Some(&arg[next_index + 1..]),
+                }));
             }
 
-            return Ok(Some(Arg { param, value: Some(&arg[next_index..]) }));
+            return Ok(Some(Arg {
+                param,
+                value: Some(&arg[next_index..]),
+            }));
         }
 
         Err(self.err(arg, Some(arg[index]), None, ArgError::InvalidArgument))
@@ -248,18 +306,32 @@ where
     }
 
     fn parse_next_arg(&mut self) -> Result<Option<ArgInfo<'a>>, ArgError> {
-        let Some(full_arg) = self.iter.next() else { return Ok(None) };
+        let Some(full_arg) = self.iter.next() else {
+            return Ok(None);
+        };
         if full_arg == b"--" || full_arg == b"-" {
-            return Ok(Some(ArgInfo { arg: full_arg, kind: ArgKind::Positional }));
+            return Ok(Some(ArgInfo {
+                arg: full_arg,
+                kind: ArgKind::Positional,
+            }));
         }
         if full_arg.starts_with(b"--") {
-            return Ok(Some(ArgInfo { arg: &full_arg[2..], kind: ArgKind::Long }));
+            return Ok(Some(ArgInfo {
+                arg: &full_arg[2..],
+                kind: ArgKind::Long,
+            }));
         }
         if full_arg.starts_with(b"-") {
-            return Ok(Some(ArgInfo { arg: &full_arg[1..], kind: ArgKind::Short }));
+            return Ok(Some(ArgInfo {
+                arg: &full_arg[1..],
+                kind: ArgKind::Short,
+            }));
         }
 
-        Ok(Some(ArgInfo { arg: full_arg, kind: ArgKind::Positional }))
+        Ok(Some(ArgInfo {
+            arg: full_arg,
+            kind: ArgKind::Positional,
+        }))
     }
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
@@ -283,7 +355,9 @@ mod tests {
         args_strings: &[&[u8]],
         results: &[Arg<'_, '_, u8>],
     ) {
-        let mut iter = args::SliceIterator { remain: args_strings };
+        let mut iter = args::SliceIterator {
+            remain: args_strings,
+        };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             params,
             iter: &mut iter,
@@ -293,7 +367,10 @@ mod tests {
         };
 
         for res in results {
-            let arg = c.next().expect("unreachable").unwrap_or_else(|| unreachable!());
+            let arg = c
+                .next()
+                .expect("unreachable")
+                .unwrap_or_else(|| unreachable!());
             assert!(core::ptr::eq(res.param, arg.param));
             let Some(expected_value) = res.value else {
                 assert_eq!(None::<&[u8]>, arg.value);
@@ -310,7 +387,9 @@ mod tests {
 
     fn test_err(params: &[clap::Param<u8>], args_strings: &[&[u8]], expected: &[u8]) {
         let mut diag = clap::Diagnostic::default();
-        let mut iter = args::SliceIterator { remain: args_strings };
+        let mut iter = args::SliceIterator {
+            remain: args_strings,
+        };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             params,
             iter: &mut iter,
@@ -338,8 +417,16 @@ mod tests {
     #[test]
     fn short_params() {
         let params: [clap::Param<u8>; 4] = [
-            clap::Param { id: 0, names: clap::Names::short(b'a'), ..Default::default() },
-            clap::Param { id: 1, names: clap::Names::short(b'b'), ..Default::default() },
+            clap::Param {
+                id: 0,
+                names: clap::Names::short(b'a'),
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                names: clap::Names::short(b'b'),
+                ..Default::default()
+            },
             clap::Param {
                 id: 2,
                 names: clap::Names::short(b'c'),
@@ -362,24 +449,61 @@ mod tests {
         test_no_err(
             &params,
             &[
-                b"-a", b"-b", b"-ab", b"-ba",
-                b"-c", b"0", b"-c=0", b"-ac",
-                b"0", b"-ac=0", b"-d=0",
+                b"-a", b"-b", b"-ab", b"-ba", b"-c", b"0", b"-c=0", b"-ac", b"0", b"-ac=0", b"-d=0",
             ],
             &[
-                Arg { param: a, value: None },
-                Arg { param: b, value: None },
-                Arg { param: a, value: None },
-                Arg { param: b, value: None },
-                Arg { param: b, value: None },
-                Arg { param: a, value: None },
-                Arg { param: c, value: Some(b"0") },
-                Arg { param: c, value: Some(b"0") },
-                Arg { param: a, value: None },
-                Arg { param: c, value: Some(b"0") },
-                Arg { param: a, value: None },
-                Arg { param: c, value: Some(b"0") },
-                Arg { param: d, value: Some(b"0") },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: b,
+                    value: None,
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: b,
+                    value: None,
+                },
+                Arg {
+                    param: b,
+                    value: None,
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: d,
+                    value: Some(b"0"),
+                },
             ],
         );
     }
@@ -387,8 +511,16 @@ mod tests {
     #[test]
     fn long_params() {
         let params: [clap::Param<u8>; 4] = [
-            clap::Param { id: 0, names: clap::Names::long(b"aa"), ..Default::default() },
-            clap::Param { id: 1, names: clap::Names::long(b"bb"), ..Default::default() },
+            clap::Param {
+                id: 0,
+                names: clap::Names::long(b"aa"),
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                names: clap::Names::long(b"bb"),
+                ..Default::default()
+            },
             clap::Param {
                 id: 2,
                 names: clap::Names::long(b"cc"),
@@ -410,17 +542,28 @@ mod tests {
 
         test_no_err(
             &params,
+            &[b"--aa", b"--bb", b"--cc", b"0", b"--cc=0", b"--dd=0"],
             &[
-                b"--aa", b"--bb",
-                b"--cc", b"0",
-                b"--cc=0", b"--dd=0",
-            ],
-            &[
-                Arg { param: aa, value: None },
-                Arg { param: bb, value: None },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: dd, value: Some(b"0") },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: bb,
+                    value: None,
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: dd,
+                    value: Some(b"0"),
+                },
             ],
         );
     }
@@ -437,8 +580,14 @@ mod tests {
             &params,
             &[b"aa", b"bb"],
             &[
-                Arg { param: &params[0], value: Some(b"aa") },
-                Arg { param: &params[0], value: Some(b"bb") },
+                Arg {
+                    param: &params[0],
+                    value: Some(b"aa"),
+                },
+                Arg {
+                    param: &params[0],
+                    value: Some(b"bb"),
+                },
             ],
         );
     }
@@ -448,21 +597,37 @@ mod tests {
         let params: [clap::Param<u8>; 4] = [
             clap::Param {
                 id: 0,
-                names: clap::Names { short: Some(b'a'), long: Some(b"aa"), ..Default::default() },
+                names: clap::Names {
+                    short: Some(b'a'),
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names { short: Some(b'b'), long: Some(b"bb"), ..Default::default() },
+                names: clap::Names {
+                    short: Some(b'b'),
+                    long: Some(b"bb"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 2,
-                names: clap::Names { short: Some(b'c'), long: Some(b"cc"), ..Default::default() },
+                names: clap::Names {
+                    short: Some(b'c'),
+                    long: Some(b"cc"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
-            clap::Param { id: 3, takes_value: clap::Values::One, ..Default::default() },
+            clap::Param {
+                id: 3,
+                takes_value: clap::Values::One,
+                ..Default::default()
+            },
         ];
 
         let aa = &params[0];
@@ -473,33 +638,108 @@ mod tests {
         test_no_err(
             &params,
             &[
-                b"-a", b"-b", b"-ab", b"-ba",
-                b"-c", b"0", b"-c=0", b"-ac",
-                b"0", b"-ac=0", b"--aa", b"--bb",
-                b"--cc", b"0", b"--cc=0", b"something",
-                b"-", b"--", b"--cc=0", b"-a",
+                b"-a",
+                b"-b",
+                b"-ab",
+                b"-ba",
+                b"-c",
+                b"0",
+                b"-c=0",
+                b"-ac",
+                b"0",
+                b"-ac=0",
+                b"--aa",
+                b"--bb",
+                b"--cc",
+                b"0",
+                b"--cc=0",
+                b"something",
+                b"-",
+                b"--",
+                b"--cc=0",
+                b"-a",
             ],
             &[
-                Arg { param: aa, value: None },
-                Arg { param: bb, value: None },
-                Arg { param: aa, value: None },
-                Arg { param: bb, value: None },
-                Arg { param: bb, value: None },
-                Arg { param: aa, value: None },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: aa, value: None },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: aa, value: None },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: aa, value: None },
-                Arg { param: bb, value: None },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: cc, value: Some(b"0") },
-                Arg { param: positional, value: Some(b"something") },
-                Arg { param: positional, value: Some(b"-") },
-                Arg { param: positional, value: Some(b"--cc=0") },
-                Arg { param: positional, value: Some(b"-a") },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: bb,
+                    value: None,
+                },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: bb,
+                    value: None,
+                },
+                Arg {
+                    param: bb,
+                    value: None,
+                },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: aa,
+                    value: None,
+                },
+                Arg {
+                    param: bb,
+                    value: None,
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: cc,
+                    value: Some(b"0"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"something"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"-"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"--cc=0"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"-a"),
+                },
             ],
         );
     }
@@ -509,12 +749,20 @@ mod tests {
         let params: [clap::Param<u8>; 2] = [
             clap::Param {
                 id: 0,
-                names: clap::Names { short: Some(b'a'), long: Some(b"aa"), ..Default::default() },
+                names: clap::Names {
+                    short: Some(b'a'),
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names { short: Some(b'c'), long: Some(b"cc"), ..Default::default() },
+                names: clap::Names {
+                    short: Some(b'c'),
+                    long: Some(b"cc"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
@@ -523,10 +771,26 @@ mod tests {
         test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
         test_err(&params, &[b"--q"], b"Invalid argument '--q'\n");
         test_err(&params, &[b"--q=1"], b"Invalid argument '--q'\n");
-        test_err(&params, &[b"-a=1"], b"The argument '-a' does not take a value\n");
-        test_err(&params, &[b"--aa=1"], b"The argument '--aa' does not take a value\n");
-        test_err(&params, &[b"-c"], b"The argument '-c' requires a value but none was supplied\n");
-        test_err(&params, &[b"--cc"], b"The argument '--cc' requires a value but none was supplied\n");
+        test_err(
+            &params,
+            &[b"-a=1"],
+            b"The argument '-a' does not take a value\n",
+        );
+        test_err(
+            &params,
+            &[b"--aa=1"],
+            b"The argument '--aa' does not take a value\n",
+        );
+        test_err(
+            &params,
+            &[b"-c"],
+            b"The argument '-c' requires a value but none was supplied\n",
+        );
+        test_err(
+            &params,
+            &[b"--cc"],
+            b"The argument '--cc' requires a value but none was supplied\n",
+        );
     }
 }
 

@@ -17,7 +17,8 @@ pub type Hash = u32;
 /// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
-pub type Map = bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
+pub type Map =
+    bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 

@@ -4,48 +4,56 @@
 use core::cmp::Ordering;
 use core::ffi::c_int;
 
-use bun_alloc::AllocError;
 use crate::BoundedArray;
 use crate::Error;
+use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
-    wtf8_byte_sequence_length_with_invalid, CodepointIterator, Cursor, NewCodePointIterator,
-    UnsignedCodepointIterator,
+    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, decode_wtf8_rune_t,
+    decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
+    wtf8_byte_sequence_length_with_invalid,
 };
 
 // Sub-modules (peer files under `src/string/immutable/`).
 // B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
 // immutable.rs itself needs. Un-gate each below as their deps land.
-#[path = "immutable/exact_size_matcher.rs"] pub mod exact_size_matcher;
+#[path = "immutable/exact_size_matcher.rs"]
+pub mod exact_size_matcher;
 // AsciiVector/AsciiU16Vector are scalar `ScalarVec` wrappers (see below) so
 // the `if ENABLE_SIMD { .. }` branches type-check; `ENABLE_SIMD = false`
 // keeps them dead at runtime. PERF(port): swap to bun_highway in Phase B.
-#[path = "immutable/escapeHTML.rs"]         pub mod escape_html;
-#[path = "immutable/grapheme.rs"] pub mod grapheme;
-#[path = "immutable/grapheme_tables.rs"] pub mod grapheme_tables;
-#[path = "immutable/unicode.rs"]            mod unicode_draft;
-#[path = "immutable/visible.rs"]            mod visible_impl;
+#[path = "immutable/escapeHTML.rs"]
+pub mod escape_html;
+#[path = "immutable/grapheme.rs"]
+pub mod grapheme;
+#[path = "immutable/grapheme_tables.rs"]
+pub mod grapheme_tables;
+#[path = "immutable/unicode.rs"]
+mod unicode_draft;
+#[path = "immutable/visible.rs"]
+mod visible_impl;
 
 // Transcoding helpers from `unicode_draft` that have no T0 `crate::strings`
 // equivalent yet — re-export so downstream `bun_core::strings::*` callers (e.g.
 // runtime/webcore/encoding.rs) resolve. These return `crate::strings::EncodeIntoResult`.
-pub use unicode_draft::{
-    allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
-    copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8, copy_u8_into_u16,
-    copy_utf16_into_utf8_impl, element_length_cp1252_into_utf16, element_length_utf8_into_utf16,
-    replace_latin1_with_utf8, to_utf16_alloc_maybe_buffered, to_utf8_list_with_type_bun,
-    u16_is_lead, u16_is_trail, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
-    UTF16Replacement, BOM,
-};
 pub use crate::strings::{
-    decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw, u16_get_supplementary,
-    u16_is_surrogate, U16_SURROGATE_OFFSET,
+    U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+    u16_get_supplementary, u16_is_surrogate,
+};
+pub use unicode_draft::{
+    BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
+    copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
+    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
+    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, replace_latin1_with_utf8,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
-mod escape_reg_exp { pub(super) use crate::string::escape_reg_exp::*; }
+mod escape_reg_exp {
+    pub(super) use crate::string::escape_reg_exp::*;
+}
 
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` for B-2).
@@ -69,13 +77,17 @@ pub mod visible_fallback {
             /// `visible.zig:visibleLatin1WidthExcludeANSIColors`.
             fn skip_ansi(input: &[u8]) -> usize {
                 debug_assert!(!input.is_empty() && input[0] == 0x1b);
-                if input.len() < 2 { return input.len(); }
+                if input.len() < 2 {
+                    return input.len();
+                }
                 match input[1] {
                     b'[' => {
                         // CSI: ESC '[' ... <0x40..=0x7E>
                         let mut i = 2;
                         while i < input.len() {
-                            if (0x40..=0x7E).contains(&input[i]) { return i + 1; }
+                            if (0x40..=0x7E).contains(&input[i]) {
+                                return i + 1;
+                            }
                             i += 1;
                         }
                         input.len()
@@ -86,7 +98,9 @@ pub mod visible_fallback {
                         while i < input.len() {
                             match input[i] {
                                 0x07 | 0x9c => return i + 1,
-                                0x1b if i + 1 < input.len() && input[i + 1] == b'\\' => return i + 2,
+                                0x1b if i + 1 < input.len() && input[i + 1] == b'\\' => {
+                                    return i + 2;
+                                }
                                 _ => i += 1,
                             }
                         }
@@ -113,7 +127,9 @@ pub mod visible_fallback {
                     }
                     if b < 0x80 {
                         // C0 controls are zero-width.
-                        if b >= 0x20 && b != 0x7f { w += 1; }
+                        if b >= 0x20 && b != 0x7f {
+                            w += 1;
+                        }
                         i += 1;
                     } else {
                         let len = wtf8_byte_sequence_length(b).max(1) as usize;
@@ -151,7 +167,9 @@ pub mod visible_fallback {
                 input.len()
             }
 
-            pub fn latin1(input: &[u8]) -> usize { utf8(input) }
+            pub fn latin1(input: &[u8]) -> usize {
+                utf8(input)
+            }
 
             /// Visible terminal width of a UTF-16 string, treating ANSI
             /// escape sequences as zero-width.
@@ -181,10 +199,15 @@ pub mod visible_fallback {
                         continue;
                     }
                     if c < 0x80 {
-                        if c >= 0x20 && c != 0x7f { w += 1; }
+                        if c >= 0x20 && c != 0x7f {
+                            w += 1;
+                        }
                         i += 1;
                     } else if crate::strings::u16_is_lead(c)
-                        && input.get(i + 1).copied().is_some_and(crate::strings::u16_is_trail)
+                        && input
+                            .get(i + 1)
+                            .copied()
+                            .is_some_and(crate::strings::u16_is_trail)
                     {
                         // Surrogate pair → one codepoint.
                         w += 1;
@@ -216,45 +239,71 @@ pub mod unicode {
 
     #[inline]
     pub fn decode_wtf8_rune_t_multibyte<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
-    where T: Copy + From<u8> + core::ops::Shl<u32, Output = T> + core::ops::BitOr<Output = T> + PartialOrd,
+    where
+        T: Copy
+            + From<u8>
+            + core::ops::Shl<u32, Output = T>
+            + core::ops::BitOr<Output = T>
+            + PartialOrd,
     {
         debug_assert!(len > 1);
         let s1 = p[1];
-        if (s1 & 0xC0) != 0x80 { return zero; }
+        if (s1 & 0xC0) != 0x80 {
+            return zero;
+        }
         if len == 2 {
             let cp = (T::from(p[0] & 0x1F) << 6) | T::from(s1 & 0x3F);
-            if cp < T::from(0x80) { return zero; }
+            if cp < T::from(0x80) {
+                return zero;
+            }
             return cp;
         }
         let s2 = p[2];
-        if (s2 & 0xC0) != 0x80 { return zero; }
+        if (s2 & 0xC0) != 0x80 {
+            return zero;
+        }
         if len == 3 {
             let cp = (T::from(p[0] & 0x0F) << 12) | (T::from(s1 & 0x3F) << 6) | T::from(s2 & 0x3F);
             // 0x800 doesn't fit u8; compare via known-safe construction
             // (T is i32 or u32 in practice — see CodePointZero impls)
-            if cp < ((T::from(0x08) << 8) | T::from(0)) { return zero; }
+            if cp < ((T::from(0x08) << 8) | T::from(0)) {
+                return zero;
+            }
             return cp;
         }
         let s3 = p[3];
-        if (s3 & 0xC0) != 0x80 { return zero; }
+        if (s3 & 0xC0) != 0x80 {
+            return zero;
+        }
         let cp = (T::from(p[0] & 0x07) << 18)
             | (T::from(s1 & 0x3F) << 12)
             | (T::from(s2 & 0x3F) << 6)
             | T::from(s3 & 0x3F);
         // 0x10000..=0x10FFFF range check — only meaningful for i32/u32.
         // Construct bounds via shifts to stay within From<u8>.
-        let lo = T::from(1) << 16;                    // 0x1_0000
+        let lo = T::from(1) << 16; // 0x1_0000
         let hi = (T::from(0x10) << 16) | (T::from(0xFF) << 8) | T::from(0xFF); // 0x10_FFFF
-        if cp < lo || cp > hi { return zero; }
+        if cp < lo || cp > hi {
+            return zero;
+        }
         cp
     }
 
     #[inline]
     pub fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
-    where T: Copy + From<u8> + core::ops::Shl<u32, Output = T> + core::ops::BitOr<Output = T> + PartialOrd,
+    where
+        T: Copy
+            + From<u8>
+            + core::ops::Shl<u32, Output = T>
+            + core::ops::BitOr<Output = T>
+            + PartialOrd,
     {
-        if len == 0 { return zero; }
-        if len == 1 { return T::from(p[0]); }
+        if len == 0 {
+            return zero;
+        }
+        if len == 1 {
+            return T::from(p[0]);
+        }
         decode_wtf8_rune_t_multibyte(p, len, zero)
     }
 
@@ -270,10 +319,26 @@ pub mod unicode {
 
     impl<'a> NewCodePointIterator<'a> {
         pub const ZERO_VALUE: CodePoint = -1;
-        pub fn init(bytes: &'a [u8]) -> Self { Self { bytes, i: 0, width: 0, c: 0 } }
-        pub fn init_offset(bytes: &'a [u8], i: usize) -> Self { Self { bytes, i, width: 0, c: 0 } }
+        pub fn init(bytes: &'a [u8]) -> Self {
+            Self {
+                bytes,
+                i: 0,
+                width: 0,
+                c: 0,
+            }
+        }
+        pub fn init_offset(bytes: &'a [u8], i: usize) -> Self {
+            Self {
+                bytes,
+                i,
+                width: 0,
+                c: 0,
+            }
+        }
         pub fn next_codepoint(&mut self) -> CodePoint {
-            if self.i >= self.bytes.len() { return -1; }
+            if self.i >= self.bytes.len() {
+                return -1;
+            }
             let len = wtf8_byte_sequence_length(self.bytes[self.i]);
             let mut buf = [0u8; 4];
             let avail = (self.bytes.len() - self.i).min(4);
@@ -302,7 +367,11 @@ pub mod unicode {
     }
 
     #[derive(Default, Clone, Copy)]
-    pub struct Cursor { pub i: u32, pub width: u8, pub c: CodePoint }
+    pub struct Cursor {
+        pub i: u32,
+        pub width: u8,
+        pub c: CodePoint,
+    }
 
     impl<'a> NewCodePointIterator<'a> {
         /// Zig-style cursor advance. Returns `false` at end.
@@ -315,7 +384,9 @@ pub mod unicode {
         pub fn next(&self, cursor: &mut Cursor) -> bool {
             let bytes = self.bytes;
             let pos = cursor.i as usize + cursor.width as usize;
-            if pos >= bytes.len() { return false; }
+            if pos >= bytes.len() {
+                return false;
+            }
             // `pos < bytes.len()` checked immediately above; LLVM elides both
             // the slice and index bounds checks.
             let tail = &bytes[pos..];
@@ -388,25 +459,32 @@ pub use self::unicode::to_utf16_literal;
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
 pub use crate::string::w;
 pub use crate::strings::{
-    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
-    element_length_latin1_into_utf8, element_length_utf16_into_utf8,
-    encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
+    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8, element_length_latin1_into_utf8,
+    element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
 /// memmem — libc on posix, scalar fallback on windows.
 #[cfg(not(windows))]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() { return Some(0); }
+    if needle.is_empty() {
+        return Some(0);
+    }
     // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
     // libc memmem only reads within those bounds.
     let p = unsafe {
         libc::memmem(
-            haystack.as_ptr().cast(), haystack.len(),
-            needle.as_ptr().cast(), needle.len(),
+            haystack.as_ptr().cast(),
+            haystack.len(),
+            needle.as_ptr().cast(),
+            needle.len(),
         )
     };
-    if p.is_null() { None } else { Some(p as usize - haystack.as_ptr() as usize) }
+    if p.is_null() {
+        None
+    } else {
+        Some(p as usize - haystack.as_ptr() as usize)
+    }
 }
 #[cfg(windows)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -715,7 +793,9 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
     {
         // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
         let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
-        if start.is_null() { return None; }
+        if start.is_null() {
+            return None;
+        }
         return Some(start as usize - self_.as_ptr() as usize);
     }
     #[cfg(not(target_os = "linux"))]
@@ -774,7 +854,11 @@ pub fn index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
 }
 
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
-    SplitIterator { buffer: self_, index: Some(0), delimiter }
+    SplitIterator {
+        buffer: self_,
+        index: Some(0),
+        delimiter,
+    }
 }
 
 pub struct SplitIterator<'a> {
@@ -913,7 +997,9 @@ impl StringOrTinyString {
         if stringy.len() <= StringOrTinyString::MAX {
             return Ok(StringOrTinyString::init_lower_case(stringy));
         }
-        Ok(StringOrTinyString::init(appendy.append_lower_case(stringy)?))
+        Ok(StringOrTinyString::init(
+            appendy.append_lower_case(stringy)?,
+        ))
     }
 
     pub fn init(stringy: &[u8]) -> StringOrTinyString {
@@ -1098,7 +1184,8 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
 }
 
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
-    self_.len() >= prefix.len() && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
+    self_.len() >= prefix.len()
+        && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
 pub use crate::strings::{has_prefix_t as starts_with_generic, has_suffix_t as ends_with_generic};
@@ -1228,7 +1315,10 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
     // ASCII literals (Zig was `comptime`).
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() == alt.len()
-        && self_.iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
+        && self_
+            .iter()
+            .zip(alt.iter())
+            .all(|(&u, &b)| u == u16::from(b))
 }
 
 pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
@@ -1236,19 +1326,24 @@ pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
 }
 
 pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    self_.len() >= alt.len() && eql_comptime_check_len_with_type::<u8, false>(&self_[0..alt.len()], alt)
+    self_.len() >= alt.len()
+        && eql_comptime_check_len_with_type::<u8, false>(&self_[0..alt.len()], alt)
 }
 
 pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() >= alt.len()
-        && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
+        && self_[..alt.len()]
+            .iter()
+            .zip(alt.iter())
+            .all(|(&u, &b)| u == u16::from(b))
 }
 
 pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
     // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
     // Rust callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
-    self_.len() >= alt.len() && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
+    self_.len() >= alt.len()
+        && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
 }
 
 pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
@@ -1266,7 +1361,11 @@ fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
 }
 
 fn eql_comptime_debug_runtime_fallback(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    if check_len { a == b } else { &a[0..b.len()] == b }
+    if check_len {
+        a == b
+    } else {
+        &a[0..b.len()] == b
+    }
 }
 
 #[allow(dead_code)]
@@ -1293,11 +1392,7 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
     b: &[T],
 ) -> bool {
     if core::mem::size_of::<T>() != 1 {
-        return eql_comptime_check_len_u8(
-            reinterpret_to_u8(a),
-            reinterpret_to_u8(b),
-            CHECK_LEN,
-        );
+        return eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN);
     }
     // T is u8-sized.
     eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
@@ -1356,9 +1451,13 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
         let c: u32 = (*c).into();
         let d = u32::from(d);
         if (u32::from(b'a')..=u32::from(b'z')).contains(&c) {
-            if c != d && c & 0b1101_1111 != d { return false; }
+            if c != d && c & 0b1101_1111 != d {
+                return false;
+            }
         } else if (u32::from(b'A')..=u32::from(b'Z')).contains(&c) {
-            if c != d && c | 0b0010_0000 != d { return false; }
+            if c != d && c | 0b0010_0000 != d {
+                return false;
+            }
         } else if c != d {
             return false;
         }
@@ -1367,7 +1466,10 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
     true
 }
 
-pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
+pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
+    str: &[T],
+    prefix: &[u8],
+) -> bool {
     if str.len() < prefix.len() {
         return false;
     }
@@ -1388,11 +1490,7 @@ pub fn eql_long_t<T: crate::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str:
             return false;
         }
     }
-    eql_long(
-        reinterpret_to_u8(a_str),
-        reinterpret_to_u8(b_str),
-        false,
-    )
+    eql_long(reinterpret_to_u8(a_str), reinterpret_to_u8(b_str), false)
 }
 
 // PORT NOTE: same rationale as `eql_case_insensitive_ascii` — Zig's
@@ -1561,31 +1659,41 @@ impl<T: Copy + Eq + Ord + Default, const N: usize> ScalarVec<T, N> {
     #[inline]
     pub fn simd_gt(self, other: Self) -> ScalarMask<N> {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] > other.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] > other.0[i];
+        }
         ScalarMask(m)
     }
     #[inline]
     pub fn simd_ge(self, other: Self) -> ScalarMask<N> {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] >= other.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] >= other.0[i];
+        }
         ScalarMask(m)
     }
     #[inline]
     pub fn simd_lt(self, other: Self) -> ScalarMask<N> {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] < other.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] < other.0[i];
+        }
         ScalarMask(m)
     }
     #[inline]
     pub fn simd_le(self, other: Self) -> ScalarMask<N> {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] <= other.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] <= other.0[i];
+        }
         ScalarMask(m)
     }
     #[inline]
     pub fn simd_ne(self, other: Self) -> ScalarMask<N> {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] != other.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] != other.0[i];
+        }
         ScalarMask(m)
     }
 }
@@ -1605,14 +1713,18 @@ impl<const N: usize> core::ops::BitAnd for ScalarMask<N> {
     #[inline]
     fn bitand(self, rhs: Self) -> Self {
         let mut m = [false; N];
-        for i in 0..N { m[i] = self.0[i] & rhs.0[i]; }
+        for i in 0..N {
+            m[i] = self.0[i] & rhs.0[i];
+        }
         Self(m)
     }
 }
 impl<const N: usize> core::ops::BitOrAssign for ScalarMask<N> {
     #[inline]
     fn bitor_assign(&mut self, rhs: Self) {
-        for i in 0..N { self.0[i] |= rhs.0[i]; }
+        for i in 0..N {
+            self.0[i] |= rhs.0[i];
+        }
     }
 }
 impl<const N: usize> ScalarMask<N> {
@@ -1924,7 +2036,6 @@ fn _decode_hex_to_bytes<Char: Copy + Into<u32>, const TRUNCATE: bool>(
     Ok(dest_len - remain.len())
 }
 
-
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
     if cfg!(debug_assertions) {
         debug_assert!(!destination.is_empty());
@@ -1984,7 +2095,10 @@ pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
 }
 
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
+pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
+    buffer: &'a [T],
+    prefix: &'static [T],
+) -> &'a [T] {
     if has_prefix_comptime_type(buffer, prefix) {
         &buffer[prefix.len()..]
     } else {
@@ -2044,13 +2158,19 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     else {
         if target_line == 0 {
             // PERF(port): was assume_capacity
-            let _ = ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = ranges.push(LineRange {
+                start: 0,
+                end: u32::try_from(text.len()).unwrap(),
+            }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
         return ranges;
     };
 
     let mut iter = CodepointIterator::init_offset(text, 0);
-    let mut cursor = unicode::Cursor { i: first_newline_or_nonascii_i, ..Default::default() };
+    let mut cursor = unicode::Cursor {
+        i: first_newline_or_nonascii_i,
+        ..Default::default()
+    };
     const NL: i32 = b'\n' as i32;
     const CR: i32 = b'\r' as i32;
     let first_newline_range: LineRange = 'brk: {
@@ -2058,18 +2178,27 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
             match cursor.c {
                 NL => {
                     current_line += 1;
-                    break 'brk LineRange { start: 0, end: cursor.i };
+                    break 'brk LineRange {
+                        start: 0,
+                        end: cursor.i,
+                    };
                 }
                 CR => {
                     if iter.next(&mut cursor) && cursor.c == NL {
                         current_line += 1;
-                        break 'brk LineRange { start: 0, end: cursor.i };
+                        break 'brk LineRange {
+                            start: 0,
+                            end: cursor.i,
+                        };
                     }
                 }
                 _ => {}
             }
         }
-        let _ = ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() });
+        let _ = ranges.push(LineRange {
+            start: 0,
+            end: u32::try_from(text.len()).unwrap(),
+        });
         return ranges;
     };
 
@@ -2091,16 +2220,25 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
             NL => {
                 let start = prev_end;
                 prev_end = cursor.i;
-                LineRange { start, end: cursor.i + 1 }
+                LineRange {
+                    start,
+                    end: cursor.i + 1,
+                }
             }
             CR => {
                 let current_end = cursor.i;
                 if iter.next(&mut cursor) && cursor.c == NL {
-                    let r = LineRange { start: prev_end, end: current_end };
+                    let r = LineRange {
+                        start: prev_end,
+                        end: current_end,
+                    };
                     prev_end = cursor.i; // Zig: `defer prev_end = cursor.i;`
                     r
                 } else {
-                    LineRange { start: prev_end, end: cursor.i + 1 }
+                    LineRange {
+                        start: prev_end,
+                        end: cursor.i + 1,
+                    }
                 }
             }
             _ => continue,
@@ -2172,7 +2310,10 @@ pub fn is_all_whitespace(slice: &[u8]) -> bool {
     begin == slice.len()
 }
 
-pub const WHITESPACE_CHARS: [u8; 6] = [b' ', b'\t', b'\n', b'\r', 0x0B /* VT */, 0x0C /* FF */];
+pub const WHITESPACE_CHARS: [u8; 6] = [
+    b' ', b'\t', b'\n', b'\r', 0x0B, /* VT */
+    0x0C, /* FF */
+];
 
 pub fn length_of_leading_whitespace_ascii(slice: &[u8]) -> usize {
     'brk: for (i, &c) in slice.iter().enumerate() {
@@ -2391,19 +2532,27 @@ pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 // resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
 // `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
 unsafe extern "C" {
-    pub fn ares_inet_pton(af: c_int, src: *const core::ffi::c_char, dst: *mut core::ffi::c_void) -> c_int;
+    pub fn ares_inet_pton(
+        af: c_int,
+        src: *const core::ffi::c_char,
+        dst: *mut core::ffi::c_void,
+    ) -> c_int;
 }
 // dep-graph: bun_string < bun_sys, so cannot import the canonical
 // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
 // previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
 // is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
 const AF_INET: c_int = 2;
-#[cfg(not(windows))] const AF_INET6: c_int = libc::AF_INET6 as c_int;
-#[cfg(windows)]      const AF_INET6: c_int = 23; // ws2def.h
+#[cfg(not(windows))]
+const AF_INET6: c_int = libc::AF_INET6 as c_int;
+#[cfg(windows)]
+const AF_INET6: c_int = 23; // ws2def.h
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
-    if input.len() >= buf.len() { return false; }
+    if input.len() >= buf.len() {
+        return false;
+    }
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
@@ -2415,7 +2564,9 @@ pub fn is_ip_address(input: &[u8]) -> bool {
 
 pub fn is_ipv6_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
-    if input.len() >= buf.len() { return false; }
+    if input.len() >= buf.len() {
+        return false;
+    }
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
@@ -2578,7 +2729,12 @@ pub struct QuoteEscapeFormatFlags {
 
 impl Default for QuoteEscapeFormatFlags {
     fn default() -> Self {
-        Self { quote_char: b'"', ascii_only: false, json: false, str_encoding: Encoding::Utf8 }
+        Self {
+            quote_char: b'"',
+            ascii_only: false,
+            json: false,
+            str_encoding: Encoding::Utf8,
+        }
     }
 }
 
@@ -2645,7 +2801,10 @@ pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'
     input
 }
 
-pub fn without_prefix_comptime_z<'a>(input: &'a crate::string::ZStr, prefix: &'static [u8]) -> &'a crate::string::ZStr {
+pub fn without_prefix_comptime_z<'a>(
+    input: &'a crate::string::ZStr,
+    prefix: &'static [u8],
+) -> &'a crate::string::ZStr {
     if has_prefix_comptime(input.as_bytes(), prefix) {
         // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
         // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
@@ -2658,7 +2817,10 @@ pub fn without_prefix_comptime_z<'a>(input: &'a crate::string::ZStr, prefix: &'s
     input
 }
 
-pub fn without_prefix_if_possible_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> Option<&'a [u8]> {
+pub fn without_prefix_if_possible_comptime<'a>(
+    input: &'a [u8],
+    prefix: &'static [u8],
+) -> Option<&'a [u8]> {
     if has_prefix_comptime(input, prefix) {
         return Some(&input[prefix.len()..]);
     }
@@ -2676,7 +2838,10 @@ pub fn split_first(self_: &[u8]) -> Option<SplitFirst<'_>> {
         return None;
     }
     let first = self_[0];
-    Some(SplitFirst { first, rest: &self_[1..] })
+    Some(SplitFirst {
+        first,
+        rest: &self_[1..],
+    })
 }
 
 /// Returns the first byte of the string which matches the expected byte and the rest of the string excluding the first byte
@@ -2770,10 +2935,11 @@ pub const fn is_unicode_space_separator(cp: u32) -> bool {
         0x0020          // SPACE
         | 0x00A0        // NO-BREAK SPACE
         | 0x1680        // OGHAM SPACE MARK
-        | 0x2000..=0x200A // EN QUAD..HAIR SPACE
+        | 0x2000
+            ..=0x200A // EN QUAD..HAIR SPACE
         | 0x202F        // NARROW NO-BREAK SPACE
         | 0x205F        // MEDIUM MATHEMATICAL SPACE
-        | 0x3000        // IDEOGRAPHIC SPACE
+        | 0x3000 // IDEOGRAPHIC SPACE
     )
 }
 
@@ -2860,10 +3026,10 @@ pub use crate::strings::trim_left;
 /// `std.mem.trimRight(u8, str, chars)` — strip trailing chars in `values_to_strip`.
 pub use crate::strings::trim_right;
 
-pub use crate::strings::{replacement_size, replace, replace_owned};
+pub use crate::strings::{replace, replace_owned, replacement_size};
 
 // `std.fmt.parseInt` — moved down to crate::fmt; re-exported for back-compat.
-pub use crate::fmt::{parse_int, ParseIntError};
+pub use crate::fmt::{ParseIntError, parse_int};
 
 /// Compare a UTF-16 string against a UTF-8 string without allocating
 /// (`unicode.zig:utf16EqlString`).
@@ -2948,7 +3114,8 @@ pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
     s.len() > 2 && s[1].into() == u32::from(b':') && {
         let c = s[0].into();
-        (c >= u32::from(b'a') && c <= u32::from(b'z')) || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
+        (c >= u32::from(b'a') && c <= u32::from(b'z'))
+            || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
     }
 }
 
@@ -3012,7 +3179,9 @@ pub fn to_utf16_alloc(
     fail_if_invalid: bool,
     sentinel: bool,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    let Some(_first) = first_non_ascii(bytes) else { return Ok(None) };
+    let Some(_first) = first_non_ascii(bytes) else {
+        return Ok(None);
+    };
 
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let cap = out_length + if sentinel { 1 } else { 0 };
@@ -3077,12 +3246,24 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     let star_b = index_of_char(key_b, b'*');
     let base_length_a = star_a.map_or(key_a.len(), |i| i as usize);
     let base_length_b = star_b.map_or(key_b.len(), |i| i as usize);
-    if base_length_a > base_length_b { return Ordering::Less; }
-    if base_length_b > base_length_a { return Ordering::Greater; }
-    if star_a.is_none() { return Ordering::Greater; }
-    if star_b.is_none() { return Ordering::Less; }
-    if key_a.len() > key_b.len() { return Ordering::Less; }
-    if key_b.len() > key_a.len() { return Ordering::Greater; }
+    if base_length_a > base_length_b {
+        return Ordering::Less;
+    }
+    if base_length_b > base_length_a {
+        return Ordering::Greater;
+    }
+    if star_a.is_none() {
+        return Ordering::Greater;
+    }
+    if star_b.is_none() {
+        return Ordering::Less;
+    }
+    if key_a.len() > key_b.len() {
+        return Ordering::Less;
+    }
+    if key_b.len() > key_a.len() {
+        return Ordering::Greater;
+    }
     Ordering::Equal
 }
 

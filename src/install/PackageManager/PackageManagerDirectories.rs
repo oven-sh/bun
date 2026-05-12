@@ -3,17 +3,17 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 
-use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, ZBox};
-use bun_dotenv::Loader as DotEnvLoader;
 use crate::bun_fs::FileSystem;
-use bun_install::lockfile::{self, Lockfile, LoadResult, Format as LockfileFormat};
-use crate::lockfile_real::package::{PackageColumns};
+use crate::lockfile_real::package::PackageColumns;
+use crate::repository::Repository;
+use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{ZStr, strings};
+use bun_dotenv::Loader as DotEnvLoader;
+use bun_install::lockfile::{self, Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use crate::repository::Repository;
-use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
+use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
 use crate::bun_progress::Node as ProgressNode;
@@ -63,12 +63,20 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn cached_git_folder_name(&self, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+    pub fn cached_git_folder_name(
+        &self,
+        repository: &Repository,
+        patch_hash: Option<u64>,
+    ) -> &'static ZStr {
         cached_git_folder_name(self, repository, patch_hash)
     }
 
     #[inline]
-    pub fn cached_github_folder_name(&self, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+    pub fn cached_github_folder_name(
+        &self,
+        repository: &Repository,
+        patch_hash: Option<u64>,
+    ) -> &'static ZStr {
         cached_github_folder_name(self, repository, patch_hash)
     }
 
@@ -83,7 +91,11 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn cached_tarball_folder_name(&self, url: SemverString, patch_hash: Option<u64>) -> &'static ZStr {
+    pub fn cached_tarball_folder_name(
+        &self,
+        url: SemverString,
+        patch_hash: Option<u64>,
+    ) -> &'static ZStr {
         cached_tarball_folder_name(self, url, patch_hash)
     }
 
@@ -151,7 +163,8 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
     let cache_dir = get_cache_directory(this);
     (
         Fd::from_std_dir(&cache_dir),
-        AbsPath::from(this.cache_directory_path.as_bytes()).expect("cache_directory_path is absolute"),
+        AbsPath::from(this.cache_directory_path.as_bytes())
+            .expect("cache_directory_path is absolute"),
     )
 }
 
@@ -176,7 +189,10 @@ pub struct TemporaryDirectory {
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
 // `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
-const _: fn() = || { fn assert<T: Send + Sync>() {} assert::<TemporaryDirectory>(); };
+const _: fn() = || {
+    fn assert<T: Send + Sync>() {}
+    assert::<TemporaryDirectory>();
+};
 
 // We need a temporary directory that can be rename()
 // This is important for extracting files.
@@ -193,24 +209,31 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let temp_dir_name = FileSystem::get_default_temp_dir();
 
     let mut tried_dot_tmp = false;
-    let mut tempdir: Dir = match sys::make_path::make_open_path(Dir::cwd(), temp_dir_name, Default::default()) {
-        Ok(d) => d,
-        Err(_) => {
-            tried_dot_tmp = true;
-            match sys::make_path::make_open_path(cache_directory, bun_paths::path_literal!(".tmp"), Default::default()) {
-                Ok(d) => d,
-                Err(err) => {
-                    Output::pretty_errorln(
-                        format_args!("<r><red>error<r>: bun is unable to access tempdir: {}", err.name()),
-                    );
-                    Global::crash();
+    let mut tempdir: Dir =
+        match sys::make_path::make_open_path(Dir::cwd(), temp_dir_name, Default::default()) {
+            Ok(d) => d,
+            Err(_) => {
+                tried_dot_tmp = true;
+                match sys::make_path::make_open_path(
+                    cache_directory,
+                    bun_paths::path_literal!(".tmp"),
+                    Default::default(),
+                ) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        Output::pretty_errorln(format_args!(
+                            "<r><red>error<r>: bun is unable to access tempdir: {}",
+                            err.name()
+                        ));
+                        Global::crash();
+                    }
                 }
             }
-        }
-    };
+        };
 
     let mut tmpbuf = PathBuffer::uninit();
-    let tmpname = FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
+    let tmpname =
+        FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
     // TODO(port): std.time.Timer — using bun_core::time::Timer placeholder
     let mut timer = if manager.options.log_level != LogLevel::Silent {
@@ -220,7 +243,13 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     };
 
     'brk: loop {
-        let file = match tempdir.create_file_z(tmpname, sys::CreateFlags { truncate: true, ..Default::default() }) {
+        let file = match tempdir.create_file_z(
+            tmpname,
+            sys::CreateFlags {
+                truncate: true,
+                ..Default::default()
+            },
+        ) {
             Ok(f) => f,
             Err(err2) => {
                 if !tried_dot_tmp {
@@ -373,10 +402,13 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         }
 
         // SAFETY: see fn safety contract.
-        unsafe { (*this).cache_directory_path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &[b"node_modules", b".cache"],
-        )) };
+        unsafe {
+            (*this).cache_directory_path =
+                ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    &[b"node_modules", b".cache"],
+                ))
+        };
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
             Ok(d) => return d,
@@ -400,32 +432,50 @@ pub struct CacheDir {
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir { path: FileSystem::instance().abs(&[dir]).to_vec(), is_node_modules: false };
+        return CacheDir {
+            path: FileSystem::instance().abs(&[dir]).to_vec(),
+            is_node_modules: false,
+        };
     }
 
     if let Some(opts) = options {
         if !opts.cache_directory.is_empty() {
-            return CacheDir { path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(), is_node_modules: false };
+            return CacheDir {
+                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
+                is_node_modules: false,
+            };
         }
     }
 
     if let Some(dir) = env.get(b"BUN_INSTALL") {
         let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
+        return CacheDir {
+            path: FileSystem::instance().abs(&parts).to_vec(),
+            is_node_modules: false,
+        };
     }
 
     if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
+        return CacheDir {
+            path: FileSystem::instance().abs(&parts).to_vec(),
+            is_node_modules: false,
+        };
     }
 
     if let Some(dir) = env_var::HOME.get() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
+        return CacheDir {
+            path: FileSystem::instance().abs(&parts).to_vec(),
+            is_node_modules: false,
+        };
     }
 
     let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
-    CacheDir { is_node_modules: true, path: FileSystem::instance().abs(&fallback_parts).to_vec() }
+    CacheDir {
+        is_node_modules: true,
+        path: FileSystem::instance().abs(&fallback_parts).to_vec(),
+    }
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────
@@ -531,7 +581,11 @@ impl<'a> ByteCursor<'a> {
     }
 }
 
-pub fn cached_git_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
+pub fn cached_git_folder_name_print<'a>(
+    buf: &'a mut [u8],
+    resolved: &[u8],
+    patch_hash: Option<u64>,
+) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@G@");
     w.put(resolved);
@@ -539,7 +593,11 @@ pub fn cached_git_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patc
     w.finish_z()
 }
 
-pub fn cached_git_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+pub fn cached_git_folder_name(
+    this: &PackageManager,
+    repository: &Repository,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
     cached_git_folder_name_print(
         cached_package_folder_name_buf(),
         this.lockfile.str(&repository.resolved),
@@ -547,7 +605,11 @@ pub fn cached_git_folder_name(this: &PackageManager, repository: &Repository, pa
     )
 }
 
-pub fn cached_git_folder_name_print_auto(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+pub fn cached_git_folder_name_print_auto(
+    this: &PackageManager,
+    repository: &Repository,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
     if !repository.resolved.is_empty() {
         return cached_git_folder_name(this, repository, patch_hash);
     }
@@ -565,7 +627,11 @@ pub fn cached_git_folder_name_print_auto(this: &PackageManager, repository: &Rep
     ZStr::EMPTY
 }
 
-pub fn cached_github_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
+pub fn cached_github_folder_name_print<'a>(
+    buf: &'a mut [u8],
+    resolved: &[u8],
+    patch_hash: Option<u64>,
+) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@GH@");
     w.put(resolved);
@@ -574,7 +640,11 @@ pub fn cached_github_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], p
     w.finish_z()
 }
 
-pub fn cached_github_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+pub fn cached_github_folder_name(
+    this: &PackageManager,
+    repository: &Repository,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
     cached_github_folder_name_print(
         cached_package_folder_name_buf(),
         this.lockfile.str(&repository.resolved),
@@ -582,12 +652,19 @@ pub fn cached_github_folder_name(this: &PackageManager, repository: &Repository,
     )
 }
 
-pub fn cached_github_folder_name_print_auto(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+pub fn cached_github_folder_name_print_auto(
+    this: &PackageManager,
+    repository: &Repository,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
     if !repository.resolved.is_empty() {
         return cached_github_folder_name(this, repository, patch_hash);
     }
 
-    if !repository.owner.is_empty() && !repository.repo.is_empty() && !repository.committish.is_empty() {
+    if !repository.owner.is_empty()
+        && !repository.repo.is_empty()
+        && !repository.committish.is_empty()
+    {
         return cached_github_folder_name_print_guess(
             cached_package_folder_name_buf(),
             this.lockfile.buffers.string_bytes.as_slice(),
@@ -611,17 +688,27 @@ pub fn cached_npm_package_folder_name_print<'a>(
 
     if scope.name.is_empty() && !this.options.did_override_default_scope {
         let include_version_number = true;
-        return cached_npm_package_folder_print_basename(buf, name, version, patch_hash, include_version_number);
+        return cached_npm_package_folder_print_basename(
+            buf,
+            name,
+            version,
+            patch_hash,
+            include_version_number,
+        );
     }
 
     let include_version_number = false;
-    let spanned_len = cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
-        .as_bytes()
-        .len();
+    let spanned_len =
+        cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
+            .as_bytes()
+            .len();
     // PORT NOTE: reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
-    let mut w = ByteCursor { buf, at: spanned_len };
+    let mut w = ByteCursor {
+        buf,
+        at: spanned_len,
+    };
     let available = w.buf.len() - spanned_len;
     if scope_url.hostname.len() > 32 || available < 64 {
         let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
@@ -656,8 +743,19 @@ fn cached_github_folder_name_print_guess<'a>(
     w.finish_z()
 }
 
-pub fn cached_npm_package_folder_name(this: &PackageManager, name: &[u8], version: Semver::Version, patch_hash: Option<u64>) -> &'static ZStr {
-    cached_npm_package_folder_name_print(this, cached_package_folder_name_buf(), name, version, patch_hash)
+pub fn cached_npm_package_folder_name(
+    this: &PackageManager,
+    name: &[u8],
+    version: Semver::Version,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
+    cached_npm_package_folder_name_print(
+        this,
+        cached_package_folder_name_buf(),
+        name,
+        version,
+        patch_hash,
+    )
 }
 
 // TODO: normalize to alphanumeric
@@ -668,7 +766,11 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     patch_hash: Option<u64>,
     include_cache_version: bool,
 ) -> &'a ZStr {
-    let cache_ver = if include_cache_version { Some(CacheVersion::CURRENT) } else { None };
+    let cache_ver = if include_cache_version {
+        Some(CacheVersion::CURRENT)
+    } else {
+        None
+    };
     let mut w = ByteCursor::new(buf);
     w.put(name);
     w.put_byte(b'@');
@@ -690,7 +792,11 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
+pub fn cached_tarball_folder_name_print<'a>(
+    buf: &'a mut [u8],
+    url: &[u8],
+    patch_hash: Option<u64>,
+) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
     w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
@@ -699,8 +805,16 @@ pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch
     w.finish_z()
 }
 
-pub fn cached_tarball_folder_name(this: &PackageManager, url: SemverString, patch_hash: Option<u64>) -> &'static ZStr {
-    cached_tarball_folder_name_print(cached_package_folder_name_buf(), this.lockfile.str(&url), patch_hash)
+pub fn cached_tarball_folder_name(
+    this: &PackageManager,
+    url: SemverString,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
+    cached_tarball_folder_name_print(
+        cached_package_folder_name_buf(),
+        this.lockfile.str(&url),
+        patch_hash,
+    )
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -714,7 +828,9 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = PathBuffer::uninit();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
-    let path = FileSystem::instance().dirname_store().append(result.as_bytes_with_nul())?;
+    let path = FileSystem::instance()
+        .dirname_store()
+        .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
     manager.options.bin_path = ZStr::from_slice_with_nul(&path[..]);
@@ -741,27 +857,34 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
         }
     };
     this.global_dir = Some(global_dir);
-    this.global_link_dir = Some(match global_dir.make_open_path(b"node_modules", Default::default()) {
-        Ok(d) => d,
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to open global link dir node_modules at '{}'",
-                (Fd::from_std_dir(&global_dir),),
-            );
-            Global::exit(1);
-        }
-    });
+    this.global_link_dir = Some(
+        match global_dir.make_open_path(b"node_modules", Default::default()) {
+            Ok(d) => d,
+            Err(err) => {
+                Output::err(
+                    err,
+                    "failed to open global link dir node_modules at '{}'",
+                    (Fd::from_std_dir(&global_dir),),
+                );
+                Global::exit(1);
+            }
+        },
+    );
     let mut buf = PathBuffer::uninit();
     let path_ = match sys::get_fd_path(Fd::from_std_dir(&this.global_link_dir.unwrap()), &mut buf) {
         Ok(p) => p,
         Err(err) => {
-            Output::err(err, "failed to get the full path of the global directory", ());
+            Output::err(
+                err,
+                "failed to get the full path of the global directory",
+                (),
+            );
             Global::exit(1);
         }
     };
-    this.global_link_dir_path =
-        Box::<[u8]>::from(bun_core::handle_oom(FileSystem::instance().dirname_store().append(path_)));
+    this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
+        FileSystem::instance().dirname_store().append(path_),
+    ));
     this.global_link_dir.unwrap()
 }
 
@@ -786,7 +909,13 @@ pub fn path_for_cached_npm_path<'a>(
     // TODO(port): narrow error set
     let mut cache_path_buf = PathBuffer::uninit();
 
-    let cache_path = cached_npm_package_folder_name_print(this, &mut cache_path_buf.0[..], package_name, version, None);
+    let cache_path = cached_npm_package_folder_name_print(
+        this,
+        &mut cache_path_buf.0[..],
+        package_name,
+        version,
+        None,
+    );
     let cache_path_len = cache_path.as_bytes().len();
     // PORT NOTE: reshaped for borrowck — drop borrow before mutating buffer
 
@@ -932,7 +1061,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
-            let folder = resolution.symlink()
+            let folder = resolution
+                .symlink()
                 .slice(manager.lockfile.buffers.string_bytes.as_slice())
                 .to_vec();
 
@@ -960,7 +1090,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
         _ => {}
     }
 
-    CacheDirAndSubpath { cache_dir, cache_dir_subpath }
+    CacheDirAndSubpath {
+        cache_dir,
+        cache_dir_subpath,
+    }
 }
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
@@ -969,11 +1102,17 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     // TODO(port): narrow error set
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
-        sys::CreateFlags { read: true, ..Default::default() },
+        sys::CreateFlags {
+            read: true,
+            ..Default::default()
+        },
     ) {
         Ok(f) => f,
         Err(err) => {
-            Output::pretty_errorln(format_args!("<r><red>error:<r> {} create package.json", err.name()));
+            Output::pretty_errorln(format_args!(
+                "<r><red>error:<r> {} create package.json",
+                err.name()
+            ));
             Global::crash();
         }
     };
@@ -1039,10 +1178,12 @@ pub fn save_lockfile(
         if !this.options.global {
             if log_level != LogLevel::Silent {
                 match this.subcommand {
-                    Subcommand::Remove => {
-                        Output::pretty_errorln(format_args!("\npackage.json has no dependencies! Deleted empty lockfile"))
+                    Subcommand::Remove => Output::pretty_errorln(format_args!(
+                        "\npackage.json has no dependencies! Deleted empty lockfile"
+                    )),
+                    _ => {
+                        Output::pretty_errorln(format_args!("No packages! Deleted empty lockfile"))
                     }
-                    _ => Output::pretty_errorln(format_args!("No packages! Deleted empty lockfile")),
                 }
             }
         }
@@ -1075,12 +1216,22 @@ pub fn save_lockfile(
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
-                if !Lockfile::eql(&this.lockfile, lockfile_before_install, packages_len_before_install)? {
+                if !Lockfile::eql(
+                    &this.lockfile,
+                    lockfile_before_install,
+                    packages_len_before_install,
+                )? {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
                 }
             } else {
-                if this.lockfile.has_meta_hash_changed(false, packages_len_before_install).unwrap_or(false) {
-                    Output::panic(format_args!("Lockfile metahash non-deterministic after saving"));
+                if this
+                    .lockfile
+                    .has_meta_hash_changed(false, packages_len_before_install)
+                    .unwrap_or(false)
+                {
+                    Output::panic(format_args!(
+                        "Lockfile metahash non-deterministic after saving"
+                    ));
                 }
             }
         }
@@ -1132,7 +1283,11 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
     let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
-    secret[0..8].copy_from_slice(&u64::try_from(bun_core::time::milli_timestamp()).expect("int cast").to_le_bytes());
+    secret[0..8].copy_from_slice(
+        &u64::try_from(bun_core::time::milli_timestamp())
+            .expect("int cast")
+            .to_le_bytes(),
+    );
     let mut base64_bytes = [0u8; 64];
     bun_core::csprng(&mut base64_bytes);
 
@@ -1150,7 +1305,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
 
     if let Err(err) = tmpfile.create(tmpname) {
-        Output::pretty_errorln(format_args!("<r><red>error:<r> failed to create tmpfile: {}", err.name()));
+        Output::pretty_errorln(format_args!(
+            "<r><red>error:<r> failed to create tmpfile: {}",
+            err.name()
+        ));
         Global::crash();
     }
 

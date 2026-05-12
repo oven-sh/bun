@@ -45,12 +45,30 @@ impl_protocol_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 // by-value (implicit copy) through the dispatch loop; in Rust the inner
 // `Context` is non-`Copy` (holds `&mut usize`), so callers reborrow instead.
 impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
-    #[inline] fn mark_message_start(&mut self) { (**self).mark_message_start() }
-    #[inline] fn peek(&self) -> &[u8] { (**self).peek() }
-    #[inline] fn skip(&mut self, count: usize) { (**self).skip(count) }
-    #[inline] fn ensure_length(&mut self, count: usize) -> bool { (**self).ensure_length(count) }
-    #[inline] fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> { (**self).read(count) }
-    #[inline] fn read_z(&mut self) -> Result<Data, AnyPostgresError> { (**self).read_z() }
+    #[inline]
+    fn mark_message_start(&mut self) {
+        (**self).mark_message_start()
+    }
+    #[inline]
+    fn peek(&self) -> &[u8] {
+        (**self).peek()
+    }
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        (**self).skip(count)
+    }
+    #[inline]
+    fn ensure_length(&mut self, count: usize) -> bool {
+        (**self).ensure_length(count)
+    }
+    #[inline]
+    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+        (**self).read(count)
+    }
+    #[inline]
+    fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+        (**self).read_z()
+    }
 }
 
 // Zig: `fn NewReaderWrap(comptime Context: type, comptime markMessageStartFn_, ...) type { return struct { wrapped: Context, ... } }`
@@ -67,7 +85,9 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// (Zig relied on implicit struct copy of the pointer-carrying wrapper).
     #[inline]
     pub fn reborrow(&mut self) -> NewReaderWrap<&mut Context> {
-        NewReaderWrap { wrapped: &mut self.wrapped }
+        NewReaderWrap {
+            wrapped: &mut self.wrapped,
+        }
     }
 
     #[inline]

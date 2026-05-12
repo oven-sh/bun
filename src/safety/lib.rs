@@ -1,13 +1,14 @@
 #![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 pub mod alloc;
 
-#[path = "CriticalSection.rs"] mod critical_section;
+#[path = "CriticalSection.rs"]
+mod critical_section;
 pub use critical_section::CriticalSection;
 
-#[path = "ThreadLock.rs"] mod thread_lock;
+#[path = "ThreadLock.rs"]
+mod thread_lock;
 pub use thread_lock::{ThreadLock, ThreadLockGuard};
 
 pub mod thread_id;
@@ -57,7 +58,10 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
     let p = vtable as *const _ as *mut ();
     let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
-    debug_assert!(i < KNOWN_ALLOC_CAP, "KNOWN_ALLOC_VTABLES overflow; bump KNOWN_ALLOC_CAP");
+    debug_assert!(
+        i < KNOWN_ALLOC_CAP,
+        "KNOWN_ALLOC_VTABLES overflow; bump KNOWN_ALLOC_CAP"
+    );
     if i < KNOWN_ALLOC_CAP {
         KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Relaxed);
     }
@@ -86,7 +90,11 @@ pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
 pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
     bun_core::dump_stack_trace(
         &trace.trace(),
-        bun_core::DumpStackTraceOptions { frame_count: 10, stop_at_jsc_llint: true, ..Default::default() },
+        bun_core::DumpStackTraceOptions {
+            frame_count: 10,
+            stop_at_jsc_llint: true,
+            ..Default::default()
+        },
     );
 }
 

@@ -1,12 +1,15 @@
 use core::ffi::{c_int, c_void};
 
-use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::Response;
 use crate::webcore::response::{HeadersRef, Init};
 use bun_core::String as BunString;
+use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
 pub fn fix_dead_code_elimination() {
-    bun_core::keep_symbols!(BakeResponseClass__constructForSSR, BakeResponseClass__constructRender);
+    bun_core::keep_symbols!(
+        BakeResponseClass__constructForSSR,
+        BakeResponseClass__constructRender
+    );
 }
 
 // `Response` embeds `Body` (no #[repr(C)]) but is only ever passed by opaque pointer across FFI.
@@ -43,7 +46,11 @@ pub enum SSRKind {
 /// `this` must be a valid heap-allocated `Response` whose ownership is being
 /// transferred to the JS GC. After this call the caller must not free or
 /// dereference `this`.
-pub unsafe fn to_js_for_ssr(this: *mut Response, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
+pub unsafe fn to_js_for_ssr(
+    this: *mut Response,
+    global_object: &JSGlobalObject,
+    kind: SSRKind,
+) -> JSValue {
     // SAFETY: caller contract — `this` is a valid exclusive heap allocation.
     unsafe { &mut *this }.calculate_estimated_byte_size();
     BakeResponse__createForSSR(global_object, this, kind as u8)
@@ -151,10 +158,7 @@ bun_jsc::jsc_host_abi! {
 }
 
 /// This function is only available on JSBakeResponse
-pub fn construct_render(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 
@@ -179,9 +183,8 @@ pub fn construct_render(
 
     let path_arg = arguments[0];
     if !path_arg.is_string() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "Response.render() path must be a string"
-        )));
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Response.render() path must be a string")));
     }
 
     // Get the path string
@@ -226,11 +229,9 @@ fn assert_streaming_disabled(
             global_this.throw_invalid_arguments(format_args!("store value must be an object"))
         );
     }
-    let Some(get_store_fn) = async_local_storage.get(global_this, b"getStore")?
-    else {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "store value must have a \"getStore\" field"
-        )));
+    let Some(get_store_fn) = async_local_storage.get(global_this, b"getStore")? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("store value must have a \"getStore\" field")));
     };
     if !get_store_fn.is_callable() {
         return Err(
@@ -239,9 +240,8 @@ fn assert_streaming_disabled(
     }
     let store_value = get_store_fn.call(global_this, async_local_storage, &[])?;
     let Some(streaming_val) = store_value.get(global_this, b"streaming")? else {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "store value must have a \"streaming\" field"
-        )));
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("store value must have a \"streaming\" field")));
     };
     if !streaming_val.is_boolean() {
         return Err(global_this

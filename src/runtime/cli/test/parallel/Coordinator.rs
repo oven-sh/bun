@@ -10,8 +10,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
+use bun_core::{PathString, ZStr, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_core::{strings, PathString, ZStr};
 use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
@@ -360,8 +360,17 @@ impl<'a> Coordinator<'a> {
                 for n in nums.iter_mut() {
                     *n = rd.u32_();
                 }
-                let [idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled] =
-                    nums;
+                let [
+                    idx,
+                    pass,
+                    fail,
+                    skip,
+                    todo,
+                    expectations,
+                    skipped_label,
+                    files,
+                    unhandled,
+                ] = nums;
 
                 self.flush_captured(w);
 
@@ -739,7 +748,9 @@ pub mod abort_handler {
     }
 
     #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
+    extern "system" fn windows_ctrl_handler(
+        ctrl: bun_sys::windows::DWORD,
+    ) -> bun_sys::windows::BOOL {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {

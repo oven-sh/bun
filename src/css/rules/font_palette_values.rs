@@ -2,8 +2,8 @@ use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
-use crate::{PrintErr, Printer};
 use crate::generics::DeepClone as _;
+use crate::{PrintErr, Printer};
 
 use super::ArrayList;
 
@@ -42,7 +42,11 @@ impl FontPaletteValuesRule {
 }
 
 impl FontPaletteValuesRule {
-    pub fn parse(name: DashedIdent, input: &mut css::Parser, loc: Location) -> css::Result<FontPaletteValuesRule> {
+    pub fn parse(
+        name: DashedIdent,
+        input: &mut css::Parser,
+        loc: Location,
+    ) -> css::Result<FontPaletteValuesRule> {
         let mut decl_parser = FontPaletteValuesDeclarationParser {};
         let mut parser = css::css_parser::RuleBodyParser::new(input, &mut decl_parser);
         let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
@@ -53,7 +57,11 @@ impl FontPaletteValuesRule {
             }
         }
 
-        Ok(FontPaletteValuesRule { name, properties, loc })
+        Ok(FontPaletteValuesRule {
+            name,
+            properties,
+            loc,
+        })
     }
 }
 
@@ -145,7 +153,10 @@ impl OverrideColors {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
-        Ok(OverrideColors { index: u16::try_from(index).expect("int cast"), color })
+        Ok(OverrideColors {
+            index: u16::try_from(index).expect("int cast"),
+            color,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -156,7 +167,10 @@ impl OverrideColors {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        Self { index: self.index, color: self.color.deep_clone(bump) }
+        Self {
+            index: self.index,
+            color: self.color.deep_clone(bump),
+        }
     }
 }
 
@@ -231,12 +245,18 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserOptions, ParserState, Result};
+    use css::{
+        BasicParseErrorKind, Maybe, Parser, ParserError, ParserOptions, ParserState, Result,
+    };
 
     impl DeclarationParser for FontPaletteValuesDeclarationParser {
         type Declaration = FontPaletteValuesProperty;
 
-        fn parse_value(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
             let state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(b"font-family", name) {
@@ -283,15 +303,32 @@ const _: () = {
         type Prelude = ();
         type AtRule = FontPaletteValuesProperty;
 
-        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
+        fn parse_prelude(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Prelude> {
+            Err(
+                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
+                    [u8],
+                >(name))),
+            )
         }
 
-        fn parse_block(_this: &mut Self, _prelude: Self::Prelude, _start: &ParserState, input: &mut Parser) -> Result<Self::AtRule> {
+        fn parse_block(
+            _this: &mut Self,
+            _prelude: Self::Prelude,
+            _start: &ParserState,
+            input: &mut Parser,
+        ) -> Result<Self::AtRule> {
             Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
         }
 
-        fn rule_without_block(_this: &mut Self, _prelude: Self::Prelude, _start: &ParserState) -> Maybe<Self::AtRule, ()> {
+        fn rule_without_block(
+            _this: &mut Self,
+            _prelude: Self::Prelude,
+            _start: &ParserState,
+        ) -> Maybe<Self::AtRule, ()> {
             Err(())
         }
     }
@@ -304,7 +341,12 @@ const _: () = {
             Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
 
-        fn parse_block(_this: &mut Self, _prelude: Self::Prelude, _start: &ParserState, input: &mut Parser) -> Result<Self::QualifiedRule> {
+        fn parse_block(
+            _this: &mut Self,
+            _prelude: Self::Prelude,
+            _start: &ParserState,
+            input: &mut Parser,
+        ) -> Result<Self::QualifiedRule> {
             Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
     }

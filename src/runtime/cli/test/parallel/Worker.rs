@@ -6,17 +6,19 @@
 use core::ffi::c_void;
 
 use bun_core::{self, Output};
-use bun_jsc as jsc;
 use bun_io as r#async;
 use bun_io;
+use bun_jsc as jsc;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
+use crate::api::bun::process::{
+    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
+};
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -140,12 +142,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned =
-                spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
-                    .map_err(|e| {
-                        Output::err(e, "spawnProcess failed for test worker", ());
-                        bun_core::err!("SpawnFailed")
-                    })?;
+            let mut spawned = spawn::spawn_process(
+                &options,
+                coord.argv.as_ptr(),
+                coord.envps[this.idx as usize].as_ptr(),
+            )?
+            .map_err(|e| {
+                Output::err(e, "spawnProcess failed for test worker", ());
+                bun_core::err!("SpawnFailed")
+            })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
@@ -205,8 +210,12 @@ impl Worker {
             this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
@@ -218,12 +227,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned =
-                spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
-                    .map_err(|e| {
-                        Output::err(e, "spawnProcess failed for test worker", ());
-                        bun_core::err!("SpawnFailed")
-                    })?;
+            let mut spawned = spawn::spawn_process(
+                &options,
+                coord.argv.as_ptr(),
+                coord.envps[this.idx as usize].as_ptr(),
+            )?
+            .map_err(|e| {
+                Output::err(e, "spawnProcess failed for test worker", ());
+                bun_core::err!("SpawnFailed")
+            })?;
             // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
             // backing (items were raw `*uv.Pipe` with no destructor). The Rust
             // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
@@ -245,13 +257,21 @@ impl Worker {
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
                 // ownership transfers into the reader's `Source` (heap::take inside).
-                unsafe { this.out.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                unsafe {
+                    this.out
+                        .reader
+                        .start_with_pipe(bun_core::heap::into_raw(pipe))
+                }
+                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
-                unsafe { this.err.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                unsafe {
+                    this.err
+                        .reader
+                        .start_with_pipe(bun_core::heap::into_raw(pipe))
+                }
+                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
             // `ipc_pipe` was Box-allocated via heap::into_raw above and
             // initialised by spawn_process; ownership of the *mut Pipe transfers

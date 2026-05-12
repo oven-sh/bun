@@ -67,7 +67,10 @@ pub type Maybe<R> = core::result::Result<R, SystemError>;
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
     safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
-    safe fn SystemError__toErrorInstanceWithInfoObject(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toErrorInstanceWithInfoObject(
+        this: &SystemError,
+        global: &JSGlobalObject,
+    ) -> JSValue;
 }
 
 impl SystemError {
@@ -120,7 +123,11 @@ impl SystemError {
     /// frames from the given promise's await chain. Use when creating an error
     /// from native code at the top of the event loop (threadpool callback) to
     /// reject a promise — otherwise the error will have an empty stack.
-    pub fn to_error_instance_with_async_stack(&self, global: &JSGlobalObject, promise: &JSPromise) -> JSValue {
+    pub fn to_error_instance_with_async_stack(
+        &self,
+        global: &JSGlobalObject,
+        promise: &JSPromise,
+    ) -> JSValue {
         let value = self.to_error_instance(global);
         value.attach_async_stack_from_promise(global, promise);
         value
@@ -189,19 +196,13 @@ impl fmt::Display for SystemError {
                     f,
                     // bun.Output.prettyFmt("<r><red>{f}<r><d>:<r> <b>{f}<r>: {f} <d>({f}())<r>", true)
                     bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> <b>{}<r>: {} <d>({}())<r>", true),
-                    self.code,
-                    self.path,
-                    self.message,
-                    self.syscall,
+                    self.code, self.path, self.message, self.syscall,
                 )
             } else {
                 write!(
                     f,
                     bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> <b>{}<r>: {} <d>({}())<r>", false),
-                    self.code,
-                    self.path,
-                    self.message,
-                    self.syscall,
+                    self.code, self.path, self.message, self.syscall,
                 )
             }
         } else {
@@ -211,17 +212,13 @@ impl fmt::Display for SystemError {
                     f,
                     // bun.Output.prettyFmt("<r><red>{f}<r><d>:<r> {f} <d>({f}())<r>", true)
                     bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> {} <d>({}())<r>", true),
-                    self.code,
-                    self.message,
-                    self.syscall,
+                    self.code, self.message, self.syscall,
                 )
             } else {
                 write!(
                     f,
                     bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> {} <d>({}())<r>", false),
-                    self.code,
-                    self.message,
-                    self.syscall,
+                    self.code, self.message, self.syscall,
                 )
             }
         }

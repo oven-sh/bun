@@ -1,14 +1,14 @@
 use core::ffi::CStr;
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{task_tag, EventLoopTask, TaskTag, Taskable};
+use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -50,7 +50,11 @@ impl Yes {
 
         // Tile to at least BUFSIZ for throughput.
         const BUFSIZ: usize = 8192;
-        let bufalloc = if one.len() <= BUFSIZ / 2 { BUFSIZ } else { one.len() };
+        let bufalloc = if one.len() <= BUFSIZ / 2 {
+            BUFSIZ
+        } else {
+            one.len()
+        };
         let mut buf = vec![0u8; bufalloc];
         buf[..one.len()].copy_from_slice(&one);
         let mut filled = one.len();
@@ -99,7 +103,9 @@ impl Yes {
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
             let shell = cmd_node.base.shell;
-            let Exec::Builtin(me) = &mut cmd_node.exec else { unreachable!() };
+            let Exec::Builtin(me) = &mut cmd_node.exec else {
+                unreachable!()
+            };
             let (stdout, yes) = Self::split_stdout_state(me);
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
@@ -183,7 +189,9 @@ impl Yes {
     /// are disjoint so this is a sound reborrow without `unsafe`.
     #[inline]
     fn split_stdout_state(me: &mut Builtin) -> (&mut BuiltinIO, &mut Yes) {
-        let Impl::Yes(yes) = &mut me.impl_ else { unreachable!() };
+        let Impl::Yes(yes) = &mut me.impl_ else {
+            unreachable!()
+        };
         (&mut me.stdout, &mut **yes)
     }
 }

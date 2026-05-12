@@ -30,7 +30,12 @@
 // with `panic_immediate_abort` so the panic/fmt machinery is dead code.
 #![no_std]
 #![no_main]
-#![allow(unused, nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![allow(
+    unused,
+    nonstandard_style,
+    ambiguous_glob_reexports,
+    incomplete_features
+)]
 #![feature(adt_const_params)]
 
 #[cfg(windows)]
@@ -283,9 +288,9 @@ pub mod compat {
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──
     pub mod kernel32 {
-        pub use bun_windows_sys::kernel32::*;
         pub use bun_windows_sys::externs::{
             GetConsoleMode, GetExitCodeProcess, SetConsoleMode, WaitForSingleObject,
         };
+        pub use bun_windows_sys::kernel32::*;
     }
 }

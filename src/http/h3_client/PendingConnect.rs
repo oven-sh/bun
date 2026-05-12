@@ -15,8 +15,8 @@ use bun_threading::Guarded;
 use bun_uws as uws;
 use bun_uws::quic;
 
-use super::client_session::session_mut;
 use super::ClientSession;
+use super::client_session::session_mut;
 
 pub struct PendingConnect {
     // INTRUSIVE: intrusive-refcounted (ref_/deref) ClientSession; one ref held
@@ -52,11 +52,7 @@ impl PendingConnect {
         unsafe { &mut *self.pc }
     }
 
-    pub fn register(
-        session: *mut ClientSession,
-        pc: *mut quic::PendingConnect,
-        l: *mut uws::Loop,
-    ) {
+    pub fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
         // Caller passes a live intrusive-refcounted ClientSession; PendingConnect
         // holds one ref from construction until Drop. `session_mut` centralises
         // the backref upgrade (same invariant as the other call sites below).

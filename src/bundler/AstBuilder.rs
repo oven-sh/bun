@@ -11,26 +11,26 @@ use core::ptr::NonNull;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
+use bun_ast::{ImportKind, ImportRecord, import_record};
+use bun_ast::{Loc, Log, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
-use bun_ast::{Loc, Log, Range, Source};
-use bun_ast::{import_record, ImportKind, ImportRecord};
-use bun_core::{strings, MutableString};
+use bun_core::{MutableString, strings};
 
 use bun_ast as js_ast;
 use bun_ast::ast_result::{NamedExports, NamedImports, TopLevelSymbolToParts};
+use bun_ast::b::B;
 use bun_ast::base::{RefInt, RefTag};
 use bun_ast::expr::IntoExprData;
 use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::stmt::StatementData;
 use bun_ast::symbol::{self, Kind as SymbolKind};
+use bun_ast::{
+    Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, ExportsKind, Expr, LocRef,
+    NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol,
+};
 use bun_ast::{E, G, S};
 use bun_js_parser as js_parser;
-use bun_ast::b::B;
-use bun_ast::{
-    Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, Expr, ExportsKind,
-    LocRef, NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol,
-};
 
 use crate::options;
 
@@ -86,11 +86,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         None
     }
 
-    pub fn init(
-        bump: &'bump Bump,
-        source: &'a Source,
-        hot_reloading: bool,
-    ) -> Result<Self, OOM> {
+    pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
             label_ref: None,
@@ -113,7 +109,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             export_star_import_records: Vec::new(),
             declared_symbols: Default::default(),
             hot_reloading,
-            module_ref: Ref::NONE, // overwritten below (Zig: undefined)
+            module_ref: Ref::NONE,  // overwritten below (Zig: undefined)
             hmr_api_ref: Ref::NONE, // overwritten below (Zig: undefined)
         };
         ab.module_ref = ab.new_symbol(SymbolKind::Other, b"module")?;
@@ -133,7 +129,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     /// borrow is held, so the returned `&mut Scope` is unique for its lifetime.
     #[inline]
     pub fn current_scope_mut(&mut self) -> &mut Scope {
-        debug_assert!(!self.current_scope.is_null(), "AstBuilder.current_scope read before init()");
+        debug_assert!(
+            !self.current_scope.is_null(),
+            "AstBuilder.current_scope read before init()"
+        );
         // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
         // through `&mut self`.
         unsafe { &mut *self.current_scope }
@@ -212,9 +211,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let record = self.add_import_record(path, ImportKind::Stmt)?;
 
         let path_name = PathName::init(path);
-        let non_unique = MutableString::ensure_valid_identifier(
-            path_name.non_unique_name_string_base(),
-        )?;
+        let non_unique =
+            MutableString::ensure_valid_identifier(path_name.non_unique_name_string_base())?;
         let name = strings::append(b"import_", &non_unique);
         // PORT NOTE: copy into the arena so the raw `*const [u8]` stored on the
         // Symbol outlives this stack frame (Zig used the parser arena arena).
@@ -294,7 +292,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
     // every other field stores arena data via raw pointers / `StoreSlice`, so
     // nothing borrows `&mut self` past this call.
-    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<crate::BundledAst<'static>, OOM> {
+    pub fn to_bundled_ast(
+        &mut self,
+        target: options::Target,
+    ) -> Result<crate::BundledAst<'static>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
@@ -344,8 +345,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // Zig shallow-copied a single `Vec(u32){1}`; `Vec` is move-only
         // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
-            top_level_symbols_to_parts
-                .put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1]));
+            top_level_symbols_to_parts.put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1]));
         }
         top_level_symbols_to_parts.re_index()?;
 
@@ -387,7 +387,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     bun_ast::StmtData::SImport(st) => {
                         // ImportScanner: track the record + named_imports for
                         // each clause item so the linker can bind symbols.
-                        self.import_records_for_current_part.push(st.import_record_index);
+                        self.import_records_for_current_part
+                            .push(st.import_record_index);
                         for item in st.items.slice() {
                             let ref_ = item.name.ref_.expect("infallible: ref bound");
                             self.named_imports.put(
@@ -437,8 +438,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
                         // ImportScanner: recordExport("default", default_name.ref)
-                        let default_ref =
-                            st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
@@ -456,10 +456,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             .mut_(1)
                             .symbol_uses
                             .put(temp_id, symbol::Use { count_estimate: 1 })?;
-                        VecExt::append(
-                            &mut self.current_scope_mut().generated,
-                            temp_id,
-                        );
+                        VecExt::append(&mut self.current_scope_mut().generated, temp_id);
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
@@ -493,10 +490,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         value: Expr::assign(
                             Expr::init(
                                 E::Dot {
-                                    target: Expr::init_identifier(
-                                        self.hmr_api_ref,
-                                        Loc::EMPTY,
-                                    ),
+                                    target: Expr::init_identifier(self.hmr_api_ref, Loc::EMPTY),
                                     name: b"exports".into(),
                                     name_loc: Loc::EMPTY,
                                     ..Default::default()
@@ -548,7 +542,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             for stmt in in_stmts.iter() {
                 match stmt.data {
                     bun_ast::StmtData::SImport(st) => {
-                        self.import_records_for_current_part.push(st.import_record_index);
+                        self.import_records_for_current_part
+                            .push(st.import_record_index);
                         for item in st.items.slice() {
                             let ref_ = item.name.ref_.expect("infallible: ref bound");
                             self.named_imports.put(
@@ -572,8 +567,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         }
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
-                        let default_ref =
-                            st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                     }
                     _ => {}
@@ -584,12 +578,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
 
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts.mut_(1).scopes = bun_ast::StoreSlice::new_mut(
-            self.bump.alloc_slice_copy(self.scopes.as_slice()),
-        );
-        parts.mut_(1).import_record_indices = Vec::<u32>::move_from_list(
-            core::mem::take(&mut self.import_records_for_current_part),
-        );
+        parts.mut_(1).scopes =
+            bun_ast::StoreSlice::new_mut(self.bump.alloc_slice_copy(self.scopes.as_slice()));
+        parts.mut_(1).import_record_indices =
+            Vec::<u32>::move_from_list(core::mem::take(&mut self.import_records_for_current_part));
 
         // SAFETY: module_scope is a live arena allocation. `Scope` is no-Drop
         // arena POD; Zig bitwise-copied it (`module_scope.*`).

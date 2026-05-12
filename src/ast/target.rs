@@ -42,7 +42,10 @@ impl Target {
 
     #[inline]
     pub fn is_bun(self) -> bool {
-        matches!(self, Target::BunMacro | Target::Bun | Target::BakeServerComponentsSsr)
+        matches!(
+            self,
+            Target::BunMacro | Target::Bun | Target::BakeServerComponentsSsr
+        )
     }
 
     #[inline]

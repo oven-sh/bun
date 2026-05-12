@@ -8,7 +8,9 @@
 use super::*;
 
 #[repr(transparent)]
-pub struct File { pub handle: Fd }
+pub struct File {
+    pub handle: Fd,
+}
 
 /// Port of `bun.sys.File.ReadToEndResult` — `{ bytes, err? }` pair so
 /// callers can recover the partially-read buffer even on error (Zig
@@ -21,10 +23,12 @@ pub struct ReadToEndResult {
 impl ReadToEndResult {
     #[inline]
     pub fn unwrap(self) -> core::result::Result<Vec<u8>, Error> {
-        match self.err { Some(e) => Err(e), None => Ok(self.bytes) }
+        match self.err {
+            Some(e) => Err(e),
+            None => Ok(self.bytes),
+        }
     }
 }
-
 
 // `File` high-level helpers — wrap the syscall surface above.
 // Single consolidated `impl` block (Zig: src/sys/File.zig).
@@ -32,12 +36,33 @@ impl File {
     // ── construction / identity ──────────────────────────────────────────
     /// `File.from(fd)` — wrap an existing fd. Zig's `from(anytype)` overload
     /// set collapses to this + the `From` impls below in Rust.
-    #[inline] pub fn from_fd(fd: Fd) -> Self { Self { handle: fd } }
-    #[inline] pub fn handle(&self) -> Fd { self.handle }
+    #[inline]
+    pub fn from_fd(fd: Fd) -> Self {
+        Self { handle: fd }
+    }
+    #[inline]
+    pub fn handle(&self) -> Fd {
+        self.handle
+    }
     /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
-    #[inline] pub fn stdin() -> Self { Self { handle: Fd::stdin() } }
-    #[inline] pub fn stdout() -> Self { Self { handle: Fd::stdout() } }
-    #[inline] pub fn stderr() -> Self { Self { handle: Fd::stderr() } }
+    #[inline]
+    pub fn stdin() -> Self {
+        Self {
+            handle: Fd::stdin(),
+        }
+    }
+    #[inline]
+    pub fn stdout() -> Self {
+        Self {
+            handle: Fd::stdout(),
+        }
+    }
+    #[inline]
+    pub fn stderr() -> Self {
+        Self {
+            handle: Fd::stderr(),
+        }
+    }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
         open(path, flags, mode).map(Self::from_fd)
@@ -102,13 +127,19 @@ impl File {
     }
 
     // ── read / write ─────────────────────────────────────────────────────
-    pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> { read(self.handle, buf) }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> { write(self.handle, buf) }
+    pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
+        read(self.handle, buf)
+    }
+    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
+        write(self.handle, buf)
+    }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
             // File.zig:118-133 — `if (amt == 0) return .success;` (matches Zig).
-            if n == 0 { return Ok(()); }
+            if n == 0 {
+                return Ok(());
+            }
             buf = &buf[n..];
         }
         Ok(())
@@ -120,7 +151,9 @@ impl File {
         let mut total_read: usize = 0;
         while !rest.is_empty() {
             let n = read(self.handle, rest)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             rest = &mut rest[n..];
             total_read += n;
         }
@@ -157,8 +190,14 @@ impl File {
             }
         }
         read_fill_vec(list, 16, |dst, off| {
-            #[cfg(unix)] { pread(self.handle, dst, off) }
-            #[cfg(not(unix))] { read(self.handle, dst) }
+            #[cfg(unix)]
+            {
+                pread(self.handle, dst, off)
+            }
+            #[cfg(not(unix))]
+            {
+                read(self.handle, dst)
+            }
         })
     }
     /// Port of `bun.sys.File.readFillBuf` (src/sys/File.zig). Reads until
@@ -177,7 +216,9 @@ impl File {
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
             let n = pwrite(self.handle, buf, off)?;
-            if n == 0 { return Ok(()); }
+            if n == 0 {
+                return Ok(());
+            }
             buf = &buf[n..];
             off += n as i64;
         }
@@ -190,7 +231,9 @@ impl File {
         let mut total: usize = 0;
         while total < buf.len() {
             let n = pread(self.handle, &mut buf[total..], off)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             total += n;
             off += n as i64;
         }
@@ -216,7 +259,9 @@ impl File {
     pub fn get_end_pos(&self) -> Maybe<usize> {
         get_file_size(self.handle).map(|n| n as usize)
     }
-    pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
+    pub fn stat(&self) -> Maybe<Stat> {
+        fstat(self.handle)
+    }
     /// Port of `bun.sys.File.kind` (File.zig:220).
     ///
     /// Be careful about using this on Linux or macOS — calls `fstat()`
@@ -246,10 +291,16 @@ impl File {
             // `.file`, not `.unknown`. `kind_from_mode` returns `Unknown` for that
             // case, so post-process here to match the spec's else arm.
             let k = kind_from_mode(st.st_mode as Mode);
-            Ok(if matches!(k, FileKind::Unknown) { FileKind::File } else { k })
+            Ok(if matches!(k, FileKind::Unknown) {
+                FileKind::File
+            } else {
+                k
+            })
         }
     }
-    pub fn close(self) -> Maybe<()> { close(self.handle) }
+    pub fn close(self) -> Maybe<()> {
+        close(self.handle)
+    }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s
     /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
@@ -257,7 +308,11 @@ impl File {
     /// Rust port goes through `rename_at_w` → `NtSetInformationFile` which
     /// opens its own source handle, so keeping `self` open across the call is
     /// fine and avoids passing a closed handle into the EXDEV fallback.)
-    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> core::result::Result<(), bun_core::Error> {
+    pub fn close_and_move_to(
+        self,
+        src: &ZStr,
+        dest: &ZStr,
+    ) -> core::result::Result<(), bun_core::Error> {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
@@ -265,10 +320,13 @@ impl File {
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
-    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer)
-        -> core::result::Result<&'a [u8], bun_core::Error>
-    {
-        get_fd_path(self.handle, buf).map(|s| &*s).map_err(Into::into)
+    pub fn get_path<'a>(
+        &self,
+        buf: &'a mut bun_paths::PathBuffer,
+    ) -> core::result::Result<&'a [u8], bun_core::Error> {
+        get_fd_path(self.handle, buf)
+            .map(|s| &*s)
+            .map_err(Into::into)
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
@@ -284,7 +342,10 @@ impl File {
     /// `bun.sys.File.readFileFrom` (File.zig:381) — open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
-    pub fn read_file_from(dir: Fd, path: &[u8]) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+    pub fn read_file_from(
+        dir: Fd,
+        path: &[u8],
+    ) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
         let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
@@ -302,10 +363,16 @@ impl File {
     /// Rust crate map that lives in `bun_resolver::fs` (T5) which `bun_sys`
     /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
     /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
-    pub fn read_from_user_input(dir: Fd, top_level_dir: &[u8], input_path: &[u8]) -> Maybe<Vec<u8>> {
+    pub fn read_from_user_input(
+        dir: Fd,
+        top_level_dir: &[u8],
+        input_path: &[u8],
+    ) -> Maybe<Vec<u8>> {
         let mut buf = bun_paths::PathBuffer::default();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            top_level_dir, &mut buf.0, &[input_path],
+            top_level_dir,
+            &mut buf.0,
+            &[input_path],
         );
         Self::read_from(dir, normalized.as_bytes())
     }
@@ -330,10 +397,14 @@ impl File {
     // ── std::io adapters ─────────────────────────────────────────────────
     /// `File.writer()` — `std.Io.GenericWriter(File, anyerror, stdIoWrite)`.
     #[inline]
-    pub fn writer(&self) -> FileWriter { FileWriter(self.handle) }
+    pub fn writer(&self) -> FileWriter {
+        FileWriter(self.handle)
+    }
     /// `File.reader()` — `std.Io.GenericReader(File, anyerror, stdIoRead)`.
     #[inline]
-    pub fn reader(&self) -> FileReader { FileReader(self.handle) }
+    pub fn reader(&self) -> FileReader {
+        FileReader(self.handle)
+    }
     /// `File.bufferedWriter()` — `std.io.BufferedWriter` wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))

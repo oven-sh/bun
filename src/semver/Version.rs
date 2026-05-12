@@ -16,9 +16,7 @@ pub type OldV2Version = VersionType<u32>;
 // `comptime IntType: type`. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait VersionInt:
-    Copy + Default + Eq + Ord + fmt::Display + 'static
-{
+pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
     /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
@@ -140,7 +138,10 @@ impl<T: VersionInt> VersionType<T> {
     }
 
     pub fn fmt<'a>(self, input: &'a [u8]) -> Formatter<'a, T> {
-        Formatter { version: self, input }
+        Formatter {
+            version: self,
+            input,
+        }
     }
 
     pub fn diff_fmt<'a>(
@@ -631,10 +632,8 @@ impl<T: VersionInt> VersionType<T> {
                         && matches!(c, b'a'..=b'z' | b'A'..=b'Z')
                     {
                         part_start_i = i;
-                        let tag_result = Tag::parse_with_pre_count(
-                            sliced_string.sub(&input[part_start_i..]),
-                            1,
-                        );
+                        let tag_result =
+                            Tag::parse_with_pre_count(sliced_string.sub(&input[part_start_i..]), 1);
                         result.version.tag = tag_result.tag;
                         i += tag_result.len as usize;
                         is_done = true;
@@ -772,7 +771,10 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
         if !bun_core::output::ENABLE_ANSI_COLORS_STDOUT.load(AtomicOrdering::Relaxed) {
             // print normally if no colors
-            let formatter = Formatter { version: self.version, input: self.buf };
+            let formatter = Formatter {
+                version: self.version,
+                input: self.buf,
+            };
             return fmt::Display::fmt(&formatter, writer);
         }
 
@@ -995,8 +997,7 @@ pub struct Tag {
 // TODO(port): unused module-level static in Zig (`var multi_tag_warn = false;`).
 // Kept as a note; remove if confirmed dead in Phase B.
 #[allow(dead_code)]
-static MULTI_TAG_WARN: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags
 
 impl Tag {
@@ -1161,7 +1162,10 @@ impl Tag {
         }
 
         if build_count == 0 && pre_count == 0 {
-            return TagResult { len: 0, ..Default::default() };
+            return TagResult {
+                len: 0,
+                ..Default::default()
+            };
         }
 
         #[derive(Copy, Clone, Eq, PartialEq)]

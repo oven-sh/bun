@@ -1,8 +1,8 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-use bun_collections::VecExt;
 use bun_ast::ImportRecord;
+use bun_collections::VecExt;
 use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
@@ -28,7 +28,10 @@ impl Url {
 
     /// Returns whether the URL is absolute, and not relative.
     pub fn is_absolute(&self, import_records: &Vec<ImportRecord>) -> bool {
-        let url: &[u8] = import_records.at(self.import_record_idx as usize).path.pretty;
+        let url: &[u8] = import_records
+            .at(self.import_record_idx as usize)
+            .path
+            .pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
         if strings::starts_with_char(url, b'.') {
@@ -151,7 +154,10 @@ impl Url {
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: Zig `css.implementDeepClone` is field-wise reflection; both
         // fields (`u32`, `dependencies::Location`) are `Copy`, so identity copy.
-        Url { import_record_idx: self.import_record_idx, loc: self.loc }
+        Url {
+            import_record_idx: self.import_record_idx,
+            loc: self.loc,
+        }
     }
 
     // TODO: dedupe import records??

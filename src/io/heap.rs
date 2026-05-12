@@ -49,7 +49,10 @@ where
     Context: Default,
 {
     fn default() -> Self {
-        Self { root: ptr::null_mut(), context: Context::default() }
+        Self {
+            root: ptr::null_mut(),
+            context: Context::default(),
+        }
     }
 }
 

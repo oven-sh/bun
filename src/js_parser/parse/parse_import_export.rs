@@ -1,11 +1,11 @@
-use bun_core::Error;
+use crate::lexer::{self as js_lexer, T};
+use crate::p::P;
+use crate::parser::{ExportClauseResult, ImportClause, JsxT, is_eval_or_arguments};
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{ClauseItem, Expr, LocRef, E};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
-use crate::p::P;
-use crate::lexer::{self as js_lexer, T};
-use crate::parser::{is_eval_or_arguments, ExportClauseResult, ImportClause, JsxT};
+use bun_ast::{ClauseItem, E, Expr, LocRef};
+use bun_core::Error;
 
 // Zig: `fn ParseImportExport(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -30,12 +30,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if level.gt(Level::Call) {
             let r = js_lexer::range_of_identifier(p.source, loc);
-            p.log()
-                .add_range_error(
-                    Some(p.source),
-                    r,
-                    b"Cannot use an \"import\" expression here without parentheses",
-                );
+            p.log().add_range_error(
+                Some(p.source),
+                r,
+                b"Cannot use an \"import\" expression here without parentheses",
+            );
         }
 
         // allow "in" inside call arguments;
@@ -85,13 +84,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 None
             };
             if let Some(slice) = slice_opt {
-                let import_record_index = p.add_import_record(
-                    bun_ast::ImportKind::Dynamic,
-                    value.loc,
-                    slice,
-                );
+                let import_record_index =
+                    p.add_import_record(bun_ast::ImportKind::Dynamic, value.loc, slice);
                 return Ok(p.new_expr(
-                    E::Import { expr: value, import_record_index, options: import_options },
+                    E::Import {
+                        expr: value,
+                        import_record_index,
+                        options: import_options,
+                    },
                     loc,
                 ));
             }
@@ -134,9 +134,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
 
             let probably_type_only_import = if TYPESCRIPT {
-                alias == b"type"
-                    && p.lexer.token != T::TComma
-                    && p.lexer.token != T::TCloseBrace
+                alias == b"type" && p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace
             } else {
                 false
             };
@@ -292,8 +290,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
         // TODO(port): narrow error set
-        let mut items =
-            bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
+        let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut first_non_identifier_loc = bun_ast::Loc { start: 0 };
@@ -325,9 +322,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
 
             if TYPESCRIPT {
-                if alias == b"type"
-                    && p.lexer.token != T::TComma
-                    && p.lexer.token != T::TCloseBrace
+                if alias == b"type" && p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace
                 {
                     if p.lexer.is_contextual_keyword(b"as") {
                         p.lexer.next()?;
@@ -354,8 +349,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 });
                                 // PERF(port): was assume_capacity (catch unreachable on append)
                             }
-                        } else if p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace
-                        {
+                        } else if p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace {
                             // "export { type as xxx }"
                             // "export { type as 'xxx' }"
                             alias = p.parse_clause_alias(b"export")?;

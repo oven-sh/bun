@@ -1,30 +1,33 @@
 use core::cell::Cell;
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_collections::VecExt;
-use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
-use bun_sys::UV_E;
+use bun_core::{self as strings_mod, String as BunString, ZStr, ZigString, strings};
+use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
+use bun_jsc::ipc as IPC;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
+    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
+    JsError, JsResult, SystemError,
 };
 use bun_jsc::{JsCell, JsClass as _, SysErrorJsc as _};
-use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
-use bun_core::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
+use bun_sys::UV_E;
 use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
-    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult, SpawnResultExt as _,
+    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
+    SpawnResultExt as _,
 };
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
-use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
+use crate::api::bun_subprocess::{
+    self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
+};
 use crate::api::bun_terminal_body::{
     self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
 };
@@ -259,7 +262,9 @@ fn get_argv(
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
     if args.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings")));
+        return Err(
+            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
+        );
     }
 
     let mut cmds_array = args.array_iterator(global_this)?;
@@ -319,7 +324,9 @@ fn get_argv(
     }
 
     if argv.is_empty() {
-        return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings")));
+        return Err(
+            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
+        );
     }
     Ok(())
 }
@@ -494,7 +501,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         maybe_ipc_mode = Some('ipc_mode: {
                             if let Some(mode_val) = args.get_truthy(global_this, "serialization")? {
                                 if mode_val.is_string() {
-                                    break 'ipc_mode match IPC::Mode::from_js(global_this, mode_val)? {
+                                    break 'ipc_mode match IPC::Mode::from_js(global_this, mode_val)?
+                                    {
                                         Some(m) => m,
                                         None => {
                                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -567,7 +575,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(env_arg) = args.get_truthy(global_this, "env")? {
                 env_arg.ensure_still_alive();
                 let Some(object) = env_arg.get_object() else {
-                    return Err(global_this.throw_invalid_arguments(format_args!("env must be an object")));
+                    return Err(
+                        global_this.throw_invalid_arguments(format_args!("env must be an object"))
+                    );
                 };
 
                 override_env = true;
@@ -585,7 +595,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 path = new_path;
             }
 
-            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv, &mut cstr_storage)?;
+            get_argv(
+                global_this,
+                cmd_value,
+                path,
+                cwd,
+                &mut argv0,
+                &mut argv,
+                &mut cstr_storage,
+            )?;
 
             if let Some(stdio_val) = args.get(global_this, "stdio")? {
                 if !stdio_val.is_empty_or_undefined_or_null() {
@@ -624,7 +642,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             i += 1;
                         }
                     } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!("stdio must be an array")));
+                        return Err(global_this
+                            .throw_invalid_arguments(format_args!("stdio must be an array")));
                     }
                 }
             } else {
@@ -673,7 +692,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(timeout_value) = args.get(global_this, "timeout")? {
                 'brk: {
                     if timeout_value != JSValue::NULL {
-                        if timeout_value.is_number() && timeout_value.as_number().is_infinite() && timeout_value.as_number() > 0.0 {
+                        if timeout_value.is_number()
+                            && timeout_value.as_number().is_infinite()
+                            && timeout_value.as_number() > 0.0
+                        {
                             break 'brk;
                         }
 
@@ -685,10 +707,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            bun_sql_jsc::jsc::IntegerRange { min: 0, field_name: b"timeout", ..Default::default() },
+                            bun_sql_jsc::jsc::IntegerRange {
+                                min: 0,
+                                field_name: b"timeout",
+                                ..Default::default()
+                            },
                         )?;
                         if timeout_int > 0 {
-                            timeout = Some(i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).expect("int cast"));
+                            timeout = Some(
+                                i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
+                                    .expect("int cast"),
+                            );
                             // PORT NOTE: Zig `@intCast(@as(u31, @truncate(timeout_int)))` — truncate to u31 then widen to i32.
                         }
                     }
@@ -703,7 +732,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if val.is_number() && val.is_finite() {
                     // 'Infinity' does not set maxBuffer
                     let value = val.coerce_to_int64(global_this)?;
-                    if value > 0 && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped()) {
+                    if value > 0
+                        && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped())
+                    {
                         max_buffer = Some(value);
                     }
                 }
@@ -720,7 +751,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // (pointee outlives holder) holds for this scope.
                         let term = bun_ptr::BackRef::from(terminal);
                         if term.is_closed() {
-                            return Err(global_this.throw_invalid_arguments(format_args!("terminal is closed")));
+                            return Err(global_this
+                                .throw_invalid_arguments(format_args!("terminal is closed")));
                         }
                         if term.is_inline_spawned() {
                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -729,13 +761,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         }
                         #[cfg(unix)]
                         if term.get_slave_fd() == Fd::INVALID {
-                            return Err(global_this
-                                .throw_invalid_arguments(format_args!("terminal slave fd is no longer valid")));
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "terminal slave fd is no longer valid"
+                            )));
                         }
                         #[cfg(not(unix))]
                         if term.get_pseudoconsole().is_none() {
-                            return Err(global_this
-                                .throw_invalid_arguments(format_args!("terminal pseudoconsole is no longer valid")));
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "terminal pseudoconsole is no longer valid"
+                            )));
                         }
                         existing_terminal = Some(term);
                         terminal_js_value = terminal_val;
@@ -763,8 +797,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     TerminalInitError::OpenPtyFailed => {
                                         global_this.throw(format_args!("Failed to open PTY"))
                                     }
-                                    TerminalInitError::DupFailed => global_this
-                                        .throw(format_args!("Failed to duplicate PTY file descriptor")),
+                                    TerminalInitError::DupFailed => global_this.throw(
+                                        format_args!("Failed to duplicate PTY file descriptor"),
+                                    ),
                                     TerminalInitError::NotSupported => global_this
                                         .throw(format_args!("PTY not supported on this platform")),
                                     TerminalInitError::WriterStartFailed => global_this
@@ -782,9 +817,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
                     #[cfg(unix)]
                     {
-                        let slave_fd = existing_terminal
-                            .map(|t| t.get_slave_fd())
-                            .unwrap_or_else(|| terminal_info.as_ref().unwrap().term().get_slave_fd());
+                        let slave_fd =
+                            existing_terminal
+                                .map(|t| t.get_slave_fd())
+                                .unwrap_or_else(|| {
+                                    terminal_info.as_ref().unwrap().term().get_slave_fd()
+                                });
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);
@@ -807,7 +845,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
         } else {
-            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv, &mut cstr_storage)?;
+            get_argv(
+                global_this,
+                cmd_value,
+                path,
+                cwd,
+                &mut argv0,
+                &mut argv,
+                &mut cstr_storage,
+            )?;
         }
     }
 
@@ -820,7 +866,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
         // (per-VM DotEnv loader, valid for VM lifetime; centralised
         // single-unsafe deref). `.map` is its `&'a mut Map` slot.
-        let envmap = match jsc_vm.transpiler.env_mut().map.create_null_delimited_env_map()
+        let envmap = match jsc_vm
+            .transpiler
+            .env_mut()
+            .map
+            .create_null_delimited_env_map()
         {
             Ok(m) => m,
             Err(_) => return Err(global_this.throw_out_of_memory()),
@@ -924,10 +974,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
                 // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
-                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0".as_ptr().cast::<c_char>(),
-                IPC::Mode::Advanced => {
-                    b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0".as_ptr().cast::<c_char>()
-                }
+                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0"
+                    .as_ptr()
+                    .cast::<c_char>(),
+                IPC::Mode::Advanced => b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0"
+                    .as_ptr()
+                    .cast::<c_char>(),
             });
         }
     }
@@ -995,7 +1047,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // (bun_event_loop is below bun_jsc); the accessor returns the
             // concrete `jsc::EventLoop` allocation created via the runtime
             // vtable in `SpawnSyncEventLoop::init`.
-            sync_loop.event_loop_ptr().cast::<jsc::event_loop::EventLoop>()
+            sync_loop
+                .event_loop_ptr()
+                .cast::<jsc::event_loop::EventLoop>()
         }
     } else {
         jsc_vm.event_loop()
@@ -1061,11 +1115,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ..Default::default()
     };
 
-    let mut spawned = match spawn::spawn_process(
-        &spawn_options,
-        argv.as_ptr(),
-        env_array.as_ptr(),
-    ) {
+    let mut spawned = match spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
+    {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
@@ -1082,7 +1133,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_core::err!("EMFILE") { sys::Errno::EMFILE } else { sys::Errno::ENFILE },
+                if err == bun_core::err!("EMFILE") {
+                    sys::Errno::EMFILE
+                } else {
+                    sys::Errno::ENFILE
+                },
                 sys::Tag::posix_spawn,
             )
             .with_path(display_path)
@@ -1122,9 +1177,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return Err(global_this.throw_value(
-                                sys_system_error_to_js(systemerror, global_this),
-                            ));
+                            return Err(global_this
+                                .throw_value(sys_system_error_to_js(systemerror, global_this)));
                         }
                     }
                     _ => {}
@@ -1192,7 +1246,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),
-        flags: Cell::new(if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() }),
+        flags: Cell::new(if IS_SYNC {
+            Subprocess::Flags::IS_SYNC
+        } else {
+            Subprocess::Flags::empty()
+        }),
         kill_signal,
         stderr_maxbuf: Cell::new(None),
         stdout_maxbuf: Cell::new(None),
@@ -1487,9 +1545,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
             if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
-                (*pipe.as_ptr()).signal.set(
-                    WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(subprocess_ptr),
-                );
+                (*pipe.as_ptr())
+                    .signal
+                    .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(
+                        subprocess_ptr,
+                    ));
             }
         }
     }
@@ -1516,11 +1576,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            let ts = Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
+            let ts =
+                Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
             // PORT NOTE: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
-                t.next = crate::timer::ElTimespec { sec: ts.sec, nsec: ts.nsec };
+                t.next = crate::timer::ElTimespec {
+                    sec: ts.sec,
+                    nsec: ts.nsec,
+                };
             });
             // Zig: `globalThis.bunVM().timer.insert(&subprocess.event_loop_timer)`.
             // `Timer::All` lives in `bun_runtime`; reach it via the
@@ -1664,7 +1728,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         // SAFETY: jsc_vm_ptr is the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
+        unsafe { &mut *jsc_vm_ptr }
+            .counters
+            .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         subprocess.process_mut().wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
@@ -1681,8 +1747,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // SAFETY: see the matching block above.
                 unsafe {
                     (*signal).pending_activity_ref();
-                    let _ = (*signal)
-                        .add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+                    let _ =
+                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
                     (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
                 }
             }
@@ -1717,9 +1783,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
-                if abort_signal_timeout.event_loop_timer.state == crate::timer::EventLoopTimerState::ACTIVE {
+                if abort_signal_timeout.event_loop_timer.state
+                    == crate::timer::EventLoopTimerState::ACTIVE
+                {
                     let next = &abort_signal_timeout.event_loop_timer.next;
-                    let next_ts = Timespec { sec: next.sec, nsec: next.nsec };
+                    let next_ts = Timespec {
+                        sec: next.sec,
+                        nsec: next.nsec,
+                    };
                     if user_timespec.eql(&Timespec::EPOCH)
                         || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
                     {
@@ -1797,10 +1868,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // different test fails, and that SHOULD be okay.
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
-                            let mut active_file_strong =
-                                crate::test_runner::jest::Jest::runner().unwrap().bun_test_root.active_file
-                                    // TODO: add a .cloneNonOptional()?
-                                    .clone();
+                            let mut active_file_strong = crate::test_runner::jest::Jest::runner()
+                                .unwrap()
+                                .bun_test_root
+                                .active_file
+                                // TODO: add a .cloneNonOptional()?
+                                .clone();
 
                             let taken_active_file = active_file_strong.take().unwrap();
 
@@ -1836,8 +1909,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
     let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
-    let stdout = subprocess.stdout.with_mut(|s| s.to_buffered_value(global_this))?;
-    let stderr = subprocess.stderr.with_mut(|s| s.to_buffered_value(global_this))?;
+    let stdout = subprocess
+        .stdout
+        .with_mut(|s| s.to_buffered_value(global_this))?;
+    let stderr = subprocess
+        .stderr
+        .with_mut(|s| s.to_buffered_value(global_this))?;
     let resource_usage: JSValue = if !global_this.has_exception() {
         subprocess.create_resource_usage_object(global_this)?
     } else {
@@ -1868,14 +1945,22 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         sync_value.put(
             global_this,
             b"exitedDueToTimeout",
-            if exited_due_to_timeout { JSValue::TRUE } else { JSValue::FALSE },
+            if exited_due_to_timeout {
+                JSValue::TRUE
+            } else {
+                JSValue::FALSE
+            },
         );
     }
     if max_buffer.is_some() {
         sync_value.put(
             global_this,
             b"exitedDueToMaxBuffer",
-            if exited_due_to_max_buffer.is_some() { JSValue::TRUE } else { JSValue::FALSE },
+            if exited_due_to_max_buffer.is_some() {
+                JSValue::TRUE
+            } else {
+                JSValue::FALSE
+            },
         );
     }
     sync_value.put(global_this, b"pid", result_pid);
@@ -1915,7 +2000,10 @@ pub fn append_envp_from_js(
     let mut object_iter = JSPropertyIterator::init(
         global_this,
         object,
-        jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
+        jsc::PropertyIteratorOptions {
+            skip_empty_name: false,
+            include_value: true,
+        },
     )?;
     // drops at scope exit (was `defer object_iter.deinit()`).
 
@@ -1966,7 +2054,8 @@ pub fn append_envp_from_js(
         // PERF(port): was arena bulk-free — profile in Phase B.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string()).map_err(|_| JsError::OutOfMemory)?;
+            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
+                .map_err(|_| JsError::OutOfMemory)?;
             ZBox::from_vec(buf)
         };
 

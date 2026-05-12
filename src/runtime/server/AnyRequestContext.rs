@@ -46,7 +46,10 @@ pub struct AnyRequestContext {
 }
 
 impl AnyRequestContext {
-    pub const NULL: Self = Self { tag: CtxTag::None, ptr: core::ptr::null_mut() };
+    pub const NULL: Self = Self {
+        tag: CtxTag::None,
+        ptr: core::ptr::null_mut(),
+    };
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
@@ -80,7 +83,10 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> CtxKind
 
 impl AnyRequestContext {
     pub fn init<T: CtxKind>(request_ctx: *const T) -> Self {
-        Self { tag: T::TAG, ptr: request_ctx as *mut () }
+        Self {
+            tag: T::TAG,
+            ptr: request_ctx as *mut (),
+        }
     }
 }
 

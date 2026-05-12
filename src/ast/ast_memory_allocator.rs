@@ -163,26 +163,40 @@ pub struct Scope<'a> {
 
 impl<'a> Default for Scope<'a> {
     fn default() -> Self {
-        Self { current: None, previous: None, previous_logger: ptr::null(), previous_heap: ptr::null_mut() }
+        Self {
+            current: None,
+            previous: None,
+            previous_logger: ptr::null(),
+            previous_heap: ptr::null_mut(),
+        }
     }
 }
 
 impl<'a> Scope<'a> {
     pub fn enter(&mut self) {
-        debug_assert!(expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator());
+        debug_assert!(
+            expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator()
+        );
 
         self.previous = Some(expr::data::Store::memory_allocator());
         self.previous_logger = crate::data_store_override();
         self.previous_heap = bun_alloc::ast_alloc::thread_heap();
 
-        let (current, arena, heap): (*mut ASTMemoryAllocator, *const Arena, *mut bun_alloc::mimalloc::Heap) =
-            match &mut self.current {
-                Some(r) => {
-                    let arena: *const Arena = &r.arena;
-                    (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena, r.arena.heap_ptr())
-                }
-                None => (ptr::null_mut(), ptr::null(), ptr::null_mut()),
-            };
+        let (current, arena, heap): (
+            *mut ASTMemoryAllocator,
+            *const Arena,
+            *mut bun_alloc::mimalloc::Heap,
+        ) = match &mut self.current {
+            Some(r) => {
+                let arena: *const Arena = &r.arena;
+                (
+                    std::ptr::from_mut::<ASTMemoryAllocator>(*r),
+                    arena,
+                    r.arena.heap_ptr(),
+                )
+            }
+            None => (ptr::null_mut(), ptr::null(), ptr::null_mut()),
+        };
 
         expr::data::Store::set_memory_allocator(current);
         stmt::data::Store::set_memory_allocator(current);
@@ -218,9 +232,7 @@ impl<'a> Scope<'a> {
             // still points at *this* scope's arena, which the caller is about
             // to drop. Re-read the side arena's live heap (or null if none
             // exists yet — i.e. no block-store on this thread).
-            bun_alloc::ast_alloc::set_thread_heap(
-                crate::store_ast_alloc_heap::current_heap(),
-            );
+            bun_alloc::ast_alloc::set_thread_heap(crate::store_ast_alloc_heap::current_heap());
         }
     }
 }

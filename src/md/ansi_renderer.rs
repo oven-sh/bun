@@ -12,7 +12,9 @@ use bun_core::strings;
 
 use crate::helpers;
 use crate::root;
-use crate::types::{self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
+use crate::types::{
+    self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
+};
 
 pub struct Theme<'a> {
     /// True when the terminal background is light. Controls color choices
@@ -79,10 +81,18 @@ impl ImageUrlCollector {
 
 // PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for ImageUrlCollector {
-    fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> { Ok(()) }
-    fn leave_block(&mut self, _: BlockType, _: u32) -> JsResult<()> { Ok(()) }
-    fn leave_span(&mut self, _: SpanType) -> JsResult<()> { Ok(()) }
-    fn text(&mut self, _: TextType, _: &[u8]) -> JsResult<()> { Ok(()) }
+    fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
+        Ok(())
+    }
+    fn leave_block(&mut self, _: BlockType, _: u32) -> JsResult<()> {
+        Ok(())
+    }
+    fn leave_span(&mut self, _: SpanType) -> JsResult<()> {
+        Ok(())
+    }
+    fn text(&mut self, _: TextType, _: &[u8]) -> JsResult<()> {
+        Ok(())
+    }
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
         if span_type != SpanType::Img {
             return Ok(());
@@ -171,7 +181,12 @@ struct BlockContext {
 
 impl Default for BlockContext {
     fn default() -> Self {
-        Self { kind: BlockKind::Li, data: 0, index: 0, indent: 0 }
+        Self {
+            kind: BlockKind::Li,
+            data: 0,
+            index: 0,
+            indent: 0,
+        }
     }
 }
 
@@ -208,10 +223,26 @@ struct InlineStyle {
 impl InlineStyle {
     fn of(span_type: SpanType) -> Option<InlineStyle> {
         match span_type {
-            SpanType::Em => Some(InlineStyle { flag: SPAN_EM, on: style(AnsiStyle::Italic), off: b"\x1b[23m" }),
-            SpanType::Strong => Some(InlineStyle { flag: SPAN_STRONG, on: style(AnsiStyle::Bold), off: b"\x1b[22m" }),
-            SpanType::U => Some(InlineStyle { flag: SPAN_U, on: style(AnsiStyle::Underline), off: b"\x1b[24m" }),
-            SpanType::Del => Some(InlineStyle { flag: SPAN_DEL, on: style(AnsiStyle::Strikethrough), off: b"\x1b[29m" }),
+            SpanType::Em => Some(InlineStyle {
+                flag: SPAN_EM,
+                on: style(AnsiStyle::Italic),
+                off: b"\x1b[23m",
+            }),
+            SpanType::Strong => Some(InlineStyle {
+                flag: SPAN_STRONG,
+                on: style(AnsiStyle::Bold),
+                off: b"\x1b[22m",
+            }),
+            SpanType::U => Some(InlineStyle {
+                flag: SPAN_U,
+                on: style(AnsiStyle::Underline),
+                off: b"\x1b[24m",
+            }),
+            SpanType::Del => Some(InlineStyle {
+                flag: SPAN_DEL,
+                on: style(AnsiStyle::Strikethrough),
+                off: b"\x1b[29m",
+            }),
             _ => None,
         }
     }
@@ -243,7 +274,10 @@ impl OutputBuffer {
 impl<'a> AnsiRenderer<'a> {
     pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
-            out: OutputBuffer { list: Vec::new(), oom: false },
+            out: OutputBuffer {
+                list: Vec::new(),
+                oom: false,
+            },
             src_text,
             theme,
             block_stack: Vec::new(),
@@ -321,7 +355,10 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Li => {
                 self.ensure_newline();
                 self.write_indent();
-                let mut entry = BlockContext { kind: BlockKind::Li, ..Default::default() };
+                let mut entry = BlockContext {
+                    kind: BlockKind::Li,
+                    ..Default::default()
+                };
                 // PORT NOTE: reshaped for borrowck — find_parent_list returns
                 // an index instead of `&mut BlockContext` so we can call
                 // self.write_styled() afterwards without an aliasing borrow.
@@ -336,11 +373,22 @@ impl<'a> AnsiRenderer<'a> {
                     if task_mark != 0 {
                         let checked = types::is_task_checked(task_mark);
                         let g: &[u8] = if self.theme.colors {
-                            if checked { "☒ ".as_bytes() } else { "☐ ".as_bytes() }
+                            if checked {
+                                "☒ ".as_bytes()
+                            } else {
+                                "☐ ".as_bytes()
+                            }
                         } else {
                             if checked { b"[x] " } else { b"[ ] " }
                         };
-                        break 'blk (g, if checked { color(AnsiColor::Green) } else { color(AnsiColor::Dim) });
+                        break 'blk (
+                            g,
+                            if checked {
+                                color(AnsiColor::Green)
+                            } else {
+                                color(AnsiColor::Dim)
+                            },
+                        );
                     }
                     if let Some(idx) = parent_list {
                         if self.block_stack[idx].kind == BlockKind::Ol {
@@ -352,7 +400,11 @@ impl<'a> AnsiRenderer<'a> {
                         }
                     }
                     break 'blk (
-                        if self.theme.colors { "• ".as_bytes() } else { b"* " },
+                        if self.theme.colors {
+                            "• ".as_bytes()
+                        } else {
+                            b"* "
+                        },
                         color(AnsiColor::Cyan),
                     );
                 };
@@ -374,10 +426,16 @@ impl<'a> AnsiRenderer<'a> {
                 let width: u32 = if self.theme.columns == 0 {
                     60u32.saturating_sub(indent_cols)
                 } else {
-                    u32::from(self.theme.columns).min(60).saturating_sub(indent_cols)
+                    u32::from(self.theme.columns)
+                        .min(60)
+                        .saturating_sub(indent_cols)
                 };
                 let mut i: u32 = 0;
-                let dash: &[u8] = if self.theme.colors { "─".as_bytes() } else { b"-" };
+                let dash: &[u8] = if self.theme.colors {
+                    "─".as_bytes()
+                } else {
+                    b"-"
+                };
                 self.write_styled(color(AnsiColor::Dim), b"");
                 while i < width {
                     self.write_raw(dash);
@@ -766,9 +824,9 @@ impl<'a> AnsiRenderer<'a> {
                     }
                     let mut cut = visible_index_at(rest, r as usize);
                     if cut == 0 {
-                        cut = rest
-                            .len()
-                            .min(usize::from(strings::wtf8_byte_sequence_length_with_invalid(rest[0])));
+                        cut = rest.len().min(usize::from(
+                            strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
+                        ));
                     }
                     self.write_raw(&rest[0..cut]);
                     self.col += u32::try_from(visible_width(&rest[0..cut])).expect("int cast");
@@ -958,8 +1016,9 @@ impl<'a> AnsiRenderer<'a> {
                     // emit one codepoint to make progress.
                     let adv = visible_index_at(rest, 2);
                     let one = if adv == 0 {
-                        rest.len()
-                            .min(usize::from(strings::wtf8_byte_sequence_length_with_invalid(rest[0])))
+                        rest.len().min(usize::from(
+                            strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
+                        ))
                     } else {
                         adv
                     };
@@ -1021,7 +1080,8 @@ impl<'a> AnsiRenderer<'a> {
             return;
         }
         self.emit_inline(text_);
-        if !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0 {
+        if !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0
+        {
             self.col += u32::try_from(visible_width(text_)).expect("int cast");
             self.last_was_newline = false;
         }
@@ -1098,7 +1158,11 @@ impl<'a> AnsiRenderer<'a> {
                 _ => other_indent += entry.indent,
             }
         }
-        let bar: &[u8] = if self.theme.colors { "│ ".as_bytes() } else { b"| " };
+        let bar: &[u8] = if self.theme.colors {
+            "│ ".as_bytes()
+        } else {
+            b"| "
+        };
         if self.theme.colors && quote_bars > 0 {
             self.out.write(b"\x1b[38;5;242m");
         }
@@ -1125,7 +1189,11 @@ impl<'a> AnsiRenderer<'a> {
     fn current_indent(&self) -> u32 {
         let mut total: u32 = 0;
         for entry in &self.block_stack {
-            total += if entry.kind == BlockKind::Quote { 2 } else { entry.indent };
+            total += if entry.kind == BlockKind::Quote {
+                2
+            } else {
+                entry.indent
+            };
         }
         total
     }
@@ -1163,7 +1231,11 @@ impl<'a> AnsiRenderer<'a> {
         if quote_bars == 0 {
             return;
         }
-        let bar: &[u8] = if self.theme.colors { "│".as_bytes() } else { b"|" };
+        let bar: &[u8] = if self.theme.colors {
+            "│".as_bytes()
+        } else {
+            b"|"
+        };
         if self.theme.colors {
             self.out.write(b"\x1b[38;5;242m");
         }
@@ -1196,7 +1268,10 @@ impl<'a> AnsiRenderer<'a> {
         if !self.out.list.is_empty() {
             // Check if last two chars are newlines
             let items = &self.out.list;
-            if items.len() >= 2 && items[items.len() - 1] == b'\n' && items[items.len() - 2] != b'\n' {
+            if items.len() >= 2
+                && items[items.len() - 1] == b'\n'
+                && items[items.len() - 2] != b'\n'
+            {
                 self.write_quote_bars();
                 self.out.write_byte(b'\n');
                 self.col = 0;
@@ -1277,7 +1352,11 @@ impl<'a> AnsiRenderer<'a> {
                 self.out.write(color(AnsiColor::Dim));
             }
             let ch: &[u8] = if self.theme.colors {
-                if level == 1 { "═".as_bytes() } else { "─".as_bytes() }
+                if level == 1 {
+                    "═".as_bytes()
+                } else {
+                    "─".as_bytes()
+                }
             } else {
                 if level == 1 { b"=" } else { b"-" }
             };
@@ -1313,17 +1392,37 @@ impl<'a> AnsiRenderer<'a> {
             &src
         };
 
-        let top_border: &[u8] = if self.theme.colors { "┌─ ".as_bytes() } else { b"+- " };
-        let top_bare: &[u8] = if self.theme.colors { "┌─".as_bytes() } else { b"+-" };
-        let side: &[u8] = if self.theme.colors { "│ ".as_bytes() } else { b"| " };
-        let bottom: &[u8] = if self.theme.colors { "└─".as_bytes() } else { b"+-" };
+        let top_border: &[u8] = if self.theme.colors {
+            "┌─ ".as_bytes()
+        } else {
+            b"+- "
+        };
+        let top_bare: &[u8] = if self.theme.colors {
+            "┌─".as_bytes()
+        } else {
+            b"+-"
+        };
+        let side: &[u8] = if self.theme.colors {
+            "│ ".as_bytes()
+        } else {
+            b"| "
+        };
+        let bottom: &[u8] = if self.theme.colors {
+            "└─".as_bytes()
+        } else {
+            b"+-"
+        };
 
         // Language badge
         if self.theme.colors {
             self.out.write(color(AnsiColor::Dim));
         }
         self.write_indent();
-        let badge: &[u8] = if !self.code_lang.is_empty() { self.code_lang } else { b"" };
+        let badge: &[u8] = if !self.code_lang.is_empty() {
+            self.code_lang
+        } else {
+            b""
+        };
         if !badge.is_empty() {
             self.out.write(top_border);
             if self.theme.colors {
@@ -1474,7 +1573,11 @@ impl<'a> AnsiRenderer<'a> {
                 self.out.write(chars.h);
                 j += 1;
             }
-            self.out.write(if i == widths.len() - 1 { chars.tr } else { chars.t });
+            self.out.write(if i == widths.len() - 1 {
+                chars.tr
+            } else {
+                chars.t
+            });
         }
         if self.theme.colors {
             self.out.write(b"\x1b[0m");
@@ -1505,7 +1608,11 @@ impl<'a> AnsiRenderer<'a> {
                 self.out.write(chars.h);
                 j += 1;
             }
-            self.out.write(if i == widths.len() - 1 { chars.br } else { chars.b });
+            self.out.write(if i == widths.len() - 1 {
+                chars.br
+            } else {
+                chars.b
+            });
         }
         if self.theme.colors {
             self.out.write(b"\x1b[0m");
@@ -1535,7 +1642,11 @@ impl<'a> AnsiRenderer<'a> {
 
         let mut lines: usize = 1;
         for (i, &w) in widths.iter().enumerate() {
-            let content: &[u8] = if i < row.cells.len() { &row.cells[i].content } else { b"" };
+            let content: &[u8] = if i < row.cells.len() {
+                &row.cells[i].content
+            } else {
+                b""
+            };
             let mut rest = content;
             let mut state = CellAnsiState::default();
             while !rest.is_empty() {
@@ -1555,9 +1666,9 @@ impl<'a> AnsiRenderer<'a> {
                     }
                 }
                 if cut == 0 {
-                    cut = rest
-                        .len()
-                        .min(usize::from(strings::wtf8_byte_sequence_length_with_invalid(rest[0])));
+                    cut = rest.len().min(usize::from(
+                        strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
+                    ));
                 }
                 state_at[i].push(state.clone());
                 segments[i].push(&rest[0..cut]);
@@ -1589,7 +1700,11 @@ impl<'a> AnsiRenderer<'a> {
                 self.out.write(b"\x1b[0m");
             }
             for (i, &w) in widths.iter().enumerate() {
-                let seg: &[u8] = if line < segments[i].len() { segments[i][line] } else { b"" };
+                let seg: &[u8] = if line < segments[i].len() {
+                    segments[i][line]
+                } else {
+                    b""
+                };
                 let opens: CellAnsiState = if line < state_at[i].len() {
                     state_at[i][line].clone()
                 } else {
@@ -1611,7 +1726,11 @@ impl<'a> AnsiRenderer<'a> {
                 } else {
                     Align::Default
                 };
-                let alignment = if cell_align != Align::Default { cell_align } else { aligns[i] };
+                let alignment = if cell_align != Align::Default {
+                    cell_align
+                } else {
+                    aligns[i]
+                };
                 let pad = w.saturating_sub(cw);
                 let (left, right): (usize, usize) = match alignment {
                     Align::Right => (pad, 0),
@@ -1661,7 +1780,11 @@ impl<'a> AnsiRenderer<'a> {
                 self.out.write(chars.h);
                 j += 1;
             }
-            self.out.write(if i == widths.len() - 1 { chars.mr } else { chars.x });
+            self.out.write(if i == widths.len() - 1 {
+                chars.mr
+            } else {
+                chars.x
+            });
         }
         if self.theme.colors {
             self.out.write(b"\x1b[0m");
@@ -1805,7 +1928,11 @@ impl<'a> AnsiRenderer<'a> {
             self.write_raw_no_color(src.as_deref().unwrap());
             self.write_raw_no_color(b"\x1b\\");
         }
-        let img_marker: &[u8] = if self.theme.colors { "📷 ".as_bytes() } else { b"[img] " };
+        let img_marker: &[u8] = if self.theme.colors {
+            "📷 ".as_bytes()
+        } else {
+            b"[img] "
+        };
         self.write_styled(color(AnsiColor::Magenta), img_marker);
         // Route alt/title through writeContent so word-wrap applies and
         // any hard breaks (`\n` captured from .br events) get a proper
@@ -2232,8 +2359,16 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
 
 fn is_js_lang(lang: &[u8]) -> bool {
     const NAMES: [&[u8]; 10] = [
-        b"js", b"javascript", b"jsx", b"mjs", b"cjs",
-        b"ts", b"typescript", b"tsx", b"mts", b"cts",
+        b"js",
+        b"javascript",
+        b"jsx",
+        b"mjs",
+        b"cjs",
+        b"ts",
+        b"typescript",
+        b"tsx",
+        b"mts",
+        b"cts",
     ];
     for n in NAMES {
         if strings::eql_case_insensitive_ascii(lang, n, true) {
@@ -2469,7 +2604,8 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+    let joined =
+        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
     let abs = Box::<[u8]>::from(joined);
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
@@ -2555,7 +2691,9 @@ pub fn render_to_ansi<'a>(
     if renderer.out.oom {
         return Err(ParserError::OutOfMemory);
     }
-    Ok(Some(core::mem::take(&mut renderer.out.list).into_boxed_slice()))
+    Ok(Some(
+        core::mem::take(&mut renderer.out.list).into_boxed_slice(),
+    ))
 }
 
 // ported from: src/md/ansi_renderer.zig

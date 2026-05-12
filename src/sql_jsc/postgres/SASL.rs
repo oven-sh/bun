@@ -6,7 +6,8 @@ const NONCE_BYTE_LEN: usize = 18;
 const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);
 
 const SERVER_SIGNATURE_BYTE_LEN: usize = 32;
-const SERVER_SIGNATURE_BASE64_LEN: usize = bun_base64::encode_len_from_size(SERVER_SIGNATURE_BYTE_LEN);
+const SERVER_SIGNATURE_BASE64_LEN: usize =
+    bun_base64::encode_len_from_size(SERVER_SIGNATURE_BYTE_LEN);
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
@@ -81,7 +82,11 @@ impl SASL {
         // `EVP_sha256()` returns a static EVP_MD singleton.
         let rc = unsafe {
             boringssl::PKCS5_PBKDF2_HMAC(
-                if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
+                if password.is_empty() {
+                    core::ptr::null()
+                } else {
+                    password.as_ptr()
+                },
                 password.len(),
                 salt_bytes.as_ptr(),
                 salt_bytes.len(),
@@ -111,8 +116,8 @@ impl SASL {
         // TODO(port): narrow error set
         debug_assert!(self.server_signature_len == 0);
 
-        let server_key =
-            hmac(self.salted_password(), b"Server Key").ok_or(bun_core::err!("InvalidServerKey"))?;
+        let server_key = hmac(self.salted_password(), b"Server Key")
+            .ok_or(bun_core::err!("InvalidServerKey"))?;
         let server_signature_bytes =
             hmac(&server_key, auth_string).ok_or(bun_core::err!("InvalidServerSignature"))?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
@@ -142,8 +147,8 @@ impl SASL {
         if self.nonce_len == 0 {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
             bun_core::csprng(&mut bytes);
-            self.nonce_len =
-                u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes)).expect("int cast");
+            self.nonce_len = u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes))
+                .expect("int cast");
         }
         &self.nonce_base64_bytes[0..self.nonce_len as usize]
     }

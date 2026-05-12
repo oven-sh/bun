@@ -55,7 +55,12 @@ impl JSUint8Array {
     pub fn from_bytes_copy(global: &JSGlobalObject, bytes: &[u8]) -> JSValue {
         // SAFETY: C++ copies `len` bytes out of `ptr`; it does not retain the pointer.
         unsafe {
-            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast::<c_void>(), bytes.len(), false)
+            Bun__createUint8ArrayForCopy(
+                global,
+                bytes.as_ptr().cast::<c_void>(),
+                bytes.len(),
+                false,
+            )
         }
     }
 

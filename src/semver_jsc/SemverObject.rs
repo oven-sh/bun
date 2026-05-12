@@ -2,15 +2,18 @@
 
 use core::cmp::Ordering;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_semver::{query, SlicedString, Version};
 use bun_core::strings;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_semver::{SlicedString, Version, query};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(global, &[
-        ("satisfies", __jsc_host_satisfies, 2),
-        ("order", __jsc_host_order, 2),
-    ])
+    bun_jsc::create_host_function_object(
+        global,
+        &[
+            ("satisfies", __jsc_host_satisfies, 2),
+            ("order", __jsc_host_order, 2),
+        ],
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -109,9 +112,11 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         return Ok(JSValue::js_boolean(left_version.eql(right_version)));
     }
 
-    Ok(JSValue::js_boolean(
-        right_group.satisfies(left_version, right.slice(), left.slice()),
-    ))
+    Ok(JSValue::js_boolean(right_group.satisfies(
+        left_version,
+        right.slice(),
+        left.slice(),
+    )))
 }
 
 // ported from: src/semver_jsc/SemverObject.zig

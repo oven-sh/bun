@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use bstr::BStr;
 
-use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_sourcemap::{mapping, Mapping, Ordinal, ParseResult, ParsedSourceMap};
 use bun_core::{self as bstring, strings};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 
 // TODO(b2-blocked): bun_jsc::JsClass — `#[bun_jsc::JsClass]` derive proc-macro not yet
 // implemented; the codegen-provided `to_js`/`from_js`/cached-setter accessors are
@@ -125,9 +125,9 @@ impl JSSourceMap {
 
         // Extract mappings string from payload
         let Some(mappings_value) = payload_arg.get_stringish(global, b"mappings")? else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "payload 'mappings' must be a string"
-            )));
+            return Err(
+                global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
+            );
         };
 
         let mappings_str = mappings_value.to_utf8();
@@ -155,10 +155,13 @@ impl JSSourceMap {
         // Parse the VLQ mappings
         let parse_result = mapping::parse(
             mappings_str.slice(),
-            None, // estimated_mapping_count
+            None,                                            // estimated_mapping_count
             i32::try_from(sources.len()).expect("int cast"), // sources_count
             i32::MAX as usize,
-            mapping::ParseOptions { allow_names: true, sort: true },
+            mapping::ParseOptions {
+                allow_names: true,
+                sort: true,
+            },
         );
 
         let mapping_list = match parse_result {
@@ -204,17 +207,26 @@ impl JSSourceMap {
         // ownership transfers to the C++ JSCell wrapper (`m_ctx`). The extern takes
         // an erased `*mut ()` (matching `src/jsc/generated.rs::__create`) since
         // C++ stores it opaquely; cast back in `finalize`.
-        unsafe { SourceMap__create(global.as_mut_ptr(), bun_core::heap::into_raw(this).cast::<()>()) }
+        unsafe {
+            SourceMap__create(
+                global.as_mut_ptr(),
+                bun_core::heap::into_raw(this).cast::<()>(),
+            )
+        }
     }
     #[inline]
     fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe { SourceMapPrototype__payloadSetCachedValue(this_value, global.as_mut_ptr(), value) };
+        unsafe {
+            SourceMapPrototype__payloadSetCachedValue(this_value, global.as_mut_ptr(), value)
+        };
     }
     #[inline]
     fn line_lengths_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe { SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_mut_ptr(), value) };
+        unsafe {
+            SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_mut_ptr(), value)
+        };
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -256,7 +268,8 @@ impl JSSourceMap {
 
     fn source_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
         let source_index = mapping.source_index;
-        if source_index >= 0 && source_index < i32::try_from(self.sources.len()).expect("int cast") {
+        if source_index >= 0 && source_index < i32::try_from(self.sources.len()).expect("int cast")
+        {
             return self.sources[usize::try_from(source_index).expect("int cast")].to_js(global);
         }
         Ok(JSValue::UNDEFINED)

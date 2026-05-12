@@ -8,30 +8,30 @@ use core::ptr::NonNull;
 // ─── submodules under ./webcore/ ─────────────────────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`).
 
-#[path = "webcore/Crypto.rs"]
-pub mod crypto;
+#[path = "webcore/ArrayBufferSink.rs"]
+pub mod array_buffer_sink;
 #[path = "webcore/BakeResponse.rs"]
 pub mod bake_response;
-#[path = "webcore/TextEncoder.rs"]
-pub mod text_encoder;
-#[path = "webcore/TextEncoderStreamEncoder.rs"]
-pub mod text_encoder_stream_encoder;
-#[path = "webcore/S3Stat.rs"]
-pub mod s3_stat;
+#[path = "webcore/ByteBlobLoader.rs"]
+pub mod byte_blob_loader;
+#[path = "webcore/ByteStream.rs"]
+pub mod byte_stream;
+#[path = "webcore/CookieMap.rs"]
+pub mod cookie_map;
+#[path = "webcore/Crypto.rs"]
+pub mod crypto;
 #[path = "webcore/ResumableSink.rs"]
 pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]
 pub mod s3_client;
 #[path = "webcore/S3File.rs"]
 pub mod s3_file;
-#[path = "webcore/CookieMap.rs"]
-pub mod cookie_map;
-#[path = "webcore/ByteBlobLoader.rs"]
-pub mod byte_blob_loader;
-#[path = "webcore/ByteStream.rs"]
-pub mod byte_stream;
-#[path = "webcore/ArrayBufferSink.rs"]
-pub mod array_buffer_sink;
+#[path = "webcore/S3Stat.rs"]
+pub mod s3_stat;
+#[path = "webcore/TextEncoder.rs"]
+pub mod text_encoder;
+#[path = "webcore/TextEncoderStreamEncoder.rs"]
+pub mod text_encoder_stream_encoder;
 
 // ─── flat re-exports (mirror Zig `pub const X = @import(...)`) ───────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;
@@ -40,10 +40,12 @@ pub use s3_stat::S3Stat;
 // `ResumableSink` is the `m_ctx` payload of a JS wrapper; it stores its
 // `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
 // lifetime), so the type aliases are lifetime-free and re-exported directly.
+pub use cookie_map::{CookieMap, CookieMapRef};
 pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
 pub use s3_client::S3Client;
-pub use cookie_map::{CookieMap, CookieMapRef};
-pub use streams::{NetworkSink, HTTPResponseSink, HTTPSResponseSink, H3ResponseSink, HTTPServerWritable};
+pub use streams::{
+    H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
+};
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub mod object_url_registry;
@@ -86,11 +88,14 @@ pub mod s3_stub {
         #[derive(Debug, Default)] pub struct $n;
     )*};}
     opaque!(
-        S3DeleteResult, S3ListObjectsResult,
-        S3SimpleRequestResult, S3DownloadStreamWrapper, S3HttpSimpleTask,
+        S3DeleteResult,
+        S3ListObjectsResult,
+        S3SimpleRequestResult,
+        S3DownloadStreamWrapper,
+        S3HttpSimpleTask,
     );
     // Real types now exist upstream — forward them.
-    pub use bun_s3_signing::{S3Credentials, S3CredentialsWithOptions, ACL, StorageClass};
+    pub use bun_s3_signing::{ACL, S3Credentials, S3CredentialsWithOptions, StorageClass};
     // Real type now exists in webcore/s3/list_objects.rs — forward it so
     // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
     // are the same type (Store.rs imports via this path).
@@ -183,7 +188,8 @@ impl AutoFlusher {
         // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
         // only the *check* is debug-gated. Do not wrap the side-effecting call
         // in `debug_assert!`.
-        let removed = vm.event_loop_ref()
+        let removed = vm
+            .event_loop_ref()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -197,7 +203,8 @@ impl AutoFlusher {
     ) {
         debug_assert!(!this.auto_flusher().registered);
         this.auto_flusher().registered = true;
-        let found_existing = vm.event_loop_ref()
+        let found_existing = vm
+            .event_loop_ref()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);
@@ -248,10 +255,10 @@ pub mod headers_ref;
 // ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;
-pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
 pub use blob::store::StoreExt as BlobStoreExt;
+pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
 pub mod body;
@@ -287,8 +294,8 @@ pub use file_sink::FileSink;
 
 // ByteStream/ByteBlobLoader: real bodies now live in webcore/ByteStream.rs and
 // webcore/ByteBlobLoader.rs (declared above). Re-export the struct types here.
-pub use byte_stream::ByteStream;
 pub use byte_blob_loader::ByteBlobLoader;
+pub use byte_stream::ByteStream;
 
 // TODO: make this JSGlobalObject local for better security
 // Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
@@ -329,7 +336,7 @@ pub mod prompt;
 
 #[path = "webcore/FormData.rs"]
 pub mod form_data;
-pub use form_data::{FormData, AsyncFormData};
+pub use form_data::{AsyncFormData, FormData};
 
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
@@ -341,12 +348,24 @@ pub mod multipart_options_impl;
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
 // `src/runtime/`) and re-export them under `s3`.
-#[doc(hidden)] #[path = "webcore/s3/simple_request.rs"] pub mod __s3_simple_request;
-#[doc(hidden)] #[path = "webcore/s3/download_stream.rs"] pub mod __s3_download_stream;
-#[doc(hidden)] #[path = "webcore/s3/list_objects.rs"] pub mod __s3_list_objects;
-#[doc(hidden)] #[path = "webcore/s3/multipart.rs"] pub mod __s3_multipart;
-#[doc(hidden)] #[path = "webcore/s3/client.rs"] pub mod __s3_client;
-#[doc(hidden)] #[path = "webcore/s3/credentials_jsc.rs"] pub mod __s3_credentials_jsc;
+#[doc(hidden)]
+#[path = "webcore/s3/client.rs"]
+pub mod __s3_client;
+#[doc(hidden)]
+#[path = "webcore/s3/credentials_jsc.rs"]
+pub mod __s3_credentials_jsc;
+#[doc(hidden)]
+#[path = "webcore/s3/download_stream.rs"]
+pub mod __s3_download_stream;
+#[doc(hidden)]
+#[path = "webcore/s3/list_objects.rs"]
+pub mod __s3_list_objects;
+#[doc(hidden)]
+#[path = "webcore/s3/multipart.rs"]
+pub mod __s3_multipart;
+#[doc(hidden)]
+#[path = "webcore/s3/simple_request.rs"]
+pub mod __s3_simple_request;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
@@ -354,21 +373,21 @@ pub mod s3 {
     // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
     // TODO(b2-blocked): replace with real bun_s3 types once that crate exists.
     pub use super::s3_stub::{
-        S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
-        S3ListObjectsResult, ACL, StorageClass, S3SimpleRequestResult,
-        S3DownloadStreamWrapper, S3HttpSimpleTask,
+        ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
+        S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
+        StorageClass,
     };
 
     // PORT NOTE: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
     // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
-    pub use super::__s3_simple_request as simple_request;
+    pub use super::__s3_client as client;
+    pub use super::__s3_credentials_jsc as credentials_jsc;
     pub use super::__s3_download_stream as download_stream;
     pub use super::__s3_list_objects as list_objects;
     pub use super::__s3_multipart as multipart;
+    pub use super::__s3_simple_request as simple_request;
     pub use multipart::MultiPartUpload;
-    pub use super::__s3_client as client;
-    pub use super::__s3_credentials_jsc as credentials_jsc;
 }
 
 #[path = "webcore/streams.rs"]
@@ -430,10 +449,7 @@ impl<T: PipeHandler> Wrap<T> {
 }
 
 pub enum DrainResult {
-    Owned {
-        list: Vec<u8>,
-        size_hint: usize,
-    },
+    Owned { list: Vec<u8>, size_hint: usize },
     EstimatedSize(usize),
     Empty,
     Aborted,

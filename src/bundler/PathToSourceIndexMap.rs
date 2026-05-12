@@ -1,5 +1,5 @@
-use bun_collections::VecExt;
 use bun_collections::StringHashMap;
+use bun_collections::VecExt;
 
 use crate::IndexStringMap::IndexInt;
 
@@ -42,7 +42,11 @@ impl PathToSourceIndexMap {
         self.map.get(text.as_ref()).copied()
     }
 
-    pub fn put_path(&mut self, path: &impl PathLike, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+    pub fn put_path(
+        &mut self,
+        path: &impl PathLike,
+        value: IndexInt,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.put(path.path_text(), value)
     }
 
@@ -55,11 +59,17 @@ impl PathToSourceIndexMap {
         self.map.put(text, value)
     }
 
-    pub fn get_or_put_path(&mut self, path: &impl PathLike) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+    pub fn get_or_put_path(
+        &mut self,
+        path: &impl PathLike,
+    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         self.get_or_put(path.path_text())
     }
 
-    pub fn get_or_put(&mut self, text: impl AsRef<[u8]>) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+    pub fn get_or_put(
+        &mut self,
+        text: impl AsRef<[u8]>,
+    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         // PERF(port): see note in `put` re: key duplication.
         self.map.get_or_put(text.as_ref())
     }

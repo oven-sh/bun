@@ -1,6 +1,6 @@
-use crate::jsc::{js_error_to_postgres, JSGlobalObject, JSValue, StringJsc as _};
-use bun_sql::postgres::types::int_types::Short;
+use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _, js_error_to_postgres};
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
 
 pub const TO: i32 = 114;
@@ -33,10 +33,7 @@ impl JsonToJs for Data {
     }
 }
 
-pub fn to_js<T: JsonToJs>(
-    global: &JSGlobalObject,
-    value: T,
-) -> Result<JSValue, AnyPostgresError> {
+pub fn to_js<T: JsonToJs>(global: &JSGlobalObject, value: T) -> Result<JSValue, AnyPostgresError> {
     value.json_to_js(global)
 }
 

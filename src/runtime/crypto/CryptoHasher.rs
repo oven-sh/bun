@@ -3,11 +3,14 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_jsc::{ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _, JsError, JsResult};
 use bun_core::ZigString;
+use bun_jsc::{
+    ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
+    JsError, JsResult,
+};
 
-use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
+use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 // `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
@@ -31,7 +34,9 @@ const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
     // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
     // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-    global.bun_vm().as_mut()
+    global
+        .bun_vm()
+        .as_mut()
         .rare_data()
         .boring_engine()
         .cast::<boring_ssl::ENGINE>()
@@ -104,11 +109,13 @@ impl CryptoHasher {
                     // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(EVP::init(
-                        algorithm,
-                        md.cast::<boring_ssl::EVP_MD>(),
-                        boring_engine(global),
-                    )))));
+                    return Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(
+                        EVP::init(
+                            algorithm,
+                            md.cast::<boring_ssl::EVP_MD>(),
+                            boring_engine(global),
+                        ),
+                    ))));
                 }
             }
             _ => {
@@ -207,9 +214,8 @@ impl CryptoHasher {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
                     None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected string or buffer"
-                        )));
+                        return Err(global
+                            .throw_invalid_arguments(format_args!("expected string or buffer")));
                     }
                 }
             } else {
@@ -252,16 +258,15 @@ impl CryptoHasher {
         // Node.BlobOrStringOrBuffer
         let input = {
             let Some(arg) = next_eat() else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "expected blob, string or buffer"
-                )));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
             };
             match BlobOrStringOrBuffer::from_js(global, arg)? {
                 Some(b) => b,
                 None => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "expected blob, string or buffer"
-                    )));
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
             }
         };
@@ -274,9 +279,8 @@ impl CryptoHasher {
                     if arg.is_undefined() {
                         None
                     } else {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected string or buffer"
-                        )));
+                        return Err(global
+                            .throw_invalid_arguments(format_args!("expected string or buffer")));
                     }
                 }
             },
@@ -287,7 +291,9 @@ impl CryptoHasher {
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
-        global.throw(format_args!("HMAC has been consumed and is no longer usable"))
+        global.throw(format_args!(
+            "HMAC has been consumed and is no longer usable"
+        ))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -342,11 +348,8 @@ impl CryptoHasher {
             )));
         }
 
-        let Some(len) = evp.hash(
-            boring_engine(global),
-            input.slice(),
-            &mut output_digest_buf,
-        ) else {
+        let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
+        else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
@@ -379,25 +382,20 @@ impl CryptoHasher {
             let size = evp.size() as usize;
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < size {
-                return Err(global.throw_invalid_arguments(
-                    format_args!("TypedArray must be at least {} bytes", size),
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TypedArray must be at least {} bytes",
+                    size
+                )));
             }
             // PORT NOTE: reshaped for borrowck — Zig rebinds the slice into the output buffer.
             // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
             // (`bytes_len >= size` checked above; not detached since len > 0);
             // borrowed for this frame only. Build the `&mut` directly from the
             // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe {
-                core::slice::from_raw_parts_mut(output_buf.ptr, size)
-            };
+            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
         }
 
-        let Some(len) = evp.hash(
-            boring_engine(global),
-            input.slice(),
-            output_digest_slice,
-        ) else {
+        let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
@@ -423,9 +421,10 @@ impl CryptoHasher {
             None => match CryptoHasherZig::hash_by_name(global, &algorithm, input, output)? {
                 Some(v) => return Ok(v),
                 None => {
-                    return Err(global.throw_invalid_arguments(
-                        format_args!("Unsupported algorithm \"{}\"", algorithm),
-                    ));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Unsupported algorithm \"{}\"",
+                        algorithm
+                    )));
                 }
             },
         };
@@ -490,9 +489,8 @@ impl CryptoHasher {
             hmac_key = match StringOrBuffer::from_js(global, hmac_value)? {
                 Some(k) => Some(k),
                 None => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "key must be a string or buffer"
-                    )));
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("key must be a string or buffer")));
                 }
             };
         }
@@ -515,23 +513,26 @@ impl CryptoHasher {
                     }
                 };
 
-                break 'brk CryptoHasher::Hmac(JsCell::new(Some(match HMAC::init(chosen_algorithm, key.slice()) {
-                    Some(h) => h,
-                    None => {
-                        if !global.has_exception() {
-                            let err = boring_ssl::ERR_get_error();
-                            if err != 0 {
-                                let instance = create_crypto_error(global, err);
-                                boring_ssl::ERR_clear_error();
-                                return Err(global.throw_value(instance));
-                            } else {
-                                return Err(global
-                                    .throw_todo(b"HMAC is not supported for this algorithm yet"));
+                break 'brk CryptoHasher::Hmac(JsCell::new(Some(
+                    match HMAC::init(chosen_algorithm, key.slice()) {
+                        Some(h) => h,
+                        None => {
+                            if !global.has_exception() {
+                                let err = boring_ssl::ERR_get_error();
+                                if err != 0 {
+                                    let instance = create_crypto_error(global, err);
+                                    boring_ssl::ERR_clear_error();
+                                    return Err(global.throw_value(instance));
+                                } else {
+                                    return Err(global.throw_todo(
+                                        b"HMAC is not supported for this algorithm yet",
+                                    ));
+                                }
                             }
+                            return Err(JsError::Thrown);
                         }
-                        return Err(JsError::Thrown);
-                    }
-                })));
+                    },
+                )));
             }
 
             break 'brk CryptoHasher::Evp(JsCell::new(match EVP::by_name(&algorithm, global) {
@@ -539,9 +540,10 @@ impl CryptoHasher {
                 None => match CryptoHasherZig::constructor(&algorithm) {
                     Some(h) => return Ok(h),
                     None => {
-                        return Err(global.throw_invalid_arguments(
-                            format_args!("Unsupported algorithm {}", algorithm),
-                        ));
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Unsupported algorithm {}",
+                            algorithm
+                        )));
                     }
                 },
             }));
@@ -568,19 +570,18 @@ impl CryptoHasher {
             );
         }
         let encoding = arguments.ptr[1];
-        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding_value(
-            global, input, encoding,
-        )? {
-            Some(b) => b,
-            None => {
-                if !global.has_exception() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "expected blob, string or buffer"
-                    )));
+        let buffer =
+            match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
+                Some(b) => b,
+                None => {
+                    if !global.has_exception() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected blob, string or buffer"
+                        )));
+                    }
+                    return Err(JsError::Thrown);
                 }
-                return Err(JsError::Thrown);
-            }
-        };
+            };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
             return Err(global.throw(format_args!(
@@ -623,11 +624,7 @@ impl CryptoHasher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn copy(
-        this: &Self,
-        global: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
             CryptoHasher::Evp(inner) => CryptoHasher::Evp(JsCell::new(
                 inner
@@ -709,9 +706,8 @@ impl CryptoHasher {
             // is the JSC-owned writable backing store, outliving this frame. Build
             // the `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe {
-                core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len)
-            };
+            output_digest_slice =
+                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.
             output_digest_slice = &mut output_digest_buf;
@@ -733,11 +729,7 @@ impl CryptoHasher {
         }
     }
 
-    fn digest_to_encoding(
-        &self,
-        global: &JSGlobalObject,
-        encoding: Encoding,
-    ) -> JsResult<JSValue> {
+    fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let output_digest_slice: &mut [u8] = &mut output_digest_buf;
         let out = match self.final_(global, output_digest_slice) {
@@ -773,9 +765,7 @@ impl CryptoHasher {
                 let engine = boring_engine(global);
                 Ok(inner.with_mut(move |e| e.r#final(engine, output_digest_slice)))
             }
-            CryptoHasher::Zig(inner) => {
-                Ok(inner.with_mut(move |z| z.final_(output_digest_slice)))
-            }
+            CryptoHasher::Zig(inner) => Ok(inner.with_mut(move |z| z.final_(output_digest_slice))),
         }
     }
 
@@ -827,7 +817,7 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
 /// `sha3`/`blake2` crates (same Keccak-p[1600,24] permutation and BLAKE2s as
 /// Zig's `std.crypto`).
 mod zig_crypto_algos {
-    use super::{evp, ZigHashAlgo};
+    use super::{ZigHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
     pub type Sha3_224 = sha3::Sha3_224;
@@ -996,9 +986,10 @@ impl CryptoHasherZig {
 
         if let Some(output_buf) = &output {
             if output_buf.byte_slice().len() < digest_length_comptime {
-                return Err(global.throw_invalid_arguments(
-                    format_args!("TypedArray must be at least {} bytes", digest_length_comptime),
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TypedArray must be at least {} bytes",
+                    digest_length_comptime
+                )));
             }
         }
 
@@ -1009,9 +1000,8 @@ impl CryptoHasherZig {
             // writable backing store, outliving this frame. Build the `&mut`
             // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
             // (Stacked-Borrows UB).
-            let out = unsafe {
-                core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime)
-            };
+            let out =
+                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
             h.final_(out);
             Ok(output_buf.value)
         } else {
@@ -1026,11 +1016,13 @@ impl CryptoHasherZig {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
                 if $alg.slice() == $name {
-                    return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(CryptoHasherZig {
-                        algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
-                        state: Box::new(<$ty as ZigHashAlgo>::init()),
-                        digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
-                    }))));
+                    return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
+                        CryptoHasherZig {
+                            algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
+                            state: Box::new(<$ty as ZigHashAlgo>::init()),
+                            digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
+                        },
+                    ))));
                 }
             };
         }
@@ -1148,13 +1140,21 @@ macro_rules! impl_static_hasher {
             const HAS_ENGINE: bool = true;
 
             #[inline]
-            fn init() -> Self { <$ty>::init() }
+            fn init() -> Self {
+                <$ty>::init()
+            }
             #[inline]
-            fn new_digest() -> Self::Digest { [0u8; $len] }
+            fn new_digest() -> Self::Digest {
+                [0u8; $len]
+            }
             #[inline]
-            fn update(&mut self, bytes: &[u8]) { <$ty>::update(self, bytes) }
+            fn update(&mut self, bytes: &[u8]) {
+                <$ty>::update(self, bytes)
+            }
             #[inline]
-            fn final_(&mut self, out: &mut Self::Digest) { <$ty>::r#final(self, out) }
+            fn final_(&mut self, out: &mut Self::Digest) {
+                <$ty>::r#final(self, out)
+            }
             #[inline]
             fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
@@ -1222,9 +1222,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
                     None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected string or buffer"
-                        )));
+                        return Err(global
+                            .throw_invalid_arguments(format_args!("expected string or buffer")));
                     }
                 }
             } else {
@@ -1256,16 +1255,15 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         // Node.BlobOrStringOrBuffer
         let input = {
             let Some(arg) = next_eat() else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "expected blob, string or buffer"
-                )));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
             };
             match BlobOrStringOrBuffer::from_js(global, arg)? {
                 Some(b) => b,
                 None => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "expected blob, string or buffer"
-                    )));
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
             }
         };
@@ -1278,9 +1276,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     if arg.is_undefined() {
                         None
                     } else {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected string or buffer"
-                        )));
+                        return Err(global
+                            .throw_invalid_arguments(format_args!("expected string or buffer")));
                     }
                 }
             },
@@ -1332,9 +1329,10 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < H::DIGEST {
                 // Zig `comptimePrint` → runtime `format_args!`; observable string is identical.
-                return Err(global.throw_invalid_arguments(
-                    format_args!("TypedArray must be at least {} bytes", H::DIGEST),
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TypedArray must be at least {} bytes",
+                    H::DIGEST
+                )));
             }
             // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
@@ -1430,9 +1428,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
             Some(b) => b,
             None => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "expected blob or string or buffer"
-                )));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("expected blob or string or buffer")));
             }
         };
         // `defer buffer.deinit()` — handled by Drop.
@@ -1495,9 +1492,10 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(output_buf) = &output {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < H::DIGEST {
-                return Err(global.throw_invalid_arguments(
-                    format_args!("TypedArray must be at least {} bytes", H::DIGEST),
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TypedArray must be at least {} bytes",
+                    H::DIGEST
+                )));
             }
             // SAFETY: `bytes_len >= H::DIGEST`; `H::Digest = [u8; H::DIGEST]`;
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
@@ -1519,11 +1517,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
     }
 
-    fn digest_to_encoding(
-        &self,
-        global: &JSGlobalObject,
-        encoding: Encoding,
-    ) -> JsResult<JSValue> {
+    fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
         // Zig comptime zero-init loop → new_digest (zeroed [u8; N]).
         let mut output_digest_buf: H::Digest = H::new_digest();
 

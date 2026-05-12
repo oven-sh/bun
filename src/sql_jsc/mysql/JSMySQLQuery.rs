@@ -1,21 +1,21 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_jsc::JsCell;
-use bun_ptr::{BackRef, ParentRef};
+use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
-use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
-use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
+use bun_jsc::JsCell;
+use bun_ptr::{BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
+use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
+use super::js_mysql_connection::MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::postgres::command_tag_jsc::CommandTagJsc as _;
-use super::js_mysql_connection::MySQLConnection;
 // PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
 // the name once pulls in both namespaces, so the `debug!` macro below resolves
@@ -139,9 +139,7 @@ impl JSMySQLQuery {
                     .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
             }
             if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(
-                    global_this.throw_invalid_arguments(format_args!("query is too long"))
-                );
+                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
             }
         }
         if !pending_value.js_type().is_array_like() {
@@ -152,9 +150,15 @@ impl JSMySQLQuery {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: BackRef::from(NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null")),
+            vm: BackRef::from(
+                NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
+            ),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple)),
+            query: JsCell::new(MySQLQuery::init(
+                query.to_bun_string(global_this)?,
+                bigint,
+                simple,
+            )),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -256,9 +260,9 @@ impl JSMySQLQuery {
             1 => SQLQueryResultMode::Values,
             2 => SQLQueryResultMode::Raw,
             _ => {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"mode", b"Number", js_mode,
-                ));
+                return Err(
+                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
+                );
             }
         };
         this.query.with_mut(|q| q.set_result_mode(mode));
@@ -296,8 +300,12 @@ impl JSMySQLQuery {
             return;
         }
 
-        let Some(target_value) = self.get_target() else { return };
-        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let Some(target_value) = self.get_target() else {
+            return;
+        };
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
         this_value.ensure_still_alive();
         let tag = CommandTag::Select(result.result_count);
         let Ok(js_tag) = tag.to_js_tag(self.global_object()) else {
@@ -306,7 +314,12 @@ impl JSMySQLQuery {
         };
         js_tag.ensure_still_alive();
 
-        let Some(function) = self.vm_mut().sql_state().mysql_context.on_query_resolve_fn.get()
+        let Some(function) = self
+            .vm_mut()
+            .sql_state()
+            .mysql_context
+            .on_query_resolve_fn
+            .get()
         else {
             return;
         };
@@ -327,7 +340,11 @@ impl JSMySQLQuery {
                 pending_value,
                 js_tag,
                 tag.to_js_number(),
-                if queries_array.is_empty() { JSValue::UNDEFINED } else { queries_array },
+                if queries_array.is_empty() {
+                    JSValue::UNDEFINED
+                } else {
+                    queries_array
+                },
                 JSValue::js_boolean(is_last_result),
                 JSValue::js_number(result.last_insert_id as f64),
                 JSValue::js_number(result.affected_rows as f64),
@@ -353,11 +370,7 @@ impl JSMySQLQuery {
         if let Some(err_) = self.global_object().try_take_exception() {
             self.reject_with_js_value(queries_array, err_);
         } else {
-            let instance = mysql_error_to_js(
-                self.global_object(),
-                "Failed to bind query",
-                err,
-            );
+            let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
             instance.ensure_still_alive();
             self.reject_with_js_value(queries_array, instance);
         }
@@ -382,7 +395,9 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return;
         }
-        let Some(target_value) = self.get_target() else { return };
+        let Some(target_value) = self.get_target() else {
+            return;
+        };
 
         let mut js_error = err.to_error().unwrap_or(err);
         if js_error.is_empty() {
@@ -394,14 +409,26 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let Some(function) = self.vm_mut().sql_state().mysql_context.on_query_reject_fn.get() else {
+        let Some(function) = self
+            .vm_mut()
+            .sql_state()
+            .mysql_context
+            .on_query_reject_fn
+            .get()
+        else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
         let event_loop = self.event_loop();
-        let js_array = if queries_array.is_empty() { JSValue::UNDEFINED } else { queries_array };
+        let js_array = if queries_array.is_empty() {
+            JSValue::UNDEFINED
+        } else {
+            queries_array
+        };
         js_array.ensure_still_alive();
-        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
         event_loop.run_callback(
             function,
             self.global_object(),

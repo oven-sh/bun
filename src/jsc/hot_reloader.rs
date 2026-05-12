@@ -4,19 +4,19 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::{StringHashMap, StringSet};
-use bun_core::{self as core_, Output};
-use bun_resolver::fs::{self as Fs, FileSystem, PathName};
-use bun_paths::{self, PathBuffer, SEP};
 use bun_core::ZStr;
+use bun_core::{self as core_, Output};
 use bun_paths::strings;
+use bun_paths::{self, PathBuffer, SEP};
+use bun_resolver::fs::{self as Fs, FileSystem, PathName};
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
-use bun_event_loop::task_tag;
 use crate::Task as JscTask;
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
+use bun_event_loop::task_tag;
 
 bun_core::declare_scope!(hot_reloader, visible);
 
@@ -72,7 +72,10 @@ impl ImportWatcher {
     pub fn snapshot_fd_and_package_json(
         &self,
         hash: bun_watcher::HashType,
-    ) -> (Option<bun_sys::Fd>, Option<&'static bun_watcher::PackageJSON>) {
+    ) -> (
+        Option<bun_sys::Fd>,
+        Option<&'static bun_watcher::PackageJSON>,
+    ) {
         let w = match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
             ImportWatcher::None => return (None, None),
@@ -86,17 +89,17 @@ impl ImportWatcher {
             .watchlist
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
         (
-            if watcher_fd.is_valid() { Some(watcher_fd) } else { None },
+            if watcher_fd.is_valid() {
+                Some(watcher_fd)
+            } else {
+                None
+            },
             package_json,
         )
     }
 
     #[inline]
-    pub fn add_file_by_path_slow(
-        &mut self,
-        file_path: &[u8],
-        loader: bun_ast::Loader,
-    ) -> bool {
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
         // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8;
         // wrap the bun_ast::Loader discriminant.
         match self {
@@ -233,8 +236,7 @@ impl HotReloaderCtx for VirtualMachine {
         // vtable (re-exported from `bun_watcher`, so it's the same type).
         // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
         // via `heap::alloc` and is live for the VM's lifetime.
-        self.transpiler.resolver.watcher =
-            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
 
         watcher_ptr
     }
@@ -384,8 +386,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
 /// before `reload_process`; the new process reads and deletes that file.
 // Zig was `?*bun.StringSet`; written once on main thread before watcher thread
 // starts, then watcher-thread-only. `OnceLock` carries the publish.
-pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> =
-    std::sync::OnceLock::new();
+pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> = std::sync::OnceLock::new();
 
 /// `Send + Sync` newtype around the arena-allocated `StringSet` pointer so it
 /// can sit inside a `OnceLock`. The set is written once on the main thread
@@ -487,8 +488,7 @@ unsafe extern "C" {
 // static per monomorphization. Rust can't put a static in a generic impl; both
 // HotReloader and WatchReloader now share this. Revisit if the per-type split
 // was load-bearing.
-static CLEAR_SCREEN: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// BACKREF to the owning context (Bundler / VM transpiler store) that
@@ -689,7 +689,10 @@ where
             // VirtualMachine. But fixing that here would diverge from observable
             // Zig behaviour; revisit upstream first.
             flush_changed_paths_for_reload();
-            bun_core::reload_process(CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed), false);
+            bun_core::reload_process(
+                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+                false,
+            );
             unreachable!();
         }
 
@@ -768,10 +771,7 @@ where
         if let Err(err) = watcher.start() {
             // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
             let _ = &err;
-            Output::panic(format_args!(
-                "Failed to start File Watcher: {}",
-                err.name()
-            ));
+            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
         }
         watcher
     }
@@ -839,7 +839,10 @@ where
         let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
 
         // SAFETY: single-threaded init; watcher thread not yet started.
-        CLEAR_SCREEN.store(ctx.compute_clear_screen(), core::sync::atomic::Ordering::Relaxed);
+        CLEAR_SCREEN.store(
+            ctx.compute_clear_screen(),
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
         if let Err(_) = unsafe { (*watcher_ptr).start() } {
@@ -900,12 +903,8 @@ where
         // SAFETY: column `Count` is `u32`; `items_raw` yields a pointer valid
         // for `slice.len()` elements; the watcher thread is the sole writer of
         // this column for the loop's duration and no other `&` to it is live.
-        let counts: &mut [u32] = unsafe {
-            bun_core::ffi::slice_mut(
-                slice.items_raw::<"count", u32>(),
-                slice.len(),
-            )
-        };
+        let counts: &mut [u32] =
+            unsafe { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
@@ -975,11 +974,17 @@ where
                             // PORT NOTE: `fs.relative_to(file_path)` would borrow `&*fs`
                             // while `rfs = &mut fs.fs` is live; inline the body so the
                             // split-borrow on `fs.top_level_dir` is visible to borrowck.
-                            bstr::BStr::new(bun_paths::resolve_path::relative(fs.top_level_dir, file_path))
+                            bstr::BStr::new(bun_paths::resolve_path::relative(
+                                fs.top_level_dir,
+                                file_path
+                            ))
                         ));
                     }
 
-                    if event.op.intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME) {
+                    if event
+                        .op
+                        .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
+                    {
                         record_changed_path(file_path);
                         if IS_KQUEUE {
                             if event.op.contains(WatchOp::RENAME) {
@@ -994,8 +999,7 @@ where
                             }
 
                             // If we got a write event after rename, the file is back - proceed with reload
-                            if self.main.is_waiting_for_dir_change
-                                && self.main.hash == current_hash
+                            if self.main.is_waiting_for_dir_change && self.main.hash == current_hash
                             {
                                 self.main.is_waiting_for_dir_change = false;
                             }
@@ -1010,17 +1014,14 @@ where
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        let _ = self
-                            .ctx_mut()
-                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
-                                file_path,
-                            ));
+                        let _ = self.ctx_mut().bust_dir_cache(
+                            strings::paths::without_trailing_slash_windows_path(file_path),
+                        );
                         continue;
                     }
                     #[cfg(not(windows))]
                     {
-                        let mut affected_buf: [&[u8]; 128] =
-                            [b"".as_slice(); 128];
+                        let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::EntriesOption> = None;
 
                         // PORT NOTE: the Zig labeled block produced a slice whose
@@ -1101,7 +1102,10 @@ where
                                                         .copy_from_slice(affected_path);
                                                     zbuf[affected_path.len()] = 0;
                                                     // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = ZStr::from_buf(&zbuf[..], affected_path.len(),);
+                                                    let z = ZStr::from_buf(
+                                                        &zbuf[..],
+                                                        affected_path.len(),
+                                                    );
                                                     bun_sys::access(z, libc::F_OK).is_err()
                                                 }
                                             };
@@ -1162,7 +1166,9 @@ where
                                 }
 
                                 // `ctx` is a BACKREF that outlives the reloader.
-                                let loader = self.ctx.get_loaders()
+                                let loader = self
+                                    .ctx
+                                    .get_loaders()
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);
@@ -1178,27 +1184,22 @@ where
                                     let path_string: bun_core::PathString;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        if let Some(file_ent) =
-                                            dir_ent.entries().get(changed_name)
+                                        if let Some(file_ent) = dir_ent.entries().get(changed_name)
                                         {
                                             // reset the file descriptor
                                             let ent = file_ent.entry();
                                             ent.set_cache_fd(Fd::INVALID);
                                             ent.need_stat.set(true);
                                             path_string = ent.abs_path;
-                                            file_hash =
-                                                Watcher::get_hash(path_string.slice());
-                                            for (entry_id, hash) in
-                                                hashes.iter().enumerate()
-                                            {
+                                            file_hash = Watcher::get_hash(path_string.slice());
+                                            for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
                                                     if file_descriptors[entry_id].is_valid() {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
                                                                 path_string.slice(),
                                                             );
-                                                            current_task
-                                                                .append(hashes[entry_id]);
+                                                            current_task.append(hashes[entry_id]);
                                                             if self.verbose {
                                                                 Self::debug(format_args!(
                                                                     "Removing file: {}",
@@ -1228,9 +1229,7 @@ where
                                                 strings::trim_right(file_path, &[SEP]);
                                             _on_file_update_path_buf
                                                 [0..file_path_without_trailing_slash.len()]
-                                                .copy_from_slice(
-                                                    file_path_without_trailing_slash,
-                                                );
+                                                .copy_from_slice(file_path_without_trailing_slash);
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()] = SEP;
 
@@ -1276,7 +1275,10 @@ where
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(bun_paths::resolve_path::relative(fs.top_level_dir, file_path)),
+                                bstr::BStr::new(bun_paths::resolve_path::relative(
+                                    fs.top_level_dir,
+                                    file_path
+                                )),
                                 affected_len
                             ));
                         }
@@ -1392,8 +1394,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         self.bun_watcher = Some(watcher_nn);
         // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler.resolver.watcher =
-            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
         watcher_ptr
     }
 
@@ -1408,11 +1409,8 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 /// Zig: `bundle_v2.Watcher = NewHotReloader(BundleV2, EventLoop, true)`
 /// (bundle_v2.zig:50). `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
-type BundlerWatcher = NewHotReloader<
-    bun_bundler::BundleV2<'static>,
-    bun_event_loop::AnyEventLoop<'static>,
-    true,
->;
+type BundlerWatcher =
+    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set (bundle_v2.zig:993). Erased via `*mut ()` because

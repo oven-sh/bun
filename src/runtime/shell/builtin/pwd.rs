@@ -12,20 +12,27 @@ pub struct Pwd {
 enum State {
     #[default]
     Idle,
-    WaitingIo { kind: WaitKind },
+    WaitingIo {
+        kind: WaitKind,
+    },
     Err,
     Done,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum WaitKind { Stdout, Stderr }
+enum WaitKind {
+    Stdout,
+    Stderr,
+}
 
 impl Pwd {
     pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-                Self::state_mut(interp, cmd).state = State::WaitingIo { kind: WaitKind::Stderr };
+                Self::state_mut(interp, cmd).state = State::WaitingIo {
+                    kind: WaitKind::Stderr,
+                };
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 return Builtin::of_mut(interp, cmd)
                     .stderr
@@ -41,7 +48,9 @@ impl Pwd {
             v
         };
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo { kind: WaitKind::Stdout };
+            Self::state_mut(interp, cmd).state = State::WaitingIo {
+                kind: WaitKind::Stdout,
+            };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout

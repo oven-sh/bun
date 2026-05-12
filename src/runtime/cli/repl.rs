@@ -17,12 +17,12 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_core::{env_var, fmt, tty, Environment, Output};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_paths::{self as path, PathBuffer};
 use bun_core::strings;
+use bun_core::{Environment, Output, env_var, fmt, tty};
+use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
+use bun_paths::{self as path, PathBuffer};
 use bun_sys::{self as sys, Fd};
 
 // ============================================================================
@@ -234,13 +234,18 @@ impl History {
 
     pub fn load(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let Some(home_path) = env_var::HOME.get() else { return Ok(()); };
+        let Some(home_path) = env_var::HOME.get() else {
+            return Ok(());
+        };
         if home_path.is_empty() {
             return Ok(());
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(&mut path_buf, &[home_path, HISTORY_FILENAME]);
+        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut path_buf,
+            &[home_path, HISTORY_FILENAME],
+        );
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
@@ -267,7 +272,9 @@ impl History {
         if !self.modified {
             return;
         }
-        let Some(path) = self.file_path.as_deref() else { return; };
+        let Some(path) = self.file_path.as_deref() else {
+            return;
+        };
 
         // Build content
         let start = if self.entries.len() > MAX_HISTORY_SIZE {
@@ -286,7 +293,9 @@ impl History {
             sys::Result::Ok(fd) => sys::File { handle: fd },
             sys::Result::Err(_) => return,
         };
-        let file = scopeguard::guard(file, |file| { let _ = file.close(); });
+        let file = scopeguard::guard(file, |file| {
+            let _ = file.close();
+        });
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,
@@ -373,7 +382,10 @@ struct LineEditor {
 
 impl LineEditor {
     pub fn init() -> LineEditor {
-        LineEditor { buffer: Vec::new(), cursor: 0 }
+        LineEditor {
+            buffer: Vec::new(),
+            cursor: 0,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -403,7 +415,8 @@ impl LineEditor {
             self.buffer.extend_from_slice(slice);
         } else {
             // TODO(port): Vec has no insert_slice; splice is equivalent
-            self.buffer.splice(self.cursor..self.cursor, slice.iter().copied());
+            self.buffer
+                .splice(self.cursor..self.cursor, slice.iter().copied());
         }
         self.cursor += slice.len();
         Ok(())
@@ -522,15 +535,51 @@ struct ReplCommand {
 
 impl ReplCommand {
     pub const ALL: [ReplCommand; 9] = [
-        ReplCommand { name: b".help", help: "Print this help message", handler: cmd_help },
-        ReplCommand { name: b".exit", help: "Exit the REPL", handler: cmd_exit },
-        ReplCommand { name: b".clear", help: "Clear the screen", handler: cmd_clear },
-        ReplCommand { name: b".copy", help: "Copy result to clipboard (.copy [expr])", handler: cmd_copy },
-        ReplCommand { name: b".load", help: "Load a file into the REPL session", handler: cmd_load },
-        ReplCommand { name: b".save", help: "Save REPL history to a file", handler: cmd_save },
-        ReplCommand { name: b".editor", help: "Enter multi-line editor mode", handler: cmd_editor },
-        ReplCommand { name: b".break", help: "Cancel current input", handler: cmd_break },
-        ReplCommand { name: b".history", help: "Show command history", handler: cmd_history },
+        ReplCommand {
+            name: b".help",
+            help: "Print this help message",
+            handler: cmd_help,
+        },
+        ReplCommand {
+            name: b".exit",
+            help: "Exit the REPL",
+            handler: cmd_exit,
+        },
+        ReplCommand {
+            name: b".clear",
+            help: "Clear the screen",
+            handler: cmd_clear,
+        },
+        ReplCommand {
+            name: b".copy",
+            help: "Copy result to clipboard (.copy [expr])",
+            handler: cmd_copy,
+        },
+        ReplCommand {
+            name: b".load",
+            help: "Load a file into the REPL session",
+            handler: cmd_load,
+        },
+        ReplCommand {
+            name: b".save",
+            help: "Save REPL history to a file",
+            handler: cmd_save,
+        },
+        ReplCommand {
+            name: b".editor",
+            help: "Enter multi-line editor mode",
+            handler: cmd_editor,
+        },
+        ReplCommand {
+            name: b".break",
+            help: "Cancel current input",
+            handler: cmd_break,
+        },
+        ReplCommand {
+            name: b".history",
+            help: "Show command history",
+            handler: cmd_history,
+        },
     ];
 
     pub fn find(name: &[u8]) -> Option<&'static ReplCommand> {
@@ -553,26 +602,100 @@ enum ReplResult {
 }
 
 fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    repl.print(format_args!("\n{}REPL Commands:{}\n", Color::BOLD, Color::RESET));
+    repl.print(format_args!(
+        "\n{}REPL Commands:{}\n",
+        Color::BOLD,
+        Color::RESET
+    ));
     for cmd in &ReplCommand::ALL {
-        repl.print(format_args!("  {}{:<12}{} {}\n", Color::CYAN, BStr::new(cmd.name), Color::RESET, cmd.help));
+        repl.print(format_args!(
+            "  {}{:<12}{} {}\n",
+            Color::CYAN,
+            BStr::new(cmd.name),
+            Color::RESET,
+            cmd.help
+        ));
     }
-    repl.print(format_args!("\n{}Keybindings:{}\n", Color::BOLD, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+A{}       Move to start of line\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+E{}       Move to end of line\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+B/F{}     Move backward/forward one character\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Alt+B/F{}      Move backward/forward one word\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+U{}       Delete to start of line\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+K{}       Delete to end of line\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+W{}       Delete word backward\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+D{}       Delete character / Exit if line empty\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+L{}       Clear screen\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Ctrl+T{}       Swap characters\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Up/Down{}      Navigate history\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}Tab{}          Auto-complete\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("\n{}Special Variables:{}\n", Color::BOLD, Color::RESET));
-    repl.print(format_args!("  {}_{}            Last expression result\n", Color::CYAN, Color::RESET));
-    repl.print(format_args!("  {}_error{}       Last error\n", Color::CYAN, Color::RESET));
+    repl.print(format_args!(
+        "\n{}Keybindings:{}\n",
+        Color::BOLD,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+A{}       Move to start of line\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+E{}       Move to end of line\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+B/F{}     Move backward/forward one character\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Alt+B/F{}      Move backward/forward one word\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+U{}       Delete to start of line\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+K{}       Delete to end of line\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+W{}       Delete word backward\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+D{}       Delete character / Exit if line empty\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+L{}       Clear screen\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+T{}       Swap characters\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Up/Down{}      Navigate history\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Tab{}          Auto-complete\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "\n{}Special Variables:{}\n",
+        Color::BOLD,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}_{}            Last expression result\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}_error{}       Last error\n",
+        Color::CYAN,
+        Color::RESET
+    ));
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
 }
@@ -626,7 +749,12 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     };
 
-    repl.print(format_args!("{}Loading {}...{}\n", Color::DIM, BStr::new(filename), Color::RESET));
+    repl.print(format_args!(
+        "{}Loading {}...{}\n",
+        Color::DIM,
+        BStr::new(filename),
+        Color::RESET
+    ));
     repl.evaluate_and_print(&content);
     ReplResult::SkipEval
 }
@@ -645,14 +773,20 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         content.push(b'\n');
     }
 
-    let file = match sys::open_a(filename, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
+    let file = match sys::open_a(
+        filename,
+        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+        0o644,
+    ) {
         sys::Result::Ok(fd) => sys::File { handle: fd },
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;
         }
     };
-    let file = scopeguard::guard(file, |file| { let _ = file.close(); });
+    let file = scopeguard::guard(file, |file| {
+        let _ = file.close();
+    });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {
@@ -661,12 +795,21 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     }
 
-    repl.print(format_args!("{}Session saved to {}{}\n", Color::GREEN, BStr::new(filename), Color::RESET));
+    repl.print(format_args!(
+        "{}Session saved to {}{}\n",
+        Color::GREEN,
+        BStr::new(filename),
+        Color::RESET
+    ));
     ReplResult::SkipEval
 }
 
 fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    repl.print(format_args!("{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n", Color::DIM, Color::RESET));
+    repl.print(format_args!(
+        "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
+        Color::DIM,
+        Color::RESET
+    ));
     repl.editor_mode = true;
     repl.editor_buffer.clear();
     ReplResult::SkipEval
@@ -680,7 +823,11 @@ fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
 }
 
 fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    repl.print(format_args!("\n{}Command History:{}\n", Color::BOLD, Color::RESET));
+    repl.print(format_args!(
+        "\n{}Command History:{}\n",
+        Color::BOLD,
+        Color::RESET
+    ));
     let start = if repl.history.entries.len() > 20 {
         repl.history.entries.len() - 20
     } else {
@@ -688,7 +835,13 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     };
     for (i, entry) in repl.history.entries[start..].iter().enumerate() {
         let i = i + start;
-        repl.print(format_args!("  {}{:>4}{}  {}\n", Color::DIM, i + 1, Color::RESET, BStr::new(entry)));
+        repl.print(format_args!(
+            "  {}{:>4}{}  {}\n",
+            Color::DIM,
+            i + 1,
+            Color::RESET,
+            BStr::new(entry)
+        ));
     }
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
@@ -807,7 +960,8 @@ impl<'a> Repl<'a> {
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
                     set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
                         | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                    unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+                    unset: bun_sys::windows::ENABLE_LINE_INPUT
+                        | bun_sys::windows::ENABLE_ECHO_INPUT,
                 },
             )
             .ok();
@@ -905,7 +1059,9 @@ impl<'a> Repl<'a> {
             return Some(b);
         }
         // Refill buffer
-        let stdin = sys::File { handle: Fd::stdin() };
+        let stdin = sys::File {
+            handle: Fd::stdin(),
+        };
         let n = match stdin.read(&mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
@@ -924,11 +1080,15 @@ impl<'a> Repl<'a> {
         // Handle escape sequences
         if byte == 27 {
             // ESC
-            let Some(second) = self.read_byte() else { return Some(Key::Escape); };
+            let Some(second) = self.read_byte() else {
+                return Some(Key::Escape);
+            };
 
             if second == b'[' {
                 // CSI
-                let Some(third) = self.read_byte() else { return Some(Key::Escape); };
+                let Some(third) = self.read_byte() else {
+                    return Some(Key::Escape);
+                };
 
                 return Some(match third {
                     b'A' => Key::ArrowUp,
@@ -938,7 +1098,9 @@ impl<'a> Repl<'a> {
                     b'H' => Key::Home,
                     b'F' => Key::End,
                     b'1'..=b'6' => 'blk: {
-                        let Some(fourth) = self.read_byte() else { break 'blk Key::Unknown; };
+                        let Some(fourth) = self.read_byte() else {
+                            break 'blk Key::Unknown;
+                        };
                         if fourth == b'~' {
                             break 'blk match third {
                                 b'1' => Key::Home,
@@ -950,8 +1112,12 @@ impl<'a> Repl<'a> {
                                 _ => Key::Unknown,
                             };
                         } else if fourth == b';' {
-                            let Some(modifier) = self.read_byte() else { break 'blk Key::Unknown; };
-                            let Some(dir) = self.read_byte() else { break 'blk Key::Unknown; };
+                            let Some(modifier) = self.read_byte() else {
+                                break 'blk Key::Unknown;
+                            };
+                            let Some(dir) = self.read_byte() else {
+                                break 'blk Key::Unknown;
+                            };
                             if modifier == b'5' || modifier == b'3' {
                                 break 'blk match dir {
                                     b'C' => Key::AltRight,
@@ -967,7 +1133,9 @@ impl<'a> Repl<'a> {
                 });
             } else if second == b'O' {
                 // SS3
-                let Some(third) = self.read_byte() else { return Some(Key::Escape); };
+                let Some(third) = self.read_byte() else {
+                    return Some(Key::Escape);
+                };
                 return Some(match third {
                     b'H' => Key::Home,
                     b'F' => Key::End,
@@ -1079,8 +1247,12 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn evaluate_and_print(&mut self, code: &[u8]) {
-        let Some(global) = self.global else { return; };
-        let Some(vm) = self.vm else { return; };
+        let Some(global) = self.global else {
+            return;
+        };
+        let Some(vm) = self.vm else {
+            return;
+        };
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
         let Some(transformed_code) = self.transform_for_repl(code) else {
@@ -1167,16 +1339,17 @@ impl<'a> Repl<'a> {
         if resolved_result.is_object() {
             // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
             // but if it does, propagate as a REPL error.
-            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                Ok(v) => v,
-                Err(err) => {
-                    let exc = global.take_exception(err);
-                    self.set_last_error(exc);
-                    self.print_js_error(exc);
-                    vm_mut(vm).tick();
-                    return;
-                }
-            };
+            let maybe_value =
+                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let exc = global.take_exception(err);
+                        self.set_last_error(exc);
+                        self.print_js_error(exc);
+                        vm_mut(vm).tick();
+                        return;
+                    }
+                };
             if let Some(value) = maybe_value {
                 actual_result = value;
             }
@@ -1213,8 +1386,12 @@ impl<'a> Repl<'a> {
     /// Returns true if an error occurred (the caller should set exit_code=1 and
     /// skip onBeforeExit); false on success (caller preserves process.exitCode).
     pub fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
-        let Some(global) = self.global else { return true; };
-        let Some(vm) = self.vm else { return true; };
+        let Some(global) = self.global else {
+            return true;
+        };
+        let Some(vm) = self.vm else {
+            return true;
+        };
 
         let no_color = env_var::NO_COLOR.get().unwrap_or(false);
         self.use_colors = Output::enable_ansi_colors_stdout() && !no_color;
@@ -1281,7 +1458,9 @@ impl<'a> Repl<'a> {
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
+                PromiseStatus::Fulfilled => {
+                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
+                }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.print_js_error_to(rejection, Output::error_writer(), stderr_colors);
@@ -1294,14 +1473,15 @@ impl<'a> Repl<'a> {
         // Unwrap the { value: expr } wrapper produced by transform_for_repl
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                Ok(v) => v,
-                Err(err) => {
-                    let exc = global.take_exception(err);
-                    self.print_js_error_to(exc, Output::error_writer(), stderr_colors);
-                    return true;
-                }
-            };
+            let maybe_value =
+                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let exc = global.take_exception(err);
+                        self.print_js_error_to(exc, Output::error_writer(), stderr_colors);
+                        return true;
+                    }
+                };
             if let Some(value) = maybe_value {
                 actual_result = value;
             }
@@ -1334,7 +1514,9 @@ impl<'a> Repl<'a> {
     /// Evaluate code without REPL transforms (fallback for errors)
     /// The C++ Bun__REPL__evaluate handles setting _ and _error
     fn evaluate_raw(&mut self, code: &[u8]) {
-        let Some(global) = self.global else { return; };
+        let Some(global) = self.global else {
+            return;
+        };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
@@ -1373,8 +1555,12 @@ impl<'a> Repl<'a> {
 
     /// Evaluate code and copy the result to clipboard instead of printing it
     fn evaluate_and_copy(&mut self, code: &[u8]) {
-        let Some(global) = self.global else { return; };
-        let Some(vm) = self.vm else { return; };
+        let Some(global) = self.global else {
+            return;
+        };
+        let Some(vm) = self.vm else {
+            return;
+        };
 
         let Some(transformed_code) = self.transform_for_repl(code) else {
             self.evaluate_raw(code);
@@ -1418,7 +1604,9 @@ impl<'a> Repl<'a> {
             }
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
+                PromiseStatus::Fulfilled => {
+                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
+                }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
@@ -1436,16 +1624,17 @@ impl<'a> Repl<'a> {
 
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                Ok(v) => v,
-                Err(err) => {
-                    let exc = global.take_exception(err);
-                    self.set_last_error(exc);
-                    self.print_js_error(exc);
-                    vm_mut(vm).tick();
-                    return;
-                }
-            };
+            let maybe_value =
+                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let exc = global.take_exception(err);
+                        self.set_last_error(exc);
+                        self.print_js_error(exc);
+                        vm_mut(vm).tick();
+                        return;
+                    }
+                };
             if let Some(value) = maybe_value {
                 actual_result = value;
             }
@@ -1468,7 +1657,9 @@ impl<'a> Repl<'a> {
     /// Format a JS value as a string suitable for clipboard.
     /// Returns None on allocator OOM; propagates JS exceptions (e.g. throwing getters).
     fn value_to_clipboard_string(&self, value: JSValue) -> JsResult<Option<Box<[u8]>>> {
-        let Some(global) = self.global else { return Ok(None); };
+        let Some(global) = self.global else {
+            return Ok(None);
+        };
 
         if value.is_undefined() {
             return Ok(Some(Box::<[u8]>::from(&b"undefined"[..])));
@@ -1518,9 +1709,17 @@ impl<'a> Repl<'a> {
             return Ok(());
         }
         if self.use_colors {
-            self.print(format_args!("{}Copied {} characters to clipboard{}\n", Color::DIM, text.len(), Color::RESET));
+            self.print(format_args!(
+                "{}Copied {} characters to clipboard{}\n",
+                Color::DIM,
+                text.len(),
+                Color::RESET
+            ));
         } else {
-            self.print(format_args!("Copied {} characters to clipboard\n", text.len()));
+            self.print(format_args!(
+                "Copied {} characters to clipboard\n",
+                text.len()
+            ));
         }
         Ok(())
     }
@@ -1529,7 +1728,9 @@ impl<'a> Repl<'a> {
     fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut it = strings::ANSIIterator::init(text);
-        let Some(first) = it.next() else { return Ok(()); };
+        let Some(first) = it.next() else {
+            return Ok(());
+        };
 
         if first.len() == text.len() {
             // No ANSI sequences - encode the original directly
@@ -1585,7 +1786,10 @@ impl<'a> Repl<'a> {
         let arena = bun_alloc::Arena::new();
 
         // Set up parser options with repl_mode enabled
-        let mut opts = bun_js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone().into(), bun_ast::Loader::Tsx);
+        let mut opts = bun_js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone().into(),
+            bun_ast::Loader::Tsx,
+        );
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
@@ -1602,7 +1806,9 @@ impl<'a> Repl<'a> {
         // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
-            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(&mut vm_mut(vm).transpiler));
+            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
+                &mut vm_mut(vm).transpiler,
+            ));
         }
         opts.macro_context = vm_mut(vm).transpiler.macro_context.as_mut();
 
@@ -1628,7 +1834,9 @@ impl<'a> Repl<'a> {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let bun_js_parser::Result::Ast(mut ast) = parse_result else { return None; };
+        let bun_js_parser::Result::Ast(mut ast) = parse_result else {
+            return None;
+        };
         // Don't call ast.deinit() - the arena handles cleanup
 
         // Check for parse errors
@@ -1644,15 +1852,23 @@ impl<'a> Repl<'a> {
         // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
-        let symbols_map = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        let symbols_map =
+            bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
-        if bun_js_printer::print_ast::<_, /* ASCII_ONLY */ true, /* GENERATE_SOURCE_MAP */ false>(
+        if bun_js_printer::print_ast::<
+            _,
+            /* ASCII_ONLY */ true,
+            /* GENERATE_SOURCE_MAP */ false,
+        >(
             &mut buffer_printer,
             &arena,
             &ast,
             symbols_map,
             &source,
-            bun_js_printer::Options { mangled_props: None, ..Default::default() },
+            bun_js_printer::Options {
+                mangled_props: None,
+                ..Default::default()
+            },
         )
         .is_err()
         {
@@ -1675,12 +1891,19 @@ impl<'a> Repl<'a> {
         self.print_js_error_to(error_value, Output::writer(), self.use_colors);
     }
 
-    fn print_js_error_to(&self, error_value: JSValue, writer: &mut bun_core::io::Writer, enable_colors: bool) {
+    fn print_js_error_to(
+        &self,
+        error_value: JSValue,
+        writer: &mut bun_core::io::Writer,
+        enable_colors: bool,
+    ) {
         // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
         // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
         // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
         // error output is tiny.
-        let Some(global) = self.global else { return; };
+        let Some(global) = self.global else {
+            return;
+        };
         let mut buf: Vec<u8> = Vec::new();
         // Use .Error level for proper error formatting with Bun.inspect
         if jsc::ConsoleObject::format2(
@@ -1711,7 +1934,9 @@ impl<'a> Repl<'a> {
 
     /// Format and print a JS value using Bun's console formatter (same as console.log)
     fn print_formatted_value(&mut self, value: JSValue) {
-        let Some(global) = self.global else { return; };
+        let Some(global) = self.global else {
+            return;
+        };
         let writer = Output::writer();
         // PORT NOTE: see `print_js_error_to` — buffer because
         // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
@@ -1765,7 +1990,10 @@ impl<'a> Repl<'a> {
         self.print(format_args!("Welcome to Bun v{}\n", VERSION));
         self.print(format_args!(
             "Type {}.copy [code]{} to copy to clipboard. {}.help{} for more info.\n\n",
-            Color::CYAN, Color::RESET, Color::CYAN, Color::RESET
+            Color::CYAN,
+            Color::RESET,
+            Color::CYAN,
+            Color::RESET
         ));
 
         self.running = true;
@@ -1926,8 +2154,16 @@ impl<'a> Repl<'a> {
         // Check for REPL commands
         if !line.is_empty() && line[0] == b'.' {
             let space_idx = strings::index_of_char(&line, b' ');
-            let cmd_name = if let Some(idx) = space_idx { &line[..idx as usize] } else { &line[..] };
-            let args = if let Some(idx) = space_idx { &line[idx as usize + 1..] } else { &b""[..] };
+            let cmd_name = if let Some(idx) = space_idx {
+                &line[..idx as usize]
+            } else {
+                &line[..]
+            };
+            let args = if let Some(idx) = space_idx {
+                &line[idx as usize + 1..]
+            } else {
+                &b""[..]
+            };
 
             if let Some(cmd) = ReplCommand::find(cmd_name) {
                 let result = (cmd.handler)(self, args);
@@ -1946,7 +2182,11 @@ impl<'a> Repl<'a> {
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
-                self.print(format_args!("Type {}.help{} for available commands\n", Color::CYAN, Color::RESET));
+                self.print(format_args!(
+                    "Type {}.help{} for available commands\n",
+                    Color::CYAN,
+                    Color::RESET
+                ));
                 self.line_editor.clear();
                 self.refresh_line();
                 return Ok(());
@@ -2001,7 +2241,11 @@ impl<'a> Repl<'a> {
 
     fn handle_ctrl_c(&mut self) {
         if self.editor_mode {
-            self.print(format_args!("\n{}// Editor mode cancelled{}\n", Color::DIM, Color::RESET));
+            self.print(format_args!(
+                "\n{}// Editor mode cancelled{}\n",
+                Color::DIM,
+                Color::RESET
+            ));
             self.editor_mode = false;
             self.editor_buffer.clear();
         } else if self.in_multiline {
@@ -2018,7 +2262,11 @@ impl<'a> Repl<'a> {
             return;
         } else {
             self.ctrl_c_pressed = true;
-            self.print(format_args!("\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n", Color::DIM, Color::RESET));
+            self.print(format_args!(
+                "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                Color::DIM,
+                Color::RESET
+            ));
         }
         self.history.reset_position();
         self.refresh_line();
@@ -2045,7 +2293,12 @@ impl<'a> Repl<'a> {
             } else if matches.len() > 1 {
                 self.print(format_args!("\n"));
                 for m in &matches {
-                    self.print(format_args!("  {}{}{}\n", Color::CYAN, BStr::new(m), Color::RESET));
+                    self.print(format_args!(
+                        "  {}{}{}\n",
+                        Color::CYAN,
+                        BStr::new(m),
+                        Color::RESET
+                    ));
                 }
                 self.refresh_line();
             }
@@ -2077,12 +2330,7 @@ impl<'a> Repl<'a> {
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
         // are valid for the duration of the call.
         let completions = unsafe {
-            Bun__REPL__getCompletions(
-                global,
-                JSValue::UNDEFINED,
-                prefix.as_ptr(),
-                prefix.len(),
-            )
+            Bun__REPL__getCompletions(global, JSValue::UNDEFINED, prefix.as_ptr(), prefix.len())
         };
 
         if completions.is_undefined() || !completions.is_array() {
@@ -2147,7 +2395,12 @@ impl<'a> Repl<'a> {
                 if item.is_string() {
                     match item.to_slice(global) {
                         Ok(slice) => {
-                            self.print(format_args!("  {}{}{}\n", Color::CYAN, BStr::new(slice.slice()), Color::RESET));
+                            self.print(format_args!(
+                                "  {}{}{}\n",
+                                Color::CYAN,
+                                BStr::new(slice.slice()),
+                                Color::RESET
+                            ));
                         }
                         Err(_) => {
                             global_clear_exception(global);
@@ -2160,7 +2413,12 @@ impl<'a> Repl<'a> {
             }
             self.refresh_line();
         } else {
-            self.print(format_args!("\n{}{} completions{}\n", Color::DIM, len, Color::RESET));
+            self.print(format_args!(
+                "\n{}{} completions{}\n",
+                Color::DIM,
+                len,
+                Color::RESET
+            ));
             self.refresh_line();
         }
     }

@@ -4,13 +4,13 @@ use core::fmt;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_core::fmt::{fmt_path_u8 as fmt_path, PathFormatOptions, PathSep};
+use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_semver as semver;
 use bun_semver::String;
 // PORT NOTE: Zig `String.Buf` → `bun_semver::string::Buf<'_>`.
+use bun_core::strings;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
-use bun_core::strings;
 
 use crate::dependency::{self, DependencyExt as _, TagExt as _};
 use crate::repository::{Repository, RepositoryExt as _};
@@ -330,14 +330,16 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 .local_tarball()
                 .order(rhs.local_tarball(), lhs_buf, rhs_buf),
             Tag::Folder => self.folder().order(rhs.folder(), lhs_buf, rhs_buf),
-            Tag::RemoteTarball => self
-                .remote_tarball()
-                .order(rhs.remote_tarball(), lhs_buf, rhs_buf),
+            Tag::RemoteTarball => {
+                self.remote_tarball()
+                    .order(rhs.remote_tarball(), lhs_buf, rhs_buf)
+            }
             Tag::Workspace => self.workspace().order(rhs.workspace(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().order(rhs.symlink(), lhs_buf, rhs_buf),
-            Tag::SingleFileModule => self
-                .single_file_module()
-                .order(rhs.single_file_module(), lhs_buf, rhs_buf),
+            Tag::SingleFileModule => {
+                self.single_file_module()
+                    .order(rhs.single_file_module(), lhs_buf, rhs_buf)
+            }
             Tag::Git => self.git().order(rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => self.github().order(rhs.github(), lhs_buf, rhs_buf),
             _ => Ordering::Equal,
@@ -390,9 +392,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 builder.append::<String>(self.single_file_module().slice(buf)),
             )),
             Tag::Git => value_init(TaggedValue::Git(self.git().clone(buf, builder))),
-            Tag::Github => {
-                value_init(TaggedValue::Github(self.github().clone(buf, builder)))
-            }
+            Tag::Github => value_init(TaggedValue::Github(self.github().clone(buf, builder))),
             Tag::Root => value_init(TaggedValue::Root),
             Tag::Uninitialized => value_init(TaggedValue::Uninitialized),
             _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
@@ -407,13 +407,9 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     pub fn copy(&self) -> Self {
         match self.tag {
             Tag::Npm => Self::init(TaggedValue::Npm(*self.npm())),
-            Tag::LocalTarball => {
-                Self::init(TaggedValue::LocalTarball(*self.local_tarball()))
-            }
+            Tag::LocalTarball => Self::init(TaggedValue::LocalTarball(*self.local_tarball())),
             Tag::Folder => Self::init(TaggedValue::Folder(*self.folder())),
-            Tag::RemoteTarball => {
-                Self::init(TaggedValue::RemoteTarball(*self.remote_tarball()))
-            }
+            Tag::RemoteTarball => Self::init(TaggedValue::RemoteTarball(*self.remote_tarball())),
             Tag::Workspace => Self::init(TaggedValue::Workspace(*self.workspace())),
             Tag::Symlink => Self::init(TaggedValue::Symlink(*self.symlink())),
             Tag::SingleFileModule => {
@@ -468,22 +464,21 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         match self.tag {
             Tag::Root => true,
             Tag::Npm => self.npm().eql(rhs.npm()),
-            Tag::LocalTarball => self.local_tarball().eql(
-                *rhs.local_tarball(),
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
+            Tag::LocalTarball => {
+                self.local_tarball()
+                    .eql(*rhs.local_tarball(), lhs_string_buf, rhs_string_buf)
+            }
             Tag::Folder => self
                 .folder()
                 .eql(*rhs.folder(), lhs_string_buf, rhs_string_buf),
-            Tag::RemoteTarball => self.remote_tarball().eql(
-                *rhs.remote_tarball(),
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            Tag::Workspace => self
-                .workspace()
-                .eql(*rhs.workspace(), lhs_string_buf, rhs_string_buf),
+            Tag::RemoteTarball => {
+                self.remote_tarball()
+                    .eql(*rhs.remote_tarball(), lhs_string_buf, rhs_string_buf)
+            }
+            Tag::Workspace => {
+                self.workspace()
+                    .eql(*rhs.workspace(), lhs_string_buf, rhs_string_buf)
+            }
             Tag::Symlink => self
                 .symlink()
                 .eql(*rhs.symlink(), lhs_string_buf, rhs_string_buf),
@@ -492,9 +487,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 lhs_string_buf,
                 rhs_string_buf,
             ),
-            Tag::Git => self
-                .git()
-                .eql(rhs.git(), lhs_string_buf, rhs_string_buf),
+            Tag::Git => self.git().eql(rhs.git(), lhs_string_buf, rhs_string_buf),
             Tag::Github => self
                 .github()
                 .eql(rhs.github(), lhs_string_buf, rhs_string_buf),
@@ -525,7 +518,11 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
                 write!(writer, "{}", res.local_tarball().fmt_store_path(string_buf))
             }
             Tag::RemoteTarball => {
-                write!(writer, "{}", res.remote_tarball().fmt_store_path(string_buf))
+                write!(
+                    writer,
+                    "{}",
+                    res.remote_tarball().fmt_store_path(string_buf)
+                )
             }
             Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
             Tag::Git => write!(writer, "{}", res.git().fmt_store_path("git+", string_buf)),
@@ -670,12 +667,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
         writer.write_str(self.resolution.tag.name().unwrap_or("invalid"))?;
         writer.write_str(" = ")?;
         match self.resolution.tag {
-            Tag::Npm => self
-                .resolution
-                .npm()
-                .version
-                .fmt(self.buf)
-                .fmt(writer)?,
+            Tag::Npm => self.resolution.npm().version.fmt(self.buf).fmt(writer)?,
             Tag::LocalTarball => write!(
                 writer,
                 "{}",
@@ -691,10 +683,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
                 "{}",
                 BStr::new(self.resolution.remote_tarball().slice(self.buf))
             )?,
-            Tag::Git => self
-                .resolution
-                .git()
-                .format_as("git+", self.buf, writer)?,
+            Tag::Git => self.resolution.git().format_as("git+", self.buf, writer)?,
             Tag::Github => self
                 .resolution
                 .github()

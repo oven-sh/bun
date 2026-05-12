@@ -5,14 +5,14 @@ use std::sync::OnceLock;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_core::{self, err, Error};
+use bun_core::strings;
+use bun_core::{self, Error, err};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-use bun_core::strings;
 #[allow(unused_imports)]
-use bun_sys::{File, FdDirExt};
+use bun_sys::{FdDirExt, File};
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
@@ -313,14 +313,16 @@ pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
 /// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
-    fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
+    fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
+    -> Result<Repository, AllocError>;
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
         string_buf: &[u8],
         dep: &Install::Dependency,
     ) -> Vec<u8>;
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
-    fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8]) -> StorePathFormatter<'a>;
+    fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
+    -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
     fn try_ssh(url: &[u8]) -> Option<&[u8]>;
     fn try_https(url: &[u8]) -> Option<&[u8]>;
@@ -368,7 +370,10 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     // + `process::sync::spawn`. On Windows it supplies the thread's
     // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
     // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
-    let result = bun_spawn::run(bun_spawn::RunOptions { argv, env_map: std_map.get() })?;
+    let result = bun_spawn::run(bun_spawn::RunOptions {
+        argv,
+        env_map: std_map.get(),
+    })?;
 
     match result.term {
         bun_spawn::Term::Exited(sig) => {
@@ -490,12 +495,7 @@ impl RepositoryExt for Repository {
         name.to_vec()
     }
 
-    fn format_as(
-        &self,
-        label: &str,
-        buf: &[u8],
-        writer: &mut impl fmt::Write,
-    ) -> fmt::Result {
+    fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
         let formatter = Formatter {
             label,
             repository: self,
@@ -650,7 +650,8 @@ impl RepositoryExt for Repository {
         attempt: u8,
     ) -> Result<bun_sys::Dir, Error> {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
-        bun_analytics::features::git_dependencies.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        bun_analytics::features::git_dependencies
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
         // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument,
         // per PackageManagerTask.zig:179,206) valid under Stacked Borrows.
@@ -677,10 +678,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(
-                    env,
-                    &[b"git", b"-C", path, b"fetch", b"--quiet"],
-                ) {
+                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -760,8 +758,15 @@ impl RepositoryExt for Repository {
 
         let shared = SharedEnv::get(env);
 
-        let argv_with: [&[u8]; 7] =
-            [b"git", b"-C", path, b"log", b"--format=%H", b"-1", committish];
+        let argv_with: [&[u8]; 7] = [
+            b"git",
+            b"-C",
+            path,
+            b"log",
+            b"--format=%H",
+            b"-1",
+            committish,
+        ];
         let argv_without: [&[u8]; 6] = [b"git", b"-C", path, b"log", b"--format=%H", b"-1"];
         let argv: &[&[u8]] = if !committish.is_empty() {
             &argv_with
@@ -800,7 +805,8 @@ impl RepositoryExt for Repository {
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
-        bun_analytics::features::git_dependencies.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        bun_analytics::features::git_dependencies
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let folder_name_buf = TlBufs::folder_name_buf();
         let folder_name = crate::package_manager_real::cached_git_folder_name_print(
             &mut folder_name_buf[..],
@@ -872,7 +878,10 @@ impl RepositoryExt for Repository {
                     'insert_tag: {
                         let Ok(git_tag) = dir.create_file_z(
                             bun_core::zstr!(".bun-tag"),
-                            bun_sys::CreateFlags { truncate: true, ..Default::default() },
+                            bun_sys::CreateFlags {
+                                truncate: true,
+                                ..Default::default()
+                            },
                         ) else {
                             break 'insert_tag;
                         };

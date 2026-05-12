@@ -5,13 +5,13 @@ use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::{env_var, output as Output, ZStr};
+use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{
-    ChangedFilePath, Op, WatchEvent, WatchItemIndex, Watcher, MAX_COUNT as max_count,
+    ChangedFilePath, MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher,
 };
 
 bun_core::declare_scope!(watcher, visible);
@@ -115,8 +115,9 @@ impl Event {
         // fixed-size header when name_len > 0; the bytes live in eventlist_bytes
         // which outlives the returned borrow.
         unsafe {
-            let name_first_char_ptr =
-                (&raw const self.name_len).cast::<u8>().add(size_of::<u32>());
+            let name_first_char_ptr = (&raw const self.name_len)
+                .cast::<u8>()
+                .add(size_of::<u32>());
             let len = libc::strlen(name_first_char_ptr.cast());
             ZStr::from_raw(name_first_char_ptr, len)
         }
@@ -228,7 +229,7 @@ impl INotifyWatcher {
         // 7) MOVED_TO http.ts
         // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
         use bun_sys::linux as system;
-        use bun_sys::{get_errno, E};
+        use bun_sys::{E, get_errno};
         let mut i: u32 = 0;
         // PORT NOTE: reshaped for borrowck — track length instead of borrowing a sub-slice
         // of self.eventlist_bytes across the whole function.

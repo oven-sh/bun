@@ -1,5 +1,5 @@
-use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;
+use bun_alloc::ArenaVecExt as _;
 
 // blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
 // properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
@@ -7,11 +7,11 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
-use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 use css::css_properties::custom::UnparsedProperty;
+use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
-use bun_collections::ArrayHashMap;
 use bun_alloc::Arena as Bump;
+use bun_collections::ArrayHashMap;
 
 pub struct SupportsEntry {
     pub condition: css::SupportsCondition,
@@ -123,10 +123,7 @@ impl<'a> PropertyHandlerContext<'a> {
     #[inline]
     fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
-        bun_alloc::vec_from_iter_in(
-            list.iter().map(|p| p.deep_clone(bump)),
-            bump,
-        )
+        bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
     pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
@@ -150,7 +147,8 @@ impl<'a> PropertyHandlerContext<'a> {
                             vendor_prefix: css::VendorPrefix::NONE,
                             declarations: css::DeclarationBlock {
                                 declarations: self.clone_decls(&entry.declarations),
-                                important_declarations: self.clone_decls(&entry.important_declarations),
+                                important_declarations: self
+                                    .clone_decls(&entry.important_declarations),
                             },
                             rules: css::CssRuleList::default(),
                             loc: style_rule.loc,
@@ -204,9 +202,9 @@ impl<'a> PropertyHandlerContext<'a> {
                                 name: css::media_query::MediaFeatureName::Standard(
                                     MediaFeatureId::PrefersColorScheme,
                                 ),
-                                value: css::media_query::MediaFeatureValue::Ident(
-                                    css::Ident { v: b"dark" },
-                                ),
+                                value: css::media_query::MediaFeatureValue::Ident(css::Ident {
+                                    v: b"dark",
+                                }),
                             })),
                         });
 
@@ -221,7 +219,9 @@ impl<'a> PropertyHandlerContext<'a> {
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
                             declarations: self.clone_decls(&self.dark),
-                            important_declarations: css::DeclarationList::new_in(self.bump_static()),
+                            important_declarations: css::DeclarationList::new_in(
+                                self.bump_static(),
+                            ),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -320,7 +320,11 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn add_unparsed_fallbacks(&mut self, bump: &bun_alloc::Arena, unparsed: &mut UnparsedProperty) {
+    pub fn add_unparsed_fallbacks(
+        &mut self,
+        bump: &bun_alloc::Arena,
+        unparsed: &mut UnparsedProperty,
+    ) {
         if self.context != DeclarationContext::StyleRule
             && self.context != DeclarationContext::StyleAttribute
         {

@@ -1,23 +1,26 @@
 // These are all extern so they can't be top-level structs.
 #![warn(unreachable_pub)]
-pub use crate::semver_string::String;
 pub use crate::external_string::ExternalString;
+pub use crate::semver_string::String;
+pub use crate::version::PinnedVersion;
 pub use crate::version::Version;
 pub use crate::version::VersionType;
-pub use crate::version::PinnedVersion;
 
-pub use crate::sliced_string::SlicedString;
-pub use crate::semver_range::Range;
 pub use crate::semver_query::Query;
+pub use crate::semver_range::Range;
+pub use crate::sliced_string::SlicedString;
 // PORT NOTE: `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
 // extension traits live in the `bun_semver_jsc` crate, not here.
 
-#[path = "Version.rs"] pub mod version;
-#[path = "SemverRange.rs"] pub mod semver_range;
-#[path = "SemverQuery.rs"] pub mod semver_query;
+#[path = "SemverQuery.rs"]
+pub mod semver_query;
+#[path = "SemverRange.rs"]
+pub mod semver_range;
+#[path = "Version.rs"]
+pub mod version;
 
-pub use crate::semver_range as range;
 pub use crate::semver_query as query;
+pub use crate::semver_range as range;
 
 /// Duck-typed surface for `Lockfile::str` (src/install/lockfile.zig:`str`): any
 /// value that can project itself into a string-bytes buffer. Implemented by
@@ -111,7 +114,11 @@ pub mod sliced_string {
                         <= ((self.buf.as_ptr() as usize) + self.buf.len())
             );
 
-            ExternalString::init(self.buf, self.slice, bun_wyhash::Wyhash11::hash(0, self.slice))
+            ExternalString::init(
+                self.buf,
+                self.slice,
+                bun_wyhash::Wyhash11::hash(0, self.slice),
+            )
         }
 
         #[inline]
@@ -143,7 +150,10 @@ pub mod sliced_string {
                     ));
                 }
             }
-            SlicedString { buf: self.buf, slice: input }
+            SlicedString {
+                buf: self.buf,
+                slice: input,
+            }
         }
     }
 }
@@ -166,7 +176,10 @@ pub mod external_string {
 
     impl Default for ExternalString {
         fn default() -> Self {
-            Self { value: String::default(), hash: 0 }
+            Self {
+                value: String::default(),
+                hash: 0,
+            }
         }
     }
 
@@ -211,7 +224,10 @@ pub mod external_string {
 
         #[inline]
         pub fn init(buf: &[u8], in_: &[u8], hash: u64) -> ExternalString {
-            ExternalString { value: String::init(buf, in_), hash }
+            ExternalString {
+                value: String::init(buf, in_),
+                hash,
+            }
         }
 
         #[inline]
@@ -249,7 +265,9 @@ pub mod semver_string {
 
     impl Default for String {
         fn default() -> Self {
-            Self { bytes: [0, 0, 0, 0, 0, 0, 0, 0] }
+            Self {
+                bytes: [0, 0, 0, 0, 0, 0, 0, 0],
+            }
         }
     }
 
@@ -258,7 +276,9 @@ pub mod semver_string {
         // output mirrors Zig's struct dump: the raw 8-byte handle. Callers that
         // want the resolved text use `.fmt(buf)` / `.slice(buf)` instead.
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("String").field("bytes", &self.bytes).finish()
+            f.debug_struct("String")
+                .field("bytes", &self.bytes)
+                .finish()
         }
     }
 
@@ -276,7 +296,9 @@ pub mod semver_string {
     impl String {
         pub const MAX_INLINE_LEN: usize = 8;
 
-        pub const EMPTY: String = String { bytes: [0, 0, 0, 0, 0, 0, 0, 0] };
+        pub const EMPTY: String = String {
+            bytes: [0, 0, 0, 0, 0, 0, 0, 0],
+        };
 
         /// Create an inline string
         // TODO(port): make const fn once `init` is const-evaluable; Zig used `comptime` block.
@@ -297,8 +319,16 @@ pub mod semver_string {
 
         /// Escapes for json. Defaults to quoting the string.
         #[inline]
-        pub fn fmt_json<'a>(&'a self, buf: &'a [u8], opts: JsonFormatterOptions) -> JsonFormatter<'a> {
-            JsonFormatter { buf, str: self, opts }
+        pub fn fmt_json<'a>(
+            &'a self,
+            buf: &'a [u8],
+            opts: JsonFormatterOptions,
+        ) -> JsonFormatter<'a> {
+            JsonFormatter {
+                buf,
+                str: self,
+                opts,
+            }
         }
 
         #[inline]
@@ -344,29 +374,53 @@ pub mod semver_string {
         pub fn init(buf: &[u8], in_: &[u8]) -> String {
             match in_.len() {
                 0 => String::default(),
-                1 => String { bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0] },
-                2 => String { bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0] },
-                3 => String { bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0] },
-                4 => String { bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0] },
-                5 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0] },
-                6 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0] },
-                7 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0] },
+                1 => String {
+                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
+                },
+                2 => String {
+                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
+                },
+                3 => String {
+                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
+                },
+                4 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
+                },
+                5 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
+                },
+                6 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
+                },
+                7 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
+                },
                 Self::MAX_INLINE_LEN => {
                     // If they use the final bit, then it's a big string.
                     // This should only happen for non-ascii strings that are exactly 8 bytes.
                     // so that's an edge-case
                     if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
                         let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                        let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
-                        String { bytes: packed.to_ne_bytes() }
+                        let packed: u64 =
+                            (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                        String {
+                            bytes: packed.to_ne_bytes(),
+                        }
                     } else {
-                        String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7]] }
+                        String {
+                            bytes: [
+                                in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+                            ],
+                        }
                     }
                 }
                 _ => {
                     let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                    let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
-                    String { bytes: packed.to_ne_bytes() }
+                    let packed: u64 =
+                        (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                    String {
+                        bytes: packed.to_ne_bytes(),
+                    }
                 }
             }
         }
@@ -375,14 +429,32 @@ pub mod semver_string {
             debug_assert!(Self::can_inline(in_));
             match in_.len() {
                 0 => String::default(),
-                1 => String { bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0] },
-                2 => String { bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0] },
-                3 => String { bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0] },
-                4 => String { bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0] },
-                5 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0] },
-                6 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0] },
-                7 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0] },
-                8 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7]] },
+                1 => String {
+                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
+                },
+                2 => String {
+                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
+                },
+                3 => String {
+                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
+                },
+                4 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
+                },
+                5 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
+                },
+                6 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
+                },
+                7 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
+                },
+                8 => String {
+                    bytes: [
+                        in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+                    ],
+                },
                 _ => unreachable!(),
             }
         }
@@ -390,13 +462,27 @@ pub mod semver_string {
         pub fn init_append_if_needed(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
             Ok(match in_.len() {
                 0 => String::default(),
-                1 => String { bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0] },
-                2 => String { bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0] },
-                3 => String { bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0] },
-                4 => String { bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0] },
-                5 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0] },
-                6 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0] },
-                7 => String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0] },
+                1 => String {
+                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
+                },
+                2 => String {
+                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
+                },
+                3 => String {
+                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
+                },
+                4 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
+                },
+                5 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
+                },
+                6 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
+                },
+                7 => String {
+                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
+                },
 
                 Self::MAX_INLINE_LEN => {
                     // If they use the final bit, then it's a big string.
@@ -405,7 +491,11 @@ pub mod semver_string {
                     if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
                         Self::init_append(buf, in_)?
                     } else {
-                        String { bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7]] }
+                        String {
+                            bytes: [
+                                in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+                            ],
+                        }
                     }
                 }
 
@@ -421,7 +511,9 @@ pub mod semver_string {
             let in_buf = &items[items.len() - in_.len()..];
             let ptr_bits: u64 = Pointer::init(items, in_buf).to_bits();
             let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
-            Ok(String { bytes: packed.to_ne_bytes() })
+            Ok(String {
+                bytes: packed.to_ne_bytes(),
+            })
         }
 
         pub fn eql(self, that: String, this_buf: &[u8], that_buf: &[u8]) -> bool {
@@ -554,12 +646,18 @@ pub mod semver_string {
             let hash = Builder::string_hash(str);
 
             if String::can_inline(str) {
-                return Ok(ExternalString { value: String::init_inline(str), hash });
+                return Ok(ExternalString {
+                    value: String::init_inline(str),
+                    hash,
+                });
             }
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(ExternalString { value: *entry.value_ptr, hash });
+                return Ok(ExternalString {
+                    value: *entry.value_ptr,
+                    hash,
+                });
             }
 
             let new = String::init_append(self.bytes, str)?;
@@ -573,12 +671,18 @@ pub mod semver_string {
             hash: u64,
         ) -> Result<ExternalString, AllocError> {
             if String::can_inline(str) {
-                return Ok(ExternalString { value: String::init_inline(str), hash });
+                return Ok(ExternalString {
+                    value: String::init_inline(str),
+                    hash,
+                });
             }
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(ExternalString { value: *entry.value_ptr, hash });
+                return Ok(ExternalString {
+                    value: *entry.value_ptr,
+                    hash,
+                });
             }
 
             let new = String::init_append(self.bytes, str)?;
@@ -631,7 +735,9 @@ pub mod semver_string {
                 "{}",
                 bun_core::fmt::format_json_string_utf8(
                     self.str.slice(self.buf),
-                    bun_core::fmt::JSONFormatterUTF8Options { quote: self.opts.quote },
+                    bun_core::fmt::JSONFormatterUTF8Options {
+                        quote: self.opts.quote
+                    },
                 ),
             )
         }
@@ -681,7 +787,11 @@ pub mod semver_string {
     impl<'a> Sorter<'a> {
         pub fn less_than(&self, lhs: String, rhs: String) -> bool {
             lhs.order(&rhs, self.lhs_buf, self.rhs_buf)
-                == if self.direction == SortDirection::Asc { Ordering::Less } else { Ordering::Greater }
+                == if self.direction == SortDirection::Asc {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
         }
     }
 
@@ -867,7 +977,11 @@ pub mod semver_string {
         pub fn count(&mut self, slice_: &[u8]) {
             self.count_with_hash(
                 slice_,
-                if slice_.len() >= String::MAX_INLINE_LEN { Self::string_hash(slice_) } else { u64::MAX },
+                if slice_.len() >= String::MAX_INLINE_LEN {
+                    Self::string_hash(slice_)
+                } else {
+                    u64::MAX
+                },
             )
         }
 
@@ -904,7 +1018,11 @@ pub mod semver_string {
             self.append_with_hash::<T>(slice_, Self::string_hash(slice_))
         }
 
-        pub fn append_utf8_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        pub fn append_utf8_without_pool<T: BuilderStringType>(
+            &mut self,
+            slice_: &[u8],
+            hash: u64,
+        ) -> T {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 if strings::is_all_ascii(slice_) {
                     return T::from_init(self.allocated_slice(), slice_, hash);

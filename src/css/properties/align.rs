@@ -1,15 +1,17 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::{Parser, Printer, PrintErr, Result as CssResult, Token};
-use crate::css_values::length::LengthPercentage;
-use crate::{VendorPrefix, DeclarationList, PropertyHandlerContext};
-use crate::properties::{Property, PropertyId, PropertyIdTag};
-use crate::prefixes::Feature;
 use crate::compat;
+use crate::css_values::length::LengthPercentage;
+use crate::prefixes::Feature;
+use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
+use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
+use bun_alloc::ArenaVecExt as _;
 
-use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, FlexAlign, FlexItemAlign, BoxOrdinalGroup};
+use crate::css_properties::flex::{
+    BoxAlign, BoxOrdinalGroup, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,
+};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // AlignContent
@@ -144,7 +146,10 @@ impl JustifyContentContentPosition {
 
 impl JustifyContent {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
             return Ok(JustifyContent::Normal);
         }
 
@@ -154,10 +159,12 @@ impl JustifyContent {
 
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         if let Ok(content_position) = input.try_parse(ContentPosition::parse) {
-            return Ok(JustifyContent::ContentPosition(JustifyContentContentPosition {
-                overflow,
-                value: content_position,
-            }));
+            return Ok(JustifyContent::ContentPosition(
+                JustifyContentContentPosition {
+                    overflow,
+                    value: content_position,
+                },
+            ));
         }
 
         let location = input.current_source_location();
@@ -296,15 +303,24 @@ impl JustifySelfSelfPosition {
 
 impl JustifySelf {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching(b"auto")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"auto"))
+            .is_ok()
+        {
             return Ok(JustifySelf::Auto);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
             return Ok(JustifySelf::Normal);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching(b"stretch")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"stretch"))
+            .is_ok()
+        {
             return Ok(JustifySelf::Stretch);
         }
 
@@ -455,11 +471,17 @@ impl JustifyItemsSelfPosition {
 
 impl JustifyItems {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
             return Ok(JustifyItems::Normal);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching(b"stretch")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"stretch"))
+            .is_ok()
+        {
             return Ok(JustifyItems::Stretch);
         }
 
@@ -608,7 +630,9 @@ impl Gap {
 
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let row = GapValue::parse(input)?;
-        let column = input.try_parse(GapValue::parse).unwrap_or_else(|_| row.clone());
+        let column = input
+            .try_parse(GapValue::parse)
+            .unwrap_or_else(|_| row.clone());
         Ok(Self { row, column })
     }
 
@@ -647,10 +671,12 @@ impl PlaceItems {
                 AlignItems::Normal => JustifyItems::Normal,
                 AlignItems::Stretch => JustifyItems::Stretch,
                 AlignItems::BaselinePosition(p) => JustifyItems::BaselinePosition(*p),
-                AlignItems::SelfPosition(sp) => JustifyItems::SelfPosition(JustifyItemsSelfPosition {
-                    overflow: sp.overflow,
-                    value: sp.value,
-                }),
+                AlignItems::SelfPosition(sp) => {
+                    JustifyItems::SelfPosition(JustifyItemsSelfPosition {
+                        overflow: sp.overflow,
+                        value: sp.value,
+                    })
+                }
             },
         };
 
@@ -667,13 +693,13 @@ impl PlaceItems {
                     break 'brk p == ap;
                 }
                 false
-            },
+            }
             JustifyItems::SelfPosition(p) => 'brk: {
                 if let AlignItems::SelfPosition(ap) = &self.align {
                     break 'brk p.to_inner() == ap.to_inner();
                 }
                 false
-            },
+            }
             _ => false,
         };
 
@@ -736,7 +762,7 @@ impl PlaceSelf {
                     break 'brk sp.to_inner() == ap.to_inner();
                 }
                 false
-            },
+            }
             _ => false,
         };
 
@@ -832,19 +858,19 @@ impl PlaceContent {
                     break 'brk true;
                 }
                 false
-            },
+            }
             JustifyContent::ContentDistribution(d) => 'brk: {
                 if let AlignContent::ContentDistribution(ad) = &self.align {
                     break 'brk d == ad;
                 }
                 false
-            },
+            }
             JustifyContent::ContentPosition(p) => 'brk: {
                 if let AlignContent::ContentPosition(ap) = &self.align {
                     break 'brk p.to_inner() == ap.to_inner();
                 }
                 false
-            },
+            }
             _ => false,
         };
 
@@ -1217,10 +1243,38 @@ impl AlignHandler {
                 self.flex_line_pack = None;
                 self.box_pack = None;
                 self.flex_pack = None;
-                handle_property_maybe_flush!(self, dest, context, align_content, &val.align, VendorPrefix::NONE);
-                handle_property_maybe_flush!(self, dest, context, justify_content, &val.justify, VendorPrefix::NONE);
-                handle_property_helper!(self, dest, context, align_content, &val.align, VendorPrefix::NONE);
-                handle_property_helper!(self, dest, context, justify_content, &val.justify, VendorPrefix::NONE);
+                handle_property_maybe_flush!(
+                    self,
+                    dest,
+                    context,
+                    align_content,
+                    &val.align,
+                    VendorPrefix::NONE
+                );
+                handle_property_maybe_flush!(
+                    self,
+                    dest,
+                    context,
+                    justify_content,
+                    &val.justify,
+                    VendorPrefix::NONE
+                );
+                handle_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    align_content,
+                    &val.align,
+                    VendorPrefix::NONE
+                );
+                handle_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    justify_content,
+                    &val.justify,
+                    VendorPrefix::NONE
+                );
             }
             Property::AlignSelf((val, vp)) => {
                 self.flex_item_align = None;
@@ -1235,7 +1289,14 @@ impl AlignHandler {
             }
             Property::PlaceSelf(val) => {
                 self.flex_item_align = None;
-                handle_property_helper!(self, dest, context, align_self, &val.align, VendorPrefix::NONE);
+                handle_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    align_self,
+                    &val.align,
+                    VendorPrefix::NONE
+                );
                 self.justify_self = Some(val.justify.clone());
             }
             Property::AlignItems((val, vp)) => {
@@ -1256,7 +1317,14 @@ impl AlignHandler {
             Property::PlaceItems(val) => {
                 self.box_align = None;
                 self.flex_align = None;
-                handle_property_helper!(self, dest, context, align_items, &val.align, VendorPrefix::NONE);
+                handle_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    align_items,
+                    &val.align,
+                    VendorPrefix::NONE
+                );
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
@@ -1289,7 +1357,11 @@ impl AlignHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
+    pub fn finalize(
+        &mut self,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
+    ) {
         self.flush(dest, context);
     }
 
@@ -1337,8 +1409,22 @@ impl AlignHandler {
                 justify_prop: (Feature::JustifyContent, JustifyContent)
             );
         }
-        flush_standard_property_helper!(self, dest, context, AlignContent, align_content.take(), Feature::AlignContent);
-        flush_standard_property_helper!(self, dest, context, JustifyContent, justify_content.take(), Feature::JustifyContent);
+        flush_standard_property_helper!(
+            self,
+            dest,
+            context,
+            AlignContent,
+            align_content.take(),
+            Feature::AlignContent
+        );
+        flush_standard_property_helper!(
+            self,
+            dest,
+            context,
+            JustifyContent,
+            justify_content.take(),
+            Feature::JustifyContent
+        );
 
         flush_legacy_property!(dest, context, Feature::AlignSelf, &align_self, prop_2009: None, prop_2012: (FlexItemAlign, FlexItemAlign));
         if context.targets.is_compatible(compat::Feature::PlaceSelf) {
@@ -1351,7 +1437,14 @@ impl AlignHandler {
                 justify_prop: None
             );
         }
-        flush_standard_property_helper!(self, dest, context, AlignSelf, align_self.take(), Feature::AlignSelf);
+        flush_standard_property_helper!(
+            self,
+            dest,
+            context,
+            AlignSelf,
+            align_self.take(),
+            Feature::AlignSelf
+        );
         flush_unprefix_property!(dest, context, JustifySelf, justify_self.take());
 
         flush_legacy_property!(dest, context, Feature::AlignItems, &align_items, prop_2009: (BoxAlign, BoxAlign), prop_2012: (FlexAlign, FlexAlign));
@@ -1365,7 +1458,14 @@ impl AlignHandler {
                 justify_prop: None
             );
         }
-        flush_standard_property_helper!(self, dest, context, AlignItems, align_items.take(), Feature::AlignItems);
+        flush_standard_property_helper!(
+            self,
+            dest,
+            context,
+            AlignItems,
+            align_items.take(),
+            Feature::AlignItems
+        );
         flush_unprefix_property!(dest, context, JustifyItems, justify_items.take());
 
         match (row_gap, column_gap) {
@@ -1383,7 +1483,11 @@ impl AlignHandler {
 
     /// Gets prefixes for standard properties.
     // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile in Phase B
-    fn flush_prefixes_helper(&self, context: &PropertyHandlerContext<'_>, feature: Feature) -> VendorPrefix {
+    fn flush_prefixes_helper(
+        &self,
+        context: &PropertyHandlerContext<'_>,
+        feature: Feature,
+    ) -> VendorPrefix {
         let mut prefix = context.targets.prefixes(VendorPrefix::NONE, feature);
         // Firefox only implemented the 2009 spec prefixed.
         // Microsoft only implemented the 2012 spec prefixed.

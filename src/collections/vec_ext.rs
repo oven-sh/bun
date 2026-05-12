@@ -295,7 +295,12 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // SAFETY: caller must never drop or grow the returned `Vec` — its
         // buffer is borrowed.  Same contract as the original.
         ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(items.as_ptr().cast_mut(), items.len(), items.len(), A::default())
+            Vec::from_raw_parts_in(
+                items.as_ptr().cast_mut(),
+                items.len(),
+                items.len(),
+                A::default(),
+            )
         })
     }
 
@@ -479,7 +484,12 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn shallow_copy(&self) -> ManuallyDrop<Self> {
         // SAFETY: caller must not drop/grow the alias; original stays the owner.
         ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(self.as_ptr().cast_mut(), self.len(), self.capacity(), A::default())
+            Vec::from_raw_parts_in(
+                self.as_ptr().cast_mut(),
+                self.len(),
+                self.capacity(),
+                A::default(),
+            )
         })
     }
     #[inline]
@@ -612,7 +622,10 @@ impl ByteVecExt for Vec<u8> {
         let prev = self.len();
         // SAFETY: capacity asserted; writing `size` bytes into the uninit tail.
         unsafe {
-            self.as_mut_ptr().add(prev).cast::<Int>().write_unaligned(int);
+            self.as_mut_ptr()
+                .add(prev)
+                .cast::<Int>()
+                .write_unaligned(int);
             self.set_len(prev + size);
         }
     }

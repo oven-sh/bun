@@ -1,9 +1,9 @@
 //! JS testing bindings for `InternalSourceMap`. Keeps `src/sourcemap/` free of JSC types.
 
-use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
-use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
-use bun_sourcemap::Ordinal;
 use bun_core::MutableString;
+use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use bun_sourcemap::Ordinal;
+use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 
 pub struct TestingAPIs;
 
@@ -27,7 +27,9 @@ impl TestingAPIs {
         if !internal_source_map::is_valid_blob(bytes) {
             return Err(global.throw(format_args!("InternalSourceMap.toVLQ: invalid blob")));
         }
-        let ism = InternalSourceMap { data: bytes.as_ptr() };
+        let ism = InternalSourceMap {
+            data: bytes.as_ptr(),
+        };
         let mut out = MutableString::init_empty();
         ism.append_vlq_to(&mut out);
         bun_string_jsc::create_utf8_for_js(global, out.list.as_slice())
@@ -46,20 +48,43 @@ impl TestingAPIs {
         if line < 0 || col < 0 {
             return Ok(JSValue::NULL);
         }
-        let ism = InternalSourceMap { data: bytes.as_ptr() };
-        let Some(mapping) =
-            ism.find(Ordinal::from_zero_based(line), Ordinal::from_zero_based(col))
-        else {
+        let ism = InternalSourceMap {
+            data: bytes.as_ptr(),
+        };
+        let Some(mapping) = ism.find(
+            Ordinal::from_zero_based(line),
+            Ordinal::from_zero_based(col),
+        ) else {
             return Ok(JSValue::NULL);
         };
 
         let obj = JSValue::create_empty_object(global, 5);
         // PORT NOTE: stub `JSValue::put` takes `&[u8]` directly (Zig used `ZigString.static_`).
-        obj.put(global, b"generatedLine", JSValue::js_number(mapping.generated.lines.zero_based() as f64));
-        obj.put(global, b"generatedColumn", JSValue::js_number(mapping.generated.columns.zero_based() as f64));
-        obj.put(global, b"originalLine", JSValue::js_number(mapping.original.lines.zero_based() as f64));
-        obj.put(global, b"originalColumn", JSValue::js_number(mapping.original.columns.zero_based() as f64));
-        obj.put(global, b"sourceIndex", JSValue::js_number(mapping.source_index as f64));
+        obj.put(
+            global,
+            b"generatedLine",
+            JSValue::js_number(mapping.generated.lines.zero_based() as f64),
+        );
+        obj.put(
+            global,
+            b"generatedColumn",
+            JSValue::js_number(mapping.generated.columns.zero_based() as f64),
+        );
+        obj.put(
+            global,
+            b"originalLine",
+            JSValue::js_number(mapping.original.lines.zero_based() as f64),
+        );
+        obj.put(
+            global,
+            b"originalColumn",
+            JSValue::js_number(mapping.original.columns.zero_based() as f64),
+        );
+        obj.put(
+            global,
+            b"sourceIndex",
+            JSValue::js_number(mapping.source_index as f64),
+        );
         Ok(obj)
     }
 }

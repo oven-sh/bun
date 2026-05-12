@@ -1,42 +1,44 @@
 use crate::mal_prelude::*;
-use std::io::Write as _;
 use std::borrow::Cow;
+use std::io::Write as _;
 
-use bun_core::Output;
-use bun_core::Environment;
-use bun_collections::VecExt;
 use bun_collections::AutoBitSet;
-use bun_collections::StringHashMap;
 use bun_collections::StringArrayHashMap;
+use bun_collections::StringHashMap;
+use bun_collections::VecExt;
+use bun_core::Environment;
+use bun_core::Output;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
 // are free types in that module, not associated types on the struct.
-use bun_threading::thread_pool as ThreadPoolLib;
-use bun_core::strings;
 use bun_core::String as BunString;
+use bun_core::strings;
 use bun_paths as path;
+use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::options;
-use crate::options::OutputFile;
-use crate::options::Loader;
+use crate::BundleV2;
 use crate::Chunk;
 use crate::ContentHasher;
 use crate::Index;
-use crate::cheap_prefix_normalizer;
-use crate::BundleV2;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
+use crate::cheap_prefix_normalizer;
+use crate::options;
+use crate::options::Loader;
+use crate::options::OutputFile;
 
-use crate::LinkerContext;
 use crate::CompileResult;
-use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
-use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
-use crate::linker_context::static_route_visitor::StaticRouteVisitor;
-use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-use crate::linker_context::metafile_builder;
-use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
+use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
+use crate::linker_context::metafile_builder;
+use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
+use crate::linker_context::prepare_css_asts_for_chunk::{
+    PrepareCssAstTask, prepare_css_asts_for_chunk,
+};
+use crate::linker_context::static_route_visitor::StaticRouteVisitor;
+use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
+use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 
 /// `bun.BYTECODE_EXTENSION` (bun.zig). Local because `bun_core` doesn't
 /// re-export it; matches `bun.rs::bytecode_extension`.
@@ -80,7 +82,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
-        c.worker_pool().each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        c.worker_pool()
+            .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -154,10 +157,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
             // stored in every ctx (Zig stores `[]Chunk` by value).
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
-            let c_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+            let c_ref =
+                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ref, chunk: bun_ptr::BackRef::new_mut(chunk) });
+                chunk_contexts.push(GenerateChunkCtx {
+                    c: c_ref,
+                    chunks: chunks_ref,
+                    chunk: bun_ptr::BackRef::new_mut(chunk),
+                });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
@@ -168,8 +176,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
                         total_count += css.imports_in_chunk_in_order.len() as usize;
-                        chunk.compile_results_for_chunk =
-                            crate::chunk::CompileResultSlots::new(css.imports_in_chunk_in_order.len() as usize);
+                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(
+                            css.imports_in_chunk_in_order.len() as usize,
+                        );
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
@@ -199,10 +208,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     PartRanges,
                                     "Part Range: {} {} ({}..{})",
                                     bstr::BStr::new(
-                                        &c.parse_graph().input_files.items_source()[part_range.source_index.get()].path.pretty
+                                        &c.parse_graph().input_files.items_source()
+                                            [part_range.source_index.get()]
+                                        .path
+                                        .pretty
                                     ),
                                     <&'static str>::from(
-                                        c.parse_graph().ast.items_target()[part_range.source_index.get()].bake_graph()
+                                        c.parse_graph().ast.items_target()
+                                            [part_range.source_index.get()]
+                                        .bake_graph()
                                     ),
                                     part_range.part_index_begin,
                                     part_range.part_index_end,
@@ -217,16 +231,21 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     callback: generate_compile_result_for_js_chunk,
                                 },
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
-                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
-                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
-                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                            // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
+                                // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                                // LinkerContext's `'a`. Launder via raw ptr so borrowck
+                                // doesn't pin `chunk_contexts` for `'a`; tasks complete
+                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                ctx: unsafe {
+                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                                },
                             };
-                            batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
+                            batch.push(ThreadPoolLib::Batch::from(
+                                &raw mut remaining_part_ranges[0].task,
+                            ));
 
                             // PORT NOTE: reshaped for borrowck — Zig reslices `remaining_part_ranges[1..]`
-                            remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
+                            remaining_part_ranges =
+                                &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
                     crate::chunk::Content::Css(css) => {
@@ -239,15 +258,20 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     callback: generate_compile_result_for_css_chunk,
                                 },
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
-                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
-                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
-                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                            // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
+                                // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                                // LinkerContext's `'a`. Launder via raw ptr so borrowck
+                                // doesn't pin `chunk_contexts` for `'a`; tasks complete
+                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                ctx: unsafe {
+                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                                },
                             };
-                            batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
+                            batch.push(ThreadPoolLib::Batch::from(
+                                &raw mut remaining_part_ranges[0].task,
+                            ));
 
-                            remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
+                            remaining_part_ranges =
+                                &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
                     crate::chunk::Content::Html => {
@@ -263,11 +287,16 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
+                            ctx: unsafe {
+                                bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                            },
                         };
 
-                        batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
-                        remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
+                        batch.push(ThreadPoolLib::Batch::from(
+                            &raw mut remaining_part_ranges[0].task,
+                        ));
+                        remaining_part_ranges =
+                            &mut core::mem::take(&mut remaining_part_ranges)[1..];
                     }
                 }
             }
@@ -287,7 +316,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
 
         // For dev server, only post-process CSS + HTML chunks.
-        let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER { &mut chunks[1..] } else { chunks };
+        let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
+            &mut chunks[1..]
+        } else {
+            chunks
+        };
         if !IS_DEV_SERVER || chunks_to_do.len() > 0 {
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
@@ -369,9 +402,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             #[cfg(windows)]
             if strings::index_of(&rel_path, b"/./").is_some() {
                 let mut buf = bun_paths::PathBuffer::uninit();
-                let rel_path_fixed: Box<[u8]> = Box::from(
-                    &*path::resolve_path::normalize_buf::<path::platform::Posix>(&rel_path, &mut buf),
-                );
+                let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
+                    path::platform::Posix,
+                >(&rel_path, &mut buf));
                 chunk.final_rel_path = rel_path_fixed;
                 continue;
             }
@@ -391,11 +424,17 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let kinds = c.graph.files.items_entry_point_kind();
 
-            for (key, dup) in duplicates_map.keys().iter().zip(duplicates_map.values().iter()) {
+            for (key, dup) in duplicates_map
+                .keys()
+                .iter()
+                .zip(duplicates_map.values().iter())
+            {
                 write!(&mut msg, "  {}:\n", bstr::BStr::new(key))?;
                 for chunk in dup.sources.iter() {
                     if chunk.entry_point.is_entry_point() {
-                        if kinds[chunk.entry_point.source_index() as usize] == EntryPoint::Kind::UserSpecified {
+                        if kinds[chunk.entry_point.source_index() as usize]
+                            == EntryPoint::Kind::UserSpecified
+                        {
                             entry_naming = Some(&chunk.template.data);
                         } else {
                             chunk_naming = Some(&chunk.template.data);
@@ -407,7 +446,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let source_index = chunk.entry_point.source_index();
                     let file: &bun_ast::Source =
                         &c.parse_graph().input_files.items_source()[source_index as usize];
-                    write!(&mut msg, "    from input {}\n", bstr::BStr::new(&file.path.pretty))?;
+                    write!(
+                        &mut msg,
+                        "    from input {}\n",
+                        bstr::BStr::new(&file.path.pretty)
+                    )?;
                 }
             }
 
@@ -446,20 +489,27 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if c.options.generate_bytecode_cache && c.options.output_format == options::Format::Esm && c.options.compile {
+    if c.options.generate_bytecode_cache
+        && c.options.output_format == options::Format::Esm
+        && c.options.compile
+    {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-        let b: &mut BundleV2 = unsafe {
-            &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
-        };
+        let b: &mut BundleV2 =
+            unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
         let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
         for ch in chunks.iter() {
             if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
                 // Use the per-chunk public_path to match what IntermediateOutput.code()
                 // uses during emission (browser chunks from server builds use the
                 // browser transpiler's public_path).
-                let public_path: &[u8] = if ch.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
-                    &b.transpiler_for_target(options::Target::Browser).options.public_path
+                let public_path: &[u8] = if ch
+                    .flags
+                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+                {
+                    &b.transpiler_for_target(options::Target::Browser)
+                        .options
+                        .public_path
                 } else {
                     &c.options.public_path
                 };
@@ -473,8 +523,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         // Fix up each chunk's module_info
         for chunk in chunks.iter_mut() {
-            let crate::chunk::Content::Javascript(js) = &mut chunk.content else { continue };
-            let Some(mi) = js.module_info.as_mut() else { continue };
+            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
+                continue;
+            };
+            let Some(mi) = js.module_info.as_mut() else {
+                continue;
+            };
 
             // Collect replacements first (can't modify string table while iterating)
             struct Replacement {
@@ -522,8 +576,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // PORT NOTE: reshaped for borrowck — `generate_chunk_json` reads all chunks
         // immutably while we write one chunk's `metafile_chunk_json`; index split.
         for i in 0..chunks.len() {
-            let json = metafile_builder::generate_chunk_json(c, &chunks[i], chunks)
-                .unwrap_or_default();
+            let json =
+                metafile_builder::generate_chunk_json(c, &chunks[i], chunks).unwrap_or_default();
             chunks[i].metafile_chunk_json = json;
         }
     }
@@ -544,7 +598,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             || (has_css_chunk && has_js_chunk)
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
-    if !c.resolver().opts.compile && more_than_one_output && !c.resolver().opts.supports_multiple_outputs {
+    if !c.resolver().opts.compile
+        && more_than_one_output
+        && !c.resolver().opts.supports_multiple_outputs
+    {
         c.log_mut().add_error(
             None,
             bun_ast::Loc::EMPTY,
@@ -554,9 +611,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bundler: &mut BundleV2 = unsafe {
-        &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
-    };
+    let bundler: &mut BundleV2 =
+        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
     let mut static_route_visitor = StaticRouteVisitor {
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
         // long-lived shared borrow doesn't conflict with `c.log_disjoint()` inside
@@ -619,7 +675,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     let is_compile = bundler.transpiler.options.compile;
     if root_path.len() > 0 && !is_compile {
-        write_output_files_to_disk(c, root_path, chunks, &mut output_files, standalone_chunk_contents.as_deref())?;
+        write_output_files_to_disk(
+            c,
+            root_path,
+            chunks,
+            &mut output_files,
+            standalone_chunk_contents.as_deref(),
+        )?;
     } else {
         // In-memory build (also used for standalone mode)
         // PORT NOTE: `code()` / `code_standalone()` read `chunk` (= `&chunks[i]`)
@@ -629,28 +691,35 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         for chunk_index_in_chunks_list in 0..chunks.len() {
             // In standalone mode, non-HTML chunks were already resolved in the first pass.
             // Insert a placeholder output file to keep chunk indices aligned.
-            if is_standalone && !matches!(chunks[chunk_index_in_chunks_list].content, crate::chunk::Content::Html) {
-                let _ = output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
-                    data: options::OutputFileData::Buffer {
-                        data: Box::default(),
+            if is_standalone
+                && !matches!(
+                    chunks[chunk_index_in_chunks_list].content,
+                    crate::chunk::Content::Html
+                )
+            {
+                let _ = output_files.insert_for_chunk(options::OutputFile::init(
+                    options::OutputFileInit {
+                        data: options::OutputFileData::Buffer {
+                            data: Box::default(),
+                        },
+                        hash: None,
+                        loader: chunks[chunk_index_in_chunks_list].content.loader(),
+                        input_path: Box::default(),
+                        display_size: 0,
+                        output_kind: options::OutputKind::Chunk,
+                        input_loader: Loader::Js,
+                        output_path: Box::default(),
+                        is_executable: false,
+                        source_map_index: None,
+                        bytecode_index: None,
+                        module_info_index: None,
+                        side: Some(options::Side::Client),
+                        entry_point_index: None,
+                        referenced_css_chunks: Box::default(),
+                        bake_extra: BakeExtra::default(),
+                        ..Default::default()
                     },
-                    hash: None,
-                    loader: chunks[chunk_index_in_chunks_list].content.loader(),
-                    input_path: Box::default(),
-                    display_size: 0,
-                    output_kind: options::OutputKind::Chunk,
-                    input_loader: Loader::Js,
-                    output_path: Box::default(),
-                    is_executable: false,
-                    source_map_index: None,
-                    bytecode_index: None,
-                    module_info_index: None,
-                    side: Some(options::Side::Client),
-                    entry_point_index: None,
-                    referenced_css_chunks: Box::default(),
-                    bake_extra: BakeExtra::default(),
-                    ..Default::default()
-                }));
+                ));
                 continue;
             }
 
@@ -660,7 +729,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .flags
                 .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
             {
-                &bundler.transpiler_for_target(options::Target::Browser).options.public_path
+                &bundler
+                    .transpiler_for_target(options::Target::Browser)
+                    .options
+                    .public_path
             } else {
                 &c.options.public_path
             };
@@ -670,8 +742,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut intermediate_output =
                 core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
             let _code_result = if is_standalone
-                && matches!(chunks[chunk_index_in_chunks_list].content, crate::chunk::Content::Html)
-            {
+                && matches!(
+                    chunks[chunk_index_in_chunks_list].content,
+                    crate::chunk::Content::Html
+                ) {
                 intermediate_output.code_standalone(
                     None,
                     c.parse_graph(),
@@ -713,7 +787,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;
             let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
-                c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize]
+                c.parse_graph().input_files.items_source()
+                    [chunk.entry_point.source_index() as usize]
                     .path
                     .text
                     .as_ref()
@@ -740,8 +815,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         };
 
                         let source_map_start = b"//# sourceMappingURL=";
-                        let total_len =
-                            code_result.buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
+                        let total_len = code_result.buffer.len()
+                            + source_map_start.len()
+                            + a.len()
+                            + b.len()
+                            + b"\n".len();
                         // TODO(port): Zig uses Chunk.IntermediateOutput.allocatorForSize(total_len)
                         let mut buf: Vec<u8> = Vec::with_capacity(total_len);
                         // PERF(port): was appendSliceAssumeCapacity
@@ -755,21 +833,22 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         code_result.buffer = buf.into_boxed_slice();
                     }
 
-                    sourcemap_output_file = Some(options::OutputFile::init(options::OutputFileInit {
-                        data: options::OutputFileData::Buffer {
-                            data: output_source_map,
-                        },
-                        hash: None,
-                        loader: Loader::Json,
-                        input_loader: Loader::File,
-                        output_path: source_map_final_rel_path.into_boxed_slice(),
-                        output_kind: options::OutputKind::Sourcemap,
-                        input_path: strings::concat(&[&input_path[..], b".map"]),
-                        side: None,
-                        entry_point_index: None,
-                        is_executable: false,
-                        ..Default::default()
-                    }));
+                    sourcemap_output_file =
+                        Some(options::OutputFile::init(options::OutputFileInit {
+                            data: options::OutputFileData::Buffer {
+                                data: output_source_map,
+                            },
+                            hash: None,
+                            loader: Loader::Json,
+                            input_loader: Loader::File,
+                            output_path: source_map_final_rel_path.into_boxed_slice(),
+                            output_kind: options::OutputKind::Sourcemap,
+                            input_path: strings::concat(&[&input_path[..], b".map"]),
+                            side: None,
+                            entry_point_index: None,
+                            is_executable: false,
+                            ..Default::default()
+                        }));
                 }
                 SourceMapOption::Inline => {
                     let output_source_map = chunk
@@ -779,7 +858,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let encode_len = bun_base64::encode_len(&output_source_map);
 
                     let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
-                    let total_len = code_result.buffer.len() + source_map_start.len() + encode_len + 1;
+                    let total_len =
+                        code_result.buffer.len() + source_map_start.len() + encode_len + 1;
                     // TODO(port): Zig uses Chunk.IntermediateOutput.allocatorForSize(total_len)
                     let mut buf: Vec<u8> = Vec::with_capacity(total_len);
 
@@ -801,20 +881,24 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: options::Side =
-                if matches!(chunk.content, crate::chunk::Content::Css(_)) || chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
-                    options::Side::Client
-                } else {
-                    match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                        options::Target::Browser => options::Side::Client,
-                        _ => options::Side::Server,
-                    }
-                };
+            let side: options::Side = if matches!(chunk.content, crate::chunk::Content::Css(_))
+                || chunk
+                    .flags
+                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+            {
+                options::Side::Client
+            } else {
+                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
+                    options::Target::Browser => options::Side::Client,
+                    _ => options::Side::Server,
+                }
+            };
 
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
+                        c.parse_graph().input_files.items_loader()
+                            [chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -832,7 +916,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
                         let source_provider_url = if c.options.compile {
-                            let normalizer = cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
+                            let normalizer =
+                                cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
                             BunString::create_format(format_args!(
                                 "{}{}",
                                 bstr::BStr::new(normalizer[0]),
@@ -848,7 +933,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         source_provider_url.ref_();
                         // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
                         // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
+                        let mut source_provider_url =
+                            bun_core::OwnedString::new(source_provider_url);
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
@@ -859,9 +945,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             debug!(
                                 "Bytecode cache generated {}: {}",
                                 bstr::BStr::new(source_provider_url_str.slice()),
-                                bun_core::fmt::size(bytecode.len(), bun_core::fmt::SizeFormatterOptions { space_between_number_and_unit: true })
+                                bun_core::fmt::size(
+                                    bytecode.len(),
+                                    bun_core::fmt::SizeFormatterOptions {
+                                        space_between_number_and_unit: true
+                                    }
+                                )
                             );
-                            fdpath[..chunk.final_rel_path.len()].copy_from_slice(&chunk.final_rel_path);
+                            fdpath[..chunk.final_rel_path.len()]
+                                .copy_from_slice(&chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
                                 .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
 
@@ -882,9 +974,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
                                 display_size: bytecode.len() as u32,
-                                data: options::OutputFileData::Buffer {
-                                    data: bytecode,
-                                },
+                                data: options::OutputFileData::Buffer { data: bytecode },
                                 side: Some(side),
                                 entry_point_index: None,
                                 is_executable: false,
@@ -919,12 +1009,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     && c.options.compile
                 {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
+                        c.parse_graph().input_files.items_loader()
+                            [chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
 
-                    if matches!(chunk.content, crate::chunk::Content::Javascript(_)) && loader.is_javascript_like() {
+                    if matches!(chunk.content, crate::chunk::Content::Javascript(_))
+                        && loader.is_javascript_like()
+                    {
                         if let crate::chunk::Content::Javascript(js) = &chunk.content {
                             if let Some(module_info_bytes) = &js.module_info_bytes {
                                 let mut out_path: Vec<u8> = Vec::new();
@@ -934,27 +1027,29 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 in_path.extend_from_slice(&chunk.final_rel_path);
                                 in_path.extend_from_slice(b".module-info");
 
-                                break 'brk Some(options::OutputFile::init(options::OutputFileInit {
-                                    output_path: out_path.into_boxed_slice(),
-                                    input_path: in_path.into_boxed_slice(),
-                                    input_loader: Loader::Js,
-                                    hash: if chunk.template.placeholder.hash.is_some() {
-                                        Some(bun_wyhash::hash(module_info_bytes))
-                                    } else {
-                                        None
+                                break 'brk Some(options::OutputFile::init(
+                                    options::OutputFileInit {
+                                        output_path: out_path.into_boxed_slice(),
+                                        input_path: in_path.into_boxed_slice(),
+                                        input_loader: Loader::Js,
+                                        hash: if chunk.template.placeholder.hash.is_some() {
+                                            Some(bun_wyhash::hash(module_info_bytes))
+                                        } else {
+                                            None
+                                        },
+                                        output_kind: options::OutputKind::ModuleInfo,
+                                        loader: Loader::File,
+                                        size: Some(module_info_bytes.len()),
+                                        display_size: module_info_bytes.len() as u32,
+                                        data: options::OutputFileData::Buffer {
+                                            data: module_info_bytes.clone(),
+                                        },
+                                        side: Some(side),
+                                        entry_point_index: None,
+                                        is_executable: false,
+                                        ..Default::default()
                                     },
-                                    output_kind: options::OutputKind::ModuleInfo,
-                                    loader: Loader::File,
-                                    size: Some(module_info_bytes.len()),
-                                    display_size: module_info_bytes.len() as u32,
-                                    data: options::OutputFileData::Buffer {
-                                        data: module_info_bytes.clone(),
-                                    },
-                                    side: Some(side),
-                                    entry_point_index: None,
-                                    is_executable: false,
-                                    ..Default::default()
-                                }));
+                                ));
                             }
                         }
                     }
@@ -983,74 +1078,82 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let output_kind = if matches!(chunk.content, crate::chunk::Content::Css(_)) {
                 options::OutputKind::Asset
             } else if chunk.entry_point.is_entry_point() {
-                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize].output_kind()
+                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+                    .output_kind()
             } else {
                 options::OutputKind::Chunk
             };
 
-            let chunk_index = output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
-                data: options::OutputFileData::Buffer {
-                    data: code_result.buffer,
-                    // TODO(port): Zig stores Chunk.IntermediateOutput.allocatorForSize(len) for matched dealloc.
-                },
-                hash: chunk.template.placeholder.hash,
-                loader: chunk.content.loader(),
-                input_path,
-                display_size: display_size as u32,
-                output_kind,
-                input_loader: if chunk.entry_point.is_entry_point() {
-                    c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
-                } else {
-                    Loader::Js
-                },
-                output_path: Box::from(chunk.final_rel_path.as_ref()),
-                is_executable: chunk.flags.contains(crate::chunk::Flags::IS_EXECUTABLE),
-                source_map_index,
-                bytecode_index,
-                module_info_index,
-                side: Some(side),
-                entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                    Some(
-                        chunk.entry_point.source_index()
-                            - (if let Some(fw) = c.framework {
-                                if fw.server_components.is_some() { 3 } else { 1 }
-                            } else {
-                                1
-                            }) as u32,
-                    )
-                } else {
-                    None
-                },
-                referenced_css_chunks: match &chunk.content {
-                    // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `output_file::Index`
-                    // is `#[repr(transparent)]` over u32.
-                    crate::chunk::Content::Javascript(js) => {
-                        js.css_chunks.iter().map(|&i| crate::output_file::Index::init(i)).collect()
-                    }
-                    crate::chunk::Content::Css(_) => Box::default(),
-                    crate::chunk::Content::Html => Box::default(),
-                },
-                bake_extra: 'brk: {
-                    if c.framework.is_none() || IS_DEV_SERVER {
-                        break 'brk BakeExtra::default();
-                    }
-                    if !c.framework.unwrap().is_built_in_react {
-                        break 'brk BakeExtra::default();
-                    }
+            let chunk_index =
+                output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
+                    data: options::OutputFileData::Buffer {
+                        data: code_result.buffer,
+                        // TODO(port): Zig stores Chunk.IntermediateOutput.allocatorForSize(len) for matched dealloc.
+                    },
+                    hash: chunk.template.placeholder.hash,
+                    loader: chunk.content.loader(),
+                    input_path,
+                    display_size: display_size as u32,
+                    output_kind,
+                    input_loader: if chunk.entry_point.is_entry_point() {
+                        c.parse_graph().input_files.items_loader()
+                            [chunk.entry_point.source_index() as usize]
+                    } else {
+                        Loader::Js
+                    },
+                    output_path: Box::from(chunk.final_rel_path.as_ref()),
+                    is_executable: chunk.flags.contains(crate::chunk::Flags::IS_EXECUTABLE),
+                    source_map_index,
+                    bytecode_index,
+                    module_info_index,
+                    side: Some(side),
+                    entry_point_index: if output_kind == options::OutputKind::EntryPoint {
+                        Some(
+                            chunk.entry_point.source_index()
+                                - (if let Some(fw) = c.framework {
+                                    if fw.server_components.is_some() { 3 } else { 1 }
+                                } else {
+                                    1
+                                }) as u32,
+                        )
+                    } else {
+                        None
+                    },
+                    referenced_css_chunks: match &chunk.content {
+                        // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `output_file::Index`
+                        // is `#[repr(transparent)]` over u32.
+                        crate::chunk::Content::Javascript(js) => js
+                            .css_chunks
+                            .iter()
+                            .map(|&i| crate::output_file::Index::init(i))
+                            .collect(),
+                        crate::chunk::Content::Css(_) => Box::default(),
+                        crate::chunk::Content::Html => Box::default(),
+                    },
+                    bake_extra: 'brk: {
+                        if c.framework.is_none() || IS_DEV_SERVER {
+                            break 'brk BakeExtra::default();
+                        }
+                        if !c.framework.unwrap().is_built_in_react {
+                            break 'brk BakeExtra::default();
+                        }
 
-                    let mut extra = BakeExtra::default();
-                    extra.bake_is_runtime =
-                        chunk.files_with_parts_in_chunk.contains(&Index::RUNTIME.get());
-                    if output_kind == options::OutputKind::EntryPoint && side == options::Side::Server {
-                        extra.is_route = true;
-                        extra.fully_static =
-                            !static_route_visitor.has_transitive_use_client(chunk.entry_point.source_index());
-                    }
+                        let mut extra = BakeExtra::default();
+                        extra.bake_is_runtime = chunk
+                            .files_with_parts_in_chunk
+                            .contains(&Index::RUNTIME.get());
+                        if output_kind == options::OutputKind::EntryPoint
+                            && side == options::Side::Server
+                        {
+                            extra.is_route = true;
+                            extra.fully_static = !static_route_visitor
+                                .has_transitive_use_client(chunk.entry_point.source_index());
+                        }
 
-                    break 'brk extra;
-                },
-                ..Default::default()
-            }));
+                        break 'brk extra;
+                    },
+                    ..Default::default()
+                }));
 
             // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
             debug_assert!(
@@ -1062,7 +1165,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
 
         if !is_standalone {
-            output_files.insert_additional_output_files(&mut c.parse_graph_mut().additional_output_files);
+            output_files
+                .insert_additional_output_files(&mut c.parse_graph_mut().additional_output_files);
         }
     }
 

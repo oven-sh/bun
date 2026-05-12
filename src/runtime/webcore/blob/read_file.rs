@@ -1,31 +1,31 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::{offset_of, MaybeUninit};
-use core::sync::atomic::{AtomicU8, AtomicPtr, Ordering};
+use core::mem::{MaybeUninit, offset_of};
+use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
-use bun_core::{self, Error};
-use bun_io::{self as io, FileAction};
-use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    SysErrorJsc as _, SystemError,
-};
-use crate::webcore::blob::{
-    Blob, ClosingState, FileCloser, FileOpener, SizeType, StoreRef, MAX_SIZE,
-};
-use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
-use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::Lifetime;
+use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
+use crate::webcore::blob::{
+    Blob, ClosingState, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef,
+};
+use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
 use bun_core::String as BunString;
-use bun_sys::{self, Fd, Stat};
-#[cfg(windows)]
-use bun_sys::windows::libuv;
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
+use bun_core::{self, Error};
+use bun_io::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{
+    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SysErrorJsc as _,
+    SystemError,
+};
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_sys::windows::libuv;
+use bun_sys::{self, Fd, Stat};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -52,12 +52,7 @@ pub trait ReadFileToJs {
     /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
     /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
     /// otherwise a borrow valid for the call.
-    fn call(
-        b: &Blob,
-        g: &JSGlobalObject,
-        by: *mut [u8],
-        lifetime: Lifetime,
-    ) -> JsResult<JSValue>;
+    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
 }
 
 pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
@@ -69,7 +64,12 @@ pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
 
 impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     pub fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
-        Self { context, promise: JSPromiseStrong::default(), global_this, _f: PhantomData }
+        Self {
+            context,
+            promise: JSPromiseStrong::default(),
+            global_this,
+            _f: PhantomData,
+        }
     }
 }
 
@@ -101,7 +101,8 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;
                 if blob.size.get() > 0 {
-                    blob.size.set((bytes.len() as SizeType).min(blob.size.get()));
+                    blob.size
+                        .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
                 // Zig defined a local `WrappedFn` struct to adapt the comptime
                 // `Function` into the `toJSHostCall` shape; Rust closures + the
@@ -198,39 +199,81 @@ bun_threading::intrusive_work_task!(ReadFile, task);
 // Zig: `pub const getFd = FileOpener(@This()).getFd;` / `doClose = FileCloser(@This()).doClose;`
 // — modeled as trait impls; the default methods on the traits provide the bodies.
 impl FileOpener for ReadFile {
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn set_errno(&mut self, e: bun_core::Error) { self.errno = Some(e); }
-    fn set_system_error(&mut self, e: jsc::SystemError) { self.system_error = Some(e); }
-    fn pathlike(&self) -> &PathOrFileDescriptor { &self.file_store.pathlike }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn set_errno(&mut self, e: bun_core::Error) {
+        self.errno = Some(e);
+    }
+    fn set_system_error(&mut self, e: jsc::SystemError) {
+        self.system_error = Some(e);
+    }
+    fn pathlike(&self) -> &PathOrFileDescriptor {
+        &self.file_store.pathlike
+    }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        unreachable!("ReadFile is POSIX-only; see ReadFileUV")
+    }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
+        unreachable!("ReadFile is POSIX-only; see ReadFileUV")
+    }
     #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
+    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
+        unreachable!()
+    }
     #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) { unreachable!() }
+    fn open_callback(&self) -> fn(&mut Self, Fd) {
+        unreachable!()
+    }
 }
 
 impl FileCloser for ReadFile {
     const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn close_after_io(&self) -> bool { self.close_after_io }
-    fn set_close_after_io(&mut self, v: bool) { self.close_after_io = v; }
-    fn state(&self) -> &AtomicU8 { &self.state }
-    fn io_request(&mut self) -> Option<&mut bun_io::Request> { Some(&mut self.io_request) }
-    fn io_poll(&mut self) -> &mut bun_io::Poll { &mut self.io_poll }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
-    fn update(&mut self) { ReadFile::update(self) }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn close_after_io(&self) -> bool {
+        self.close_after_io
+    }
+    fn set_close_after_io(&mut self, v: bool) {
+        self.close_after_io = v;
+    }
+    fn state(&self) -> &AtomicU8 {
+        &self.state
+    }
+    fn io_request(&mut self) -> Option<&mut bun_io::Request> {
+        Some(&mut self.io_request)
+    }
+    fn io_poll(&mut self) -> &mut bun_io::Poll {
+        &mut self.io_poll
+    }
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+        &mut self.task
+    }
+    fn update(&mut self) {
+        ReadFile::update(self)
+    }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!() }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        unreachable!()
+    }
 
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, std::ptr::from_mut::<io::Request>(request)))
+            &mut *(bun_core::from_field_ptr!(
+                ReadFile,
+                io_request,
+                std::ptr::from_mut::<io::Request>(request)
+            ))
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut ReadFile` set below.
@@ -300,7 +343,10 @@ impl ReadFile {
             size: 0,
             buffer: Vec::new(),
             // TODO(port): was `undefined` — overwritten before first schedule.
-            task: WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task },
+            task: WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_read_loop_task,
+            },
             system_error: None,
             errno: None,
             on_complete_ctx: on_read_file_context,
@@ -348,15 +394,17 @@ impl ReadFile {
 
     pub fn on_readable(request: *mut io::Request) {
         // SAFETY: request points to ReadFile.io_request (intrusive field).
-        let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request))
-        };
+        let this: &mut ReadFile =
+            unsafe { &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request)) };
         this.on_ready();
     }
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
-        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
+        self.task = WorkPoolTask {
+            node: Default::default(),
+            callback: Self::do_read_loop_task,
+        };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
@@ -373,7 +421,10 @@ impl ReadFile {
         bloblog!("ReadFile.onIOError");
         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         self.system_error = Some(err.to_system_error().into());
-        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
+        self.task = WorkPoolTask {
+            node: Default::default(),
+            callback: Self::do_read_loop_task,
+        };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
@@ -396,7 +447,11 @@ impl ReadFile {
         request.scheduled = false;
         // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
         let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, std::ptr::from_mut::<io::Request>(request)))
+            &mut *(bun_core::from_field_ptr!(
+                ReadFile,
+                io_request,
+                std::ptr::from_mut::<io::Request>(request)
+            ))
         };
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
@@ -411,7 +466,8 @@ impl ReadFile {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;
         // Zig: @atomicStore on the callback fn-pointer field.
-        self.io_request.store_callback_seq_cst(Self::on_request_readable);
+        self.io_request
+            .store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
             io::IoRequestLoop::schedule(&mut self.io_request);
         }
@@ -881,23 +937,47 @@ pub struct ReadFileUV<'a> {
 //      `pub const doClose = FileCloser(@This()).doClose;`
 #[cfg(windows)]
 impl<'a> FileOpener for ReadFileUV<'a> {
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn set_errno(&mut self, e: bun_core::Error) { self.errno = Some(e); }
-    fn set_system_error(&mut self, e: jsc::SystemError) { self.system_error = Some(e); }
-    fn pathlike(&self) -> &PathOrFileDescriptor { &self.file_store.pathlike }
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { self.loop_ }
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { &mut self.req }
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd)) { self.open_callback = cb; }
-    fn open_callback(&self) -> fn(&mut Self, Fd) { self.open_callback }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn set_errno(&mut self, e: bun_core::Error) {
+        self.errno = Some(e);
+    }
+    fn set_system_error(&mut self, e: jsc::SystemError) {
+        self.system_error = Some(e);
+    }
+    fn pathlike(&self) -> &PathOrFileDescriptor {
+        &self.file_store.pathlike
+    }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        self.loop_
+    }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
+        &mut self.req
+    }
+    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd)) {
+        self.open_callback = cb;
+    }
+    fn open_callback(&self) -> fn(&mut Self, Fd) {
+        self.open_callback
+    }
 }
 
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
     const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { self.loop_ }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        self.loop_
+    }
 
     // Zig `FileCloser` gates the `close_after_io` / `io_request` / `io_poll` /
     // `state` / `task` accesses on `@hasField(This, "io_request")`, which is
@@ -905,14 +985,18 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     // `io_request`). So `do_close` falls straight to the close-fd branch and
     // none of the methods below are ever reached — these mark genuinely dead
     // code paths, not unported stubs.
-    fn close_after_io(&self) -> bool { false }
+    fn close_after_io(&self) -> bool {
+        false
+    }
     fn set_close_after_io(&mut self, _: bool) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn state(&self) -> &AtomicU8 {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn io_request(&mut self) -> Option<&mut bun_io::Request> { None }
+    fn io_request(&mut self) -> Option<&mut bun_io::Request> {
+        None
+    }
     fn io_poll(&mut self) -> &mut bun_io::Poll {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
@@ -942,8 +1026,7 @@ impl<'a> ReadFileUV<'a> {
         off: SizeType,
         max_len: SizeType,
         handler: *mut c_void,
-    )
-    where
+    ) where
         H: ReadFileUvHandler,
     {
         Self::start_with_ctx(
@@ -1089,8 +1172,11 @@ impl<'a> ReadFileUV<'a> {
         };
         if let Some(errno) = rc.err_enum_e() {
             self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
-            self.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());
+            self.system_error = Some(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
+                    .to_system_error()
+                    .into(),
+            );
             self.on_finish();
             return;
         }
@@ -1107,8 +1193,11 @@ impl<'a> ReadFileUV<'a> {
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         if let Some(errno) = this.req.result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
-            this.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());
+            this.system_error = Some(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
+                    .to_system_error()
+                    .into(),
+            );
             this.on_finish();
             return;
         }
@@ -1175,22 +1264,24 @@ impl<'a> ReadFileUV<'a> {
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
             this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
-            this.system_error =
-                Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
+            this.system_error = Some(
+                bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
-                    .into());
+                    .into(),
+            );
             this.on_finish();
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        let want = ((this.size as usize).saturating_add(16))
-            .min(bun_sys::windows::ULONG::MAX as usize);
+        let want =
+            ((this.size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
         if this.buffer.try_reserve_exact(want).is_err() {
             this.errno = Some(bun_core::err!("OutOfMemory"));
-            this.system_error =
-                Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
+            this.system_error = Some(
+                bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
-                    .into());
+                    .into(),
+            );
             this.on_finish();
             return;
         }
@@ -1270,8 +1361,11 @@ impl<'a> ReadFileUV<'a> {
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
-                self.system_error =
-                    Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error().into());
+                self.system_error = Some(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::read)
+                        .to_system_error()
+                        .into(),
+                );
                 self.on_finish();
             }
         } else {
@@ -1295,8 +1389,11 @@ impl<'a> ReadFileUV<'a> {
 
         if let Some(errno) = result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
-            this.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error().into());
+            this.system_error = Some(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::read)
+                    .to_system_error()
+                    .into(),
+            );
             this.on_finish();
             return;
         }
@@ -1312,7 +1409,10 @@ impl<'a> ReadFileUV<'a> {
 
         this.read_off += SizeType::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
-        unsafe { this.buffer.uv_commit(usize::try_from(result.int()).expect("int cast")) };
+        unsafe {
+            this.buffer
+                .uv_commit(usize::try_from(result.int()).expect("int cast"))
+        };
 
         this.req.deinit();
         this.queue_read();

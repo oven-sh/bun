@@ -103,7 +103,10 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
             continue;
         }
 
-        let mut result = Entry { port, ..Entry::default() };
+        let mut result = Entry {
+            port,
+            ..Entry::default()
+        };
         for raw_param in params {
             let param = strings::trim(raw_param, b" \t");
             let Some(peq) = strings::index_of_char(param, b'=') else {
@@ -216,10 +219,13 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
         }
     }
     // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
-    let _ = cache().put(k, Record {
-        h3_port: entry.port,
-        expires_at: now + i64::from(entry.ma),
-    });
+    let _ = cache().put(
+        k,
+        Record {
+            h3_port: entry.port,
+            expires_at: now + i64::from(entry.ma),
+        },
+    );
     bun_core::scoped_log!(
         h3_client,
         "alt-svc h3 {} -> :{} ma={}",

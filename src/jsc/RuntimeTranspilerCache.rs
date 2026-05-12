@@ -4,16 +4,16 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_core::{self as bun, env_var, FeatureFlags};
-use bun_io::Write as _;
-use bun_core::{String as BunString, PathString, ZStr};
-use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_ast::ExportsKind;
-use bun_js_parser::ParserOptions;
 use bun_ast::Source;
-use bun_resolver::fs::{FileSystem, RealFS, Path as FsPath};
+use bun_core::{self as bun, FeatureFlags, env_var};
+use bun_core::{PathString, String as BunString, ZStr};
+use bun_io::Write as _;
+use bun_js_parser::ParserOptions;
+use bun_paths::resolve_path::{self as path_handler, platform};
+use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_resolver::fs::{FileSystem, Path as FsPath, RealFS};
+use bun_sys::{self as sys, Fd, FdExt as _};
 // Zig: `std.hash.Wyhash` (final4 variant). Must match exactly so on-disk
 // `.pile` filenames/hashes are interchangeable with Zig-produced caches.
 use bun_wyhash::Wyhash;
@@ -317,7 +317,8 @@ impl Entry {
                     output_byte_offset: Metadata::SIZE as u64,
                     output_byte_length: output_bytes.len() as u64,
                     sourcemap_byte_offset: (Metadata::SIZE + output_bytes.len()) as u64,
-                    esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len()) as u64,
+                    esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
+                        as u64,
                     esm_record_byte_length: esm_record.len() as u64,
                     ..Default::default()
                 };
@@ -369,7 +370,8 @@ impl Entry {
             let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
-            let end_position = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
+            let end_position =
+                Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
             #[cfg(debug_assertions)]
             {
@@ -457,8 +459,7 @@ impl Entry {
                     }
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
-                    let read_bytes =
-                        file.pread_all(bytes, self.metadata.output_byte_offset)?;
+                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
                     if self.metadata.output_hash != 0 {
                         if hash(latin1.latin1()) != self.metadata.output_hash {
@@ -511,8 +512,7 @@ impl Entry {
         // Zig: errdefer { switch (this.output_code) { .utf8 => free, .string => deref } }
         // BunString is Copy with no Drop, so dropping `Entry` on error does NOT
         // deref the WTFStringImpl — must do it explicitly here.
-        let output_code_errdefer =
-            scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
+        let output_code_errdefer = scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
             self.sourcemap = pread_box(
@@ -661,7 +661,12 @@ impl RuntimeTranspilerCache {
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len();
+            return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                top,
+                &mut buf[..],
+                parts,
+            )
+            .len();
         }
 
         #[cfg(target_os = "macos")]
@@ -670,13 +675,23 @@ impl RuntimeTranspilerCache {
             // This is different than ~/.bun/install/cache, and not configurable by the user.
             if let Some(home) = env_var::HOME.get() {
                 let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
-                return path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len();
+                return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                    top,
+                    &mut buf[..],
+                    parts,
+                )
+                .len();
             }
         }
 
         if let Some(dir) = env_var::HOME.get() {
             let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len();
+            return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                top,
+                &mut buf[..],
+                parts,
+            )
+            .len();
         }
 
         {
@@ -707,9 +722,8 @@ impl RuntimeTranspilerCache {
         let path_len = match Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.get()) {
             Some(len) => len,
             None => {
-                let len = Self::CACHE_DIR_BUF.with_borrow_mut(|tl_buf| {
-                    Self::really_get_cache_dir(tl_buf)
-                });
+                let len = Self::CACHE_DIR_BUF
+                    .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
                 if len == 0 {
                     IS_DISABLED.store(true, Ordering::Relaxed);
                     return Err(bun_core::err!(CacheDisabled));
@@ -840,8 +854,8 @@ impl RuntimeTranspilerCache {
             let dirname = path_handler::dirname::<platform::Auto>(cache_file_path.as_bytes());
             if !dirname.is_empty() {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
-                let dir = sys::Dir::cwd()
-                    .make_open_path(dirname, sys::OpenDirOptions::default())?;
+                let dir =
+                    sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
                 break 'brk dir.fd.make_lib_uv_owned()?;
             }
 

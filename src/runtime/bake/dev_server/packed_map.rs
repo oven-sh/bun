@@ -28,10 +28,7 @@ pub struct PackedMap {
 }
 
 impl PackedMap {
-    pub fn new_non_empty(
-        chunk: &mut bun_sourcemap::Chunk,
-        escaped_source: Box<[u8]>,
-    ) -> Rc<Self> {
+    pub fn new_non_empty(chunk: &mut bun_sourcemap::Chunk, escaped_source: Box<[u8]>) -> Rc<Self> {
         let buffer = &mut chunk.buffer;
         debug_assert!(!buffer.is_empty());
         Rc::new(Self {
@@ -44,14 +41,21 @@ impl PackedMap {
         })
     }
 
-    #[inline] pub fn memory_cost(&self) -> usize {
+    #[inline]
+    pub fn memory_cost(&self) -> usize {
         self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>()
     }
 
-    #[inline] pub fn vlq(&self) -> &[u8] { &self.vlq_ }
+    #[inline]
+    pub fn vlq(&self) -> &[u8] {
+        &self.vlq_
+    }
 
     // TODO: rename to `escaped_source`
-    #[inline] pub fn quoted_contents(&self) -> &[u8] { &self.escaped_source }
+    #[inline]
+    pub fn quoted_contents(&self) -> &[u8] {
+        &self.escaped_source
+    }
 }
 
 /// HTML, CSS, Assets, and failed files do not have source maps. These cases

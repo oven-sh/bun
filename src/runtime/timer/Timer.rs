@@ -11,11 +11,11 @@
 
 use core::mem::offset_of;
 
+use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::host_fn::to_js_host_call;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
-use bun_core::String as BunString;
 use bun_uws::Loop as UwsLoop;
 
 use super::{
@@ -103,9 +103,7 @@ impl All {
             // std.fmt gives us "nan" but Node.js wants "NaN".
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
-                BunString::ascii(
-                    const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes(),
-                )
+                BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
             }
         };
         let mut warning_type_string =
@@ -202,7 +200,11 @@ impl All {
     /// Bun.sleep
     /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
     /// slightly differently for historical reasons (see jsValueToCountdown)
-    pub fn sleep(global: &JSGlobalObject, promise: JSValue, countdown: JSValue) -> JsResult<JSValue> {
+    pub fn sleep(
+        global: &JSGlobalObject,
+        promise: JSValue,
+        countdown: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
@@ -234,7 +236,12 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(global);
-        Ok(ImmediateObject::init(global, id, wrapped_callback, arguments))
+        Ok(ImmediateObject::init(
+            global,
+            id,
+            wrapped_callback,
+            arguments,
+        ))
     }
 
     pub fn set_timeout(
@@ -327,8 +334,7 @@ impl All {
                 // Node.js array-index semantics.
                 // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
                 // a +1 ref and there are several early `return Ok(())` exits below.
-                let string =
-                    bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
+                let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string

@@ -25,7 +25,7 @@ use crate::webcore::blob::store::Data as StoreData;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_http::ssl_config::{
-    global_registry, GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr,
+    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +85,11 @@ fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
 ) -> Result<*const c_char, ReadFromBlobError> {
-    let store = blob.store.get().as_ref().ok_or(ReadFromBlobError::NullStore)?;
+    let store = blob
+        .store
+        .get()
+        .as_ref()
+        .ok_or(ReadFromBlobError::NullStore)?;
     let file = match &store.data {
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
@@ -276,9 +280,7 @@ fn handle_path(
         // errdefer: free_sensitive(name) — zero before drop. Route through
         // the canonical helper so the secure-zero core stays single-sourced.
         bun_core::free_sensitive(zbox_into_raw(name));
-        return Err(global.throw_invalid_arguments(
-            format_args!("Unable to access {} path", field),
-        ));
+        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
     Ok(zbox_into_raw(name))
 }
@@ -291,17 +293,15 @@ fn handle_file_for_field(
     match handle_file(global, file) {
         Ok(v) => Ok(v),
         Err(ReadFromBlobError::Js(e)) => Err(e),
-        Err(ReadFromBlobError::EmptyFile) => Err(global.throw_invalid_arguments(
-            format_args!("TLSOptions.{} is an empty file", field),
-        )),
-        Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => {
-            Err(global.throw_invalid_arguments(
-                format_args!(
-                    "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
-                    field
-                ),
-            ))
+        Err(ReadFromBlobError::EmptyFile) => {
+            Err(global
+                .throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field)))
         }
+        Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => Err(global
+            .throw_invalid_arguments(format_args!(
+                "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
+                field
+            ))),
     }
 }
 
@@ -434,9 +434,7 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
 /// hands the pointer off to a Zig upgrade client.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__freeSSLConfig(
-    config: *mut bun_http::ssl_config::SSLConfig,
-) {
+pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
     // SAFETY: C++-only entry point; `config` was produced by `heap::alloc`
     // (via `Option<Box<_>>` FFI niche) in `Bun__WebSocket__parseSSLConfig` and
     // the caller transfers ownership back. `bun_http::SSLConfig::drop` runs

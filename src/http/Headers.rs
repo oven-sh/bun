@@ -23,7 +23,6 @@ pub use bun_http_types::Method::HeaderName;
 // `bun_jsc::FetchHeaders`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
-
 // PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
 // deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
@@ -47,7 +46,10 @@ impl HeadersExt for Headers {
         for header in headers {
             buf_len += header.name().len() + header.value().len();
         }
-        result.entries.ensure_total_capacity(header_count).expect("OOM"); // Zig: bun.handleOom
+        result
+            .entries
+            .ensure_total_capacity(header_count)
+            .expect("OOM"); // Zig: bun.handleOom
         result.buf.reserve_exact(buf_len);
         for header in headers {
             let name = header.name();

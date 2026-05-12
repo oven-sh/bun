@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, PrintErr, Printer};
-use crate::values::protocol::{IsCompatible, Parse, ToCss};
 use crate::targets::Browsers;
+use crate::values::protocol::{IsCompatible, Parse, ToCss};
 
 // PORT NOTE: the Zig `needsDeinit(comptime T: type) bool` switch and the
 // `deinit(this, arena)` method are dropped entirely. They existed to
@@ -82,25 +82,45 @@ impl<T> Rect<T> {
             Ok(v) => v,
             // <first>
             Err(_) => {
-                return Ok(Self { top: first.clone(), right: first.clone(), bottom: first.clone(), left: first });
+                return Ok(Self {
+                    top: first.clone(),
+                    right: first.clone(),
+                    bottom: first.clone(),
+                    left: first,
+                });
             }
         };
         let third = match input.try_parse(&parse_fn) {
             Ok(v) => v,
             // <first> <second>
             Err(_) => {
-                return Ok(Self { top: first.clone(), right: second.clone(), bottom: first, left: second });
+                return Ok(Self {
+                    top: first.clone(),
+                    right: second.clone(),
+                    bottom: first,
+                    left: second,
+                });
             }
         };
         let fourth = match input.try_parse(&parse_fn) {
             Ok(v) => v,
             // <first> <second> <third>
             Err(_) => {
-                return Ok(Self { top: first, right: second.clone(), bottom: third, left: second });
+                return Ok(Self {
+                    top: first,
+                    right: second.clone(),
+                    bottom: third,
+                    left: second,
+                });
             }
         };
         // <first> <second> <third> <fourth>
-        Ok(Self { top: first, right: second, bottom: third, left: fourth })
+        Ok(Self {
+            top: first,
+            right: second,
+            bottom: third,
+            left: fourth,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>

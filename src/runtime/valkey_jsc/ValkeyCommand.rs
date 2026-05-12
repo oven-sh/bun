@@ -2,7 +2,7 @@ use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_valkey::valkey_protocol as protocol;
 
-use super::protocol_jsc::{resp_value_to_js_with_options, ToJSOptions};
+use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
 type Slice = bun_core::ZigStringSlice;
 
@@ -27,7 +27,11 @@ pub struct Command<'a> {
 
 impl<'a> Default for Command<'a> {
     fn default() -> Self {
-        Self { command: b"", args: Args::default(), meta: Meta::default() }
+        Self {
+            command: b"",
+            args: Args::default(),
+            meta: Meta::default(),
+        }
     }
 }
 
@@ -250,7 +254,8 @@ pub struct PromisePair {
 
 // Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
 pub mod promise_pair {
-    pub type Queue = super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
+    pub type Queue =
+        super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
 }
 
 impl PromisePair {

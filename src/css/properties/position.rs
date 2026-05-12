@@ -1,7 +1,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
-use crate::{Parser, Printer, PrintErr, VendorPrefix, Token};
+use crate::{Parser, PrintErr, Printer, Token, VendorPrefix};
 use bun_core::strings;
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
@@ -33,13 +33,21 @@ fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
     // ≤8 entries → plain match per PORTING.md (Zig: `bun.ComptimeEnumMap` +
     // `getASCIIICaseInsensitive`).
     use bun_core::eql_case_insensitive_ascii_check_length as eq;
-    Some(if eq(ident, b"static") { PositionKeyword::Static }
-        else if eq(ident, b"relative") { PositionKeyword::Relative }
-        else if eq(ident, b"absolute") { PositionKeyword::Absolute }
-        else if eq(ident, b"fixed") { PositionKeyword::Fixed }
-        else if eq(ident, b"sticky") { PositionKeyword::Sticky }
-        else if eq(ident, b"-webkit-sticky") { PositionKeyword::WebkitSticky }
-        else { return None })
+    Some(if eq(ident, b"static") {
+        PositionKeyword::Static
+    } else if eq(ident, b"relative") {
+        PositionKeyword::Relative
+    } else if eq(ident, b"absolute") {
+        PositionKeyword::Absolute
+    } else if eq(ident, b"fixed") {
+        PositionKeyword::Fixed
+    } else if eq(ident, b"sticky") {
+        PositionKeyword::Sticky
+    } else if eq(ident, b"-webkit-sticky") {
+        PositionKeyword::WebkitSticky
+    } else {
+        return None;
+    })
 }
 
 impl Position {

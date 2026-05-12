@@ -3,12 +3,12 @@ use std::io::Write as _;
 
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
-use bun_semver as semver;
 use bun_core::strings;
+use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
-use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
-use bun_install::{resolution, Dependency, INVALID_PACKAGE_ID};
+use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 
 use super::package_manager_options::{Do, Enable};
@@ -51,7 +51,11 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 /// reset anyway.
 #[inline]
 fn copy_property(p: &G::Property) -> G::Property {
-    G::Property { key: p.key, value: p.value, ..G::Property::default() }
+    G::Property {
+        key: p.key,
+        value: p.value,
+        ..G::Property::default()
+    }
 }
 
 pub fn edit_patched_dependencies(
@@ -86,15 +90,11 @@ pub fn edit_patched_dependencies(
 
     patched_dependencies.put(&bump, leak_dup(patch_key), patchfile_expr)?;
 
-    package_json
-        .data
-        .e_object_mut()
-        .unwrap()
-        .put(
-            &bump,
-            b"patchedDependencies",
-            Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
-        )?;
+    package_json.data.e_object_mut().unwrap().put(
+        &bump,
+        b"patchedDependencies",
+        Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
+    )?;
     Ok(())
 }
 
@@ -158,10 +158,7 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(
-                        E::EString::init(leak_dup(name)),
-                        bun_ast::Loc::EMPTY,
-                    );
+                    deps[i] = Expr::init(E::EString::init(leak_dup(name)), bun_ast::Loc::EMPTY);
                     break;
                 }
             }
@@ -194,13 +191,22 @@ pub fn edit_trusted_dependencies(
     };
 
     if trusted_dependencies_to_add > 0 && new_trusted_deps.len_u32() > 0 {
-        let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
+        let arr = trusted_dependencies_array
+            .data
+            .e_array_mut()
+            .expect("infallible: variant checked");
         arr.items = new_trusted_deps;
         arr.alphabetize_strings();
     }
 
     if !matches!(package_json.data, bun_ast::ExprData::EObject(_))
-        || package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
+        || package_json
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .len_u32()
+            == 0
     {
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
         root_properties.push(G::Property {
@@ -220,7 +226,10 @@ pub fn edit_trusted_dependencies(
             bun_ast::Loc::EMPTY,
         );
     } else if needs_new_trusted_dependencies_list {
-        let obj = package_json.data.e_object().expect("infallible: variant checked");
+        let obj = package_json
+            .data
+            .e_object()
+            .expect("infallible: variant checked");
         let old_props = obj.properties.slice();
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
         for p in old_props {
@@ -271,7 +280,14 @@ pub fn edit_update_no_args(
             if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
                 if options.before_install {
                     // set each npm dependency to latest
-                    for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
+                    for dep in root
+                        .expr
+                        .data
+                        .e_object_mut()
+                        .expect("infallible: variant checked")
+                        .properties
+                        .slice_mut()
+                    {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, bun_ast::ExprData::EString(_)) {
                             continue;
@@ -304,9 +320,7 @@ pub fn edit_update_no_args(
                             if let Some(at_index) =
                                 strings::last_index_of_char(version_literal, b'@')
                             {
-                                tag = dependency::Tag::infer(
-                                    &version_literal[at_index + 1..],
-                                );
+                                tag = dependency::Tag::infer(&version_literal[at_index + 1..]);
                                 if tag != dependency::Tag::Npm
                                     && (tag != dependency::Tag::DistTag
                                         || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
@@ -376,7 +390,14 @@ pub fn edit_update_no_args(
                     let workspace_resolution_ids =
                         resolution_ids.get(lockfile.buffers.resolutions.as_slice());
 
-                    for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
+                    for dep in root
+                        .expr
+                        .data
+                        .e_object_mut()
+                        .expect("infallible: variant checked")
+                        .properties
+                        .slice_mut()
+                    {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, bun_ast::ExprData::EString(_)) {
                             continue;
@@ -434,11 +455,11 @@ pub fn edit_update_no_args(
 
                                     let new_version: Vec<u8> = 'new_version: {
                                         // `resolution.tag == Npm` checked above.
-                                        let version_fmt =
-                                            resolution.npm().version.fmt(string_buf);
+                                        let version_fmt = resolution.npm().version.fmt(string_buf);
                                         if options.exact_versions {
                                             let mut v = Vec::new();
-                                            write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
+                                            write!(&mut v, "{}", version_fmt)
+                                                .expect("infallible: in-memory write");
                                             break 'new_version v;
                                         }
 
@@ -454,8 +475,7 @@ pub fn edit_update_no_args(
                                             ) {
                                                 break 'version_literal &entry
                                                     .value
-                                                    .original_version_literal
-                                                    [at_index + 1..];
+                                                    .original_version_literal[at_index + 1..];
                                             }
                                             &entry.value.original_version_literal
                                         };
@@ -467,13 +487,16 @@ pub fn edit_update_no_args(
                                         let mut v = Vec::new();
                                         match pinned_version {
                                             semver::PinnedVersion::Patch => {
-                                                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
+                                                write!(&mut v, "{}", version_fmt)
+                                                    .expect("infallible: in-memory write")
                                             }
                                             semver::PinnedVersion::Minor => {
-                                                write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
+                                                write!(&mut v, "~{}", version_fmt)
+                                                    .expect("infallible: in-memory write")
                                             }
                                             semver::PinnedVersion::Major => {
-                                                write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
+                                                write!(&mut v, "^{}", version_fmt)
+                                                    .expect("infallible: in-memory write")
                                             }
                                         }
                                         v
@@ -625,9 +648,8 @@ pub fn edit(
                                                 // `manager.updating_packages` mutably.
                                                 let version_literal_owned =
                                                     Box::<[u8]>::from(version_literal);
-                                                let entry = manager
-                                                    .updating_packages
-                                                    .get_or_put(name)?;
+                                                let entry =
+                                                    manager.updating_packages.get_or_put(name)?;
 
                                                 // first come, first serve
                                                 if entry.found_existing {
@@ -667,8 +689,7 @@ pub fn edit(
                                                 }
 
                                                 *entry.value_ptr = PackageUpdateInfo {
-                                                    original_version_literal:
-                                                        version_literal_owned,
+                                                    original_version_literal: version_literal_owned,
                                                     is_alias,
                                                     original_version_string_buf: Box::default(),
                                                     original_version: None,
@@ -677,7 +698,12 @@ pub fn edit(
                                         }
                                         if !only_add_missing {
                                             request.e_string = Some(
-                                                value.expr.data.e_string().expect("infallible: variant checked").as_ptr(),
+                                                value
+                                                    .expr
+                                                    .data
+                                                    .e_string()
+                                                    .expect("infallible: variant checked")
+                                                    .as_ptr(),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -697,8 +723,13 @@ pub fn edit(
                                 if request.version.tag == dependency::Tag::Github
                                     || request.version.tag == dependency::Tag::Git
                                 {
-                                    for item in
-                                        query.expr.data.e_object().expect("infallible: variant checked").properties.slice()
+                                    for item in query
+                                        .expr
+                                        .data
+                                        .e_object()
+                                        .expect("infallible: variant checked")
+                                        .properties
+                                        .slice()
                                     {
                                         if let Some(v) = &item.value {
                                             let url = request
@@ -708,7 +739,10 @@ pub fn edit(
                                             if let bun_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
                                                     request.e_string = Some(
-                                                        v.data.e_string().expect("infallible: variant checked").as_ptr(),
+                                                        v.data
+                                                            .e_string()
+                                                            .expect("infallible: variant checked")
+                                                            .as_ptr(),
                                                     );
                                                     remaining -= 1;
                                                     break;
@@ -748,8 +782,7 @@ pub fn edit(
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
-                    trusted_dependencies =
-                        unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
+                    trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
                 }
             }
         }
@@ -809,7 +842,12 @@ pub fn edit(
             while k < new_dependencies.len() {
                 if let Some(key) = &new_dependencies[k].key {
                     let name = request.get_name();
-                    if !key.data.e_string().expect("infallible: variant checked").eql_bytes(name) {
+                    if !key
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .eql_bytes(name)
+                    {
                         k += 1;
                         continue;
                     }
@@ -877,7 +915,10 @@ pub fn edit(
         };
 
         {
-            let obj = dependencies_object.data.e_object_mut().expect("infallible: variant checked");
+            let obj = dependencies_object
+                .data
+                .e_object_mut()
+                .expect("infallible: variant checked");
             obj.properties = G::PropertyList::move_from_list(new_dependencies);
             if obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
@@ -908,7 +949,10 @@ pub fn edit(
         };
 
         if options.add_trusted_dependencies && trusted_dependencies_to_add > 0 {
-            let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
+            let arr = trusted_dependencies_array
+                .data
+                .e_array_mut()
+                .expect("infallible: variant checked");
             arr.items = new_trusted_deps;
             if arr.items.len_u32() > 1 {
                 arr.alphabetize_strings();
@@ -916,9 +960,19 @@ pub fn edit(
         }
 
         if !matches!(current_package_json.data, bun_ast::ExprData::EObject(_))
-            || current_package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
+            || current_package_json
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .properties
+                .len_u32()
+                == 0
         {
-            let n = if options.add_trusted_dependencies { 2 } else { 1 };
+            let n = if options.add_trusted_dependencies {
+                2
+            } else {
+                1
+            };
             let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
@@ -952,10 +1006,12 @@ pub fn edit(
             );
         } else {
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
-                let obj = current_package_json.data.e_object().expect("infallible: variant checked");
+                let obj = current_package_json
+                    .data
+                    .e_object()
+                    .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> =
-                    Vec::with_capacity(old_props.len() + 2);
+                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 2);
                 for p in old_props {
                     root_properties.push(copy_property(p));
                 }
@@ -986,10 +1042,12 @@ pub fn edit(
                     bun_ast::Loc::EMPTY,
                 );
             } else if needs_new_dependency_list || needs_new_trusted_dependencies_list {
-                let obj = current_package_json.data.e_object().expect("infallible: variant checked");
+                let obj = current_package_json
+                    .data
+                    .e_object()
+                    .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> =
-                    Vec::with_capacity(old_props.len() + 1);
+                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
                 for p in old_props {
                     root_properties.push(copy_property(p));
                 }
@@ -1064,9 +1122,8 @@ pub fn edit(
                     {
                         break 'uninitialized match request.version.tag {
                             dependency::Tag::Uninitialized => b"latest".into(),
-                            _ => leak_dup(
-                                request.version.literal.slice(request.version_buf()),
-                            ).into(),
+                            _ => leak_dup(request.version.literal.slice(request.version_buf()))
+                                .into(),
                         };
                     } else {
                         break 'uninitialized e_string.data;
@@ -1075,72 +1132,121 @@ pub fn edit(
 
                 continue;
             }
-            e_string.data = bun_ast::StoreStr::new(match resolutions[request.package_id as usize].tag {
-                resolution::Tag::Npm => 'npm: {
-                    if manager.subcommand == Subcommand::Update
-                        && (request.version.tag == dependency::Tag::DistTag
-                            || request.version.tag == dependency::Tag::Npm)
-                    {
-                        if let Some(entry) =
-                            manager.updating_packages.fetch_swap_remove(request.name)
+            e_string.data =
+                bun_ast::StoreStr::new(match resolutions[request.package_id as usize].tag {
+                    resolution::Tag::Npm => 'npm: {
+                        if manager.subcommand == Subcommand::Update
+                            && (request.version.tag == dependency::Tag::DistTag
+                                || request.version.tag == dependency::Tag::Npm)
                         {
-                            // Zig declares `alias_at_index` here and assigns it inside the
-                            // `version_literal` block but never reads it afterwards (dead
-                            // store, vestigial from the earlier `editUpdateNoArgs` copy).
-                            // The Rust port omits the variable entirely.
-                            let new_version: Vec<u8> = 'new_version: {
+                            if let Some(entry) =
+                                manager.updating_packages.fetch_swap_remove(request.name)
+                            {
+                                // Zig declares `alias_at_index` here and assigns it inside the
+                                // `version_literal` block but never reads it afterwards (dead
+                                // store, vestigial from the earlier `editUpdateNoArgs` copy).
+                                // The Rust port omits the variable entirely.
+                                let new_version: Vec<u8> = 'new_version: {
+                                    let version_fmt = resolutions[request.package_id as usize]
+                                        .npm()
+                                        .version
+                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice());
+                                    if options.exact_versions {
+                                        let mut v = Vec::new();
+                                        write!(&mut v, "{}", version_fmt)
+                                            .expect("infallible: in-memory write");
+                                        break 'new_version v;
+                                    }
+
+                                    let version_literal: &[u8] = 'version_literal: {
+                                        if !entry.value.is_alias {
+                                            break 'version_literal &entry
+                                                .value
+                                                .original_version_literal;
+                                        }
+                                        if let Some(at_index) = strings::last_index_of_char(
+                                            &entry.value.original_version_literal,
+                                            b'@',
+                                        ) {
+                                            break 'version_literal &entry
+                                                .value
+                                                .original_version_literal[at_index + 1..];
+                                        }
+
+                                        &entry.value.original_version_literal
+                                    };
+
+                                    let pinned_version =
+                                        semver::Version::which_version_is_pinned(version_literal);
+                                    let mut v = Vec::new();
+                                    match pinned_version {
+                                        semver::PinnedVersion::Patch => {
+                                            write!(&mut v, "{}", version_fmt)
+                                                .expect("infallible: in-memory write")
+                                        }
+                                        semver::PinnedVersion::Minor => {
+                                            write!(&mut v, "~{}", version_fmt)
+                                                .expect("infallible: in-memory write")
+                                        }
+                                        semver::PinnedVersion::Major => {
+                                            write!(&mut v, "^{}", version_fmt)
+                                                .expect("infallible: in-memory write")
+                                        }
+                                    }
+                                    v
+                                };
+
+                                if entry.value.is_alias {
+                                    let dep_literal = &entry.value.original_version_literal;
+
+                                    if let Some(at_index) =
+                                        strings::last_index_of_char(dep_literal, b'@')
+                                    {
+                                        let mut v = Vec::new();
+                                        write!(
+                                            &mut v,
+                                            "{}@{}",
+                                            bstr::BStr::new(&dep_literal[0..at_index]),
+                                            bstr::BStr::new(&new_version)
+                                        )
+                                        .unwrap();
+                                        break 'npm leak_str(v);
+                                    }
+                                }
+
+                                break 'npm leak_str(new_version);
+                            }
+                        }
+                        if request.version.tag == dependency::Tag::DistTag
+                            || (manager.subcommand == Subcommand::Update
+                                && request.version.tag == dependency::Tag::Npm
+                                && !request.version.npm().version.is_exact())
+                        {
+                            let new_version: Vec<u8> = {
+                                // `tag == Npm` matched at the top of this arm.
                                 let version_fmt = resolutions[request.package_id as usize]
                                     .npm()
                                     .version
-                                    .fmt(manager.lockfile.buffers.string_bytes.as_slice());
-                                if options.exact_versions {
-                                    let mut v = Vec::new();
-                                    write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
-                                    break 'new_version v;
-                                }
-
-                                let version_literal: &[u8] = 'version_literal: {
-                                    if !entry.value.is_alias {
-                                        break 'version_literal &entry
-                                            .value
-                                            .original_version_literal;
-                                    }
-                                    if let Some(at_index) = strings::last_index_of_char(
-                                        &entry.value.original_version_literal,
-                                        b'@',
-                                    ) {
-                                        break 'version_literal &entry
-                                            .value
-                                            .original_version_literal
-                                            [at_index + 1..];
-                                    }
-
-                                    &entry.value.original_version_literal
-                                };
-
-                                let pinned_version =
-                                    semver::Version::which_version_is_pinned(version_literal);
+                                    .fmt(request.version_buf());
                                 let mut v = Vec::new();
-                                match pinned_version {
-                                    semver::PinnedVersion::Patch => {
-                                        write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
-                                    }
-                                    semver::PinnedVersion::Minor => {
-                                        write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
-                                    }
-                                    semver::PinnedVersion::Major => {
-                                        write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
-                                    }
+                                if options.exact_versions {
+                                    write!(&mut v, "{}", version_fmt)
+                                        .expect("infallible: in-memory write");
+                                } else {
+                                    write!(&mut v, "^{}", version_fmt)
+                                        .expect("infallible: in-memory write");
                                 }
+                                // PERF(port): was comptime bool dispatch — profile in Phase B
                                 v
                             };
 
-                            if entry.value.is_alias {
-                                let dep_literal = &entry.value.original_version_literal;
-
-                                if let Some(at_index) =
-                                    strings::last_index_of_char(dep_literal, b'@')
-                                {
+                            if request.version.tag == dependency::Tag::Npm
+                                && request.version.npm().is_alias
+                            {
+                                let dep_literal =
+                                    request.version.literal.slice(request.version_buf());
+                                if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
+                                    let at_index = at_index as usize;
                                     let mut v = Vec::new();
                                     write!(
                                         &mut v,
@@ -1155,55 +1261,13 @@ pub fn edit(
 
                             break 'npm leak_str(new_version);
                         }
-                    }
-                    if request.version.tag == dependency::Tag::DistTag
-                        || (manager.subcommand == Subcommand::Update
-                            && request.version.tag == dependency::Tag::Npm
-                            && !request.version.npm().version.is_exact())
-                    {
-                        let new_version: Vec<u8> = {
-                            // `tag == Npm` matched at the top of this arm.
-                            let version_fmt = resolutions[request.package_id as usize]
-                                .npm()
-                                .version
-                                .fmt(request.version_buf());
-                            let mut v = Vec::new();
-                            if options.exact_versions {
-                                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
-                            } else {
-                                write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write");
-                            }
-                            // PERF(port): was comptime bool dispatch — profile in Phase B
-                            v
-                        };
 
-                        if request.version.tag == dependency::Tag::Npm
-                            && request.version.npm().is_alias
-                        {
-                            let dep_literal = request.version.literal.slice(request.version_buf());
-                            if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
-                                let at_index = at_index as usize;
-                                let mut v = Vec::new();
-                                write!(
-                                    &mut v,
-                                    "{}@{}",
-                                    bstr::BStr::new(&dep_literal[0..at_index]),
-                                    bstr::BStr::new(&new_version)
-                                )
-                                .unwrap();
-                                break 'npm leak_str(v);
-                            }
-                        }
-
-                        break 'npm leak_str(new_version);
+                        leak_dup(request.version.literal.slice(request.version_buf()))
                     }
 
-                    leak_dup(request.version.literal.slice(request.version_buf()))
-                }
-
-                resolution::Tag::Workspace => b"workspace:*",
-                _ => leak_dup(request.version.literal.slice(request.version_buf())),
-            });
+                    resolution::Tag::Workspace => b"workspace:*",
+                    _ => leak_dup(request.version.literal.slice(request.version_buf())),
+                });
         }
     }
     Ok(())

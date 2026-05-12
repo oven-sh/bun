@@ -15,7 +15,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_threading::Mutex;
 
-use crate::jsc::virtual_machine::{VirtualMachine, IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE};
+use crate::jsc::virtual_machine::{IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE, VirtualMachine};
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
 use super::{
@@ -86,7 +86,9 @@ impl WTFTimer {
             // `event_loop_timer` is an embedded field of a live allocation.
             unsafe {
                 let state = crate::jsc_hooks::runtime_state_of(vm);
-                (*state).timer.remove(ptr::addr_of_mut!((*this).event_loop_timer));
+                (*state)
+                    .timer
+                    .remove(ptr::addr_of_mut!((*this).event_loop_timer));
             }
         }
         t.run_without_removing();
@@ -116,8 +118,11 @@ impl WTFTimer {
             let next = &self.event_loop_timer.next;
             // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack
             // into bun_core::Timespec to call `duration`.
-            let until = Timespec { sec: next.sec, nsec: next.nsec }
-                .duration(&Timespec::now(TimespecMockMode::ForceRealTime));
+            let until = Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            }
+            .duration(&Timespec::now(TimespecMockMode::ForceRealTime));
             let sec = until.sec as f64;
             let nsec = until.nsec as f64;
             return sec + nsec / NS_PER_S as f64;
@@ -277,7 +282,10 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
             vm: NonNull::new_unchecked(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
-                next: ElTimespec { sec: i64::MAX, nsec: 0 },
+                next: ElTimespec {
+                    sec: i64::MAX,
+                    nsec: 0,
+                },
                 tag: EventLoopTimerTag::WTFTimer,
                 state: EventLoopTimerState::CANCELLED,
                 heap: IntrusiveField::default(),

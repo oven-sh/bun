@@ -111,7 +111,9 @@ impl PosixSignalHandle {
 pub extern "C" fn Bun__onPosixSignal(number: i32) {
     #[cfg(unix)]
     {
-        let Some(vm) = VirtualMachine::get_main_thread_vm() else { return };
+        let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+            return;
+        };
         // SAFETY: `vm` and its event loop are process-lifetime; raw place
         // projection reads only the `signal_handler` slot (no `&EventLoop`
         // formed — the main thread may hold `&mut EventLoop` concurrently).

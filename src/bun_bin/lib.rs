@@ -24,9 +24,9 @@ mod phase_c_exports;
 // (`sys_epoll_pwait2`, `ioctl_ficlone`, …) reach the linker.
 use bun_platform as _;
 
-use bun_core::output;
 use bun_core::Global;
 use bun_core::StackCheck;
+use bun_core::output;
 
 /// mimalloc as the process allocator — matches Zig's `bun.default_allocator`
 /// and the `uv_replace_allocator(mi_*)` call in `main.zig` on Windows.
@@ -210,7 +210,8 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
         // side only reads it to print the suggested download URL.
         unsafe {
             bun_warn_avx_missing(
-                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL.as_ptr(),
+                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL
+                    .as_ptr(),
             );
         }
     }

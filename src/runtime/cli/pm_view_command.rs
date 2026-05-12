@@ -1,20 +1,20 @@
+use bstr::BStr;
+use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
-use bun_core::{prettyln, Global, Output};
+use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
+use bun_core::strings;
+use bun_core::{Global, Output, prettyln};
 use bun_http as http;
 use bun_install::PackageManager;
-use bun_install::npm::{self, PackageManifest};
 use bun_install::dependency;
+use bun_install::npm::{self, PackageManifest};
+use bun_js_parser as ast;
+use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
 use bun_paths::PathBuffer;
 use bun_semver as Semver;
-use bun_core::strings;
-use bun_core::MutableString;
-use bun_url::URL;
-use bun_js_parser as ast;
-use bun_js_printer as JSPrinter;
-use bstr::BStr;
-use bun_alloc::{Arena as Bump, AllocError}; // bumpalo::Bump re-export
+use bun_url::URL; // bumpalo::Bump re-export
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
@@ -33,7 +33,8 @@ pub fn view(
                 // PORT NOTE: reshaped for borrowck — copy into the function-scope
                 // bump so `name` doesn't keep `manager` borrowed across the
                 // `&mut self` calls (`http_proxy`, `tls_reject_unauthorized`) below.
-                break 'brk &*bump.alloc_slice_copy(&manager.root_package_json_name_at_time_of_init);
+                break 'brk &*bump
+                    .alloc_slice_copy(&manager.root_package_json_name_at_time_of_init);
             }
 
             // Try our best to get the package.json name they meant
@@ -109,9 +110,15 @@ pub fn view(
     headers.allocate()?;
     headers.append(b"Accept", b"application/json");
     if !scope.token.is_empty() {
-        headers.append_fmt(b"Authorization", format_args!("Bearer {}", BStr::new(&*scope.token)));
+        headers.append_fmt(
+            b"Authorization",
+            format_args!("Bearer {}", BStr::new(&*scope.token)),
+        );
     } else if !scope.auth.is_empty() {
-        headers.append_fmt(b"Authorization", format_args!("Basic {}", BStr::new(&*scope.auth)));
+        headers.append_fmt(
+            b"Authorization",
+            format_args!("Basic {}", BStr::new(&*scope.auth)),
+        );
     }
 
     let mut response_buf = MutableString::init(2048)?;
@@ -162,9 +169,9 @@ pub fn view(
         &mut log,
         response_buf.list.as_slice(),
         name,
-        b"", // last_modified (not needed for view)
-        b"", // etag (not needed for view)
-        0,   // public_max_age (not needed for view)
+        b"",  // last_modified (not needed for view)
+        b"",  // etag (not needed for view)
+        0,    // public_max_age (not needed for view)
         true, // is_extended_manifest (view uses application/json Accept header)
     ) {
         Ok(Some(m)) => m,
@@ -188,7 +195,10 @@ pub fn view(
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
                 // Find the version string from JSON that matches the resolved version
-                let versions_e_obj = versions_obj.data.e_object().expect("infallible: variant checked");
+                let versions_e_obj = versions_obj
+                    .data
+                    .e_object()
+                    .expect("infallible: variant checked");
                 let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
@@ -202,7 +212,9 @@ pub fn view(
                         let query = Semver::query::parse(version, sliced_literal)?;
                         // `defer query.deinit()` — handled by Drop
                         // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) = parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf) {
+                        if let Some(result) =
+                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
+                        {
                             break 'brk2 result.version;
                         }
                     }
@@ -211,8 +223,12 @@ pub fn view(
                 };
 
                 for prop in versions {
-                    let Some(key) = prop.key.as_ref() else { continue };
-                    let Some(version_str) = key.as_string(&bump) else { continue };
+                    let Some(key) = prop.key.as_ref() else {
+                        continue;
+                    };
+                    let Some(version_str) = key.as_string(&bump) else {
+                        continue;
+                    };
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
@@ -227,7 +243,10 @@ pub fn view(
         if json_output {
             Output::print(format_args!(
                 "{{ \"error\": \"No matching version found\", \"version\": {} }}\n",
-                bun_fmt::format_json_string_utf8(spec_, bun_fmt::JSONFormatterUTF8Options { quote: true }),
+                bun_fmt::format_json_string_utf8(
+                    spec_,
+                    bun_fmt::JSONFormatterUTF8Options { quote: true }
+                ),
             ));
             Output::flush();
         } else {
@@ -238,13 +257,20 @@ pub fn view(
 
             let max_versions_to_display: usize = 5;
 
-            let start_index = parsed_manifest.versions.len().saturating_sub(max_versions_to_display);
+            let start_index = parsed_manifest
+                .versions
+                .len()
+                .saturating_sub(max_versions_to_display);
             let mut versions_to_display = &parsed_manifest.versions[start_index..];
-            versions_to_display = &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
+            versions_to_display =
+                &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
             if !versions_to_display.is_empty() {
                 Output::pretty_errorln("\nRecent versions:<r>");
                 for v in versions_to_display {
-                    Output::pretty_errorln(format_args!("<d>-<r> {}", v.fmt(&parsed_manifest.string_buf)));
+                    Output::pretty_errorln(format_args!(
+                        "<d>-<r> {}",
+                        v.fmt(&parsed_manifest.string_buf)
+                    ));
                 }
 
                 if start_index > 0 {
@@ -257,7 +283,10 @@ pub fn view(
 
     // Treat versions specially because npm does some normalization on there.
     if let Some(versions_object) = json.get_object(b"versions") {
-        let versions_e_obj = versions_object.data.e_object().expect("infallible: variant checked");
+        let versions_e_obj = versions_object
+            .data
+            .e_object()
+            .expect("infallible: variant checked");
         let props = versions_e_obj.properties.slice();
         let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
         debug_assert_eq!(props.len(), keys.capacity());
@@ -279,13 +308,19 @@ pub fn view(
         // This is similar to what npm does.
         // `bun pm view react version ` => 1.2.3
         // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
-        if let Some(value) = manifest.get_path_may_be_index(&bump, prop_path).or_else(|| json.get_path_may_be_index(&bump, prop_path)) {
+        if let Some(value) = manifest
+            .get_path_may_be_index(&bump, prop_path)
+            .or_else(|| json.get_path_may_be_index(&bump, prop_path))
+        {
             if let bun_ast::ExprData::EString(e_string) = &value.data {
                 // JSON parse_utf8 always produces UTF-8 strings, so the raw
                 // `data` slice is the literal value.
                 let slice = e_string.data.slice();
                 if json_output {
-                    Output::print(format_args!("{}\n", bun_fmt::format_json_string_utf8(&slice, Default::default())));
+                    Output::print(format_args!(
+                        "{}\n",
+                        bun_fmt::format_json_string_utf8(&slice, Default::default())
+                    ));
                 } else {
                     Output::print(format_args!("{}\n", BStr::new(&*slice)));
                 }
@@ -305,19 +340,31 @@ pub fn view(
                     ..Default::default()
                 },
             )?;
-            Output::print(format_args!("{}", BStr::new(package_json_writer.ctx.get_written())));
+            Output::print(format_args!(
+                "{}",
+                BStr::new(package_json_writer.ctx.get_written())
+            ));
             Output::flush();
             Global::exit(0);
         } else {
             if json_output {
                 Output::print(format_args!(
                     "{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n",
-                    bun_fmt::format_json_string_utf8(spec_, bun_fmt::JSONFormatterUTF8Options { quote: true }),
-                    bun_fmt::format_json_string_utf8(prop_path, bun_fmt::JSONFormatterUTF8Options { quote: true }),
+                    bun_fmt::format_json_string_utf8(
+                        spec_,
+                        bun_fmt::JSONFormatterUTF8Options { quote: true }
+                    ),
+                    bun_fmt::format_json_string_utf8(
+                        prop_path,
+                        bun_fmt::JSONFormatterUTF8Options { quote: true }
+                    ),
                 ));
                 Output::flush();
             } else {
-                Output::err_generic("Property <b>{}<r> not found", format_args!("{}", BStr::new(prop_path)));
+                Output::err_generic(
+                    "Property <b>{}<r> not found",
+                    format_args!("{}", BStr::new(prop_path)),
+                );
             }
         }
         Global::exit(1);
@@ -334,22 +381,45 @@ pub fn view(
             source,
             JSPrinter::PrintJsonOptions {
                 mangled_props: None,
-                indent: bun_ast::Indentation { count: 2, ..Default::default() },
+                indent: bun_ast::Indentation {
+                    count: 2,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )?;
-        Output::print(format_args!("{}", BStr::new(package_json_writer.ctx.get_written())));
+        Output::print(format_args!(
+            "{}",
+            BStr::new(package_json_writer.ctx.get_written())
+        ));
         Output::flush();
         return Ok(());
     }
 
-    let pkg_name: &[u8] = manifest.get_string_cloned(&bump, b"name").ok().flatten().unwrap_or(name);
-    let pkg_version: &[u8] = manifest.get_string_cloned(&bump, b"version").ok().flatten().unwrap_or(version);
-    let license: &[u8] = manifest.get_string_cloned(&bump, b"license").ok().flatten().unwrap_or(b"");
+    let pkg_name: &[u8] = manifest
+        .get_string_cloned(&bump, b"name")
+        .ok()
+        .flatten()
+        .unwrap_or(name);
+    let pkg_version: &[u8] = manifest
+        .get_string_cloned(&bump, b"version")
+        .ok()
+        .flatten()
+        .unwrap_or(version);
+    let license: &[u8] = manifest
+        .get_string_cloned(&bump, b"license")
+        .ok()
+        .flatten()
+        .unwrap_or(b"");
     let mut dep_count: usize = 0;
     let dependencies_object = manifest.get_object(b"dependencies");
     if let Some(deps) = &dependencies_object {
-        dep_count = deps.data.e_object().expect("infallible: variant checked").properties.len_u32() as usize;
+        dep_count = deps
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .len_u32() as usize;
     }
 
     prettyln!(
@@ -399,8 +469,22 @@ pub fn view(
             if prop.key.is_none() || prop.value.is_none() {
                 continue;
             }
-            let Some(dep_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else { continue };
-            let Some(dep_version) = prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else { continue };
+            let Some(dep_name) = prop
+                .key
+                .as_ref()
+                .expect("infallible: prop has key")
+                .as_string(&bump)
+            else {
+                continue;
+            };
+            let Some(dep_version) = prop
+                .value
+                .as_ref()
+                .expect("infallible: prop has value")
+                .as_string(&bump)
+            else {
+                continue;
+            };
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
                 BStr::new(dep_name),
@@ -430,7 +514,13 @@ pub fn view(
 
     if let Some(tags_obj) = json.get_object(b"dist-tags") {
         prettyln!("\n<b>dist-tags<r><d>:<r>");
-        for prop in tags_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in tags_obj
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             if prop.key.is_none() || prop.value.is_none() {
                 continue;
             }
@@ -453,8 +543,16 @@ pub fn view(
     if let Some(mut iter) = json.get_array(b"maintainers") {
         prettyln!("\nmaintainers<r><d>:<r>");
         while let Some(m) = iter.next() {
-            let nm: &[u8] = m.get_string_cloned(&bump, b"name").ok().flatten().unwrap_or(b"");
-            let em: &[u8] = m.get_string_cloned(&bump, b"email").ok().flatten().unwrap_or(b"");
+            let nm: &[u8] = m
+                .get_string_cloned(&bump, b"name")
+                .ok()
+                .flatten()
+                .unwrap_or(b"");
+            let em: &[u8] = m
+                .get_string_cloned(&bump, b"email")
+                .ok()
+                .flatten()
+                .unwrap_or(b"");
             if !em.is_empty() {
                 prettyln!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em));
             } else if !nm.is_empty() {
@@ -466,9 +564,17 @@ pub fn view(
     // Add published date information
     if let Some(time_obj) = json.get_object(b"time") {
         // TODO: use a relative time formatter
-        if let Some(published_time) = time_obj.get_string_cloned(&bump, pkg_version).ok().flatten() {
+        if let Some(published_time) = time_obj
+            .get_string_cloned(&bump, pkg_version)
+            .ok()
+            .flatten()
+        {
             prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
-        } else if let Some(modified_time) = time_obj.get_string_cloned(&bump, b"modified").ok().flatten() {
+        } else if let Some(modified_time) = time_obj
+            .get_string_cloned(&bump, b"modified")
+            .ok()
+            .flatten()
+        {
             prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
         }
     }

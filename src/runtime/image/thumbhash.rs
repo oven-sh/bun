@@ -75,7 +75,11 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     let ac = if has_alpha {
         dct(&a[0..px], w, h, 5, 5)
     } else {
-        Channel { dc: 1.0, scale: 1.0, ..Channel::default() }
+        Channel {
+            dc: 1.0,
+            scale: 1.0,
+            ..Channel::default()
+        }
     };
 
     let land = w > h;
@@ -126,7 +130,12 @@ struct Channel {
 
 impl Default for Channel {
     fn default() -> Self {
-        Self { dc: 0.0, scale: 0.0, ac: [0.0; 49], n: 0 }
+        Self {
+            dc: 0.0,
+            scale: 0.0,
+            ac: [0.0; 49],
+            n: 0,
+        }
     }
 }
 
@@ -227,7 +236,11 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
         off = 6;
     }
 
-    let mut nibbles = NibbleReader { src: hash, i: off, hi: false };
+    let mut nibbles = NibbleReader {
+        src: hash,
+        i: off,
+        hi: false,
+    };
     // PERF(port): was `undefined` stack arrays — profile in Phase B
     let mut l_ac = [0.0f32; 49];
     let mut p_ac = [0.0f32; 5];
@@ -238,11 +251,23 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
     // washing the chroma out — matches the reference impl.
     let pn = nibbles.channel(&mut p_ac, 3, 3, p_scale * 1.25)?;
     let qn = nibbles.channel(&mut q_ac, 3, 3, q_scale * 1.25)?;
-    let an = if has_alpha { nibbles.channel(&mut a_ac, 5, 5, a_scale)? } else { 0 };
+    let an = if has_alpha {
+        nibbles.channel(&mut a_ac, 5, 5, a_scale)?
+    } else {
+        0
+    };
 
     let ratio = lx as f32 / ly as f32;
-    let w: u32 = if ratio > 1.0 { 32 } else { (32.0 * ratio).round() as u32 };
-    let h: u32 = if ratio > 1.0 { (32.0 / ratio).round() as u32 } else { 32 };
+    let w: u32 = if ratio > 1.0 {
+        32
+    } else {
+        (32.0 * ratio).round() as u32
+    };
+    let h: u32 = if ratio > 1.0 {
+        (32.0 / ratio).round() as u32
+    } else {
+        32
+    };
     // PORT NOTE: `bun.default_allocator.alloc` → boxed slice (global mimalloc); aborts on OOM.
     let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4].into_boxed_slice();
     // errdefer free → dropped; Box<[u8]> Drop handles it.
@@ -311,7 +336,11 @@ impl<'a> NibbleReader<'a> {
         if self.i >= self.src.len() {
             return Err(DecodeError::DecodeFailed);
         }
-        let v = if self.hi { self.src[self.i] >> 4 } else { self.src[self.i] & 15 };
+        let v = if self.hi {
+            self.src[self.i] >> 4
+        } else {
+            self.src[self.i] & 15
+        };
         if self.hi {
             self.i += 1;
         }
@@ -319,7 +348,13 @@ impl<'a> NibbleReader<'a> {
         Ok(v)
     }
 
-    fn channel(&mut self, out: &mut [f32], nx: u32, ny: u32, scale: f32) -> Result<usize, DecodeError> {
+    fn channel(
+        &mut self,
+        out: &mut [f32],
+        nx: u32,
+        ny: u32,
+        scale: f32,
+    ) -> Result<usize, DecodeError> {
         let mut n: usize = 0;
         let mut cy: u32 = 0;
         while cy < ny {

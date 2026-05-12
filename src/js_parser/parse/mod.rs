@@ -1,39 +1,46 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe, clippy::all)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unused_unsafe,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 pub mod parse_entry;
-pub mod parse_stmt;
-pub mod parse_prefix;
-pub mod parse_suffix;
-pub mod parse_property;
 pub mod parse_fn;
 pub mod parse_import_export;
 pub mod parse_jsx;
-pub mod parse_typescript;
+pub mod parse_prefix;
+pub mod parse_property;
 pub mod parse_skip_typescript;
+pub mod parse_stmt;
+pub mod parse_suffix;
+pub mod parse_typescript;
 
 use bun_collections::VecExt;
 use core::mem;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
-use bun_core::{err, Error};
 use bun_core::strings;
+use bun_core::{Error, err};
 
-use bun_ast as js_ast;
-use bun_ast::{
-    Binding, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, Stmt, Symbol, B, E, G, S,
-};
-use bun_ast::expr::EFlags;
-use bun_ast::op::Level;
-use crate::p::P;
 use crate::lexer::{self as js_lexer, T};
+use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, JsxT, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
+use bun_ast as js_ast;
+use bun_ast::expr::EFlags;
+use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
+use bun_ast::{
+    B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt, Symbol,
+};
 
 // Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -236,12 +243,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(key) = prop_key {
                         if let js_ast::expr::Data::EString(str_) = &key.data {
                             if str_.eql_comptime(b"constructor") {
-                                p.log()
-                                    .add_error(
-                    Some(p.source),
-                                        first_decorator_loc,
-                                        b"TypeScript does not allow decorators on class constructors",
-                                    );
+                                p.log().add_error(
+                                    Some(p.source),
+                                    first_decorator_loc,
+                                    b"TypeScript does not allow decorators on class constructors",
+                                );
                             }
                         }
                     }
@@ -304,7 +310,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
 
-            parts.push(E::TemplatePart { value, tail_loc, tail });
+            parts.push(E::TemplatePart {
+                value,
+                tail_loc,
+                tail,
+            });
 
             if p.lexer.token == T::TTemplateTail {
                 p.lexer.next()?;
@@ -420,8 +430,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // values that introduce new scopes and declare new symbols. If this is an
         // arrow function, then those new scopes will need to be parented under the
         // scope of the arrow function itself.
-        let scope_index =
-            p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)?;
+        let scope_index = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)?;
 
         // Allow "in" inside parentheses
         let old_allow_in = p.allow_in;
@@ -595,7 +604,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.log_expr_errors(&mut errors);
             let async_ref = p.store_name_in_ref(b"async")?;
             let async_expr = p.new_expr(
-                E::Identifier { ref_: async_ref, ..Default::default() },
+                E::Identifier {
+                    ref_: async_ref,
+                    ..Default::default()
+                },
                 loc,
             );
             return Ok(p.new_expr(
@@ -684,7 +696,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
             }
 
-            name = Some(LocRef { loc: name_loc, ref_: None });
+            name = Some(LocRef {
+                loc: name_loc,
+                ref_: None,
+            });
             if !opts.is_typescript_declare {
                 name.as_mut().unwrap().ref_ = Some(
                     p.declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
@@ -726,7 +741,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         p.pop_scope();
-        Ok(p.s(S::Class { class, is_export: opts.is_export }, loc))
+        Ok(p.s(
+            S::Class {
+                class,
+                is_export: opts.is_export,
+            },
+            loc,
+        ))
     }
 
     pub fn parse_clause_alias(&mut self, kind: &[u8]) -> Result<&'a [u8], Error> {
@@ -787,8 +808,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.forbid_lexical_decl(token_range.loc)?;
                         }
 
-                        let decls =
-                            p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
+                        let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
                         let decls_slice = bun_collections::RawSlice::new(decls.slice());
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
@@ -842,8 +862,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     decls: decls_slice,
                 });
             }
-        } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr
-            && raw == b"await"
+        } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr && raw == b"await"
         {
             // Handle an "await using" declaration
             if opts.is_export {
@@ -877,10 +896,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                         let decls_slice = bun_collections::RawSlice::new(decls.slice());
                         if !opts.is_for_loop_init {
-                            p.require_initializers(
-                                js_ast::LocalKind::KAwaitUsing,
-                                decls.slice(),
-                            )?;
+                            p.require_initializers(js_ast::LocalKind::KAwaitUsing, decls.slice())?;
                         }
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
@@ -897,7 +913,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     let r = p.store_name_in_ref(raw)?;
                     break 'value p.new_expr(
-                        E::Identifier { ref_: r, ..Default::default() },
+                        E::Identifier {
+                            ref_: r,
+                            ..Default::default()
+                        },
                         // TODO: implement saveExprCommentsHere and use using_loc here
                         using_range.loc,
                     );
@@ -927,7 +946,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ref_ = p.store_name_in_ref(raw)?;
         let mut result = ExprOrLetStmt {
             stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
-                E::Identifier { ref_, ..Default::default() },
+                E::Identifier {
+                    ref_,
+                    ..Default::default()
+                },
                 token_range.loc,
             )),
             ..Default::default()
@@ -952,12 +974,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && name == b"yield")
                 {
                     // TODO: add fmt to addRangeError
-                    p.log()
-                        .add_range_error(
-                    Some(p.source),
-                            p.lexer.range(),
-                            b"Cannot use \"yield\" or \"await\" here.",
-                        );
+                    p.log().add_range_error(
+                        Some(p.source),
+                        p.lexer.range(),
+                        b"Cannot use \"yield\" or \"await\" here.",
+                    );
                 }
 
                 let ref_ = p.store_name_in_ref(name).expect("unreachable");
@@ -1003,16 +1024,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 default_value = Some(p.parse_expr(Level::Comma)?);
                             }
 
-                            items.push(ArrayBinding { binding, default_value });
+                            items.push(ArrayBinding {
+                                binding,
+                                default_value,
+                            });
 
                             // Commas after spread elements are not allowed
                             if has_spread && p.lexer.token == T::TComma {
-                                p.log()
-                                    .add_range_error(
-                    Some(p.source),
-                                        p.lexer.range(),
-                                        b"Unexpected \",\" after rest pattern",
-                                    );
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    p.lexer.range(),
+                                    b"Unexpected \",\" after rest pattern",
+                                );
                                 return Err(err!("SyntaxError"));
                             }
                         }
@@ -1065,12 +1088,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // Commas after spread elements are not allowed
                         if is_spread && p.lexer.token == T::TComma {
-                            p.log()
-                                .add_range_error(
-                    Some(p.source),
-                                    p.lexer.range(),
-                                    b"Unexpected \",\" after rest pattern",
-                                );
+                            p.log().add_range_error(
+                                Some(p.source),
+                                p.lexer.range(),
+                                b"Unexpected \",\" after rest pattern",
+                            );
                             return Err(err!("SyntaxError"));
                         }
 
@@ -1096,7 +1118,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     return Ok(p.b(
                         B::Object {
-                            properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
+                            properties: bun_ast::StoreSlice::new_mut(
+                                properties.into_bump_slice_mut(),
+                            ),
                             is_single_line,
                         },
                         loc,
@@ -1107,7 +1131,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         p.lexer.expect(T::TIdentifier)?;
-        Ok(Binding { loc, data: B::B::BMissing(B::Missing {}) })
+        Ok(Binding {
+            loc,
+            data: B::B::BMissing(B::Missing {}),
+        })
     }
 
     pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
@@ -1119,8 +1146,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         match p.lexer.token {
             T::TDotDotDot => {
                 p.lexer.next()?;
-                let ident_ref =
-                    p.store_name_in_ref(p.lexer.identifier).expect("unreachable");
+                let ident_ref = p
+                    .store_name_in_ref(p.lexer.identifier)
+                    .expect("unreachable");
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
                 return Ok(B::Property {
@@ -1131,7 +1159,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 });
             }
             T::TNumericLiteral => {
-                key = p.new_expr(E::Number { value: p.lexer.number }, p.lexer.loc());
+                key = p.new_expr(
+                    E::Number {
+                        value: p.lexer.number,
+                    },
+                    p.lexer.loc(),
+                );
                 // check for legacy octal literal
                 p.lexer.next()?;
             }
@@ -1139,7 +1172,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 key = p.parse_string_literal()?;
             }
             T::TBigIntegerLiteral => {
-                key = p.new_expr(E::BigInt { value: p.lexer.identifier.into() }, p.lexer.loc());
+                key = p.new_expr(
+                    E::BigInt {
+                        value: p.lexer.identifier.into(),
+                    },
+                    p.lexer.loc(),
+                );
                 // p.markSyntaxFeature(compat.BigInt, p.lexer.Range())
                 p.lexer.next()?;
             }
@@ -1159,7 +1197,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 p.lexer.next()?;
 
-                key = p.new_expr(E::String { data: name.into(), ..Default::default() }, loc);
+                key = p.new_expr(
+                    E::String {
+                        data: name.into(),
+                        ..Default::default()
+                    },
+                    loc,
+                );
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
                     let ref_ = p.store_name_in_ref(name).expect("unreachable");
@@ -1214,19 +1258,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if (kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant)
                 && p.lexer.is_contextual_keyword(b"let")
             {
-                p.log()
-                    .add_range_error(
+                p.log().add_range_error(
                     Some(p.source),
-                        p.lexer.range(),
-                        b"Cannot use \"let\" as an identifier here",
-                    );
+                    p.lexer.range(),
+                    b"Cannot use \"let\" as an identifier here",
+                );
             }
 
             let mut value: Option<js_ast::Expr> = None;
             let mut local = p.parse_binding(ParseBindingOptions {
                 is_using_statement: opts.is_using_statement,
             })?;
-            p.declare_binding(kind, &mut local, opts).expect("unreachable");
+            p.declare_binding(kind, &mut local, opts)
+                .expect("unreachable");
 
             // Skip over types
             if Self::IS_TYPESCRIPT_ENABLED {
@@ -1249,7 +1293,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 value = Some(p.parse_expr(Level::Comma)?);
             }
 
-            decls.push(G::Decl { binding: local, value });
+            decls.push(G::Decl {
+                binding: local,
+                value,
+            });
 
             if p.lexer.token != T::TComma {
                 break;
@@ -1346,15 +1393,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let type_attr = string_literal_text;
                             if type_attr == b"macro" {
                                 path.is_macro = true;
-                            } else if let Some(loader) =
-                                bun_ast::Loader::from_string(type_attr)
-                            {
+                            } else if let Some(loader) = bun_ast::Loader::from_string(type_attr) {
                                 path.loader = Some(loader);
-                                if loader == bun_ast::Loader::Sqlite
-                                    && has_seen_embed_true
-                                {
-                                    path.loader =
-                                        Some(bun_ast::Loader::SqliteEmbedded);
+                                if loader == bun_ast::Loader::Sqlite && has_seen_embed_true {
+                                    path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                                 }
                             } else {
                                 // unknown loader; consider erroring
@@ -1364,15 +1406,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if string_literal_text == b"true" {
                                 has_seen_embed_true = true;
                                 if path.loader == Some(bun_ast::Loader::Sqlite) {
-                                    path.loader =
-                                        Some(bun_ast::Loader::SqliteEmbedded);
+                                    path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                                 }
                             }
                         }
                         SupportedAttribute::BunBakeGraph => {
                             if string_literal_text == b"ssr" {
-                                path.import_tag =
-                                    bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
+                                path.import_tag = bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
                             } else {
                                 let r = p.lexer.range();
                                 p.lexer.add_range_error(
@@ -1454,7 +1494,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
-                                stmt = Stmt::alloc(S::Directive { value: bun_ast::StoreStr::new(bytes) }, stmt.loc);
+                                stmt = Stmt::alloc(
+                                    S::Directive {
+                                        value: bun_ast::StoreStr::new(bytes),
+                                    },
+                                    stmt.loc,
+                                );
                             }
                         }
                     }
@@ -1515,13 +1560,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
                         let async_ref = p.store_name_in_ref(b"async")?;
-                        let arg_binding =
-                            p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
-                        let args: &'a mut [G::Arg] =
-                            p.arena.alloc_slice_fill_with(1, |_| G::Arg {
-                                binding: arg_binding,
-                                ..Default::default()
-                            });
+                        let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
+                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
+                            binding: arg_binding,
+                            ..Default::default()
+                        });
                         let _ = p
                             .push_scope_for_parse_pass(
                                 js_ast::scope::Kind::FunctionArgs,
@@ -1545,11 +1588,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
                         let arg_loc = p.lexer.loc();
                         let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
-                        let args: &'a mut [G::Arg] =
-                            p.arena.alloc_slice_fill_with(1, |_| G::Arg {
-                                binding: arg_binding,
-                                ..Default::default()
-                            });
+                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
+                            binding: arg_binding,
+                            ..Default::default()
+                        });
                         p.lexer.next()?;
 
                         let _ = p.push_scope_for_parse_pass(
@@ -1592,8 +1634,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && (!Self::IS_JSX_ENABLED || p.is_ts_arrow_fn_jsx()?)
                     {
                         match p
-                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
-                        {
+                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
+                            ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
@@ -1621,7 +1663,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "async + 1"
         let async_ref = p.store_name_in_ref(b"async")?;
         Ok(p.new_expr(
-            E::Identifier { ref_: async_ref, ..Default::default() },
+            E::Identifier {
+                ref_: async_ref,
+                ..Default::default()
+            },
             async_range.loc,
         ))
     }

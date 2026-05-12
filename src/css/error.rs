@@ -1,7 +1,6 @@
 use bstr::BStr;
 use core::fmt;
 
-
 use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
@@ -191,7 +190,10 @@ impl ErrorLocation {
         }
     }
 
-    pub fn to_location(&self, source: &bun_ast::Source) -> Result<bun_ast::Location, bun_core::Error> {
+    pub fn to_location(
+        &self,
+        source: &bun_ast::Source,
+    ) -> Result<bun_ast::Location, bun_core::Error> {
         // TODO(port): narrow error set (Zig narrowed to alloc-only).
         // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows

@@ -1,9 +1,9 @@
 use core::ops::Range;
 
+use crate::{self as sys, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
 use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
-use crate::{self as sys, dir_iterator, Fd, FdExt};
 use bun_wyhash::Wyhash11;
 
 #[inline]

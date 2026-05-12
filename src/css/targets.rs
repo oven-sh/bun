@@ -111,7 +111,8 @@ impl Targets {
     }
 
     pub fn prefixes(&self, prefix: VendorPrefix, feature: css::prefixes::Feature) -> VendorPrefix {
-        if prefix.contains(VendorPrefix::NONE) && !self.exclude.contains(Features::VENDOR_PREFIXES) {
+        if prefix.contains(VendorPrefix::NONE) && !self.exclude.contains(Features::VENDOR_PREFIXES)
+        {
             if self.include.contains(Features::VENDOR_PREFIXES) {
                 VendorPrefix::all()
             } else {
@@ -225,47 +226,100 @@ impl Browsers {
                 match year {
                     // https://caniuse.com/?search=es2015
                     2015 => {
-                        entries_buf = [b"chrome49", b"edge13", b"safari10", b"firefox44", b"opera36"];
+                        entries_buf = [
+                            b"chrome49",
+                            b"edge13",
+                            b"safari10",
+                            b"firefox44",
+                            b"opera36",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2016
                     2016 => {
-                        entries_buf = [b"chrome50", b"edge13", b"safari10", b"firefox43", b"opera37"];
+                        entries_buf = [
+                            b"chrome50",
+                            b"edge13",
+                            b"safari10",
+                            b"firefox43",
+                            b"opera37",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2017
                     2017 => {
-                        entries_buf = [b"chrome58", b"edge15", b"safari11", b"firefox52", b"opera45"];
+                        entries_buf = [
+                            b"chrome58",
+                            b"edge15",
+                            b"safari11",
+                            b"firefox52",
+                            b"opera45",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2018
                     2018 => {
-                        entries_buf = [b"chrome63", b"edge79", b"safari12", b"firefox58", b"opera50"];
+                        entries_buf = [
+                            b"chrome63",
+                            b"edge79",
+                            b"safari12",
+                            b"firefox58",
+                            b"opera50",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2019
                     2019 => {
-                        entries_buf = [b"chrome73", b"edge79", b"safari12.1", b"firefox64", b"opera60"];
+                        entries_buf = [
+                            b"chrome73",
+                            b"edge79",
+                            b"safari12.1",
+                            b"firefox64",
+                            b"opera60",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2020
                     2020 => {
-                        entries_buf = [b"chrome80", b"edge80", b"safari14.1", b"firefox80", b"opera67"];
+                        entries_buf = [
+                            b"chrome80",
+                            b"edge80",
+                            b"safari14.1",
+                            b"firefox80",
+                            b"opera67",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2021
                     2021 => {
-                        entries_buf = [b"chrome85", b"edge85", b"safari14.1", b"firefox80", b"opera71"];
+                        entries_buf = [
+                            b"chrome85",
+                            b"edge85",
+                            b"safari14.1",
+                            b"firefox80",
+                            b"opera71",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2022
                     2022 => {
-                        entries_buf = [b"chrome94", b"edge94", b"safari16.4", b"firefox93", b"opera80"];
+                        entries_buf = [
+                            b"chrome94",
+                            b"edge94",
+                            b"safari16.4",
+                            b"firefox93",
+                            b"opera80",
+                        ];
                         break 'entries_without_es &entries_buf[0..5];
                     }
                     // https://caniuse.com/?search=es2023
                     2023 => {
-                        entries_buf[0..4].copy_from_slice(&[b"chrome110", b"edge110", b"safari16.4", b"opera96"]);
+                        entries_buf[0..4].copy_from_slice(&[
+                            b"chrome110",
+                            b"edge110",
+                            b"safari16.4",
+                            b"opera96",
+                        ]);
                         break 'entries_without_es &entries_buf[0..4];
                     }
                     _ => {
@@ -324,11 +378,14 @@ impl Browsers {
                             .iter()
                             .position(|&b| b == b'.')
                             .unwrap_or(version_str.len());
-                        let Some(major) = strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok() else {
+                        let Some(major) =
+                            strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok()
+                        else {
                             continue 'for_loop;
                         };
                         let minor = if dot_index < version_str.len() {
-                            strings::parse_int::<u16>(&version_str[dot_index + 1..], 10).unwrap_or(0)
+                            strings::parse_int::<u16>(&version_str[dot_index + 1..], 10)
+                                .unwrap_or(0)
                         } else {
                             0
                         };

@@ -1,8 +1,6 @@
-
-
 use super::helpers;
 use super::parser::{Error as ParserError, Parser};
-use super::types::{self, BlockType, JsResult, TextType, VerbatimLine, OFF};
+use super::types::{self, BlockType, JsResult, OFF, TextType, VerbatimLine};
 
 impl Parser<'_> {
     pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
@@ -134,7 +132,11 @@ impl Parser<'_> {
                 cell_end -= 1;
             }
 
-            let cell_type: BlockType = if is_header { BlockType::Th } else { BlockType::Td };
+            let cell_type: BlockType = if is_header {
+                BlockType::Th
+            } else {
+                BlockType::Td
+            };
             let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
                 self.table_alignments[cell_index as usize] as u32
             } else {
@@ -190,7 +192,11 @@ impl Parser<'_> {
         }
 
         // Pad short rows with empty cells
-        let cell_type: BlockType = if is_header { BlockType::Th } else { BlockType::Td };
+        let cell_type: BlockType = if is_header {
+            BlockType::Th
+        } else {
+            BlockType::Td
+        };
         while cell_index < col_count {
             let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
                 self.table_alignments[cell_index as usize] as u32

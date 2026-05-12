@@ -3,15 +3,14 @@
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
-use bun_ast::fold_string_addition::{fold_string_addition, FoldStringAdditionKind};
 use crate::p::P;
+use crate::parser::{ExprIn, JsxT, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
+use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
-    self as js_ast,
+    self as js_ast, E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol,
     expr::{Equality, LooseEql, StrictEql},
-    E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol,
 };
-use crate::parser::{float_to_int32, prefill, ExprIn, JsxT};
 
 // PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
@@ -61,11 +60,23 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
     let u_string = p.new_expr(E::EString::from_static(b"u"), string_expr.loc);
 
     // Create the optimized comparison
-    let left = if flip_comparison { u_string } else { typeof_expr };
-    let right = if flip_comparison { typeof_expr } else { u_string };
+    let left = if flip_comparison {
+        u_string
+    } else {
+        typeof_expr
+    };
+    let right = if flip_comparison {
+        typeof_expr
+    } else {
+        u_string
+    };
 
     Some(p.new_expr(
-        E::Binary { left, right, op: replacement_op },
+        E::Binary {
+            left,
+            right,
+            op: replacement_op,
+        },
         e_.left.loc,
     ))
 }
@@ -216,7 +227,10 @@ impl BinaryExpressionVisitor {
                         // the comma operator semantics when used as a call target
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             // Keep the comma expression to strip "this" binding
-                            e_.left = Expr { data: prefill::data::ZERO, loc: e_.left.loc };
+                            e_.left = Expr {
+                                data: prefill::data::ZERO,
+                                loc: e_.left.loc,
+                            };
                         } else {
                             return e_.right;
                         }
@@ -224,7 +238,8 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLooseEq => {
-                let equality = data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                let equality =
+                    data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage_of_runtime_require();
@@ -232,14 +247,17 @@ impl BinaryExpressionVisitor {
                         return p.value_for_import_meta_main(false, v.loc);
                     }
 
-                    return p.new_expr(E::Boolean { value: equality.equal }, v.loc);
+                    return p.new_expr(
+                        E::Boolean {
+                            value: equality.equal,
+                        },
+                        v.loc,
+                    );
                 }
 
                 if p.options.features.minify_syntax {
                     // "typeof x == 'undefined'" => "typeof x > 'u'"
-                    if let Some(optimized) =
-                        try_optimize_typeof_undefined(e_, p, Op::Code::BinGt)
-                    {
+                    if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinGt) {
                         return optimized;
                     }
 
@@ -256,7 +274,8 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinStrictEq => {
-                let equality = data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                let equality =
+                    data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -264,14 +283,17 @@ impl BinaryExpressionVisitor {
                         return p.value_for_import_meta_main(false, v.loc);
                     }
 
-                    return p.new_expr(E::Boolean { value: equality.equal }, v.loc);
+                    return p.new_expr(
+                        E::Boolean {
+                            value: equality.equal,
+                        },
+                        v.loc,
+                    );
                 }
 
                 if p.options.features.minify_syntax {
                     // "typeof x === 'undefined'" => "typeof x > 'u'"
-                    if let Some(optimized) =
-                        try_optimize_typeof_undefined(e_, p, Op::Code::BinGt)
-                    {
+                    if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinGt) {
                         return optimized;
                     }
                 }
@@ -281,7 +303,8 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinLooseNe => {
-                let equality = data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                let equality =
+                    data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -289,13 +312,16 @@ impl BinaryExpressionVisitor {
                         return p.value_for_import_meta_main(true, v.loc);
                     }
 
-                    return p.new_expr(E::Boolean { value: !equality.equal }, v.loc);
+                    return p.new_expr(
+                        E::Boolean {
+                            value: !equality.equal,
+                        },
+                        v.loc,
+                    );
                 }
                 if p.options.features.minify_syntax {
                     // "typeof x != 'undefined'" => "typeof x < 'u'"
-                    if let Some(optimized) =
-                        try_optimize_typeof_undefined(e_, p, Op::Code::BinLt)
-                    {
+                    if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinLt) {
                         return optimized;
                     }
                 }
@@ -310,7 +336,8 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinStrictNe => {
-                let equality = data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                let equality =
+                    data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -318,14 +345,17 @@ impl BinaryExpressionVisitor {
                         return p.value_for_import_meta_main(true, v.loc);
                     }
 
-                    return p.new_expr(E::Boolean { value: !equality.equal }, v.loc);
+                    return p.new_expr(
+                        E::Boolean {
+                            value: !equality.equal,
+                        },
+                        v.loc,
+                    );
                 }
 
                 if p.options.features.minify_syntax {
                     // "typeof x !== 'undefined'" => "typeof x < 'u'"
-                    if let Some(optimized) =
-                        try_optimize_typeof_undefined(e_, p, Op::Code::BinLt)
-                    {
+                    if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinLt) {
                         return optimized;
                     }
                 }
@@ -357,13 +387,17 @@ impl BinaryExpressionVisitor {
                 let side_effects = SideEffects::to_boolean(p, &e_.left.data);
                 if side_effects.ok && side_effects.value {
                     return e_.left;
-                } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects {
+                } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects
+                {
                     // "(0 || fn)()" => "fn()"
                     // "(0 || this.fn)" => "this.fn"
                     // "(0 || this.fn)()" => "(0, this.fn)()"
                     if is_call_target && e_.right.has_value_for_this_in_call() {
                         return Expr::join_with_comma(
-                            Expr { data: prefill::data::ZERO, loc: e_.left.loc },
+                            Expr {
+                                data: prefill::data::ZERO,
+                                loc: e_.left.loc,
+                            },
                             e_.right,
                         );
                     }
@@ -382,7 +416,10 @@ impl BinaryExpressionVisitor {
                         // "(1 && this.fn)()" => "(0, this.fn)()"
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             return Expr::join_with_comma(
-                                Expr { data: prefill::data::ZERO, loc: e_.left.loc },
+                                Expr {
+                                    data: prefill::data::ZERO,
+                                    loc: e_.left.loc,
+                                },
                                 e_.right,
                             );
                         }
@@ -393,8 +430,14 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinAdd => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
-                        return p.new_expr(E::Number { value: vals[0] + vals[1] }, v.loc);
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
+                        return p.new_expr(
+                            E::Number {
+                                value: vals[0] + vals[1],
+                            },
+                            v.loc,
+                        );
                     }
 
                     // "'abc' + 'xyz'" => "'abcxyz'"
@@ -431,28 +474,47 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinSub => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
-                        return p.new_expr(E::Number { value: vals[0] - vals[1] }, v.loc);
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
+                        return p.new_expr(
+                            E::Number {
+                                value: vals[0] - vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinMul => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
-                        return p.new_expr(E::Number { value: vals[0] * vals[1] }, v.loc);
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
+                        return p.new_expr(
+                            E::Number {
+                                value: vals[0] * vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinDiv => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
-                        return p.new_expr(E::Number { value: vals[0] / vals[1] }, v.loc);
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
+                        return p.new_expr(
+                            E::Number {
+                                value: vals[0] / vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinRem => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         // TODO(port): move to <area>_sys
                         unsafe extern "C" {
                             // libc fmod is pure (value-type args, no errno, no pointers) → no caller preconditions.
@@ -462,7 +524,9 @@ impl BinaryExpressionVisitor {
                             // Use libc fmod here to be consistent with what JavaScriptCore does
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
                             // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
-                            E::Number { value: fmod(vals[0], vals[1]) },
+                            E::Number {
+                                value: fmod(vals[0], vals[1]),
+                            },
                             v.loc,
                         );
                     }
@@ -470,10 +534,13 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinPow => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         return p.new_expr(
                             // TODO(b0): math arrives from move-in (was bun_jsc::math → js_parser)
-                            E::Number { value: bun_ast::math::pow(vals[0], vals[1]) },
+                            E::Number {
+                                value: bun_ast::math::pow(vals[0], vals[1]),
+                            },
                             v.loc,
                         );
                     }
@@ -481,38 +548,57 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinShl => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         let left = float_to_int32(vals[0]);
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         let result: i32 = left.wrapping_shl(right);
-                        return p.new_expr(E::Number { value: result as f64 }, v.loc);
+                        return p.new_expr(
+                            E::Number {
+                                value: result as f64,
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinShr => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         let left = float_to_int32(vals[0]);
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         // std.math.shr on i32 is arithmetic shift right
                         let result: i32 = left.wrapping_shr(right);
-                        return p.new_expr(E::Number { value: result as f64 }, v.loc);
+                        return p.new_expr(
+                            E::Number {
+                                value: result as f64,
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinUShr => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         let left: u32 = float_to_int32(vals[0]) as u32;
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         let result: u32 = left.wrapping_shr(right);
-                        return p.new_expr(E::Number { value: result as f64 }, v.loc);
+                        return p.new_expr(
+                            E::Number {
+                                value: result as f64,
+                            },
+                            v.loc,
+                        );
                     }
                 }
             }
             Op::Code::BinBitwiseAnd => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         return p.new_expr(
                             E::Number {
                                 value: (float_to_int32(vals[0]) & float_to_int32(vals[1])) as f64,
@@ -524,7 +610,8 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinBitwiseOr => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         return p.new_expr(
                             E::Number {
                                 value: (float_to_int32(vals[0]) | float_to_int32(vals[1])) as f64,
@@ -536,7 +623,8 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinBitwiseXor => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
+                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    {
                         return p.new_expr(
                             E::Number {
                                 value: (float_to_int32(vals[0]) ^ float_to_int32(vals[1])) as f64,
@@ -552,14 +640,21 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) =
                         Expr::extract_numeric_values_in_safe_range(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(E::Boolean { value: vals[0] < vals[1] }, v.loc);
+                        return p.new_expr(
+                            E::Boolean {
+                                value: vals[0] < vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
-                            E::Boolean { value: ord == Ordering::Less },
+                            E::Boolean {
+                                value: ord == Ordering::Less,
+                            },
                             v.loc,
                         );
                     }
@@ -570,14 +665,21 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) =
                         Expr::extract_numeric_values_in_safe_range(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(E::Boolean { value: vals[0] > vals[1] }, v.loc);
+                        return p.new_expr(
+                            E::Boolean {
+                                value: vals[0] > vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
-                            E::Boolean { value: ord == Ordering::Greater },
+                            E::Boolean {
+                                value: ord == Ordering::Greater,
+                            },
                             v.loc,
                         );
                     }
@@ -588,7 +690,12 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) =
                         Expr::extract_numeric_values_in_safe_range(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(E::Boolean { value: vals[0] <= vals[1] }, v.loc);
+                        return p.new_expr(
+                            E::Boolean {
+                                value: vals[0] <= vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
@@ -608,7 +715,12 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) =
                         Expr::extract_numeric_values_in_safe_range(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(E::Boolean { value: vals[0] >= vals[1] }, v.loc);
+                        return p.new_expr(
+                            E::Boolean {
+                                value: vals[0] >= vals[1],
+                            },
+                            v.loc,
+                        );
                     }
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
@@ -630,8 +742,7 @@ impl BinaryExpressionVisitor {
                 if let ExprData::EIdentifier(ident) = e_.left.data {
                     // PORT NOTE: reshaped for borrowck — copy the `StoreStr` out of
                     // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
-                    let name =
-                        p.symbols[ident.ref_.inner_index() as usize].original_name;
+                    let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
                     e_.right = p.maybe_keep_expr_symbol_name(
                         e_.right,
                         name.slice(),
@@ -687,15 +798,14 @@ impl BinaryExpressionVisitor {
                             loc: e_.left.loc,
                             len: i32::try_from(name.len()).expect("int cast"),
                         };
-                        p.log()
-                            .add_range_error_fmt(
-                                Some(p.source),
-                                r,
-                                format_args!(
-                                    "Private name \"{}\" must be declared in an enclosing class",
-                                    bstr::BStr::new(name)
-                                ),
-                            );
+                        p.log().add_range_error_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!(
+                                "Private name \"{}\" must be declared in an enclosing class",
+                                bstr::BStr::new(name)
+                            ),
+                        );
                     }
 
                     p.visit_expr(&mut e_.right);
@@ -705,14 +815,16 @@ impl BinaryExpressionVisitor {
                     };
 
                     // privateSymbolNeedsToBeLowered
-                    return Some(Expr { loc: v.loc, data: ExprData::EBinary(e_handle) });
+                    return Some(Expr {
+                        loc: v.loc,
+                        data: ExprData::EBinary(e_handle),
+                    });
                 }
             }
             _ => {}
         }
 
-        v.is_stmt_expr =
-            matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), std::ptr::from_mut(e_)));
+        v.is_stmt_expr = matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), std::ptr::from_mut(e_)));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

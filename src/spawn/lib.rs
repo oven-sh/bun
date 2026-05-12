@@ -34,13 +34,13 @@ pub mod posix_spawn {
     pub use bun_spawn_sys::posix_spawn::*;
 
     pub mod bun_spawn {
-        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
-        pub use crate::process as process;
+        pub use crate::process;
         pub use crate::process::{
-            spawn_process, sync, Process, SpawnOptions, SpawnProcessResult, Status,
+            Process, SpawnOptions, SpawnProcessResult, Status, spawn_process, sync,
         };
         #[cfg(windows)]
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
+        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
     }
     pub use bun_spawn as BunSpawn;
     pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
@@ -64,14 +64,13 @@ pub mod static_pipe_writer;
 pub use bun_event_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
-pub use bun_spawn_sys::{ffi, Argv, CStrPtr, Envp};
+pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
-pub use process::{
-    spawn_process, Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage,
-    SignalCodeExt, SpawnOptions, SpawnProcessResult, SpawnResultExt, Status,
-    StdioKind, WaiterThread,
-};
 pub use bun_spawn_sys::RusageFields;
+pub use process::{
+    Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage, SignalCodeExt, SpawnOptions,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
+};
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
 // via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
@@ -123,9 +122,7 @@ link_impl_ProcessExit! {
 pub use bun_sys as spawn_sys;
 
 #[cfg(unix)]
-pub use process::{
-    PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult,
-};
+pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
 pub type SpawnResult = process::PosixSpawnResult;
 /// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
@@ -151,9 +148,9 @@ pub mod windows {
 
 /// `bun.spawnSync` (process.zig `pub const sync`).
 pub mod sync {
-    pub use crate::process::sync::{spawn, spawn_with_argv, Options, Result, SyncStdio as Stdio};
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
+    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
     #[cfg(not(windows))]
     pub type WindowsOptions = ();
 }
@@ -340,7 +337,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
             Some(code) => Term::Exited(code as u32),
             None => Term::Unknown(0),
         };
-        return Ok(RunResult { term, stdout: out.stdout, stderr: out.stderr });
+        return Ok(RunResult {
+            term,
+            stdout: out.stdout,
+            stderr: out.stderr,
+        });
     }
 
     // `std.process.Child.spawnPosix` resolves `argv[0]` against `$PATH` (it
@@ -350,7 +351,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     let mut argv0_buf = bun_core::PathBuffer::uninit();
     let mut argv0_storage: Option<Box<[u8]>> = None;
     'argv0: {
-        let Some(&first) = opts.argv.first() else { break 'argv0 };
+        let Some(&first) = opts.argv.first() else {
+            break 'argv0;
+        };
         // Only PATH-search bare names — Zig's expandArg0 expands only when no
         // separator is present.
         if first.iter().any(|&b| b == b'/') {
@@ -374,8 +377,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         owned.push(0);
         argv0_storage = Some(owned.into_boxed_slice());
     }
-    let argv0_ptr: Option<*const c_char> =
-        argv0_storage.as_deref().map(|s| s.as_ptr().cast::<c_char>());
+    let argv0_ptr: Option<*const c_char> = argv0_storage
+        .as_deref()
+        .map(|s| s.as_ptr().cast::<c_char>());
 
     // ── envp: HashMap<String,String> → `[*:null]?[*:0]const u8` ──
     // Own the `KEY=VALUE\0` backing storage in `env_buf`; `envp` points into it
@@ -389,8 +393,10 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         entry.push(0);
         env_buf.push(entry);
     }
-    let mut envp: Vec<*const c_char> =
-        env_buf.iter().map(|e| e.as_ptr().cast::<c_char>()).collect();
+    let mut envp: Vec<*const c_char> = env_buf
+        .iter()
+        .map(|e| e.as_ptr().cast::<c_char>())
+        .collect();
     envp.push(core::ptr::null());
 
     // ── argv: &[&[u8]] → Vec<Box<[u8]>> (sync::Options owns its argv) ──
@@ -417,9 +423,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         // jsc.MiniEventLoop.initGlobal(env, null))`).
         #[cfg(windows)]
         windows: process::sync::WindowsOptions {
-            loop_: EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
-            ),
+            loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
             ..Default::default()
         },
         ..Default::default()
@@ -444,5 +450,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         Status::Err(_) | Status::Running => Term::Unknown(0),
     };
 
-    Ok(RunResult { term, stdout: result.stdout, stderr: result.stderr })
+    Ok(RunResult {
+        term,
+        stdout: result.stdout,
+        stderr: result.stderr,
+    })
 }

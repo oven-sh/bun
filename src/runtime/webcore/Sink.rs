@@ -1,11 +1,11 @@
 use core::ffi::c_void;
 
-use bun_collections::{ByteVecExt, VecExt, TaggedPtrUnion};
-use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_core::strings;
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
+use bun_collections::{ByteVecExt, TaggedPtrUnion, VecExt};
+use bun_core::Output;
+use bun_core::strings;
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
 
 // PORT NOTE: re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
@@ -349,7 +349,10 @@ impl VTable {
     };
 
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
-        fn on_write<W: SinkHandler>(this: *mut (), data: streams::Result) -> streams::result::Writable {
+        fn on_write<W: SinkHandler>(
+            this: *mut (),
+            data: streams::Result,
+        ) -> streams::result::Writable {
             // SAFETY: `this` was erased from `&mut W` in init_with_type.
             unsafe { &mut *this.cast::<W>() }.write(data)
         }
@@ -495,17 +498,13 @@ macro_rules! decl_js_sink_externs {
     ($abi:literal as $m:ident) => {
         #[allow(non_snake_case)]
         pub mod $m {
-            use ::core::ffi::c_void;
             use ::bun_jsc::{JSGlobalObject, JSValue};
+            use ::core::ffi::c_void;
             unsafe extern "C" {
                 #[link_name = concat!($abi, "__fromJS")]
                 pub safe fn from_js(value: JSValue) -> usize;
                 #[link_name = concat!($abi, "__createObject")]
-                pub safe fn create_object(
-                    g: &JSGlobalObject,
-                    o: *mut c_void,
-                    d: usize,
-                ) -> JSValue;
+                pub safe fn create_object(g: &JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
                 pub safe fn set_destroy_callback(v: JSValue, cb: usize);
                 #[link_name = concat!($abi, "__assignToStream")]
@@ -710,9 +709,8 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // is satisfied; route through the same path here.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
             let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
-            let _ = ::bun_jsc::call_check_slow(global, || {
-                T::on_close_extern(cpp, JSValue::UNDEFINED)
-            });
+            let _ =
+                ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
         }
         fn ready<T: JsSinkAbi>(
             this: *mut c_void,

@@ -273,7 +273,11 @@ const fn align_sort_key(size: usize, struct_align: usize) -> usize {
     }
     // Largest power of two dividing `size`.
     let pow2 = size & size.wrapping_neg();
-    if pow2 < struct_align { pow2 } else { struct_align }
+    if pow2 < struct_align {
+        pow2
+    } else {
+        struct_align
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -286,7 +290,11 @@ struct FieldMeta {
     align: usize,
 }
 
-const ZERO_META: FieldMeta = FieldMeta { size: 0, offset: 0, align: 1 };
+const ZERO_META: FieldMeta = FieldMeta {
+    size: 0,
+    offset: 0,
+    align: 1,
+};
 
 /// Per-`T` reflected layout, fully const-evaluated.
 struct Reflected<T>(PhantomData<T>);
@@ -313,7 +321,11 @@ impl<T> Reflected<T> {
                 None => panic!("MultiArrayList: field type must be Sized"),
             };
             let align = align_sort_key(size, struct_align);
-            out[i] = FieldMeta { size, offset: f.offset, align };
+            out[i] = FieldMeta {
+                size,
+                offset: f.offset,
+                align,
+            };
             i += 1;
         }
         out
@@ -557,7 +569,10 @@ impl<T> Slice<T> {
     }
 
     pub fn set(&mut self, index: usize, elem: T) {
-        assert!(index < self.len, "MultiArrayList::Slice::set: index out of bounds");
+        assert!(
+            index < self.len,
+            "MultiArrayList::Slice::set: index out of bounds"
+        );
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
         unsafe { scatter::<T>(&self.ptrs, index, elem) };
     }
@@ -570,7 +585,10 @@ impl<T> Slice<T> {
     /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
     /// by-value copy is harmless there.
     pub fn get(&self, index: usize) -> ManuallyDrop<T> {
-        assert!(index < self.len, "MultiArrayList::Slice::get: index out of bounds");
+        assert!(
+            index < self.len,
+            "MultiArrayList::Slice::get: index out of bounds"
+        );
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
         ManuallyDrop::new(unsafe { gather::<T>(&self.ptrs, index) })
     }
@@ -667,7 +685,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
     #[inline]
     pub const fn new_in(alloc: A) -> Self {
-        Self { bytes: ptr::null_mut(), len: 0, capacity: 0, alloc, _marker: PhantomData }
+        Self {
+            bytes: ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+            alloc,
+            _marker: PhantomData,
+        }
     }
 
     /// Number of elements.
@@ -732,7 +756,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         }
         // SAFETY: column offset within the single allocation; always in-bounds.
         // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
-        unsafe { self.bytes.add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity) }
+        unsafe {
+            self.bytes
+                .add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity)
+        }
     }
 
     /// Get the shared slice of values for field `NAME`.
@@ -901,7 +928,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// item in the list into its position. Fast, but does not
     /// retain list ordering.
     pub fn swap_remove(&mut self, index: usize) {
-        assert!(index < self.len, "MultiArrayList::swap_remove: index out of bounds");
+        assert!(
+            index < self.len,
+            "MultiArrayList::swap_remove: index out of bounds"
+        );
         let slices = self.slice();
         for fi in 0..Reflected::<T>::COUNT {
             let size = Reflected::<T>::META[fi].size;
@@ -912,7 +942,11 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             // SAFETY: `index < len` and `len-1 < len <= capacity`. Regions overlap
             // exactly when `index == len-1` (src == dst), which `copy` handles.
             unsafe {
-                ptr::copy(base.add((self.len - 1) * size), base.add(index * size), size);
+                ptr::copy(
+                    base.add((self.len - 1) * size),
+                    base.add(index * size),
+                    size,
+                );
             }
         }
         self.len -= 1;
@@ -921,7 +955,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Remove the specified item from the list, shifting items
     /// after it to preserve order.
     pub fn ordered_remove(&mut self, index: usize) {
-        assert!(index < self.len, "MultiArrayList::ordered_remove: index out of bounds");
+        assert!(
+            index < self.len,
+            "MultiArrayList::ordered_remove: index out of bounds"
+        );
         let slices = self.slice();
         for fi in 0..Reflected::<T>::COUNT {
             let size = Reflected::<T>::META[fi].size;
@@ -1154,7 +1191,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: type invariant above — `self.bytes` is non-null and was
             // allocated by `self.alloc` with exactly `layout`.
-            unsafe { self.alloc.deallocate(ptr::NonNull::new_unchecked(self.bytes), layout) };
+            unsafe {
+                self.alloc
+                    .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
+            };
             // Re-establish the invariant immediately so an (accidental) second
             // call before the caller installs a new buffer is a no-op rather
             // than a double-free. Callers overwrite both fields right after.
@@ -1180,7 +1220,10 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: `bytes` was allocated with exactly `layout` and is
             // freed exactly once here.
-            unsafe { self.alloc.deallocate(ptr::NonNull::new_unchecked(self.bytes), layout) };
+            unsafe {
+                self.alloc
+                    .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
+            };
         }
     }
 }
@@ -1340,7 +1383,12 @@ mod tests {
     fn roundtrip() {
         let mut list = MultiArrayList::<Foo>::default();
         for i in 0..10u32 {
-            list.push(Foo { a: i, b: i as u8, c: i as u64 * 100 }).unwrap();
+            list.push(Foo {
+                a: i,
+                b: i as u8,
+                c: i as u64 * 100,
+            })
+            .unwrap();
         }
         let s = list.slice();
         assert_eq!(s.items::<"c", u64>()[7], 700);
@@ -1352,7 +1400,12 @@ mod tests {
     fn list_items() {
         let mut list = MultiArrayList::<Foo>::default();
         for i in 0..4u32 {
-            list.push(Foo { a: i, b: i as u8, c: i as u64 * 10 }).unwrap();
+            list.push(Foo {
+                a: i,
+                b: i as u8,
+                c: i as u64 * 10,
+            })
+            .unwrap();
         }
         assert_eq!(list.items::<"c", u64>(), &[0u64, 10, 20, 30]);
         list.items_mut::<"a", u32>()[2] = 99;

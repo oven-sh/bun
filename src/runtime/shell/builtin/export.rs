@@ -1,10 +1,10 @@
 use core::ffi::CStr;
 
+use crate::shell::EnvStr;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::EnvStr;
 
 #[derive(Default)]
 pub struct Export {

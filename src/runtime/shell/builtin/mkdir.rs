@@ -1,15 +1,15 @@
 use core::ffi::CStr;
 
-use crate::node::fs::{args as fs_args, MkdirCtx, NodeFS};
+use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
 use crate::node::types::PathLike;
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
+    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
+    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Mkdir {
@@ -62,7 +62,7 @@ impl Mkdir {
                 Err(e) => {
                     return Builtin::fail_parse(interp, cmd, Kind::Mkdir, e, || {
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    })
+                    });
                 }
             }
         };
@@ -129,8 +129,14 @@ impl Mkdir {
                     let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                     for i in args_start..argc {
                         let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                        let task =
-                            ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
+                        let task = ShellMkdirTask::create(
+                            cmd,
+                            opts,
+                            path,
+                            cwd.clone(),
+                            evtloop,
+                            interp_ptr,
+                        );
                         // SAFETY: freshly heap-allocated.
                         unsafe { ShellTask::schedule(task) };
                     }
@@ -160,11 +166,7 @@ impl Mkdir {
     }
 
     /// Spec: mkdir.zig `onShellMkdirTaskDone`.
-    pub fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellMkdirTask,
-    ) {
+    pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
         // SAFETY: task was heap-allocated in create(); reclaim ownership.
         let mut task = unsafe { bun_core::heap::take(task) };
         let output = core::mem::take(&mut task.created_directories);
@@ -306,7 +308,7 @@ impl ShellMkdirTask {
 
     /// Spec: mkdir.zig `runFromThreadPool`.
     pub fn run_from_thread_pool(this: &mut ShellMkdirTask) {
-        use bun_paths::{platform, resolve_path, Platform};
+        use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
@@ -340,7 +342,8 @@ impl ShellMkdirTask {
             match node_fs.mkdir_non_recursive(&args) {
                 Ok(_) => {
                     if this.opts.verbose {
-                        this.created_directories.extend_from_slice(filepath.as_bytes());
+                        this.created_directories
+                            .extend_from_slice(filepath.as_bytes());
                         this.created_directories.push(b'\n');
                     }
                 }
@@ -401,7 +404,9 @@ impl MkdirCtx for MkdirVerboseVTable {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) {
+        Self::run_from_thread_pool(this)
+    }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
@@ -446,7 +451,9 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[1 + i..])),
+            _ => Some(ParseFlagResult::IllegalOption(
+                &raw const smallflags[1 + i..],
+            )),
         }
     }
 }

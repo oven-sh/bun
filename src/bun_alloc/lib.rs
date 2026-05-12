@@ -9,8 +9,8 @@
 #![feature(thread_local)]
 
 use core::fmt::Write as _;
-use core::mem::{size_of, MaybeUninit};
-use core::ptr::{addr_of_mut, NonNull};
+use core::mem::{MaybeUninit, size_of};
+use core::ptr::{NonNull, addr_of_mut};
 use core::sync::atomic::{AtomicU16, Ordering};
 use std::collections::HashMap;
 
@@ -26,9 +26,18 @@ pub mod c_thunks;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Alignment(pub u8); // log2 of byte alignment, like std.mem.Alignment
 impl Alignment {
-    #[inline] pub const fn of<T>() -> Self { Self(core::mem::align_of::<T>().trailing_zeros() as u8) }
-    #[inline] pub const fn to_byte_units(self) -> usize { 1usize << self.0 }
-    #[inline] pub const fn from_byte_units(b: usize) -> Self { Self(b.trailing_zeros() as u8) }
+    #[inline]
+    pub const fn of<T>() -> Self {
+        Self(core::mem::align_of::<T>().trailing_zeros() as u8)
+    }
+    #[inline]
+    pub const fn to_byte_units(self) -> usize {
+        1usize << self.0
+    }
+    #[inline]
+    pub const fn from_byte_units(b: usize) -> Self {
+        Self(b.trailing_zeros() as u8)
+    }
 }
 
 // ── `std.c.max_align_t` alignment ─────────────────────────────────────────
@@ -69,10 +78,20 @@ impl AllocatorVTable {
     /// return null; }`. This is the Rust-side improvement.
     pub const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
         |_, _, _, _| core::ptr::null_mut();
-    pub const NO_RESIZE: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool =
-        |_, _, _, _, _| false;
-    pub const NO_REMAP: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8 =
-        |_, _, _, _, _| core::ptr::null_mut();
+    pub const NO_RESIZE: unsafe fn(
+        *mut core::ffi::c_void,
+        &mut [u8],
+        Alignment,
+        usize,
+        usize,
+    ) -> bool = |_, _, _, _, _| false;
+    pub const NO_REMAP: unsafe fn(
+        *mut core::ffi::c_void,
+        &mut [u8],
+        Alignment,
+        usize,
+        usize,
+    ) -> *mut u8 = |_, _, _, _, _| core::ptr::null_mut();
 
     /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
     /// only `free` is meaningful. Each call site still gets its own `static`
@@ -123,13 +142,25 @@ impl StdAllocator {
     }
     /// Zig: `Allocator.rawResize`.
     #[inline]
-    pub fn raw_resize(&self, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
+    pub fn raw_resize(
+        &self,
+        buf: &mut [u8],
+        alignment: Alignment,
+        new_len: usize,
+        ra: usize,
+    ) -> bool {
         // SAFETY: see `raw_alloc`.
         unsafe { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
     }
     /// Zig: `Allocator.rawRemap`.
     #[inline]
-    pub fn raw_remap(&self, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> Option<*mut u8> {
+    pub fn raw_remap(
+        &self,
+        buf: &mut [u8],
+        alignment: Alignment,
+        new_len: usize,
+        ra: usize,
+    ) -> Option<*mut u8> {
         // SAFETY: see `raw_alloc`.
         let p = unsafe { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
         if p.is_null() { None } else { Some(p) }
@@ -143,16 +174,16 @@ impl StdAllocator {
     /// Zig: `Allocator.free` — `rawFree` with `ret_addr = 0`, byte-aligned.
     #[inline]
     pub fn free(&self, bytes: &[u8]) {
-        if bytes.is_empty() { return; }
+        if bytes.is_empty() {
+            return;
+        }
         // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
         // callee treats it as opaque (Zig passes `[]u8`).
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len())
-        };
+        let buf =
+            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
         self.raw_free(buf, Alignment::from_byte_units(1), 0);
     }
 }
-
 
 /// `std.heap.FixedBufferAllocator` — bump allocator over a caller-owned buffer.
 pub struct FixedBufferAllocator<'a> {
@@ -161,9 +192,13 @@ pub struct FixedBufferAllocator<'a> {
 }
 impl<'a> FixedBufferAllocator<'a> {
     #[inline]
-    pub fn init(buffer: &'a mut [u8]) -> Self { Self { end: 0, buffer } }
+    pub fn init(buffer: &'a mut [u8]) -> Self {
+        Self { end: 0, buffer }
+    }
     #[inline]
-    pub fn reset(&mut self) { self.end = 0; }
+    pub fn reset(&mut self) {
+        self.end = 0;
+    }
     #[inline]
     pub fn owns_ptr(&self, p: *const u8) -> bool {
         let base = self.buffer.as_ptr() as usize;
@@ -172,10 +207,12 @@ impl<'a> FixedBufferAllocator<'a> {
     }
     pub fn alloc(&mut self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
         let base = self.buffer.as_mut_ptr() as usize;
-        let aligned = (base + self.end + alignment.to_byte_units() - 1)
-            & !(alignment.to_byte_units() - 1);
+        let aligned =
+            (base + self.end + alignment.to_byte_units() - 1) & !(alignment.to_byte_units() - 1);
         let new_end = (aligned - base).checked_add(len)?;
-        if new_end > self.buffer.len() { return None; }
+        if new_end > self.buffer.len() {
+            return None;
+        }
         self.end = new_end;
         Some(aligned as *mut u8)
     }
@@ -186,19 +223,33 @@ impl<'a> FixedBufferAllocator<'a> {
             return new_len <= buf.len();
         }
         let new_end = buf_end - buf.len() + new_len;
-        if new_end > self.buffer.len() { return false; }
+        if new_end > self.buffer.len() {
+            return false;
+        }
         self.end = new_end;
         true
     }
     #[inline]
-    pub fn remap(&mut self, buf: &mut [u8], a: Alignment, new_len: usize, ra: usize) -> Option<*mut u8> {
-        if self.resize(buf, a, new_len, ra) { Some(buf.as_mut_ptr()) } else { None }
+    pub fn remap(
+        &mut self,
+        buf: &mut [u8],
+        a: Alignment,
+        new_len: usize,
+        ra: usize,
+    ) -> Option<*mut u8> {
+        if self.resize(buf, a, new_len, ra) {
+            Some(buf.as_mut_ptr())
+        } else {
+            None
+        }
     }
     #[inline]
     pub fn free(&mut self, buf: &mut [u8], _a: Alignment, _ra: usize) {
         // Only the last allocation can be freed.
         let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end == self.end { self.end -= buf.len(); }
+        if buf_end == self.end {
+            self.end -= buf.len();
+        }
     }
 }
 
@@ -217,7 +268,7 @@ pub type Bump = bumpalo::Bump;
 /// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
 /// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
-pub use mimalloc_arena::{live_arena_heaps, vec_from_iter_in, ArenaString, ArenaVecExt};
+pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].
@@ -257,17 +308,20 @@ pub const USE_MIMALLOC: bool = true;
 //   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
- #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
-                                        pub mod maybe_owned;
- #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
- #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
-                                        pub mod fallback;
-                                        pub mod stack_fallback;
+#[path = "BufferFallbackAllocator.rs"]
+pub mod buffer_fallback_allocator;
+pub mod fallback;
+#[path = "MaxHeapAllocator.rs"]
+pub mod max_heap_allocator;
+pub mod maybe_owned;
+#[path = "NullableAllocator.rs"]
+pub mod nullable_allocator;
+pub mod stack_fallback;
 
-pub use nullable_allocator::NullableAllocator;
-pub use max_heap_allocator::MaxHeapAllocator;
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
+pub use max_heap_allocator::MaxHeapAllocator;
 pub use maybe_owned::MaybeOwned;
+pub use nullable_allocator::NullableAllocator;
 pub use stack_fallback::{ArenaPtr, BumpWithFallback, MimallocHeapRef};
 
 #[path = "MimallocArena.rs"]
@@ -443,7 +497,9 @@ impl core::fmt::Write for SliceCursor<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let bytes = s.as_bytes();
         let end = self.at + bytes.len();
-        if end > self.buf.len() { return Err(core::fmt::Error); }
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
         Ok(())
@@ -508,7 +564,9 @@ impl Drop for MutexGuard {
     }
 }
 impl Default for Mutex {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
@@ -576,7 +634,12 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 
     #[inline]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: core::alloc::Layout, new_size: usize) -> *mut u8 {
+    unsafe fn realloc(
+        &self,
+        ptr: *mut u8,
+        layout: core::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
         unsafe {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
                 mimalloc::mi_realloc(ptr.cast(), new_size)
@@ -782,11 +845,17 @@ pub struct ZigString {
 }
 
 impl ZigString {
-    pub const EMPTY: ZigString = ZigString { _unsafe_ptr_do_not_use: b"".as_ptr(), len: 0 };
+    pub const EMPTY: ZigString = ZigString {
+        _unsafe_ptr_do_not_use: b"".as_ptr(),
+        len: 0,
+    };
 
     #[inline]
     pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString { _unsafe_ptr_do_not_use: slice.as_ptr(), len: slice.len() }
+        ZigString {
+            _unsafe_ptr_do_not_use: slice.as_ptr(),
+            len: slice.len(),
+        }
     }
 
     /// Construct from an already-tagged pointer + length. Mirror of
@@ -795,18 +864,30 @@ impl ZigString {
     /// time, not at runtime).
     #[inline]
     pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString { _unsafe_ptr_do_not_use: ptr, len }
+        ZigString {
+            _unsafe_ptr_do_not_use: ptr,
+            len,
+        }
     }
 
     #[inline]
     pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString { _unsafe_ptr_do_not_use: items.as_ptr().cast(), len: items.len() };
+        let mut out = ZigString {
+            _unsafe_ptr_do_not_use: items.as_ptr().cast(),
+            len: items.len(),
+        };
         out.mark_utf16();
         out
     }
 
-    #[inline] pub const fn length(&self) -> usize { self.len }
-    #[inline] pub const fn is_empty(&self) -> bool { self.len == 0 }
+    #[inline]
+    pub const fn length(&self) -> usize {
+        self.len
+    }
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 
     #[inline]
     pub fn is_16bit(&self) -> bool {
@@ -903,19 +984,30 @@ impl WTFStringImplStruct {
     /// This allows us to ref / deref without disturbing the static string flag.
     pub const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
-    #[inline] pub fn length(&self) -> u32 { self.m_length }
+    #[inline]
+    pub fn length(&self) -> u32 {
+        self.m_length
+    }
     #[inline]
     pub fn is_8bit(&self) -> bool {
         (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
     }
     #[inline]
     pub fn byte_length(&self) -> usize {
-        if self.is_8bit() { self.m_length as usize } else { (self.m_length as usize) * 2 }
+        if self.is_8bit() {
+            self.m_length as usize
+        } else {
+            (self.m_length as usize) * 2
+        }
     }
     #[inline]
-    pub fn memory_cost(&self) -> usize { self.byte_length() }
+    pub fn memory_cost(&self) -> usize {
+        self.byte_length()
+    }
     #[inline]
-    pub fn ref_count(&self) -> u32 { self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT }
+    pub fn ref_count(&self) -> u32 {
+        self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT
+    }
     #[inline]
     pub fn is_static(&self) -> bool {
         self.m_ref_count.get() & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
@@ -951,7 +1043,10 @@ impl WTFStringImplStruct {
     }
     #[inline]
     pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
-        StdAllocator { ptr: self.cast(), vtable: StringImplAllocator::VTABLE_PTR }
+        StdAllocator {
+            ptr: self.cast(),
+            vtable: StringImplAllocator::VTABLE_PTR,
+        }
     }
     /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
     /// union is a valid byte pointer regardless of encoding (both arms share
@@ -964,7 +1059,9 @@ impl WTFStringImplStruct {
         unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
     }
     #[inline]
-    pub fn byte_slice(&self) -> &[u8] { self.raw_bytes(self.byte_length()) }
+    pub fn byte_slice(&self) -> &[u8] {
+        self.raw_bytes(self.byte_length())
+    }
     #[inline]
     pub fn latin1_slice(&self) -> &[u8] {
         debug_assert!(self.is_8bit());
@@ -978,7 +1075,11 @@ impl WTFStringImplStruct {
     }
     #[inline]
     pub fn utf16_byte_length(&self) -> usize {
-        if self.is_8bit() { self.m_length as usize * 2 } else { self.m_length as usize }
+        if self.is_8bit() {
+            self.m_length as usize * 2
+        } else {
+            self.m_length as usize
+        }
     }
     #[inline]
     pub fn latin1_byte_length(&self) -> usize {
@@ -1110,11 +1211,15 @@ impl String {
 
     pub const EMPTY: String = String {
         tag: Tag::Empty,
-        value: StringImpl { zig_string: ZigString::EMPTY },
+        value: StringImpl {
+            zig_string: ZigString::EMPTY,
+        },
     };
     pub const DEAD: String = String {
         tag: Tag::Dead,
-        value: StringImpl { zig_string: ZigString::EMPTY },
+        value: StringImpl {
+            zig_string: ZigString::EMPTY,
+        },
     };
 
     /// Borrow the live `WTF::StringImpl` backing this string.
@@ -1149,7 +1254,10 @@ impl String {
         }
     }
 
-    #[inline] pub fn is_empty(&self) -> bool { self.length() == 0 }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.length() == 0
+    }
 
     #[inline]
     pub fn is_8bit(&self) -> bool {
@@ -1171,7 +1279,10 @@ impl String {
             if u16s.len() != other.len() {
                 return false;
             }
-            u16s.iter().copied().zip(other.iter().copied()).all(|(a, b)| a == b as u16)
+            u16s.iter()
+                .copied()
+                .zip(other.iter().copied())
+                .all(|(a, b)| a == b as u16)
         } else {
             zs.slice() == other
         }
@@ -1213,7 +1324,8 @@ pub fn is_slice_in_buffer_t<T>(slice: &[T], buffer: &[T]) -> bool {
     let slice_ptr = slice.as_ptr() as usize;
     let buffer_ptr = buffer.as_ptr() as usize;
     buffer_ptr <= slice_ptr
-        && (slice_ptr + slice.len() * size_of::<T>()) <= (buffer_ptr + buffer.len() * size_of::<T>())
+        && (slice_ptr + slice.len() * size_of::<T>())
+            <= (buffer_ptr + buffer.len() * size_of::<T>())
 }
 
 /// Checks if a slice's pointer is contained within another slice.
@@ -1325,7 +1437,9 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
 /// (defence-in-depth for keys/passphrases). `p` must have been allocated by
 /// `dupe_z` (i.e. mimalloc, NUL-terminated).
 pub fn free_sensitive_cstr(p: *const core::ffi::c_char) {
-    if p.is_null() { return; }
+    if p.is_null() {
+        return;
+    }
     // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
     unsafe {
         let len = libc::strlen(p);
@@ -1637,8 +1751,8 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
 #[doc(hidden)]
 #[inline]
 pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
-    let p = bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>())
-        .cast::<MaybeUninit<T>>();
+    let p =
+        bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>()).cast::<MaybeUninit<T>>();
     NonNull::slice_from_raw_parts(p, count)
 }
 
@@ -1678,10 +1792,10 @@ macro_rules! bss_map {
 // statics live in BSS and the accessors are dead-stripped if unused).
 #[allow(dead_code)]
 mod __bss_macro_smoke {
-    crate::bss_list!        { _l  : u32, 4 }
+    crate::bss_list! { _l  : u32, 4 }
     crate::bss_string_list! { _sl : 4, 8 }
-    crate::bss_map_inner!   { _mi : u32, 4, true }
-    crate::bss_map!         { _m  : u32, 4, 8, false }
+    crate::bss_map_inner! { _mi : u32, 4, true }
+    crate::bss_map! { _m  : u32, 4, 8, false }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1778,11 +1892,17 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 
     pub fn tail(&mut self) -> &mut Block {
         if self.allocated > 0
-            && self.ptrs[self.used as usize].as_ref().expect("alloc").is_full()
+            && self.ptrs[self.used as usize]
+                .as_ref()
+                .expect("alloc")
+                .is_full()
         {
             self.used = self.used.wrapping_add(1);
             if self.allocated > self.used {
-                *self.ptrs[self.used as usize].as_mut().expect("alloc").used_mut() = 0;
+                *self.ptrs[self.used as usize]
+                    .as_mut()
+                    .expect("alloc")
+                    .used_mut() = 0;
             }
         }
 
@@ -1844,8 +1964,12 @@ impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueTyp
         // SAFETY: caller contract — `this` is a valid, aligned `*mut Self`.
         unsafe { addr_of_mut!((*this).used).write(0) };
     }
-    fn is_full(&self) -> bool { (self.used as usize) >= COUNT }
-    fn used_mut(&mut self) -> &mut u32 { &mut self.used }
+    fn is_full(&self) -> bool {
+        (self.used as usize) >= COUNT
+    }
+    fn used_mut(&mut self) -> &mut u32 {
+        &mut self.used
+    }
 }
 
 pub struct OverflowList<ValueType, const COUNT: usize> {
@@ -1911,7 +2035,9 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         );
 
         // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
-        unsafe { self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref() }
+        unsafe {
+            self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref()
+        }
     }
 
     #[inline]
@@ -1926,7 +2052,9 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         );
 
         // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
-        unsafe { self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut() }
+        unsafe {
+            self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut()
+        }
     }
 }
 
@@ -2245,7 +2373,10 @@ pub struct BSSListPair<ValueType> {
 /// Overflows to heap when count is exceeded.
 ///
 /// TODO(port): same const-generic-arithmetic and per-type-static caveats as `BSSList`.
-pub struct BSSStringList<const COUNT: usize /* = _COUNT * 2 */, const ITEM_LENGTH: usize /* = _ITEM_LENGTH + 1 */> {
+pub struct BSSStringList<
+    const COUNT: usize,       /* = _COUNT * 2 */
+    const ITEM_LENGTH: usize, /* = _ITEM_LENGTH + 1 */
+> {
     // Zig keeps both arrays *inline* in the struct (`[count*item_length]u8`,
     // `[count][]const u8`) so they live in the same demand-faulted allocation
     // as the rest of the singleton and `init()` writes only the four scalar
@@ -2282,15 +2413,23 @@ pub trait BSSAppendable {
 }
 
 impl BSSAppendable for EmptyType {
-    fn total_len(&self) -> usize { self.len }
+    fn total_len(&self) -> usize {
+        self.len
+    }
     fn copy_into(&self, _dst: &mut [u8]) {}
 }
 impl BSSAppendable for &[u8] {
-    fn total_len(&self) -> usize { self.len() }
-    fn copy_into(&self, dst: &mut [u8]) { dst[..self.len()].copy_from_slice(self); }
+    fn total_len(&self) -> usize {
+        self.len()
+    }
+    fn copy_into(&self, dst: &mut [u8]) {
+        dst[..self.len()].copy_from_slice(self);
+    }
 }
 impl<const N: usize> BSSAppendable for [&[u8]; N] {
-    fn total_len(&self) -> usize { self.iter().map(|s| s.len()).sum() }
+    fn total_len(&self) -> usize {
+        self.iter().map(|s| s.len()).sum()
+    }
     fn copy_into(&self, dst: &mut [u8]) {
         let mut remainder = dst;
         for val in self {
@@ -2300,7 +2439,9 @@ impl<const N: usize> BSSAppendable for [&[u8]; N] {
     }
 }
 impl BSSAppendable for &[&[u8]] {
-    fn total_len(&self) -> usize { self.iter().map(|s| s.len()).sum() }
+    fn total_len(&self) -> usize {
+        self.iter().map(|s| s.len()).sum()
+    }
     fn copy_into(&self, dst: &mut [u8]) {
         let mut remainder = dst;
         for val in *self {
@@ -2564,7 +2705,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
         }
 
-        let mut result = IndexType::new(u32::MAX >> 1, self.slice_buf_used as usize > Self::MAX_INDEX);
+        let mut result = IndexType::new(
+            u32::MAX >> 1,
+            self.slice_buf_used as usize > Self::MAX_INDEX,
+        );
 
         if result.is_overflow() {
             result.set_index(self.overflow_list.len());
@@ -2576,8 +2720,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `out_ptr` addresses self.backing_buf or a process-lifetime alloc, both
         // outliving 'static (singleton). Zig stores it as `[]const u8` with no lifetime
         // tracking.
-        let stored: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
+        let stored: &'static [u8] = unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
@@ -2824,8 +2967,12 @@ pub struct BSSMap<
     pub key_list_overflow: Vec<&'static [u8]>,
 }
 
-impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REMOVE_TRAILING_SLASHES: bool>
-    BSSMap<ValueType, COUNT, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
+impl<
+    ValueType,
+    const COUNT: usize,
+    const ESTIMATED_KEY_LENGTH: usize,
+    const REMOVE_TRAILING_SLASHES: bool,
+> BSSMap<ValueType, COUNT, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
 {
     /// In-place field initialization into uninitialized storage.
     ///
@@ -2897,9 +3044,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
                     // by `put_key` at this slot before any reader could observe
                     // the index — the slot is initialized. `key_list_slices` is
                     // a process-lifetime mapping of `COUNT` slots.
-                    Some(unsafe {
-                        *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i)
-                    })
+                    Some(unsafe { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
                 } else {
                     // TODO(port): see key_list_overflow note — Zig indexes `.items` here.
                     Some(self.key_list_overflow[index.index() as usize])
@@ -2937,7 +3082,11 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     // There's two parts to this.
     // 1. Storing the underlying string.
     // 2. Making the key accessible at the index.
-    pub fn put_key(&mut self, key: &[u8], result: &mut Result) -> core::result::Result<(), AllocError> {
+    pub fn put_key(
+        &mut self,
+        key: &[u8],
+        result: &mut Result,
+    ) -> core::result::Result<(), AllocError> {
         let _guard = self.map().mutex.lock();
 
         let slice: &'static [u8];
@@ -3007,7 +3156,14 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
                     // size-agnostic, so a trimmed (shorter) stored slice is fine.
                     // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
                     // (the only non-static-buffer source above) and not yet freed.
-                    unsafe { mimalloc::mi_free(existing_slice.as_ptr().cast_mut().cast::<core::ffi::c_void>()) };
+                    unsafe {
+                        mimalloc::mi_free(
+                            existing_slice
+                                .as_ptr()
+                                .cast_mut()
+                                .cast::<core::ffi::c_void>(),
+                        )
+                    };
                 }
                 self.key_list_overflow[idx] = slice;
             } else {
@@ -3110,7 +3266,8 @@ pub fn default_allocator() -> &'static dyn Allocator {
 
 // `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
 // Draft kept for diff-pass only.
- #[path = "basic.rs"] pub mod basic;
+#[path = "basic.rs"]
+pub mod basic;
 pub mod memory;
 
 // ported from: src/bun_alloc/bun_alloc.zig

@@ -4,26 +4,26 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
+#[allow(unused_imports)]
+use bun_core::ZigString;
+use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
+use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
+use bun_http::{self as HTTP, headers};
+use bun_js_parser as js_ast;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_parsers::json as JSON;
+use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs;
+use bun_sys as sys;
 use bun_url::URL;
 use bun_which::which;
 use bun_wyhash::hash;
-use bun_core::{strings, ZStr};
-use bun_paths::{self, PathBuffer, SEP_STR};
-use bun_sys as sys;
-use bun_js_parser as js_ast;
-use bun_parsers::json as JSON;
-use bun_http::{self as HTTP, headers};
-use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
-#[allow(unused_imports)]
-use bun_core::ZigString;
 
-use crate::api::bun::process::sync as spawn_sync;
 use crate::api::bun::process::Status;
+use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 
 // PORT NOTE: `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
@@ -136,7 +136,11 @@ impl Version {
     } else {
         ""
     };
-    const SUFFIX_CPU: &'static str = if Environment::BASELINE { "-baseline" } else { "" };
+    const SUFFIX_CPU: &'static str = if Environment::BASELINE {
+        "-baseline"
+    } else {
+        ""
+    };
     const SUFFIX: &'static str = const_format::concatcp!(Version::SUFFIX_ABI, Version::SUFFIX_CPU);
     pub const FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
@@ -188,7 +192,8 @@ pub static Bun__githubURL: SyncCStr = SyncCStr(
         Version::ZIP_FILENAME,
         "\0"
     )
-    .as_ptr().cast::<c_char>(),
+    .as_ptr()
+    .cast::<c_char>(),
 );
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -277,7 +282,8 @@ impl UpgradeCommand {
                                     + b"Authorization".len(),
                             )
                             .unwrap(),
-                            length: u32::try_from(b"Bearer ".len() + access_token.len()).expect("int cast"),
+                            length: u32::try_from(b"Bearer ".len() + access_token.len())
+                                .expect("int cast"),
                         },
                     })
                     .expect("oom");
@@ -305,8 +311,7 @@ impl UpgradeCommand {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            async_http.client.progress_node =
-                Some(NonNull::from(progress.as_deref_mut().unwrap()));
+            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
             // TODO(port): lifetime — progress_node stores a borrow of progress
         }
         let response = async_http.send_sync()?;
@@ -322,7 +327,8 @@ impl UpgradeCommand {
 
         let mut log = bun_ast::Log::init();
         // defer if SILENT log.deinit() — Drop handles this
-        let source = bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
+        let source =
+            bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         bun_ast::initialize_store();
         // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
         // CLI path so use the process-lifetime CLI arena (Zig used the global
@@ -339,12 +345,10 @@ impl UpgradeCommand {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         Global::exit(1);
                     } else {
-                        Output::pretty_errorln(
-                            format_args!(
-                                "Error parsing releases from GitHub: <r><red>{}<r>",
-                                err.name()
-                            ),
-                        );
+                        Output::pretty_errorln(format_args!(
+                            "Error parsing releases from GitHub: <r><red>{}<r>",
+                            err.name()
+                        ));
                         Global::exit(1);
                     }
                 }
@@ -479,10 +483,8 @@ impl UpgradeCommand {
 
                         if let Some(size_) = asset.as_property(b"size") {
                             if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
-                                version.size = u32::try_from(
-                                    ((n.value.ceil()) as i32).max(0),
-                                )
-                                .unwrap();
+                                version.size =
+                                    u32::try_from(((n.value.ceil()) as i32).max(0)).unwrap();
                             }
                         }
                         return Ok(Some(version));
@@ -840,12 +842,8 @@ impl UpgradeCommand {
                     // however, we want to be sure that xattrs are preserved
                     // xattrs are used for codesigning
                     // it'd be easy to mess that up
-                    let unzip_argv: [&[u8]; 4] = [
-                        unzip_exe.as_bytes(),
-                        b"-q",
-                        b"-o",
-                        tmpname.as_bytes(),
-                    ];
+                    let unzip_argv: [&[u8]; 4] =
+                        [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
 
                     // PORT NOTE: Zig used `std.process.Child` directly with all stdio
                     // set to `.Inherit` and `.spawnAndWait()`. PORTING.md / src/CLAUDE.md
@@ -930,7 +928,10 @@ impl UpgradeCommand {
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
                                     system_root,
                                     &mut buf2[..],
-                                    &[system_root, b"System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
+                                    &[
+                                        system_root,
+                                        b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                                    ],
                                 );
                             if !sys::exists(hardcoded_system_powershell.as_bytes()) {
                                 Output::pretty_errorln(format_args!(
@@ -987,7 +988,11 @@ impl UpgradeCommand {
             {
                 let verify_argv: [&[u8]; 2] = [
                     exe,
-                    if use_canary { b"--revision" } else { b"--version" },
+                    if use_canary {
+                        b"--revision"
+                    } else {
+                        b"--version"
+                    },
                 ];
 
                 // PORT NOTE: Zig used `std.process.Child.run` with `.max_output_bytes = 512`.
@@ -1192,49 +1197,49 @@ impl UpgradeCommand {
                     let mut input_buf = vec![0u8; target_stat.st_size as usize];
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
-                    let target_hash = hash(match sys::File::openat(
-                        target_dir.fd(),
-                        target_filename.as_bytes(),
-                        sys::O::RDONLY,
-                        0,
-                    )
-                    .and_then(|f| {
-                        let n = f.read_all(&mut input_buf);
-                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                        n
-                    }) {
-                        Ok(n) => &input_buf[..n],
-                        Err(err) => {
-                            let _ = save_dir_.delete_tree(&version_name);
-                            Output::pretty_errorln(format_args!(
-                                "<r><red>error:<r> Failed to read target bun {}",
-                                bstr::BStr::new(err.name())
-                            ));
-                            Global::exit(1);
-                        }
-                    });
+                    let target_hash = hash(
+                        match sys::File::openat(
+                            target_dir.fd(),
+                            target_filename.as_bytes(),
+                            sys::O::RDONLY,
+                            0,
+                        )
+                        .and_then(|f| {
+                            let n = f.read_all(&mut input_buf);
+                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                            n
+                        }) {
+                            Ok(n) => &input_buf[..n],
+                            Err(err) => {
+                                let _ = save_dir_.delete_tree(&version_name);
+                                Output::pretty_errorln(format_args!(
+                                    "<r><red>error:<r> Failed to read target bun {}",
+                                    bstr::BStr::new(err.name())
+                                ));
+                                Global::exit(1);
+                            }
+                        },
+                    );
 
-                    let source_hash = hash(match sys::File::openat(
-                        save_dir.fd(),
-                        exe,
-                        sys::O::RDONLY,
-                        0,
-                    )
-                    .and_then(|f| {
-                        let n = f.read_all(&mut input_buf);
-                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                        n
-                    }) {
-                        Ok(n) => &input_buf[..n],
-                        Err(err) => {
-                            let _ = save_dir_.delete_tree(&version_name);
-                            Output::pretty_errorln(format_args!(
-                                "<r><red>error:<r> Failed to read source bun {}",
-                                bstr::BStr::new(err.name())
-                            ));
-                            Global::exit(1);
-                        }
-                    });
+                    let source_hash = hash(
+                        match sys::File::openat(save_dir.fd(), exe, sys::O::RDONLY, 0).and_then(
+                            |f| {
+                                let n = f.read_all(&mut input_buf);
+                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                                n
+                            },
+                        ) {
+                            Ok(n) => &input_buf[..n],
+                            Err(err) => {
+                                let _ = save_dir_.delete_tree(&version_name);
+                                Output::pretty_errorln(format_args!(
+                                    "<r><red>error:<r> Failed to read source bun {}",
+                                    bstr::BStr::new(err.name())
+                                ));
+                                Global::exit(1);
+                            }
+                        },
+                    );
 
                     if target_hash == source_hash {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1271,9 +1276,10 @@ impl UpgradeCommand {
                     .expect("oom");
                     // Zig: `std.fmt.allocPrintSentinel(..., 0)` — owned NUL-terminated string.
                     outdated_filename = Some(bun_core::ZBox::from_vec(buf));
-                    if let Err(err) =
-                        sys::rename(destination_executable_z, outdated_filename.as_deref().unwrap())
-                    {
+                    if let Err(err) = sys::rename(
+                        destination_executable_z,
+                        outdated_filename.as_deref().unwrap(),
+                    ) {
                         let _ = save_dir_.delete_tree(&version_name);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to rename current executable {}",
@@ -1285,12 +1291,9 @@ impl UpgradeCommand {
                     unsafe { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
-                if let Err(err) = sys::move_file_z(
-                    save_dir.fd(),
-                    exe_z,
-                    target_dir.fd(),
-                    target_filename,
-                ) {
+                if let Err(err) =
+                    sys::move_file_z(save_dir.fd(), exe_z, target_dir.fd(), target_filename)
+                {
                     scopeguard::defer! {
                         let _ = save_dir_.delete_tree(&version_name);
                     }
@@ -1462,11 +1465,7 @@ pub mod upgrade_js_bindings {
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
             let mut wtmp = bun_paths::WPathBuffer::uninit();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
-            let path = match sys::normalize_path_windows(
-                sys::Fd::INVALID,
-                tmpdir_w,
-                &mut buf[..],
-            ) {
+            let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
                 sys::Result::Ok(norm) => norm,
             };
@@ -1519,7 +1518,9 @@ pub mod upgrade_js_bindings {
                 sys::windows::Win32Error::SUCCESS => {
                     // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe { TEMPDIR_FD.write(Some(sys::Fd::from_system(fd))); }
+                    unsafe {
+                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                    }
                 }
                 _ => {}
             }

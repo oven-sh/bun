@@ -86,7 +86,11 @@ fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
         resolution::Tag::RemoteTarball => hooks::ResolutionTag::RemoteTarball,
         resolution::Tag::SingleFileModule => hooks::ResolutionTag::SingleFileModule,
         unknown => {
-            debug_assert!(false, "unknown resolution::Tag({}) crossing hooks boundary", unknown.0);
+            debug_assert!(
+                false,
+                "unknown resolution::Tag({}) crossing hooks boundary",
+                unknown.0
+            );
             hooks::ResolutionTag::Uninitialized
         }
     }
@@ -98,7 +102,11 @@ fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
     // so `value` copies as the SAME nominal type. `hooks::Resolution` is
     // in-memory only (never byte-serialized), so trailing union bytes carrying
     // over from the install-side zero-init contract is fine.
-    hooks::Resolution { tag: tag_to_hooks(r.tag), _padding: r._padding, value: r.value }
+    hooks::Resolution {
+        tag: tag_to_hooks(r.tag),
+        _padding: r._padding,
+        value: r.value,
+    }
 }
 
 #[inline]
@@ -241,10 +249,8 @@ impl hooks::AutoInstaller for PackageManager {
         // Mirror that by default-filling the tail now and `truncate`-ing back
         // to `dep_start` on the error path so a failed `clone_in` leaves both
         // buffer lengths consistent.
-        let mut dependencies: &mut [dependency::Dependency] = bun_core::vec::grow_default(
-            dependencies_list,
-            total_dependencies_count as usize,
-        );
+        let mut dependencies: &mut [dependency::Dependency] =
+            bun_core::vec::grow_default(dependencies_list, total_dependencies_count as usize);
 
         for (_, dep) in package_json.dependency_iter() {
             if !dep.behavior.is_enabled(features) {
@@ -384,12 +390,13 @@ impl hooks::AutoInstaller for PackageManager {
         behavior: hooks::Behavior,
     ) -> hooks::EnqueueResult {
         match enqueue::enqueue_dependency_to_root(self, name, version, version_buf, behavior) {
-            enqueue::DependencyToEnqueue::Resolution { package_id, resolution } => {
-                hooks::EnqueueResult::Resolution {
-                    package_id,
-                    resolution: resolution_to_hooks(resolution),
-                }
-            }
+            enqueue::DependencyToEnqueue::Resolution {
+                package_id,
+                resolution,
+            } => hooks::EnqueueResult::Resolution {
+                package_id,
+                resolution: resolution_to_hooks(resolution),
+            },
             enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
             enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e),
@@ -475,8 +482,11 @@ pub unsafe fn __bun_resolver_init_package_manager(
 
     // SAFETY: `install` is either null or points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
-        unsafe { install.cast::<crate::bun_schema::api::BunInstall>().as_ref() };
+    let bun_install: Option<&crate::bun_schema::api::BunInstall> = unsafe {
+        install
+            .cast::<crate::bun_schema::api::BunInstall>()
+            .as_ref()
+    };
     // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
     // pointers (resolver `.expect`s `env_loader` before calling).
     let log_ref: &mut bun_ast::Log = unsafe { &mut *log };

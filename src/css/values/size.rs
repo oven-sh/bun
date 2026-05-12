@@ -1,9 +1,9 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
+use crate::targets::Browsers;
 use crate::values::length::LengthPercentage;
 use crate::values::number::CSSNumberFns;
 use crate::values::protocol::{IsCompatible, Parse, ToCss};
-use crate::targets::Browsers;
 use bun_alloc::Arena;
 
 /// A generic value that represents a value with two components, e.g. a border radius.
@@ -39,8 +39,13 @@ where
         T: Parse,
     {
         let first = Self::parse_val(input)?;
-        let second = input.try_parse(Self::parse_val).unwrap_or_else(|_| first.clone());
-        Ok(Size2D { a: first, b: second })
+        let second = input
+            .try_parse(Self::parse_val)
+            .unwrap_or_else(|_| first.clone());
+        Ok(Size2D {
+            a: first,
+            b: second,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
@@ -74,7 +79,10 @@ where
         // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
         // replace with #[derive(DeepClone)] or arena-aware deep_clone in Phase B.
         // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
-        Size2D { a: self.a.clone(), b: self.b.clone() }
+        Size2D {
+            a: self.a.clone(),
+            b: self.b.clone(),
+        }
     }
 
     #[inline]

@@ -10,21 +10,21 @@
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet.
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
-use bun_io::KeepAlive;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::options;
 use bun_bundler::transpiler::ParseResult;
+use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
+use bun_io::KeepAlive;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
-use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
@@ -264,9 +264,9 @@ unsafe extern "C" {
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
+use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID, PackageManager};
-use bun_core::strings;
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
@@ -357,7 +357,8 @@ impl Queue {
                 // `&mut vm` to `resolve_error`. The lockfile string buffer is
                 // stable across `resolve_error` (no realloc on the error
                 // path); detach the borrow via raw ptr.
-                let name = bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
+                let name =
+                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
                 module
                     .resolve_error(
                         vm,
@@ -388,9 +389,7 @@ impl Queue {
         // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
-        let vm = unsafe {
-            &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue)
-        };
+        let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
         vm.enqueue_task_concurrent(task);
     }
 
@@ -998,7 +997,8 @@ impl AsyncModule {
         // running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
-        let _ = JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        let _ =
+            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 
@@ -1019,7 +1019,11 @@ impl AsyncModule {
         // extend the `&mut vm` borrow across the `match e` body (the `else`
         // arm calls `vm.package_manager()` again).
         let string_bytes = bun_ptr::RawSlice::new(
-            vm.package_manager().lockfile.buffers.string_bytes.as_slice(),
+            vm.package_manager()
+                .lockfile
+                .buffers
+                .string_bytes
+                .as_slice(),
         );
         let resolution_fmt = result
             .resolution
@@ -1220,7 +1224,8 @@ impl AsyncModule {
         // retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
-        let _ = JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        let _ =
+            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 
@@ -1315,12 +1320,8 @@ impl AsyncModule {
         // guard immediately after `printer` so it drops last (locals drop in
         // reverse declaration order) and the buffer is still populated when
         // read.
-        let _writeback = scopeguard::guard(
-            (
-                printer_ptr.as_ptr(),
-                &raw mut printer,
-            ),
-            |(dst, src)| {
+        let _writeback =
+            scopeguard::guard((printer_ptr.as_ptr(), &raw mut printer), |(dst, src)| {
                 // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
                 // stack `printer`; both outlive this guard (it drops before
                 // `printer`). Move the buffer back into the thread-local slot.
@@ -1330,8 +1331,7 @@ impl AsyncModule {
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
                     )
                 };
-            },
-        );
+            });
 
         {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
@@ -1380,7 +1380,9 @@ impl AsyncModule {
                     // when `is_watcher_enabled()`; cast recovers the
                     // concrete type (matches VirtualMachine.rs:2301).
                     let watcher = unsafe {
-                        &mut *(*jsc_vm).bun_watcher.cast::<crate::hot_reloader::ImportWatcher>()
+                        &mut *(*jsc_vm)
+                            .bun_watcher
+                            .cast::<crate::hot_reloader::ImportWatcher>()
                     };
                     // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
                     // forward-decl of `bun_resolver::PackageJSON`;

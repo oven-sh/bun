@@ -52,7 +52,10 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_zlib_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_zlib_compress_bound(
+        compressor: Option<&mut Compressor>,
+        in_nbytes: usize,
+    ) -> usize;
     pub fn libdeflate_gzip_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
@@ -60,7 +63,10 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_gzip_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_gzip_compress_bound(
+        compressor: Option<&mut Compressor>,
+        in_nbytes: usize,
+    ) -> usize;
     pub fn libdeflate_free_compressor(compressor: *mut Compressor);
 }
 
@@ -383,7 +389,11 @@ impl Decompressor {
                 ),
             }
         };
-        Result { read, written, status }
+        Result {
+            read,
+            written,
+            status,
+        }
     }
 
     /// Decompress `input` into `out`'s **spare capacity** (append mode).

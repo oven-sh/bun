@@ -4,12 +4,12 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
-use bun_core::{feature_flags, output as Output, strings, zstr, ThreadLock, ZStr};
+use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
-use crate::watcher_trace as WatcherTrace;
 use crate::Loader;
+use crate::watcher_trace as WatcherTrace;
 
 // Android: same kernel inotify ABI as glibc/musl Linux. Zig kept these under
 // `Environment.isLinux`; Rust splits `target_os`, so list both.
@@ -434,7 +434,7 @@ impl Watcher {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
         // TODO(port): move to watcher_sys
-        use libc::{kevent as KEvent, EVFILT_VNODE, EV_ADD, EV_CLEAR, EV_ENABLE};
+        use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html

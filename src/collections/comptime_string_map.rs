@@ -30,7 +30,12 @@ pub struct KV<K: 'static, V> {
 /// Precomputed lookup table. Construct via `comptime_string_map!` / `comptime_string_map_16!`.
 ///
 /// `N` = number of entries, `LEN_TABLE` = `max_len + 1` (size of `len_indexes`).
-pub struct ComptimeStringMapWithKeyType<K: 'static, V: 'static, const N: usize, const LEN_TABLE: usize> {
+pub struct ComptimeStringMapWithKeyType<
+    K: 'static,
+    V: 'static,
+    const N: usize,
+    const LEN_TABLE: usize,
+> {
     // PORT NOTE: in Zig these were `precomputed.{min_len,max_len,sorted_kvs,len_indexes}`
     // computed in a `comptime blk:`. Here they are filled by the constructor macro.
     min_len: usize,
@@ -418,11 +423,26 @@ mod tests {
     #[test]
     fn comptime_string_map_list_literal_of_list_literals() {
         let map = ComptimeStringMapWithKeyType::<u8, TestEnum, 5, 9>::new([
-            KV { key: b"these", value: TestEnum::D },
-            KV { key: b"have", value: TestEnum::A },
-            KV { key: b"nothing", value: TestEnum::B },
-            KV { key: b"incommon", value: TestEnum::C },
-            KV { key: b"samelen", value: TestEnum::E },
+            KV {
+                key: b"these",
+                value: TestEnum::D,
+            },
+            KV {
+                key: b"have",
+                value: TestEnum::A,
+            },
+            KV {
+                key: b"nothing",
+                value: TestEnum::B,
+            },
+            KV {
+                key: b"incommon",
+                value: TestEnum::C,
+            },
+            KV {
+                key: b"samelen",
+                value: TestEnum::E,
+            },
         ]);
         test_map(&map);
     }
@@ -432,11 +452,26 @@ mod tests {
         // PORT NOTE: Zig tested that anonymous-struct and named-struct kv inputs both work.
         // In Rust there is one input shape (`KV`), so this collapses to the same test.
         let map = ComptimeStringMapWithKeyType::<u8, TestEnum, 5, 9>::new([
-            KV { key: b"these", value: TestEnum::D },
-            KV { key: b"have", value: TestEnum::A },
-            KV { key: b"nothing", value: TestEnum::B },
-            KV { key: b"incommon", value: TestEnum::C },
-            KV { key: b"samelen", value: TestEnum::E },
+            KV {
+                key: b"these",
+                value: TestEnum::D,
+            },
+            KV {
+                key: b"have",
+                value: TestEnum::A,
+            },
+            KV {
+                key: b"nothing",
+                value: TestEnum::B,
+            },
+            KV {
+                key: b"incommon",
+                value: TestEnum::C,
+            },
+            KV {
+                key: b"samelen",
+                value: TestEnum::E,
+            },
         ]);
         test_map(&map);
     }
@@ -444,11 +479,26 @@ mod tests {
     #[test]
     fn comptime_string_map_slice_of_structs() {
         let map = ComptimeStringMapWithKeyType::<u8, TestEnum, 5, 9>::new([
-            KV { key: b"these", value: TestEnum::D },
-            KV { key: b"have", value: TestEnum::A },
-            KV { key: b"nothing", value: TestEnum::B },
-            KV { key: b"incommon", value: TestEnum::C },
-            KV { key: b"samelen", value: TestEnum::E },
+            KV {
+                key: b"these",
+                value: TestEnum::D,
+            },
+            KV {
+                key: b"have",
+                value: TestEnum::A,
+            },
+            KV {
+                key: b"nothing",
+                value: TestEnum::B,
+            },
+            KV {
+                key: b"incommon",
+                value: TestEnum::C,
+            },
+            KV {
+                key: b"samelen",
+                value: TestEnum::E,
+            },
         ]);
         test_map(&map);
     }
@@ -467,11 +517,26 @@ mod tests {
     #[test]
     fn comptime_string_map_void_value_type_slice_of_structs() {
         let map = ComptimeStringMapWithKeyType::<u8, (), 5, 9>::new([
-            KV { key: b"these", value: () },
-            KV { key: b"have", value: () },
-            KV { key: b"nothing", value: () },
-            KV { key: b"incommon", value: () },
-            KV { key: b"samelen", value: () },
+            KV {
+                key: b"these",
+                value: (),
+            },
+            KV {
+                key: b"have",
+                value: (),
+            },
+            KV {
+                key: b"nothing",
+                value: (),
+            },
+            KV {
+                key: b"incommon",
+                value: (),
+            },
+            KV {
+                key: b"samelen",
+                value: (),
+            },
         ]);
         test_set(&map);
     }
@@ -479,11 +544,26 @@ mod tests {
     #[test]
     fn comptime_string_map_void_value_type_list_literal_of_list_literals() {
         let map = ComptimeStringMapWithKeyType::<u8, (), 5, 9>::new([
-            KV { key: b"these", value: () },
-            KV { key: b"have", value: () },
-            KV { key: b"nothing", value: () },
-            KV { key: b"incommon", value: () },
-            KV { key: b"samelen", value: () },
+            KV {
+                key: b"these",
+                value: (),
+            },
+            KV {
+                key: b"have",
+                value: (),
+            },
+            KV {
+                key: b"nothing",
+                value: (),
+            },
+            KV {
+                key: b"incommon",
+                value: (),
+            },
+            KV {
+                key: b"samelen",
+                value: (),
+            },
         ]);
         test_set(&map);
     }

@@ -23,13 +23,19 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     if error_message.len() == PREFIX.len() {
         // TODO(port): globalThis.ERR(.BORINGSSL, ...) builder — confirm bun_jsc API shape
         return global
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("An unknown BoringSSL error occurred: {}", err_code))
+            .err(
+                bun_jsc::ErrorCode::BORINGSSL,
+                format_args!("An unknown BoringSSL error occurred: {}", err_code),
+            )
             .to_js();
     }
 
     // TODO(port): globalThis.ERR(.BORINGSSL, ...) builder — confirm bun_jsc API shape
     global
-        .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("{}", bstr::BStr::new(error_message)))
+        .err(
+            bun_jsc::ErrorCode::BORINGSSL,
+            format_args!("{}", bstr::BStr::new(error_message)),
+        )
         .to_js()
 }
 

@@ -36,14 +36,14 @@
 use crate::mal_prelude::*;
 use core::fmt;
 
-use bun_collections::VecExt;
+use bun_ast::Source;
 use bun_collections::AutoBitSet;
+use bun_collections::VecExt;
+use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_ast::Source;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
-use bun_core::strings;
 
 use crate::Graph::{Graph, InputFileColumns as _};
 use crate::chunk::{Content, Flags};
@@ -64,7 +64,13 @@ pub struct HTMLImportManifest<'a> {
 impl<'a> fmt::Display for HTMLImportManifest<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut adapter = FmtAdapter::new(writer);
-        match write(self.index, self.graph, self.linker_graph, self.chunks, &mut adapter) {
+        match write(
+            self.index,
+            self.graph,
+            self.linker_graph,
+            self.chunks,
+            &mut adapter,
+        ) {
             Ok(()) => Ok(()),
             // We use std.fmt.count for this
             // Zig: error.NoSpaceLeft => unreachable, error.OutOfMemory => return error.OutOfMemory
@@ -96,11 +102,16 @@ fn write_entry_item<W: Write + ?Sized>(
     // Zig: @tagName(loader) — strum is configured snake_case to match.
     writer.write_all(<&'static str>::from(loader).as_bytes())?;
     writer.write_all(b"\",\"isEntry\":")?;
-    writer.write_all(if kind == OutputKind::EntryPoint { b"true" as &[u8] } else { b"false" })?;
+    writer.write_all(if kind == OutputKind::EntryPoint {
+        b"true" as &[u8]
+    } else {
+        b"false"
+    })?;
     writer.write_all(b",\"headers\":{")?;
 
     if hash > 0 {
-        const BASE64_BUF_LEN: usize = bun_base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
+        const BASE64_BUF_LEN: usize =
+            bun_base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
         let mut base64_buf = [0u8; BASE64_BUF_LEN];
         let n = bun_base64::encode_url_safe(&mut base64_buf, &hash.to_ne_bytes());
         let base64 = &base64_buf[..n];

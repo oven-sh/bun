@@ -33,8 +33,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericParam, Lifetime,
-    LifetimeParam, Meta,
+    Attribute, Data, DeriveInput, Fields, GenericParam, Lifetime, LifetimeParam, Meta,
+    parse_macro_input, parse_quote,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -120,7 +120,11 @@ fn has_css_skip(attrs: &[Attribute]) -> bool {
 /// parameter so generic containers (`Foo<T>`) constrain their payload.
 fn with_trait_bounds(input: &DeriveInput, trait_path: TokenStream2) -> syn::Generics {
     let mut g = input.generics.clone();
-    let ty_params: Vec<_> = input.generics.type_params().map(|tp| tp.ident.clone()).collect();
+    let ty_params: Vec<_> = input
+        .generics
+        .type_params()
+        .map(|tp| tp.ident.clone())
+        .collect();
     if !ty_params.is_empty() {
         let wc = g.make_where_clause();
         for ident in ty_params {
@@ -818,13 +822,22 @@ pub fn derive_to_css(input: TokenStream) -> TokenStream {
 /// One variant of a `union(enum)` shape.
 enum VariantShape<'a> {
     /// `Foo` — keyword
-    Unit { ident: &'a syn::Ident, keyword: String },
+    Unit {
+        ident: &'a syn::Ident,
+        keyword: String,
+    },
     /// `Foo(Payload)` — single unnamed field
-    Payload { ident: &'a syn::Ident, ty: &'a syn::Type },
+    Payload {
+        ident: &'a syn::Ident,
+        ty: &'a syn::Type,
+    },
     /// `Foo { f1, f2, … }` — inline struct payload. Direct Rust analogue of the
     /// Zig `union(enum)` arm carrying an anonymous `struct { … __generateToCss }`;
     /// the printer is the field sequence (see [`gen_field_seq_to_css`]).
-    NamedFields { ident: &'a syn::Ident, fields: &'a syn::FieldsNamed },
+    NamedFields {
+        ident: &'a syn::Ident,
+        fields: &'a syn::FieldsNamed,
+    },
 }
 
 fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
@@ -919,8 +932,12 @@ fn gen_field_seq_to_css<'a>(
 /// generic argument). Used by the struct branch of `expand_derive_to_css` to
 /// mirror Zig's `@typeInfo(field.type) == .optional` unwrap.
 fn is_option_type(ty: &syn::Type) -> bool {
-    let syn::Type::Path(tp) = ty else { return false };
-    let Some(seg) = tp.path.segments.last() else { return false };
+    let syn::Type::Path(tp) = ty else {
+        return false;
+    };
+    let Some(seg) = tp.path.segments.last() else {
+        return false;
+    };
     if seg.ident != "Option" {
         return false;
     }
@@ -986,8 +1003,11 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
                 VariantShape::NamedFields { ident, fields } => {
                     // Inline `__generateToCss` path: destructure and emit fields.
-                    let bind: Vec<_> =
-                        fields.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                    let bind: Vec<_> = fields
+                        .named
+                        .iter()
+                        .map(|f| f.ident.clone().unwrap())
+                        .collect();
                     let seq = gen_field_seq_to_css(fields.named.iter(), |f| quote! { #f });
                     quote! {
                         #name::#ident { #(#bind),* } => {
@@ -1045,7 +1065,10 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
 fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let Data::Enum(data) = &input.data else {
-        return Err(syn::Error::new_spanned(name, "#[derive(Parse)] is only valid on enums"));
+        return Err(syn::Error::new_spanned(
+            name,
+            "#[derive(Parse)] is only valid on enums",
+        ));
     };
     let shapes = classify(data)?;
     let (_, ty_g, _) = input.generics.split_for_impl();
@@ -1136,7 +1159,10 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let body = match (units.is_empty(), payloads.is_empty()) {
         (true, true) => {
-            return Err(syn::Error::new_spanned(name, "#[derive(Parse)] on empty enum"));
+            return Err(syn::Error::new_spanned(
+                name,
+                "#[derive(Parse)] on empty enum",
+            ));
         }
         // Only payload variants — last one's error propagates.
         (true, false) => {

@@ -35,10 +35,10 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{env_var, ZStr};
+use bun_core::{ZStr, env_var};
 use bun_sys::{self, Fd, O};
 
-use crate::posix_event_loop::{poll_tag, EventLoopCtx, FilePoll, Owner};
+use crate::posix_event_loop::{EventLoopCtx, FilePoll, Owner, poll_tag};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -233,11 +233,7 @@ pub fn enable() {
         // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
         // nested bun) inherits no-orphans mode without the parent having to thread
         // the flag through. No-op if we got here via the env var.
-        let _ = libc::setenv(
-            c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(),
-            c"1".as_ptr(),
-            1,
-        );
+        let _ = libc::setenv(c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(), c"1".as_ptr(), 1);
 
         // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
         // make every orphaned grandchild reparent to us, but only the spawnSync
@@ -291,8 +287,10 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     }
     #[cfg(target_os = "macos")]
     {
-        let (enabled, original_ppid) =
-            (ENABLED.load(Ordering::Relaxed), ORIGINAL_PPID.load(Ordering::Relaxed));
+        let (enabled, original_ppid) = (
+            ENABLED.load(Ordering::Relaxed),
+            ORIGINAL_PPID.load(Ordering::Relaxed),
+        );
         if !enabled || original_ppid <= 1 {
             return;
         }
@@ -316,7 +314,11 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(handle.loop_mut(), crate::file_poll::Pollable::Process, true) {
+        match unsafe { &mut *poll }.register(
+            handle.loop_mut(),
+            crate::file_poll::Pollable::Process,
+            true,
+        ) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no
@@ -570,7 +572,8 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         unsafe {
             let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
             let size: c_int =
-                c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>()).expect("int cast");
+                c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>())
+                    .expect("int cast");
             let rc = bun_sys::c::proc_pidinfo(
                 pid,
                 bun_sys::c::PROC_PIDTBSDINFO,

@@ -1,11 +1,15 @@
-#![allow(non_camel_case_types, non_upper_case_globals, clippy::missing_safety_doc)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::missing_safety_doc
+)]
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_core::{ZStr, WStr};
 use bun_core::{Fd, FileKind, Mode, kind_from_mode};
+use bun_core::{WStr, ZStr};
 
 /// Bitset over [`FileKind`] (Zig: `std.EnumSet(std.fs.File.Kind)`).
 /// Local because `bun_core::FileKind` does not derive `enumset::EnumSetType`.
@@ -13,8 +17,14 @@ use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 pub struct FileKindSet(u16);
 
 impl FileKindSet {
-    #[inline] pub const fn empty() -> Self { Self(0) }
-    #[inline] pub const fn is_empty(self) -> bool { self.0 == 0 }
+    #[inline]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
     #[inline]
     pub fn contains(self, kind: FileKind) -> bool {
         self.0 & (1u16 << (kind as u8)) != 0
@@ -221,7 +231,8 @@ pub mod flags {
         pub const ENTRY_INHERITED: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_INHERITED);
         pub const ENTRY_FILE_INHERIT: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_FILE_INHERIT);
         pub const ENTRY_DIRECTORY_INHERIT: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_DIRECTORY_INHERIT);
-        pub const ENTRY_NO_PROPAGATE_INHERIT: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_NO_PROPAGATE_INHERIT);
+        pub const ENTRY_NO_PROPAGATE_INHERIT: Self =
+            Self(ARCHIVE_ENTRY_ACL_ENTRY_NO_PROPAGATE_INHERIT);
         pub const ENTRY_INHERIT_ONLY: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_INHERIT_ONLY);
         pub const ENTRY_SUCCESSFUL_ACCESS: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_SUCCESSFUL_ACCESS);
         pub const ENTRY_FAILED_ACCESS: Self = Self(ARCHIVE_ENTRY_ACL_ENTRY_FAILED_ACCESS);
@@ -390,10 +401,20 @@ unsafe extern "C" {
     safe fn archive_write_add_filter_uuencode(a: &Archive) -> ArchiveResult;
     safe fn archive_write_add_filter_xz(a: &Archive) -> ArchiveResult;
     safe fn archive_write_add_filter_zstd(a: &Archive) -> ArchiveResult;
-    fn archive_write_set_filter_option(a: *mut Archive, m: *const c_char, o: *const c_char, v: *const c_char) -> ArchiveResult;
+    fn archive_write_set_filter_option(
+        a: *mut Archive,
+        m: *const c_char,
+        o: *const c_char,
+        v: *const c_char,
+    ) -> ArchiveResult;
     fn archive_write_open_filename(a: *mut Archive, filename: *const c_char) -> ArchiveResult;
     safe fn archive_write_open_fd(a: &Archive, fd: c_int) -> ArchiveResult;
-    fn archive_write_open_memory(a: *mut Archive, buffer: *mut c_void, buff_size: usize, used: *mut usize) -> ArchiveResult;
+    fn archive_write_open_memory(
+        a: *mut Archive,
+        buffer: *mut c_void,
+        buff_size: usize,
+        used: *mut usize,
+    ) -> ArchiveResult;
     safe fn archive_write_header(a: &Archive, e: &ArchiveEntry) -> ArchiveResult;
     fn archive_write_data(a: *mut Archive, data: *const c_void, len: usize) -> isize;
     safe fn archive_write_finish_entry(a: &Archive) -> ArchiveResult;
@@ -614,7 +635,12 @@ impl Archive {
         archive_write_open_fd(self, fd.uv())
     }
 
-    pub fn write_open_memory(&self, buf: *mut c_void, buf_size: usize, used: &mut usize) -> ArchiveResult {
+    pub fn write_open_memory(
+        &self,
+        buf: *mut c_void,
+        buf_size: usize,
+        used: &mut usize,
+    ) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
         unsafe { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
     }
@@ -737,17 +763,27 @@ impl Archive {
         let mut buff: *const c_void = core::ptr::null();
         let mut size: usize = 0;
         // SAFETY: archive_read_data_block writes buff/size/offset; pointers are valid.
-        let r = unsafe { archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset) };
+        let r = unsafe {
+            archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
+        };
         if r == ArchiveResult::Eof {
             return None;
         }
         if r != ArchiveResult::Ok {
-            return Some(Block { bytes: std::ptr::from_ref::<[u8]>(&[]), offset: *offset, result: r });
+            return Some(Block {
+                bytes: std::ptr::from_ref::<[u8]>(&[]),
+                offset: *offset,
+                result: r,
+            });
         }
         // SAFETY: libarchive guarantees buff[0..size] is valid until the next read call.
         let ptr = buff.cast::<u8>();
         let bytes = core::ptr::slice_from_raw_parts(ptr, size);
-        Some(Block { bytes, offset: *offset, result: r })
+        Some(Block {
+            bytes,
+            offset: *offset,
+            result: r,
+        })
     }
 
     pub fn read_data(&self, buf: &mut [u8]) -> isize {
@@ -799,7 +835,8 @@ impl Archive {
             let data: &[u8] = unsafe { &*block.bytes };
 
             // Track the furthest point we need to write to (for final truncation)
-            final_offset = final_offset.max(block.offset + i64::try_from(data.len()).expect("int cast"));
+            final_offset =
+                final_offset.max(block.offset + i64::try_from(data.len()).expect("int cast"));
 
             #[cfg(unix)]
             {
@@ -813,7 +850,9 @@ impl Archive {
                         continue;
                     } else {
                         *can_use_pwrite = false;
-                        bun_core::Output::debug_warn("libarchive: falling back to write() after pwrite() failure");
+                        bun_core::Output::debug_warn(
+                            "libarchive: falling back to write() after pwrite() failure",
+                        );
                         // Fall through to lseek+write path
                     }
                 }
@@ -825,7 +864,10 @@ impl Archive {
                     if *can_use_lseek {
                         // SAFETY: sink.owner is valid for the vtable provider's lifetime.
                         if unsafe {
-                            (sink.vtable.set_offset)(sink.owner, u64::try_from(block.offset).expect("int cast"))
+                            (sink.vtable.set_offset)(
+                                sink.owner,
+                                u64::try_from(block.offset).expect("int cast"),
+                            )
                         } {
                             actual_offset = block.offset;
                             break 'seek;
@@ -837,7 +879,8 @@ impl Archive {
                     // lseek failed or not available
                     if block.offset > actual_offset {
                         // Write zeros to fill the gap
-                        let zero_count = usize::try_from(block.offset - actual_offset).expect("int cast");
+                        let zero_count =
+                            usize::try_from(block.offset - actual_offset).expect("int cast");
                         let zero_result = Self::write_zeros_to_file(sink, zero_count);
                         if zero_result != ArchiveResult::Ok {
                             return zero_result;
@@ -1081,7 +1124,10 @@ pub enum IteratorResult<T> {
 
 impl<T> IteratorResult<T> {
     pub fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
-        Self::Err { message: msg, archive: arch }
+        Self::Err {
+            message: msg,
+            archive: arch,
+        }
     }
 
     pub fn init_res(value: T) -> Self {
@@ -1116,7 +1162,10 @@ impl ArchiveIterator {
         }
         match a.read_support_format_gnutar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return IteratorResult::init_err(archive, b"failed to enable gnutar format support");
+                return IteratorResult::init_err(
+                    archive,
+                    b"failed to enable gnutar format support",
+                );
             }
             _ => {}
         }
@@ -1210,14 +1259,20 @@ impl NextEntry {
         // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
         let size = unsafe { (*self.entry).size() };
         if size < 0 {
-            return Ok(IteratorResult::init_err(archive.as_mut_ptr(), b"invalid archive entry size"));
+            return Ok(IteratorResult::init_err(
+                archive.as_mut_ptr(),
+                b"invalid archive entry size",
+            ));
         }
 
         let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
 
         let read = archive.read_data(&mut buf);
         if read < 0 {
-            return Ok(IteratorResult::init_err(archive.as_mut_ptr(), b"failed to read archive data"));
+            return Ok(IteratorResult::init_err(
+                archive.as_mut_ptr(),
+                b"failed to read archive data",
+            ));
         }
         buf.truncate(usize::try_from(read).expect("int cast"));
         Ok(IteratorResult::init_res(buf.into_boxed_slice()))
@@ -1245,54 +1300,180 @@ pub type archive_passphrase_callback =
     unsafe extern "C" fn(*mut struct_archive, *mut c_void) -> *const c_char;
 
 unsafe extern "C" {
-    pub fn archive_read_support_compression_program(a: *mut struct_archive, command: *const c_char) -> c_int;
-    pub fn archive_read_support_compression_program_signature(a: *mut struct_archive, cmd: *const c_char, sig: *const c_void, sig_len: usize) -> c_int;
-    pub fn archive_read_support_filter_program(a: *mut struct_archive, command: *const c_char) -> c_int;
-    pub fn archive_read_support_filter_program_signature(a: *mut struct_archive, cmd: *const c_char, sig: *const c_void, sig_len: usize) -> c_int;
+    pub fn archive_read_support_compression_program(
+        a: *mut struct_archive,
+        command: *const c_char,
+    ) -> c_int;
+    pub fn archive_read_support_compression_program_signature(
+        a: *mut struct_archive,
+        cmd: *const c_char,
+        sig: *const c_void,
+        sig_len: usize,
+    ) -> c_int;
+    pub fn archive_read_support_filter_program(
+        a: *mut struct_archive,
+        command: *const c_char,
+    ) -> c_int;
+    pub fn archive_read_support_filter_program_signature(
+        a: *mut struct_archive,
+        cmd: *const c_char,
+        sig: *const c_void,
+        sig_len: usize,
+    ) -> c_int;
     pub fn archive_read_set_format(a: *mut struct_archive, code: c_int) -> c_int;
     pub fn archive_read_append_filter(a: *mut struct_archive, code: c_int) -> c_int;
     pub fn archive_read_append_filter_program(a: *mut struct_archive, cmd: *const c_char) -> c_int;
-    pub fn archive_read_append_filter_program_signature(a: *mut struct_archive, cmd: *const c_char, sig: *const c_void, sig_len: usize) -> c_int;
-    pub fn archive_read_set_open_callback(a: *mut struct_archive, cb: Option<archive_open_callback>) -> c_int;
-    pub fn archive_read_set_read_callback(a: *mut struct_archive, cb: Option<archive_read_callback>) -> c_int;
-    pub fn archive_read_set_seek_callback(a: *mut struct_archive, cb: Option<archive_seek_callback>) -> c_int;
-    pub fn archive_read_set_skip_callback(a: *mut struct_archive, cb: Option<archive_skip_callback>) -> c_int;
-    pub fn archive_read_set_close_callback(a: *mut struct_archive, cb: Option<archive_close_callback>) -> c_int;
-    pub fn archive_read_set_switch_callback(a: *mut struct_archive, cb: Option<archive_switch_callback>) -> c_int;
+    pub fn archive_read_append_filter_program_signature(
+        a: *mut struct_archive,
+        cmd: *const c_char,
+        sig: *const c_void,
+        sig_len: usize,
+    ) -> c_int;
+    pub fn archive_read_set_open_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_open_callback>,
+    ) -> c_int;
+    pub fn archive_read_set_read_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_read_callback>,
+    ) -> c_int;
+    pub fn archive_read_set_seek_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_seek_callback>,
+    ) -> c_int;
+    pub fn archive_read_set_skip_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_skip_callback>,
+    ) -> c_int;
+    pub fn archive_read_set_close_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_close_callback>,
+    ) -> c_int;
+    pub fn archive_read_set_switch_callback(
+        a: *mut struct_archive,
+        cb: Option<archive_switch_callback>,
+    ) -> c_int;
     pub fn archive_read_set_callback_data(a: *mut struct_archive, data: *mut c_void) -> c_int;
-    pub fn archive_read_set_callback_data2(a: *mut struct_archive, data: *mut c_void, idx: c_uint) -> c_int;
-    pub fn archive_read_add_callback_data(a: *mut struct_archive, data: *mut c_void, idx: c_uint) -> c_int;
+    pub fn archive_read_set_callback_data2(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        idx: c_uint,
+    ) -> c_int;
+    pub fn archive_read_add_callback_data(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        idx: c_uint,
+    ) -> c_int;
     pub fn archive_read_append_callback_data(a: *mut struct_archive, data: *mut c_void) -> c_int;
     pub fn archive_read_prepend_callback_data(a: *mut struct_archive, data: *mut c_void) -> c_int;
     pub fn archive_read_open1(a: *mut struct_archive) -> c_int;
-    pub fn archive_read_open(a: *mut struct_archive, client_data: *mut c_void, open: Option<archive_open_callback>, read: Option<archive_read_callback>, close: Option<archive_close_callback>) -> c_int;
-    pub fn archive_read_open2(a: *mut struct_archive, client_data: *mut c_void, open: Option<archive_open_callback>, read: Option<archive_read_callback>, skip: Option<archive_skip_callback>, close: Option<archive_close_callback>) -> c_int;
-    pub fn archive_read_open_filename(a: *mut struct_archive, filename: *const c_char, block_size: usize) -> c_int;
-    pub fn archive_read_open_filenames(a: *mut struct_archive, filenames: *mut *const c_char, block_size: usize) -> c_int;
-    pub fn archive_read_open_filename_w(a: *mut struct_archive, filename: *const wchar_t, block_size: usize) -> c_int;
-    pub fn archive_read_open_file(a: *mut struct_archive, filename: *const c_char, block_size: usize) -> c_int;
-    pub fn archive_read_open_memory2(a: *mut struct_archive, buff: *const c_void, size: usize, read_size: usize) -> c_int;
+    pub fn archive_read_open(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        open: Option<archive_open_callback>,
+        read: Option<archive_read_callback>,
+        close: Option<archive_close_callback>,
+    ) -> c_int;
+    pub fn archive_read_open2(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        open: Option<archive_open_callback>,
+        read: Option<archive_read_callback>,
+        skip: Option<archive_skip_callback>,
+        close: Option<archive_close_callback>,
+    ) -> c_int;
+    pub fn archive_read_open_filename(
+        a: *mut struct_archive,
+        filename: *const c_char,
+        block_size: usize,
+    ) -> c_int;
+    pub fn archive_read_open_filenames(
+        a: *mut struct_archive,
+        filenames: *mut *const c_char,
+        block_size: usize,
+    ) -> c_int;
+    pub fn archive_read_open_filename_w(
+        a: *mut struct_archive,
+        filename: *const wchar_t,
+        block_size: usize,
+    ) -> c_int;
+    pub fn archive_read_open_file(
+        a: *mut struct_archive,
+        filename: *const c_char,
+        block_size: usize,
+    ) -> c_int;
+    pub fn archive_read_open_memory2(
+        a: *mut struct_archive,
+        buff: *const c_void,
+        size: usize,
+        read_size: usize,
+    ) -> c_int;
     pub fn archive_read_open_fd(a: *mut struct_archive, fd: c_int, block_size: usize) -> c_int;
     pub fn archive_read_open_FILE(a: *mut struct_archive, file: *mut FILE) -> c_int;
     pub fn archive_read_header_position(a: *mut struct_archive) -> la_int64_t;
     pub fn archive_read_has_encrypted_entries(a: *mut struct_archive) -> c_int;
     pub fn archive_read_format_capabilities(a: *mut struct_archive) -> c_int;
     pub fn archive_seek_data(a: *mut struct_archive, off: la_int64_t, whence: c_int) -> la_int64_t;
-    pub fn archive_read_data_block(a: *mut struct_archive, buff: *mut *const c_void, size: *mut usize, offset: *mut la_int64_t) -> ArchiveResult;
+    pub fn archive_read_data_block(
+        a: *mut struct_archive,
+        buff: *mut *const c_void,
+        size: *mut usize,
+        offset: *mut la_int64_t,
+    ) -> ArchiveResult;
     pub fn archive_read_data_skip(a: *mut struct_archive) -> c_int;
-    pub fn archive_read_set_format_option(a: *mut struct_archive, m: *const c_char, o: *const c_char, v: *const c_char) -> c_int;
-    pub fn archive_read_set_filter_option(a: *mut struct_archive, m: *const c_char, o: *const c_char, v: *const c_char) -> c_int;
+    pub fn archive_read_set_format_option(
+        a: *mut struct_archive,
+        m: *const c_char,
+        o: *const c_char,
+        v: *const c_char,
+    ) -> c_int;
+    pub fn archive_read_set_filter_option(
+        a: *mut struct_archive,
+        m: *const c_char,
+        o: *const c_char,
+        v: *const c_char,
+    ) -> c_int;
     pub fn archive_read_add_passphrase(a: *mut struct_archive, pass: *const c_char) -> c_int;
-    pub fn archive_read_set_passphrase_callback(a: *mut struct_archive, client_data: *mut c_void, cb: Option<archive_passphrase_callback>) -> c_int;
-    pub fn archive_read_extract(a: *mut struct_archive, e: *mut struct_archive_entry, flags: c_int) -> c_int;
-    pub fn archive_read_extract2(a: *mut struct_archive, e: *mut struct_archive_entry, dst: *mut struct_archive) -> c_int;
-    pub fn archive_read_extract_set_progress_callback(a: *mut struct_archive, progress_func: Option<unsafe extern "C" fn(*mut c_void)>, user_data: *mut c_void);
-    pub fn archive_read_extract_set_skip_file(a: *mut struct_archive, dev: la_int64_t, ino: la_int64_t);
-    pub fn archive_write_set_bytes_per_block(a: *mut struct_archive, bytes_per_block: c_int) -> c_int;
+    pub fn archive_read_set_passphrase_callback(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        cb: Option<archive_passphrase_callback>,
+    ) -> c_int;
+    pub fn archive_read_extract(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+        flags: c_int,
+    ) -> c_int;
+    pub fn archive_read_extract2(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+        dst: *mut struct_archive,
+    ) -> c_int;
+    pub fn archive_read_extract_set_progress_callback(
+        a: *mut struct_archive,
+        progress_func: Option<unsafe extern "C" fn(*mut c_void)>,
+        user_data: *mut c_void,
+    );
+    pub fn archive_read_extract_set_skip_file(
+        a: *mut struct_archive,
+        dev: la_int64_t,
+        ino: la_int64_t,
+    );
+    pub fn archive_write_set_bytes_per_block(
+        a: *mut struct_archive,
+        bytes_per_block: c_int,
+    ) -> c_int;
     pub fn archive_write_get_bytes_per_block(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_set_bytes_in_last_block(a: *mut struct_archive, bytes_in_last_block: c_int) -> c_int;
+    pub fn archive_write_set_bytes_in_last_block(
+        a: *mut struct_archive,
+        bytes_in_last_block: c_int,
+    ) -> c_int;
     pub fn archive_write_get_bytes_in_last_block(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_set_skip_file(a: *mut struct_archive, dev: la_int64_t, ino: la_int64_t) -> c_int;
+    pub fn archive_write_set_skip_file(
+        a: *mut struct_archive,
+        dev: la_int64_t,
+        ino: la_int64_t,
+    ) -> c_int;
     // Deprecated: archive_write_set_compression_*
     pub fn archive_write_set_format_by_name(a: *mut struct_archive, name: *const c_char) -> c_int;
     pub fn archive_write_set_format_ar_bsd(a: *mut struct_archive) -> c_int;
@@ -1310,39 +1491,115 @@ unsafe extern "C" {
     pub fn archive_write_set_format_v7tar(a: *mut struct_archive) -> c_int;
     pub fn archive_write_set_format_warc(a: *mut struct_archive) -> c_int;
     pub fn archive_write_set_format_xar(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_set_format_filter_by_ext(a: *mut struct_archive, filename: *const c_char) -> c_int;
-    pub fn archive_write_set_format_filter_by_ext_def(a: *mut struct_archive, filename: *const c_char, def_ext: *const c_char) -> c_int;
+    pub fn archive_write_set_format_filter_by_ext(
+        a: *mut struct_archive,
+        filename: *const c_char,
+    ) -> c_int;
+    pub fn archive_write_set_format_filter_by_ext_def(
+        a: *mut struct_archive,
+        filename: *const c_char,
+        def_ext: *const c_char,
+    ) -> c_int;
     pub fn archive_write_zip_set_compression_deflate(a: *mut struct_archive) -> c_int;
     pub fn archive_write_zip_set_compression_store(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_open(a: *mut struct_archive, client_data: *mut c_void, open: Option<archive_open_callback>, write: Option<archive_write_callback>, close: Option<archive_close_callback>) -> c_int;
-    pub fn archive_write_open2(a: *mut struct_archive, client_data: *mut c_void, open: Option<archive_open_callback>, write: Option<archive_write_callback>, close: Option<archive_close_callback>, free: Option<archive_free_callback>) -> c_int;
+    pub fn archive_write_open(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        open: Option<archive_open_callback>,
+        write: Option<archive_write_callback>,
+        close: Option<archive_close_callback>,
+    ) -> c_int;
+    pub fn archive_write_open2(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        open: Option<archive_open_callback>,
+        write: Option<archive_write_callback>,
+        close: Option<archive_close_callback>,
+        free: Option<archive_free_callback>,
+    ) -> c_int;
     pub fn archive_write_open_filename_w(a: *mut struct_archive, file: *const wchar_t) -> c_int;
     pub fn archive_write_open_file(a: *mut struct_archive, file: *const c_char) -> c_int;
     pub fn archive_write_open_FILE(a: *mut struct_archive, file: *mut FILE) -> c_int;
-    pub fn archive_write_data_block(a: *mut struct_archive, buff: *const c_void, len: usize, off: la_int64_t) -> la_ssize_t;
+    pub fn archive_write_data_block(
+        a: *mut struct_archive,
+        buff: *const c_void,
+        len: usize,
+        off: la_int64_t,
+    ) -> la_ssize_t;
     pub fn archive_write_fail(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_set_format_option(a: *mut struct_archive, m: *const c_char, o: *const c_char, v: *const c_char) -> c_int;
-    pub fn archive_write_set_option(a: *mut struct_archive, m: *const c_char, o: *const c_char, v: *const c_char) -> c_int;
+    pub fn archive_write_set_format_option(
+        a: *mut struct_archive,
+        m: *const c_char,
+        o: *const c_char,
+        v: *const c_char,
+    ) -> c_int;
+    pub fn archive_write_set_option(
+        a: *mut struct_archive,
+        m: *const c_char,
+        o: *const c_char,
+        v: *const c_char,
+    ) -> c_int;
     pub fn archive_write_set_passphrase(a: *mut struct_archive, p: *const c_char) -> c_int;
-    pub fn archive_write_set_passphrase_callback(a: *mut struct_archive, client_data: *mut c_void, cb: Option<archive_passphrase_callback>) -> c_int;
+    pub fn archive_write_set_passphrase_callback(
+        a: *mut struct_archive,
+        client_data: *mut c_void,
+        cb: Option<archive_passphrase_callback>,
+    ) -> c_int;
     pub fn archive_write_disk_new() -> *mut struct_archive;
-    pub fn archive_write_disk_set_skip_file(a: *mut struct_archive, dev: la_int64_t, ino: la_int64_t) -> c_int;
+    pub fn archive_write_disk_set_skip_file(
+        a: *mut struct_archive,
+        dev: la_int64_t,
+        ino: la_int64_t,
+    ) -> c_int;
     pub fn archive_write_disk_set_options(a: *mut struct_archive, flags: c_int) -> c_int;
     pub fn archive_write_disk_set_standard_lookup(a: *mut struct_archive) -> c_int;
-    pub fn archive_write_disk_set_group_lookup(a: *mut struct_archive, data: *mut c_void, lookup: Option<unsafe extern "C" fn(*mut c_void, *const c_char, la_int64_t) -> la_int64_t>, cleanup: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
-    pub fn archive_write_disk_set_user_lookup(a: *mut struct_archive, data: *mut c_void, lookup: Option<unsafe extern "C" fn(*mut c_void, *const c_char, la_int64_t) -> la_int64_t>, cleanup: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
-    pub fn archive_write_disk_gid(a: *mut struct_archive, name: *const c_char, id: la_int64_t) -> la_int64_t;
-    pub fn archive_write_disk_uid(a: *mut struct_archive, name: *const c_char, id: la_int64_t) -> la_int64_t;
+    pub fn archive_write_disk_set_group_lookup(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        lookup: Option<unsafe extern "C" fn(*mut c_void, *const c_char, la_int64_t) -> la_int64_t>,
+        cleanup: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
+    pub fn archive_write_disk_set_user_lookup(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        lookup: Option<unsafe extern "C" fn(*mut c_void, *const c_char, la_int64_t) -> la_int64_t>,
+        cleanup: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
+    pub fn archive_write_disk_gid(
+        a: *mut struct_archive,
+        name: *const c_char,
+        id: la_int64_t,
+    ) -> la_int64_t;
+    pub fn archive_write_disk_uid(
+        a: *mut struct_archive,
+        name: *const c_char,
+        id: la_int64_t,
+    ) -> la_int64_t;
     pub fn archive_read_disk_new() -> *mut struct_archive;
     pub fn archive_read_disk_set_symlink_logical(a: *mut struct_archive) -> c_int;
     pub fn archive_read_disk_set_symlink_physical(a: *mut struct_archive) -> c_int;
     pub fn archive_read_disk_set_symlink_hybrid(a: *mut struct_archive) -> c_int;
-    pub fn archive_read_disk_entry_from_file(a: *mut struct_archive, e: *mut struct_archive_entry, fd: c_int, st: *const struct_stat) -> c_int;
+    pub fn archive_read_disk_entry_from_file(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+        fd: c_int,
+        st: *const struct_stat,
+    ) -> c_int;
     pub fn archive_read_disk_gname(a: *mut struct_archive, gid: la_int64_t) -> *const c_char;
     pub fn archive_read_disk_uname(a: *mut struct_archive, uid: la_int64_t) -> *const c_char;
     pub fn archive_read_disk_set_standard_lookup(a: *mut struct_archive) -> c_int;
-    pub fn archive_read_disk_set_gname_lookup(a: *mut struct_archive, data: *mut c_void, lookup: Option<unsafe extern "C" fn(*mut c_void, la_int64_t) -> *const c_char>, cleanup: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
-    pub fn archive_read_disk_set_uname_lookup(a: *mut struct_archive, data: *mut c_void, lookup: Option<unsafe extern "C" fn(*mut c_void, la_int64_t) -> *const c_char>, cleanup: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
+    pub fn archive_read_disk_set_gname_lookup(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        lookup: Option<unsafe extern "C" fn(*mut c_void, la_int64_t) -> *const c_char>,
+        cleanup: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
+    pub fn archive_read_disk_set_uname_lookup(
+        a: *mut struct_archive,
+        data: *mut c_void,
+        lookup: Option<unsafe extern "C" fn(*mut c_void, la_int64_t) -> *const c_char>,
+        cleanup: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
     pub fn archive_read_disk_open(a: *mut struct_archive, path: *const c_char) -> c_int;
     pub fn archive_read_disk_open_w(a: *mut struct_archive, path: *const wchar_t) -> c_int;
     pub fn archive_read_disk_descend(a: *mut struct_archive) -> c_int;
@@ -1352,8 +1609,25 @@ unsafe extern "C" {
     pub fn archive_read_disk_current_filesystem_is_remote(a: *mut struct_archive) -> c_int;
     pub fn archive_read_disk_set_atime_restored(a: *mut struct_archive) -> c_int;
     pub fn archive_read_disk_set_behavior(a: *mut struct_archive, flags: c_int) -> c_int;
-    pub fn archive_read_disk_set_matching(a: *mut struct_archive, matching: *mut struct_archive, excluded_func: Option<unsafe extern "C" fn(*mut struct_archive, *mut c_void, *mut struct_archive_entry)>, client_data: *mut c_void) -> c_int;
-    pub fn archive_read_disk_set_metadata_filter_callback(a: *mut struct_archive, metadata_filter_func: Option<unsafe extern "C" fn(*mut struct_archive, *mut c_void, *mut struct_archive_entry) -> c_int>, client_data: *mut c_void) -> c_int;
+    pub fn archive_read_disk_set_matching(
+        a: *mut struct_archive,
+        matching: *mut struct_archive,
+        excluded_func: Option<
+            unsafe extern "C" fn(*mut struct_archive, *mut c_void, *mut struct_archive_entry),
+        >,
+        client_data: *mut c_void,
+    ) -> c_int;
+    pub fn archive_read_disk_set_metadata_filter_callback(
+        a: *mut struct_archive,
+        metadata_filter_func: Option<
+            unsafe extern "C" fn(
+                *mut struct_archive,
+                *mut c_void,
+                *mut struct_archive_entry,
+            ) -> c_int,
+        >,
+        client_data: *mut c_void,
+    ) -> c_int;
     pub fn archive_filter_count(a: *mut struct_archive) -> c_int;
     pub fn archive_filter_bytes(a: *mut struct_archive, n: c_int) -> la_int64_t;
     pub fn archive_filter_code(a: *mut struct_archive, n: c_int) -> c_int;
@@ -1372,27 +1646,89 @@ unsafe extern "C" {
     pub fn archive_match_new() -> *mut struct_archive;
     pub fn archive_match_free(a: *mut struct_archive) -> c_int;
     pub fn archive_match_excluded(a: *mut struct_archive, e: *mut struct_archive_entry) -> c_int;
-    pub fn archive_match_path_excluded(a: *mut struct_archive, e: *mut struct_archive_entry) -> c_int;
+    pub fn archive_match_path_excluded(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+    ) -> c_int;
     pub fn archive_match_set_inclusion_recursion(a: *mut struct_archive, enabled: c_int) -> c_int;
     pub fn archive_match_exclude_pattern(a: *mut struct_archive, pattern: *const c_char) -> c_int;
-    pub fn archive_match_exclude_pattern_w(a: *mut struct_archive, pattern: *const wchar_t) -> c_int;
-    pub fn archive_match_exclude_pattern_from_file(a: *mut struct_archive, path: *const c_char, null_separator: c_int) -> c_int;
-    pub fn archive_match_exclude_pattern_from_file_w(a: *mut struct_archive, path: *const wchar_t, null_separator: c_int) -> c_int;
+    pub fn archive_match_exclude_pattern_w(
+        a: *mut struct_archive,
+        pattern: *const wchar_t,
+    ) -> c_int;
+    pub fn archive_match_exclude_pattern_from_file(
+        a: *mut struct_archive,
+        path: *const c_char,
+        null_separator: c_int,
+    ) -> c_int;
+    pub fn archive_match_exclude_pattern_from_file_w(
+        a: *mut struct_archive,
+        path: *const wchar_t,
+        null_separator: c_int,
+    ) -> c_int;
     pub fn archive_match_include_pattern(a: *mut struct_archive, pattern: *const c_char) -> c_int;
-    pub fn archive_match_include_pattern_w(a: *mut struct_archive, pattern: *const wchar_t) -> c_int;
-    pub fn archive_match_include_pattern_from_file(a: *mut struct_archive, path: *const c_char, null_separator: c_int) -> c_int;
-    pub fn archive_match_include_pattern_from_file_w(a: *mut struct_archive, path: *const wchar_t, null_separator: c_int) -> c_int;
+    pub fn archive_match_include_pattern_w(
+        a: *mut struct_archive,
+        pattern: *const wchar_t,
+    ) -> c_int;
+    pub fn archive_match_include_pattern_from_file(
+        a: *mut struct_archive,
+        path: *const c_char,
+        null_separator: c_int,
+    ) -> c_int;
+    pub fn archive_match_include_pattern_from_file_w(
+        a: *mut struct_archive,
+        path: *const wchar_t,
+        null_separator: c_int,
+    ) -> c_int;
     pub fn archive_match_path_unmatched_inclusions(a: *mut struct_archive) -> c_int;
-    pub fn archive_match_path_unmatched_inclusions_next(a: *mut struct_archive, p: *mut *const c_char) -> c_int;
-    pub fn archive_match_path_unmatched_inclusions_next_w(a: *mut struct_archive, p: *mut *const wchar_t) -> c_int;
-    pub fn archive_match_time_excluded(a: *mut struct_archive, e: *mut struct_archive_entry) -> c_int;
-    pub fn archive_match_include_time(a: *mut struct_archive, flag: c_int, sec: time_t, nsec: c_long) -> c_int;
-    pub fn archive_match_include_date(a: *mut struct_archive, flag: c_int, datestr: *const c_char) -> c_int;
-    pub fn archive_match_include_date_w(a: *mut struct_archive, flag: c_int, datestr: *const wchar_t) -> c_int;
-    pub fn archive_match_include_file_time(a: *mut struct_archive, flag: c_int, pathname: *const c_char) -> c_int;
-    pub fn archive_match_include_file_time_w(a: *mut struct_archive, flag: c_int, pathname: *const wchar_t) -> c_int;
-    pub fn archive_match_exclude_entry(a: *mut struct_archive, flag: c_int, e: *mut struct_archive_entry) -> c_int;
-    pub fn archive_match_owner_excluded(a: *mut struct_archive, e: *mut struct_archive_entry) -> c_int;
+    pub fn archive_match_path_unmatched_inclusions_next(
+        a: *mut struct_archive,
+        p: *mut *const c_char,
+    ) -> c_int;
+    pub fn archive_match_path_unmatched_inclusions_next_w(
+        a: *mut struct_archive,
+        p: *mut *const wchar_t,
+    ) -> c_int;
+    pub fn archive_match_time_excluded(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+    ) -> c_int;
+    pub fn archive_match_include_time(
+        a: *mut struct_archive,
+        flag: c_int,
+        sec: time_t,
+        nsec: c_long,
+    ) -> c_int;
+    pub fn archive_match_include_date(
+        a: *mut struct_archive,
+        flag: c_int,
+        datestr: *const c_char,
+    ) -> c_int;
+    pub fn archive_match_include_date_w(
+        a: *mut struct_archive,
+        flag: c_int,
+        datestr: *const wchar_t,
+    ) -> c_int;
+    pub fn archive_match_include_file_time(
+        a: *mut struct_archive,
+        flag: c_int,
+        pathname: *const c_char,
+    ) -> c_int;
+    pub fn archive_match_include_file_time_w(
+        a: *mut struct_archive,
+        flag: c_int,
+        pathname: *const wchar_t,
+    ) -> c_int;
+    pub fn archive_match_exclude_entry(
+        a: *mut struct_archive,
+        flag: c_int,
+        e: *mut struct_archive_entry,
+    ) -> c_int;
+    pub fn archive_match_owner_excluded(
+        a: *mut struct_archive,
+        e: *mut struct_archive_entry,
+    ) -> c_int;
     pub fn archive_match_include_uid(a: *mut struct_archive, uid: la_int64_t) -> c_int;
     pub fn archive_match_include_gid(a: *mut struct_archive, gid: la_int64_t) -> c_int;
     pub fn archive_match_include_uname(a: *mut struct_archive, name: *const c_char) -> c_int;
@@ -1456,19 +1792,29 @@ unsafe extern "C" {
     pub fn archive_entry_set_devmajor(e: *mut struct_archive_entry, d: dev_t);
     pub fn archive_entry_set_devminor(e: *mut struct_archive_entry, d: dev_t);
     pub fn archive_entry_set_fflags(e: *mut struct_archive_entry, set: u64, clear: u64);
-    pub fn archive_entry_copy_fflags_text(e: *mut struct_archive_entry, s: *const c_char) -> *const c_char;
-    pub fn archive_entry_copy_fflags_text_w(e: *mut struct_archive_entry, s: *const wchar_t) -> *const wchar_t;
+    pub fn archive_entry_copy_fflags_text(
+        e: *mut struct_archive_entry,
+        s: *const c_char,
+    ) -> *const c_char;
+    pub fn archive_entry_copy_fflags_text_w(
+        e: *mut struct_archive_entry,
+        s: *const wchar_t,
+    ) -> *const wchar_t;
     pub fn archive_entry_set_gid(e: *mut struct_archive_entry, gid: la_int64_t);
     pub fn archive_entry_set_gname(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_set_gname_utf8(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_gname(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_gname_w(e: *mut struct_archive_entry, s: *const wchar_t);
-    pub fn archive_entry_update_gname_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
+    pub fn archive_entry_update_gname_utf8(e: *mut struct_archive_entry, s: *const c_char)
+    -> c_int;
     pub fn archive_entry_set_hardlink(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_set_hardlink_utf8(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_hardlink(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_hardlink_w(e: *mut struct_archive_entry, s: *const wchar_t);
-    pub fn archive_entry_update_hardlink_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
+    pub fn archive_entry_update_hardlink_utf8(
+        e: *mut struct_archive_entry,
+        s: *const c_char,
+    ) -> c_int;
     pub fn archive_entry_set_ino(e: *mut struct_archive_entry, ino: la_int64_t);
     pub fn archive_entry_set_ino64(e: *mut struct_archive_entry, ino: la_int64_t);
     pub fn archive_entry_set_link(e: *mut struct_archive_entry, s: *const c_char);
@@ -1478,7 +1824,10 @@ unsafe extern "C" {
     pub fn archive_entry_update_link_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
     pub fn archive_entry_unset_mtime(e: *mut struct_archive_entry);
     pub fn archive_entry_set_nlink(e: *mut struct_archive_entry, n: c_uint);
-    pub fn archive_entry_update_pathname_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
+    pub fn archive_entry_update_pathname_utf8(
+        e: *mut struct_archive_entry,
+        s: *const c_char,
+    ) -> c_int;
     pub fn archive_entry_set_rdev(e: *mut struct_archive_entry, d: dev_t);
     pub fn archive_entry_set_rdevmajor(e: *mut struct_archive_entry, d: dev_t);
     pub fn archive_entry_set_rdevminor(e: *mut struct_archive_entry, d: dev_t);
@@ -1490,49 +1839,126 @@ unsafe extern "C" {
     pub fn archive_entry_set_symlink_utf8(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_symlink(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_symlink_w(e: *mut struct_archive_entry, s: *const wchar_t);
-    pub fn archive_entry_update_symlink_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
+    pub fn archive_entry_update_symlink_utf8(
+        e: *mut struct_archive_entry,
+        s: *const c_char,
+    ) -> c_int;
     pub fn archive_entry_set_uid(e: *mut struct_archive_entry, uid: la_int64_t);
     pub fn archive_entry_set_uname(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_set_uname_utf8(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_uname(e: *mut struct_archive_entry, s: *const c_char);
     pub fn archive_entry_copy_uname_w(e: *mut struct_archive_entry, s: *const wchar_t);
-    pub fn archive_entry_update_uname_utf8(e: *mut struct_archive_entry, s: *const c_char) -> c_int;
+    pub fn archive_entry_update_uname_utf8(e: *mut struct_archive_entry, s: *const c_char)
+    -> c_int;
     pub fn archive_entry_set_is_data_encrypted(e: *mut struct_archive_entry, is_encrypted: u8);
     pub fn archive_entry_set_is_metadata_encrypted(e: *mut struct_archive_entry, is_encrypted: u8);
     pub fn archive_entry_stat(e: *mut struct_archive_entry) -> *const struct_stat;
     pub fn archive_entry_copy_stat(e: *mut struct_archive_entry, st: *const struct_stat);
-    pub fn archive_entry_mac_metadata(e: *mut struct_archive_entry, size: *mut usize) -> *const c_void;
-    pub fn archive_entry_copy_mac_metadata(e: *mut struct_archive_entry, data: *const c_void, size: usize);
+    pub fn archive_entry_mac_metadata(
+        e: *mut struct_archive_entry,
+        size: *mut usize,
+    ) -> *const c_void;
+    pub fn archive_entry_copy_mac_metadata(
+        e: *mut struct_archive_entry,
+        data: *const c_void,
+        size: usize,
+    );
     pub fn archive_entry_digest(e: *mut struct_archive_entry, kind: c_int) -> *const c_char;
     pub fn archive_entry_acl_clear(e: *mut struct_archive_entry);
-    pub fn archive_entry_acl_add_entry(e: *mut struct_archive_entry, type_: c_int, permset: c_int, tag: c_int, qual: c_int, name: *const c_char) -> c_int;
-    pub fn archive_entry_acl_add_entry_w(e: *mut struct_archive_entry, type_: c_int, permset: c_int, tag: c_int, qual: c_int, name: *const wchar_t) -> c_int;
+    pub fn archive_entry_acl_add_entry(
+        e: *mut struct_archive_entry,
+        type_: c_int,
+        permset: c_int,
+        tag: c_int,
+        qual: c_int,
+        name: *const c_char,
+    ) -> c_int;
+    pub fn archive_entry_acl_add_entry_w(
+        e: *mut struct_archive_entry,
+        type_: c_int,
+        permset: c_int,
+        tag: c_int,
+        qual: c_int,
+        name: *const wchar_t,
+    ) -> c_int;
     pub fn archive_entry_acl_reset(e: *mut struct_archive_entry, want_type: c_int) -> c_int;
-    pub fn archive_entry_acl_next(e: *mut struct_archive_entry, want_type: c_int, type_: *mut c_int, permset: *mut c_int, tag: *mut c_int, qual: *mut c_int, name: *mut *const c_char) -> c_int;
-    pub fn archive_entry_acl_to_text_w(e: *mut struct_archive_entry, len: *mut la_ssize_t, flags: c_int) -> *mut wchar_t;
-    pub fn archive_entry_acl_to_text(e: *mut struct_archive_entry, len: *mut la_ssize_t, flags: c_int) -> *mut c_char;
-    pub fn archive_entry_acl_from_text_w(e: *mut struct_archive_entry, text: *const wchar_t, type_: c_int) -> c_int;
-    pub fn archive_entry_acl_from_text(e: *mut struct_archive_entry, text: *const c_char, type_: c_int) -> c_int;
+    pub fn archive_entry_acl_next(
+        e: *mut struct_archive_entry,
+        want_type: c_int,
+        type_: *mut c_int,
+        permset: *mut c_int,
+        tag: *mut c_int,
+        qual: *mut c_int,
+        name: *mut *const c_char,
+    ) -> c_int;
+    pub fn archive_entry_acl_to_text_w(
+        e: *mut struct_archive_entry,
+        len: *mut la_ssize_t,
+        flags: c_int,
+    ) -> *mut wchar_t;
+    pub fn archive_entry_acl_to_text(
+        e: *mut struct_archive_entry,
+        len: *mut la_ssize_t,
+        flags: c_int,
+    ) -> *mut c_char;
+    pub fn archive_entry_acl_from_text_w(
+        e: *mut struct_archive_entry,
+        text: *const wchar_t,
+        type_: c_int,
+    ) -> c_int;
+    pub fn archive_entry_acl_from_text(
+        e: *mut struct_archive_entry,
+        text: *const c_char,
+        type_: c_int,
+    ) -> c_int;
     pub fn archive_entry_acl_text_w(e: *mut struct_archive_entry, flags: c_int) -> *const wchar_t;
     pub fn archive_entry_acl_text(e: *mut struct_archive_entry, flags: c_int) -> *const c_char;
     pub fn archive_entry_acl_types(e: *mut struct_archive_entry) -> c_int;
     pub fn archive_entry_acl_count(e: *mut struct_archive_entry, want_type: c_int) -> c_int;
     pub fn archive_entry_acl(e: *mut struct_archive_entry) -> *mut struct_archive_acl;
     pub fn archive_entry_xattr_clear(e: *mut struct_archive_entry);
-    pub fn archive_entry_xattr_add_entry(e: *mut struct_archive_entry, name: *const c_char, value: *const c_void, size: usize);
+    pub fn archive_entry_xattr_add_entry(
+        e: *mut struct_archive_entry,
+        name: *const c_char,
+        value: *const c_void,
+        size: usize,
+    );
     pub fn archive_entry_xattr_count(e: *mut struct_archive_entry) -> c_int;
     pub fn archive_entry_xattr_reset(e: *mut struct_archive_entry) -> c_int;
-    pub fn archive_entry_xattr_next(e: *mut struct_archive_entry, name: *mut *const c_char, value: *mut *const c_void, size: *mut usize) -> c_int;
+    pub fn archive_entry_xattr_next(
+        e: *mut struct_archive_entry,
+        name: *mut *const c_char,
+        value: *mut *const c_void,
+        size: *mut usize,
+    ) -> c_int;
     pub fn archive_entry_sparse_clear(e: *mut struct_archive_entry);
-    pub fn archive_entry_sparse_add_entry(e: *mut struct_archive_entry, offset: la_int64_t, length: la_int64_t);
+    pub fn archive_entry_sparse_add_entry(
+        e: *mut struct_archive_entry,
+        offset: la_int64_t,
+        length: la_int64_t,
+    );
     pub fn archive_entry_sparse_count(e: *mut struct_archive_entry) -> c_int;
     pub fn archive_entry_sparse_reset(e: *mut struct_archive_entry) -> c_int;
-    pub fn archive_entry_sparse_next(e: *mut struct_archive_entry, offset: *mut la_int64_t, length: *mut la_int64_t) -> c_int;
+    pub fn archive_entry_sparse_next(
+        e: *mut struct_archive_entry,
+        offset: *mut la_int64_t,
+        length: *mut la_int64_t,
+    ) -> c_int;
     pub fn archive_entry_linkresolver_new() -> *mut struct_archive_entry_linkresolver;
-    pub fn archive_entry_linkresolver_set_strategy(r: *mut struct_archive_entry_linkresolver, format: c_int);
+    pub fn archive_entry_linkresolver_set_strategy(
+        r: *mut struct_archive_entry_linkresolver,
+        format: c_int,
+    );
     pub fn archive_entry_linkresolver_free(r: *mut struct_archive_entry_linkresolver);
-    pub fn archive_entry_linkify(r: *mut struct_archive_entry_linkresolver, e1: *mut *mut struct_archive_entry, e2: *mut *mut struct_archive_entry);
-    pub fn archive_entry_partial_links(res: *mut struct_archive_entry_linkresolver, links: *mut c_uint) -> *mut struct_archive_entry;
+    pub fn archive_entry_linkify(
+        r: *mut struct_archive_entry_linkresolver,
+        e1: *mut *mut struct_archive_entry,
+        e2: *mut *mut struct_archive_entry,
+    );
+    pub fn archive_entry_partial_links(
+        res: *mut struct_archive_entry_linkresolver,
+        links: *mut c_uint,
+    ) -> *mut struct_archive_entry;
 }
 
 bun_opaque::opaque_ffi! {
@@ -1640,7 +2066,10 @@ pub struct GrowingBuffer {
 
 impl Default for GrowingBuffer {
     fn default() -> Self {
-        Self { list: Vec::new(), had_error: false }
+        Self {
+            list: Vec::new(),
+            had_error: false,
+        }
     }
 }
 
@@ -1658,7 +2087,10 @@ impl GrowingBuffer {
         Ok(core::mem::take(&mut self.list).into_boxed_slice())
     }
 
-    pub unsafe extern "C" fn open_callback(_a: *mut struct_archive, client_data: *mut c_void) -> c_int {
+    pub unsafe extern "C" fn open_callback(
+        _a: *mut struct_archive,
+        client_data: *mut c_void,
+    ) -> c_int {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
         let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
         this.list.clear();
@@ -1688,7 +2120,10 @@ impl GrowingBuffer {
         la_ssize_t::try_from(length).expect("int cast")
     }
 
-    pub unsafe extern "C" fn close_callback(_a: *mut struct_archive, _client_data: *mut c_void) -> c_int {
+    pub unsafe extern "C" fn close_callback(
+        _a: *mut struct_archive,
+        _client_data: *mut c_void,
+    ) -> c_int {
         0
     }
 }

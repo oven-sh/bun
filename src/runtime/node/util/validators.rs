@@ -1,14 +1,16 @@
 use core::fmt;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_core::ZigString;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
 pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
     if js_type.is_array() {
         return ZigString::static_("array");
     }
-    value.js_type_string(global_object).get_zig_string(global_object)
+    value
+        .js_type_string(global_object)
+        .get_zig_string(global_object)
 }
 
 #[cold]
@@ -17,7 +19,9 @@ pub fn throw_err_invalid_arg_value(
     args: fmt::Arguments<'_>,
 ) -> JsError {
     // Zig: `global.ERR(.INVALID_ARG_VALUE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_VALUE"`.
-    global_this.err(jsc::ErrorCode::INVALID_ARG_VALUE, args).throw()
+    global_this
+        .err(jsc::ErrorCode::INVALID_ARG_VALUE, args)
+        .throw()
 }
 
 #[cold]
@@ -26,7 +30,9 @@ pub fn throw_err_invalid_arg_type_with_message(
     args: fmt::Arguments<'_>,
 ) -> JsError {
     // Zig: `global.ERR(.INVALID_ARG_TYPE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_TYPE"`.
-    global_this.err(jsc::ErrorCode::INVALID_ARG_TYPE, args).throw()
+    global_this
+        .err(jsc::ErrorCode::INVALID_ARG_TYPE, args)
+        .throw()
 }
 
 // PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
@@ -110,7 +116,12 @@ pub fn validate_integer(
     }
 
     if !value.is_integer() {
-        return Err(throw_range_error_msg(global_this, value.as_number(), name, b"an integer"));
+        return Err(throw_range_error_msg(
+            global_this,
+            value.as_number(),
+            name,
+            b"an integer",
+        ));
     }
 
     if let Some(min) = min_value {
@@ -132,7 +143,13 @@ pub fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error_min_max(global_this, num, name, min as i64, max as i64));
+        return Err(throw_range_error_min_max(
+            global_this,
+            num,
+            name,
+            min as i64,
+            max as i64,
+        ));
     }
 
     Ok(num as i64)
@@ -184,7 +201,12 @@ pub fn validate_int32(
     let max = max_value.unwrap_or(i32::MAX);
     // The defaults for min and max correspond to the limits of 32-bit integers.
     if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(global_this, name, "number", value));
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "number",
+            value,
+        ));
     }
     if !value.is_any_int() {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
@@ -222,7 +244,12 @@ pub fn validate_uint32(
     greater_than_zero: bool,
 ) -> JsResult<u32> {
     if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(global_this, name, "number", value));
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "number",
+            value,
+        ));
     }
     if !value.is_any_int() {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
@@ -261,7 +288,12 @@ pub fn validate_string(
     name: impl fmt::Display,
 ) -> JsResult<()> {
     if !value.is_string() {
-        return Err(throw_err_invalid_arg_type(global_this, name, "string", value));
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "string",
+            value,
+        ));
     }
     Ok(())
 }
@@ -328,7 +360,12 @@ pub fn validate_boolean(
     name: impl fmt::Display,
 ) -> JsResult<bool> {
     if !value.is_boolean() {
-        return Err(throw_err_invalid_arg_type(global_this, name, "boolean", value));
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "boolean",
+            value,
+        ));
     }
     Ok(value.as_boolean())
 }
@@ -366,23 +403,48 @@ pub fn validate_object(
 ) -> JsResult<()> {
     if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
         if value.is_null() || value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(global_this, name, "object", value));
+            return Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ));
         }
 
         if !value.is_object() {
-            return Err(throw_err_invalid_arg_type(global_this, name, "object", value));
+            return Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ));
         }
     } else {
         if !options.allow_nullable() && value.is_null() {
-            return Err(throw_err_invalid_arg_type(global_this, name, "object", value));
+            return Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ));
         }
 
         if !options.allow_array() && value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(global_this, name, "object", value));
+            return Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ));
         }
 
         if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
-            return Err(throw_err_invalid_arg_type(global_this, name, "object", value));
+            return Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ));
         }
     }
     Ok(())
@@ -460,11 +522,7 @@ pub fn validate_boolean_array(
     Ok(i)
 }
 
-pub fn validate_function(
-    global: &JSGlobalObject,
-    name: &str,
-    value: JSValue,
-) -> JsResult<JSValue> {
+pub fn validate_function(global: &JSGlobalObject, name: &str, value: JSValue) -> JsResult<JSValue> {
     if !value.is_function() {
         return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
@@ -477,7 +535,12 @@ pub fn validate_undefined(
     name: impl fmt::Display,
 ) -> JsResult<()> {
     if !value.is_undefined() {
-        return Err(throw_err_invalid_arg_type(global_this, name, "undefined", value));
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "undefined",
+            value,
+        ));
     }
     Ok(())
 }

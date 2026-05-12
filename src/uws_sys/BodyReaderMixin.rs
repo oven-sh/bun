@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 use core::mem;
 
-use crate::response::Response;
 use crate::AnyResponse;
+use crate::response::Response;
 
 /// Response types that can drive a `BodyReaderMixin`: must support registering
 /// data/abort callbacks and converting to `AnyResponse`. Stands in for the Zig
@@ -74,7 +74,11 @@ pub trait BodyReaderHandler: Sized + 'static {
     /// SAFETY: `this` is the pointer previously passed to
     /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
     /// mixin until this call (no other `&mut` into the allocation is live).
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error>;
+    unsafe fn on_body(
+        this: *mut Self,
+        body: &[u8],
+        resp: AnyResponse,
+    ) -> Result<(), bun_core::Error>;
 
     /// Called on error or request abort. Same provenance contract as `on_body`.
     ///

@@ -4,30 +4,30 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
-use bun_core::{FeatureFlags, Output};
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_core::{FeatureFlags, Output};
 // PORT NOTE: `bun.ast.Index` is mirrored as both `crate::Index`
 // (`bun_ast::Index`) and `bun_ast::Index` via a
 // TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
 // flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
-use bun_sourcemap as source_map;
 use bun_core::{immutable as strings, string_joiner::StringJoiner};
+use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
 use crate::bun_renamer;
 
+use crate::Graph::{Graph, InputFileColumns as _};
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
-use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{
-    cheap_prefix_normalizer, AdditionalFile, CompileResult, CrossChunkImport, LinkerContext,
-    LinkerGraph, PartRange, PathTemplate,
+    AdditionalFile, CompileResult, CrossChunkImport, LinkerContext, LinkerGraph, PartRange,
+    PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -241,7 +241,10 @@ impl Chunk {
             // layout/ABI as `*mut T` (and `NonNull<T>`).
             let cells: *mut [UnsafeCell<CompileResult>] =
                 core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
-            debug_assert!(i < cells.len(), "compile_results_for_chunk slot out of bounds");
+            debug_assert!(
+                i < cells.len(),
+                "compile_results_for_chunk slot out of bounds"
+            );
             let cell: *mut UnsafeCell<CompileResult> =
                 cells.cast::<UnsafeCell<CompileResult>>().add(i);
             // `UnsafeCell` is `repr(transparent)` — `*mut UnsafeCell<T>` and
@@ -390,7 +393,10 @@ pub struct OutputPieces {
 impl OutputPieces {
     #[inline]
     pub fn new(pieces: Vec<OutputPiece>, buffer: Box<[u8]>) -> Self {
-        OutputPieces { pieces, _buffer: buffer }
+        OutputPieces {
+            pieces,
+            _buffer: buffer,
+        }
     }
 
     #[inline]
@@ -649,7 +655,8 @@ impl IntermediateOutput {
         // surfaces are tracked upstream.
         // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
-        let unique_key_for_additional_files = graph.input_files.items_unique_key_for_additional_file();
+        let unique_key_for_additional_files =
+            graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
         let mut file_path_buf = bun_paths::path_buffer_pool::get();
         match self {
@@ -672,8 +679,9 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir =
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&chunk.final_rel_path);
+                let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
+                    bun_paths::platform::Posix,
+                >(&chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -731,17 +739,17 @@ impl IntermediateOutput {
                                         ));
                                     }
 
-                                    let output_file = additional_output_file_index(
-                                        files.slice().last().unwrap(),
-                                    );
+                                    let output_file =
+                                        additional_output_file_index(files.slice().last().unwrap());
 
                                     &graph.additional_output_files.as_slice()[output_file].dest_path
                                 }
                                 QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
-                                    &chunks[entry_point_chunks_for_scb[index] as usize].final_rel_path
+                                    &chunks[entry_point_chunks_for_scb[index] as usize]
+                                        .final_rel_path
                                 }
-                                
+
                                 QueryKind::HtmlImport => {
                                     // TODO(port): std.fmt.count → counting writer; assuming bun_core::fmt::count
                                     count += bun_core::fmt::count(format_args!(
@@ -767,9 +775,7 @@ impl IntermediateOutput {
                                         bun_paths::platform::Posix,
                                         false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        from_chunk_dir,
-                                        file_path,
+                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
                                     )
                                 },
                             );
@@ -783,18 +789,20 @@ impl IntermediateOutput {
                     *amt = count;
                 }
 
-                let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
+                let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID
+                {
                     // TODO(port): std.fmt.count → counting writer
                     bun_core::fmt::count(format_args!(
                         "\n//# debugId={}\n",
-                        source_map::DebugIDFormatter { id: chunk.isolated_hash }
+                        source_map::DebugIDFormatter {
+                            id: chunk.isolated_hash
+                        }
                     ))
                 } else {
                     0
                 };
 
-                let arena =
-                    allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
+                let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
                 let mut total_buf = alloc_buf(arena, count + debug_id_len)?;
                 let mut remain: &mut [u8] = &mut total_buf;
 
@@ -873,9 +881,8 @@ impl IntermediateOutput {
                                     let files = &additional_files[index];
                                     debug_assert!(files.len() > 0);
 
-                                    let output_file = additional_output_file_index(
-                                        files.slice().last().unwrap(),
-                                    );
+                                    let output_file =
+                                        additional_output_file_index(files.slice().last().unwrap());
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         shift
@@ -906,7 +913,7 @@ impl IntermediateOutput {
 
                                     break 'brk &piece_chunk.final_rel_path;
                                 }
-                                
+
                                 QueryKind::HtmlImport => {
                                     // TODO(port): std.io.fixedBufferStream → write into &mut [u8]
                                     let mut cursor: &mut [u8] = remain;
@@ -954,9 +961,7 @@ impl IntermediateOutput {
                                         bun_paths::platform::Posix,
                                         false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        from_chunk_dir,
-                                        file_path,
+                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
                                     )
                                 },
                             );
@@ -995,7 +1000,9 @@ impl IntermediateOutput {
                     write!(
                         &mut cursor,
                         "\n//# debugId={}\n",
-                        source_map::DebugIDFormatter { id: chunk.isolated_hash }
+                        source_map::DebugIDFormatter {
+                            id: chunk.isolated_hash
+                        }
                     )
                     .unwrap_or_else(|_| panic!("unexpected NoSpaceLeft error from bufPrint"));
                     let written = before_len - cursor.len();
@@ -1030,7 +1037,9 @@ impl IntermediateOutput {
                         write!(
                             &mut debug_id_fmt,
                             "\n//# debugId={}\n",
-                            source_map::DebugIDFormatter { id: chunk.isolated_hash }
+                            source_map::DebugIDFormatter {
+                                id: chunk.isolated_hash
+                            }
                         )
                         .ok();
 
@@ -1086,7 +1095,10 @@ impl OutputPiece {
     }
 
     pub fn init(data_slice: &[u8], query: Query) -> OutputPiece {
-        OutputPiece { data: bun_ptr::RawSlice::new(data_slice), query }
+        OutputPiece {
+            data: bun_ptr::RawSlice::new(data_slice),
+            query,
+        }
     }
 }
 
@@ -1211,7 +1223,12 @@ pub type EntryPointId = u32;
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
 
-    pub fn new(source_index: u32, entry_point_id: u32, is_entry_point: bool, is_html: bool) -> Self {
+    pub fn new(
+        source_index: u32,
+        entry_point_id: u32,
+        is_entry_point: bool,
+        is_html: bool,
+    ) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
             (source_index as u64)
@@ -1250,7 +1267,8 @@ impl EntryPoint {
     #[inline]
     pub fn set_entry_point_id(&mut self, v: EntryPointId) {
         debug_assert!((v as u64) <= Self::ENTRY_POINT_ID_MASK);
-        self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32)) | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
+        self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32))
+            | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
     }
 
     #[inline]
@@ -1549,7 +1567,7 @@ impl Content {
 
 // Re-exports (Zig: pub const X = ...)
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ThreadPool;
 pub use crate::ParseTask;
+pub use crate::ThreadPool;
 
 // ported from: src/bundler/Chunk.zig

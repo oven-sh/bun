@@ -1,14 +1,13 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 #![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use core::cell::RefCell;
 
-use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
+use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
+use bun_core::{String as BunString, Tag as BunStringTag, immutable as strings};
 use bun_paths::resolve_path::{self, platform};
-use bun_core::{immutable as strings, String as BunString, Tag as BunStringTag};
 use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
@@ -42,8 +41,8 @@ pub use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
-    use super::strings;
     use super::BunString as String;
+    use super::strings;
 
     /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
     /// Construct via `from_string`/`from_utf8`; free via `deinit`.
@@ -128,14 +127,28 @@ pub mod whatwg {
             Self::from_string(&String::borrow_utf8(input))
         }
         /// Includes the leading '#'.
-        pub fn hash(&self) -> String { URL__hash(self) }
+        pub fn hash(&self) -> String {
+            URL__hash(self)
+        }
         /// Exactly the same as `hash`, excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String { URL__fragmentIdentifier(self) }
-        pub fn protocol(&self) -> String { URL__protocol(self) }
-        pub fn href(&self) -> String { URL__href(self) }
-        pub fn username(&self) -> String { URL__username(self) }
-        pub fn password(&self) -> String { URL__password(self) }
-        pub fn search(&self) -> String { URL__search(self) }
+        pub fn fragment_identifier(&self) -> String {
+            URL__fragmentIdentifier(self)
+        }
+        pub fn protocol(&self) -> String {
+            URL__protocol(self)
+        }
+        pub fn href(&self) -> String {
+            URL__href(self)
+        }
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        pub fn search(&self) -> String {
+            URL__search(self)
+        }
         /// Returns the host WITHOUT the port.
         ///
         /// Note that this does NOT match JS behavior, which returns the host with the port. See
@@ -144,7 +157,9 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
-        pub fn host(&self) -> String { URL__host(self) }
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
         /// Returns the host WITH the port.
         ///
         /// Note that this does NOT match JS behavior which returns the host without the port. See
@@ -153,17 +168,27 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
-        pub fn hostname(&self) -> String { URL__hostname(self) }
+        pub fn hostname(&self) -> String {
+            URL__hostname(self)
+        }
         /// Returns `u32::MAX` if the port is not set. Otherwise, the result is
         /// guaranteed to be within the `u16` range.
-        pub fn port(&self) -> u32 { URL__port(self) }
-        pub fn pathname(&self) -> String { URL__pathname(self) }
-        pub fn deinit(&mut self) { URL__deinit(self) }
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
+        pub fn pathname(&self) -> String {
+            URL__pathname(self)
+        }
+        pub fn deinit(&mut self) {
+            URL__deinit(self)
+        }
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url};
+pub use whatwg::{
+    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+};
 
 // PORT NOTE: URL is a pure view struct — every field is a slice into `href` (or a
 // literal default). Zig expresses this with `[]const u8` fields borrowing the
@@ -309,7 +334,11 @@ impl<'a> URL<'a> {
                 let start = self.host.as_ptr() as usize;
                 let len: usize = end
                     - start
-                    - (if self.path.ends_with(b"/") { 1usize } else { 0usize });
+                    - (if self.path.ends_with(b"/") {
+                        1usize
+                    } else {
+                        0usize
+                    });
                 let ptr = start as *const u8;
                 // SAFETY: start..end is a subrange of self.href (both slices verified above)
                 return unsafe { core::slice::from_raw_parts(ptr, len) };
@@ -373,12 +402,25 @@ impl<'a> URL<'a> {
         b"http"
     }
 
-    #[inline] pub fn is_https(&self) -> bool { self.protocol == b"https" }
-    #[inline] pub fn is_s3(&self) -> bool { self.protocol == b"s3" }
-    #[inline] pub fn is_http(&self) -> bool { self.protocol == b"http" }
+    #[inline]
+    pub fn is_https(&self) -> bool {
+        self.protocol == b"https"
+    }
+    #[inline]
+    pub fn is_s3(&self) -> bool {
+        self.protocol == b"s3"
+    }
+    #[inline]
+    pub fn is_http(&self) -> bool {
+        self.protocol == b"http"
+    }
 
     pub fn display_hostname(&self) -> &[u8] {
-        if !self.hostname.is_empty() { self.hostname } else { b"localhost" }
+        if !self.hostname.is_empty() {
+            self.hostname
+        } else {
+            b"localhost"
+        }
     }
 
     pub fn s3_path(&self) -> &'a [u8] {
@@ -393,8 +435,16 @@ impl<'a> URL<'a> {
 
     pub fn display_host(&self) -> bun_fmt::HostFormatter<'_> {
         bun_fmt::HostFormatter {
-            host: if !self.host.is_empty() { self.host } else { self.display_hostname() },
-            port: if !self.port.is_empty() { self.get_port() } else { None },
+            host: if !self.host.is_empty() {
+                self.host
+            } else {
+                self.display_hostname()
+            },
+            port: if !self.port.is_empty() {
+                self.get_port()
+            } else {
+                None
+            },
             is_https: self.is_https(),
         }
     }
@@ -411,7 +461,8 @@ impl<'a> URL<'a> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
 
-        let mut buf: Vec<u8> = Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
+        let mut buf: Vec<u8> =
+            Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
         buf.extend_from_slice(proto);
         buf.extend_from_slice(b"://");
         // bun_core::io::Write on Vec<u8> is infallible.
@@ -542,7 +593,8 @@ impl<'a> URL<'a> {
             Ok(v.into_boxed_slice())
         } else {
             let mut out = [0u8; 2048];
-            let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
+            let normalized_path =
+                Self::join_normalize(&mut out, prefix, dirname, basename, extname);
             let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
             v.extend_from_slice(self.origin);
             v.extend_from_slice(b"/");
@@ -578,8 +630,10 @@ impl<'a> URL<'a> {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
                         // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at = strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon = strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
+                        let first_at =
+                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
+                        let first_colon =
+                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
 
                         if first_at > first_colon
                             && first_at
@@ -607,7 +661,10 @@ impl<'a> URL<'a> {
         let path_offset = offset;
 
         let mut can_update_path = true;
-        if base.len() > offset as usize + 1 && base[offset as usize] == b'/' && !base[offset as usize..].is_empty() {
+        if base.len() > offset as usize + 1
+            && base[offset as usize] == b'/'
+            && !base[offset as usize..].is_empty()
+        {
             url.path = &base[offset as usize..];
             url.pathname = url.path;
         }
@@ -635,7 +692,8 @@ impl<'a> URL<'a> {
         if base.len() > path_offset as usize && base[path_offset as usize] == b'/' && offset > 0 {
             if !url.search.is_empty() {
                 url.pathname = &base[path_offset as usize
-                    ..((offset as usize + url.search.len()).min(base.len())).min(hash_offset as usize)];
+                    ..((offset as usize + url.search.len()).min(base.len()))
+                        .min(hash_offset as usize)];
             } else if hash_offset < u32::MAX {
                 url.pathname = &base[path_offset as usize..hash_offset as usize];
             }
@@ -763,7 +821,11 @@ impl<'a> URL<'a> {
             let mut colon_i: Option<u32> = None;
 
             while (i as usize) < str.len() {
-                ipv6_i = if ipv6_i.is_none() && str[i as usize] == b']' { Some(i) } else { ipv6_i };
+                ipv6_i = if ipv6_i.is_none() && str[i as usize] == b']' {
+                    Some(i)
+                } else {
+                    ipv6_i
+                };
                 colon_i = if ipv6_i.is_some() && colon_i.is_none() && str[i as usize] == b':' {
                     Some(i)
                 } else {
@@ -797,7 +859,11 @@ impl<'a> URL<'a> {
 
             let mut colon_i: Option<u32> = None;
             while (i as usize) < str.len() {
-                colon_i = if colon_i.is_none() && str[i as usize] == b':' { Some(i) } else { colon_i };
+                colon_i = if colon_i.is_none() && str[i as usize] == b':' {
+                    Some(i)
+                } else {
+                    colon_i
+                };
 
                 match str[i as usize] {
                     // alright, we found the slash or "?"
@@ -866,7 +932,12 @@ impl Clone for QueryStringMap {
         } else {
             self.slice
         };
-        Self { slice, buffer, list: self.list.clone(), name_count: self.name_count }
+        Self {
+            slice,
+            buffer,
+            list: self.list.clone(),
+            name_count: self.name_count,
+        }
     }
 }
 
@@ -1003,7 +1074,11 @@ impl QueryStringMap {
             buf_writer_pos += value.length;
 
             // PERF(port): was appendAssumeCapacity
-            list.push(Param { name, value, name_hash });
+            list.push(Param {
+                name,
+                value,
+                name_hash,
+            });
         }
 
         let route_parameter_begin = list.len();
@@ -1057,7 +1132,11 @@ impl QueryStringMap {
             buf_writer_pos += value.length;
 
             // PERF(port): was appendAssumeCapacity
-            list.push(Param { name, value, name_hash });
+            list.push(Param {
+                name,
+                value,
+                name_hash,
+            });
         }
 
         // buf.expandToCapacity() — Vec doesn't expose this; not needed since we slice by buf_writer_pos
@@ -1104,7 +1183,11 @@ impl QueryStringMap {
                 let value = result.value;
                 let name_hash: u64 = wyhash(result.raw_name(query_string));
                 // PERF(port): was appendAssumeCapacity
-                list.push(Param { name, value, name_hash });
+                list.push(Param {
+                    name,
+                    value,
+                    name_hash,
+                });
             }
 
             return Ok(Some(QueryStringMap {
@@ -1164,7 +1247,11 @@ impl QueryStringMap {
             buf_writer_pos += value.length;
 
             // PERF(port): was appendAssumeCapacity
-            list.push(Param { name, value, name_hash });
+            list.push(Param {
+                name,
+                value,
+                name_hash,
+            });
         }
 
         let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
@@ -1197,7 +1284,11 @@ pub struct IteratorResult<'a, 't> {
 
 impl<'a> Iterator<'a> {
     pub fn init(map: &'a QueryStringMap) -> Iterator<'a> {
-        Iterator { i: 0, map, visited: VisitedMap::init_empty() }
+        Iterator {
+            i: 0,
+            map,
+            visited: VisitedMap::init_empty(),
+        }
     }
 
     // TODO(port): lifetime on `target`/return — values borrow target, name borrows map.slice
@@ -1227,7 +1318,10 @@ impl<'a> Iterator<'a> {
         let mut target_i: usize = 1;
         let mut current_i: usize = 0;
 
-        while let Some(next_index) = remainder[current_i..].iter().position(|p| p.name_hash == hash) {
+        while let Some(next_index) = remainder[current_i..]
+            .iter()
+            .position(|p| p.name_hash == hash)
+        {
             let real_i = current_i + next_index + self.i;
             if cfg!(debug_assertions) {
                 debug_assert!(!self.visited.is_set(real_i));
@@ -1239,14 +1333,23 @@ impl<'a> Iterator<'a> {
 
             current_i += next_index + 1;
             if target_i >= target.len() {
-                return Some(IteratorResult { name, values: &mut target[0..target_i] });
+                return Some(IteratorResult {
+                    name,
+                    values: &mut target[0..target_i],
+                });
             }
             if real_i + 1 >= self.map.list.len() {
-                return Some(IteratorResult { name, values: &mut target[0..target_i] });
+                return Some(IteratorResult {
+                    name,
+                    values: &mut target[0..target_i],
+                });
             }
         }
 
-        Some(IteratorResult { name, values: &mut target[0..target_i] })
+        Some(IteratorResult {
+            name,
+            values: &mut target[0..target_i],
+        })
     }
 }
 
@@ -1262,7 +1365,9 @@ pub enum DecodeError {
     Write(bun_core::Error),
 }
 impl From<bun_core::Error> for DecodeError {
-    fn from(e: bun_core::Error) -> Self { DecodeError::Write(e) }
+    fn from(e: bun_core::Error) -> Self {
+        DecodeError::Write(e)
+    }
 }
 impl From<DecodeError> for bun_core::Error {
     fn from(e: DecodeError) -> Self {
@@ -1474,8 +1579,17 @@ impl<'a> PathnameScanner<'a> {
         self.i = 0;
     }
 
-    pub fn init(pathname: &'a [u8], routename: &'a [u8], params: &'a ParamsList<'a>) -> PathnameScanner<'a> {
-        PathnameScanner { pathname, routename, params, i: 0 }
+    pub fn init(
+        pathname: &'a [u8],
+        routename: &'a [u8],
+        params: &'a ParamsList<'a>,
+    ) -> PathnameScanner<'a> {
+        PathnameScanner {
+            pathname,
+            routename,
+            params,
+            i: 0,
+        }
     }
 
     pub fn next(&mut self) -> Option<ScannerResult> {
@@ -1506,10 +1620,18 @@ pub struct Scanner<'a> {
 impl<'a> Scanner<'a> {
     pub fn init(query_string: &'a [u8]) -> Scanner<'a> {
         if !query_string.is_empty() && query_string[0] == b'?' {
-            return Scanner { query_string, i: 1, start: 1 };
+            return Scanner {
+                query_string,
+                i: 1,
+                start: 1,
+            };
         }
 
-        Scanner { query_string, i: 0, start: 0 }
+        Scanner {
+            query_string,
+            i: 0,
+            start: 0,
+        }
     }
 
     #[inline]
@@ -1533,8 +1655,14 @@ impl<'a> Scanner<'a> {
 
             let slice = &self.query_string[self.i..];
             relative_i = 0;
-            let mut name = api::StringPointer { offset: u32::try_from(self.i).unwrap(), length: 0 };
-            let mut value = api::StringPointer { offset: 0, length: 0 };
+            let mut name = api::StringPointer {
+                offset: u32::try_from(self.i).unwrap(),
+                length: 0,
+            };
+            let mut value = api::StringPointer {
+                offset: 0,
+                length: 0,
+            };
             let mut name_needs_decoding = false;
 
             while relative_i < slice.len() {
@@ -1549,8 +1677,8 @@ impl<'a> Scanner<'a> {
                         let offset = relative_i;
                         let mut value_needs_decoding = false;
                         while relative_i < slice.len() && slice[relative_i] != b'&' {
-                            value_needs_decoding = value_needs_decoding
-                                || matches!(slice[relative_i], b'%' | b'+');
+                            value_needs_decoding =
+                                value_needs_decoding || matches!(slice[relative_i], b'%' | b'+');
                             relative_i += 1;
                         }
                         value.length = u32::try_from(relative_i - offset).unwrap();
@@ -1606,7 +1734,12 @@ impl<'a> Scanner<'a> {
 
             name.length = u32::try_from(relative_i).unwrap();
             self.i += relative_i;
-            return Some(ScannerResult { name, value, name_needs_decoding, value_needs_decoding: false });
+            return Some(ScannerResult {
+                name,
+                value,
+                name_needs_decoding,
+                value_needs_decoding: false,
+            });
         }
     }
 }

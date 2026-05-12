@@ -18,7 +18,9 @@ impl Strong {
     /// Hold a strong reference to a JavaScript value. Released on `Drop`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Strong {
         debug_assert!(!value.is_empty());
-        Strong { handle: Impl::init(global, value) }
+        Strong {
+            handle: Impl::init(global, value),
+        }
     }
 
     pub fn get(&self) -> JSValue {
@@ -95,7 +97,9 @@ impl Optional {
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Optional {
         if !value.is_empty() {
-            Optional { handle: Some(Impl::init(global, value)) }
+            Optional {
+                handle: Some(Impl::init(global, value)),
+            }
         } else {
             Optional::empty()
         }
@@ -108,7 +112,9 @@ impl Optional {
     }
 
     pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else { return JSValue::ZERO };
+        let Some(function) = self.try_swap() else {
+            return JSValue::ZERO;
+        };
         // PORT NOTE: Zig source (Strong.zig:71) calls `function.call(global, args)`
         // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
         function
@@ -126,7 +132,9 @@ impl Optional {
     }
 
     pub fn swap(&mut self) -> JSValue {
-        let Some(imp) = self.handle else { return JSValue::ZERO };
+        let Some(imp) = self.handle else {
+            return JSValue::ZERO;
+        };
         let result = Impl::get(imp);
         if result.is_empty() {
             return JSValue::ZERO;
@@ -195,8 +203,7 @@ bun_opaque::opaque_ffi! {
 impl Impl {
     pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
-        NonNull::new(Bun__StrongRef__new(global, value))
-            .expect("Bun__StrongRef__new returned null")
+        NonNull::new(Bun__StrongRef__new(global, value)).expect("Bun__StrongRef__new returned null")
     }
 
     pub fn get(this: NonNull<Impl>) -> JSValue {

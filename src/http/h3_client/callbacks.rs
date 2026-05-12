@@ -14,7 +14,7 @@ use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{session_mut, stream_mut, stream_ref, ClientSession};
+use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
@@ -86,8 +86,15 @@ pub fn register(qctx: &mut quic::Context) {
 
 extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     let qs = qsocket_arg(qs);
-    let Some(session) = session_of(qs) else { return };
-    bun_core::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
+    let Some(session) = session_of(qs) else {
+        return;
+    };
+    bun_core::scoped_log!(
+        h3_client,
+        "hsk_done ok={} pending={}",
+        ok,
+        session.pending.len()
+    );
     if ok == 0 {
         session.closed = true;
         return;
@@ -105,7 +112,9 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 /// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
 extern "C" fn on_goaway(qs: *mut quic::Socket) {
     let qs = qsocket_arg(qs);
-    let Some(session) = session_of(qs) else { return };
+    let Some(session) = session_of(qs) else {
+        return;
+    };
     bun_core::scoped_log!(
         h3_client,
         "goaway {}:{}",
@@ -117,7 +126,9 @@ extern "C" fn on_goaway(qs: *mut quic::Socket) {
 
 extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     let qs = qsocket_arg(qs);
-    let Some(session) = session_of(qs) else { return };
+    let Some(session) = session_of(qs) else {
+        return;
+    };
     session.closed = true;
     session.qsocket = None;
     let mut buf = [0u8; 256];
@@ -211,7 +222,9 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             continue;
         }
         // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
-        stream.decoded_headers.push(picohttp::Header::new(name, value));
+        stream
+            .decoded_headers
+            .push(picohttp::Header::new(name, value));
         i += 1;
     }
     if status == 0 {

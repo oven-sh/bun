@@ -2,7 +2,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
-use bun_event_loop::{task_tag, TaskTag, Taskable};
+use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 // TODO(port): move to jsc_sys

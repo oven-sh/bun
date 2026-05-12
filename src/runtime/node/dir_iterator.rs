@@ -172,10 +172,12 @@ mod platform {
 
                     self.index = 0;
                     self.end_index = usize::try_from(rc).expect("int cast");
-                    let eof_flag =
-                        u32::from_ne_bytes(self.buf.0[len - 4..len].try_into().expect("infallible: size matches"));
-                    self.received_eof =
-                        self.end_index <= (self.buf.0.len() - 4) && eof_flag == 1;
+                    let eof_flag = u32::from_ne_bytes(
+                        self.buf.0[len - 4..len]
+                            .try_into()
+                            .expect("infallible: size matches"),
+                    );
+                    self.received_eof = self.end_index <= (self.buf.0.len() - 4) && eof_flag == 1;
                 }
                 // Records are variable-length; the kernel rounds `d_reclen` to
                 // 4 bytes, not 8, so subsequent entries are NOT aligned to
@@ -187,9 +189,7 @@ mod platform {
                 // `*align(1) posix.system.dirent`).
                 // SAFETY: self.index < self.end_index <= buf.len(); kernel
                 // wrote a valid (possibly 4-aligned) dirent record here.
-                let entry = unsafe {
-                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>()
-                };
+                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
                 // SAFETY: `entry` points at a valid (possibly unaligned)
                 // dirent; addr_of! avoids creating intermediate references.
                 let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
@@ -244,11 +244,7 @@ mod platform {
     unsafe extern "C" {
         // SAFETY precondition: `buf` must be writable for `nbytes` bytes and
         // dirent-aligned — raw-pointer contract, cannot be `safe fn`.
-        fn getdents(
-            fd: core::ffi::c_int,
-            buf: *mut core::ffi::c_char,
-            nbytes: usize,
-        ) -> isize;
+        fn getdents(fd: core::ffi::c_int, buf: *mut core::ffi::c_char, nbytes: usize) -> isize;
     }
 
     /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
@@ -295,9 +291,7 @@ mod platform {
                 // 8-byte aligned (Zig: `*align(1) posix.system.dirent`). Never
                 // form a `&dirent` — read each field through the raw pointer.
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid record.
-                let entry = unsafe {
-                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>()
-                };
+                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
                 // SAFETY: entry points at a valid (possibly unaligned) dirent.
                 let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
                 let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
@@ -350,7 +344,8 @@ mod platform {
     /// 8-aligned as long as the base is.
     #[repr(C, align(8))]
     pub struct DirentBuf(pub [u8; 8192]);
-    const _: () = assert!(core::mem::align_of::<DirentBuf>() >= core::mem::align_of::<libc::dirent64>());
+    const _: () =
+        assert!(core::mem::align_of::<DirentBuf>() >= core::mem::align_of::<libc::dirent64>());
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
@@ -397,9 +392,7 @@ mod platform {
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid
                 // record header at this offset. `DirentBuf` is align(8) and
                 // d_reclen is always a multiple of 8, so `entry` is 8-aligned.
-                let entry = unsafe {
-                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent64>()
-                };
+                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent64>() };
                 debug_assert!(entry.is_aligned());
                 // SAFETY: entry points at a valid record header within buf.
                 let d_reclen: u16 = unsafe { core::ptr::addr_of!((*entry).d_reclen).read() };
@@ -452,8 +445,8 @@ mod platform {
     use bun_sys::windows as w;
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DIRECTORY_INFORMATION,
-        IO_STATUS_BLOCK, UNICODE_STRING, BOOLEAN, FALSE, TRUE, Win32ErrorExt as _,
+        BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -521,16 +514,24 @@ mod platform {
             name_data[..len].copy_from_slice(dir_info_name);
             name_data[len] = 0;
             IteratorResultW {
-                name: IteratorResultWName { data: RawSlice::new(&name_data[..len]) },
+                name: IteratorResultWName {
+                    data: RawSlice::new(&name_data[..len]),
+                },
                 kind,
             }
         }
     }
     // Map the const bool to the marker type.
     pub type Select<const B: bool> = <() as SelectImpl<B>>::T;
-    pub trait SelectImpl<const B: bool> { type T: WindowsOsPath; }
-    impl SelectImpl<false> for () { type T = OsPathFalse; }
-    impl SelectImpl<true> for () { type T = OsPathTrue; }
+    pub trait SelectImpl<const B: bool> {
+        type T: WindowsOsPath;
+    }
+    impl SelectImpl<false> for () {
+        type T = OsPathFalse;
+    }
+    impl SelectImpl<true> for () {
+        type T = OsPathTrue;
+    }
 
     #[repr(C, align(8))]
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool>
@@ -610,7 +611,11 @@ mod platform {
                             w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
                             FALSE as BOOLEAN,
                             filter_ptr,
-                            if self.first { TRUE as BOOLEAN } else { FALSE as BOOLEAN },
+                            if self.first {
+                                TRUE as BOOLEAN
+                            } else {
+                                FALSE as BOOLEAN
+                            },
                         )
                     };
 
@@ -621,10 +626,7 @@ mod platform {
 
                     // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                     if rc == w::NTSTATUS::INVALID_PARAMETER {
-                        sys::syslog!(
-                            "NtQueryDirectoryFile({}) = INVALID_PARAMETER",
-                            self.dir
-                        );
+                        sys::syslog!("NtQueryDirectoryFile({}) = INVALID_PARAMETER", self.dir);
                         return Err(sys::Error::from_code(
                             SystemErrno::ENOTDIR.to_e(),
                             Tag::NtQueryDirectoryFile,
@@ -643,7 +645,10 @@ mod platform {
                         let errno = w::Win32Error::from_nt_status(rc)
                             .to_system_errno()
                             .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(errno.to_e(), Tag::NtQueryDirectoryFile));
+                        return Err(sys::Error::from_code(
+                            errno.to_e(),
+                            Tag::NtQueryDirectoryFile,
+                        ));
                     }
 
                     if io.Information == 0 {
@@ -663,26 +668,23 @@ mod platform {
                 // faulty VM/Sandboxing tools) — read fields via unaligned loads.
                 // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
                 // FileName lies within `buf` per the kernel contract.
-                let next_entry_offset = unsafe {
-                    core::ptr::read_unaligned(
-                        p.add(entry_offset
-                            + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset))
-                            as *const u32,
-                    )
-                };
+                let next_entry_offset =
+                    unsafe {
+                        core::ptr::read_unaligned(p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
+                        ) as *const u32)
+                    };
                 // SAFETY: see above.
                 let file_name_length = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset
-                            + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
+                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
                             as *const u32,
                     )
                 } as usize;
                 // SAFETY: see above.
                 let file_attributes = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset
-                            + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
+                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
                             as *const u32,
                     )
                 };
@@ -699,14 +701,14 @@ mod platform {
                 // limit). Clamp to what fits in name_data (destination) and to
                 // what remains in buf (source) so a misbehaving driver cannot
                 // walk us past the end of either buffer.
-                let max_name_u16 =
-                    <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
+                let max_name_u16 = <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
                 let name_byte_offset =
                     entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
                 let buf_remaining_u16 =
                     self.buf.len().saturating_sub(name_byte_offset) / size_of::<u16>();
-                let name_len_u16 =
-                    (file_name_length / 2).min(max_name_u16).min(buf_remaining_u16);
+                let name_len_u16 = (file_name_length / 2)
+                    .min(max_name_u16)
+                    .min(buf_remaining_u16);
                 // name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above.
                 // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
                 // it is itself 8-byte aligned, and per MS docs each record (and
@@ -716,9 +718,7 @@ mod platform {
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
 
-                if dir_info_name == [b'.' as u16]
-                    || dir_info_name == [b'.' as u16, b'.' as u16]
-                {
+                if dir_info_name == [b'.' as u16] || dir_info_name == [b'.' as u16, b'.' as u16] {
                     continue;
                 }
 

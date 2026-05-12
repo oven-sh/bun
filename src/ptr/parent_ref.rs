@@ -60,7 +60,9 @@ impl LiveMarker {
     pub fn new() -> Self {
         #[cfg(debug_assertions)]
         {
-            Self { generation: AtomicU64::new(next_gen()) }
+            Self {
+                generation: AtomicU64::new(next_gen()),
+            }
         }
         #[cfg(not(debug_assertions))]
         {
@@ -198,7 +200,9 @@ impl<T: ?Sized> ParentRef<T> {
         }
         #[cfg(not(debug_assertions))]
         {
-            Self { ptr: NonNull::from(parent) }
+            Self {
+                ptr: NonNull::from(parent),
+            }
         }
     }
 
@@ -272,7 +276,8 @@ impl<T: ?Sized> ParentRef<T> {
             // (it will read garbage that almost certainly ≠ `generation`, or fault).
             let live = unsafe { m.as_ref() }.load(Ordering::Relaxed);
             debug_assert_eq!(
-                live, self.generation,
+                live,
+                self.generation,
                 "ParentRef<{}>: use-after-parent-drop (live={live:#x}, snap={:#x})",
                 core::any::type_name::<T>(),
                 self.generation,
@@ -373,7 +378,11 @@ impl<T: ?Sized> core::fmt::Debug for ParentRef<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         #[cfg(debug_assertions)]
         {
-            write!(f, "ParentRef({:p}, generation={:#x})", self.ptr, self.generation)
+            write!(
+                f,
+                "ParentRef({:p}, generation={:#x})",
+                self.ptr, self.generation
+            )
         }
         #[cfg(not(debug_assertions))]
         {

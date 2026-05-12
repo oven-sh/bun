@@ -19,9 +19,17 @@ use crate::JSValue;
 // `enable_safety = bun.Environment.ci_assert`
 // TODO(port): map `Environment.ci_assert` to the correct cfg; using debug_assertions as proxy.
 #[cfg(debug_assertions)]
-macro_rules! enable_safety { () => { true }; }
+macro_rules! enable_safety {
+    () => {
+        true
+    };
+}
 #[cfg(not(debug_assertions))]
-macro_rules! enable_safety { () => { false }; }
+macro_rules! enable_safety {
+    () => {
+        false
+    };
+}
 
 #[cfg(debug_assertions)]
 type Safety = Option<SafetyData>;
@@ -56,7 +64,10 @@ pub struct DeprecatedStrong {
 impl DeprecatedStrong {
     pub fn init_non_cell(non_cell: JSValue) -> DeprecatedStrong {
         debug_assert!(!non_cell.is_cell());
-        DeprecatedStrong { raw: non_cell, safety: SAFETY_NONE }
+        DeprecatedStrong {
+            raw: non_cell,
+            safety: SAFETY_NONE,
+        }
     }
 
     pub fn init(value: JSValue) -> DeprecatedStrong {
@@ -152,15 +163,23 @@ pub struct Optional {
 impl Optional {
     // PORT NOTE: Zig `pub const empty = .initNonCell(null)` — inlined as a struct
     // literal so it can be `const` (init_non_cell debug_asserts, which is non-const).
-    pub const EMPTY: Optional =
-        Optional { backing: DeprecatedStrong { raw: JSValue::ZERO, safety: SAFETY_NONE } };
+    pub const EMPTY: Optional = Optional {
+        backing: DeprecatedStrong {
+            raw: JSValue::ZERO,
+            safety: SAFETY_NONE,
+        },
+    };
 
     pub fn init_non_cell(non_cell: Option<JSValue>) -> Optional {
-        Optional { backing: DeprecatedStrong::init_non_cell(non_cell.unwrap_or(JSValue::ZERO)) }
+        Optional {
+            backing: DeprecatedStrong::init_non_cell(non_cell.unwrap_or(JSValue::ZERO)),
+        }
     }
 
     pub fn init(value: Option<JSValue>) -> Optional {
-        Optional { backing: DeprecatedStrong::init(value.unwrap_or(JSValue::ZERO)) }
+        Optional {
+            backing: DeprecatedStrong::init(value.unwrap_or(JSValue::ZERO)),
+        }
     }
 
     // PORT NOTE: Zig `deinit` dropped — `backing: DeprecatedStrong` is dropped
@@ -183,7 +202,9 @@ impl Optional {
     }
 
     pub fn dupe(&self) -> Optional {
-        Optional { backing: self.backing.dupe() }
+        Optional {
+            backing: self.backing.dupe(),
+        }
     }
 
     pub fn has(&self) -> bool {

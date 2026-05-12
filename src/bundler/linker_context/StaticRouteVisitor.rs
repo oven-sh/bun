@@ -26,7 +26,11 @@ impl<'a> StaticRouteVisitor<'a> {
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
     pub fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
-        if cfg!(debug_assertions) && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR.get().unwrap_or(false) {
+        if cfg!(debug_assertions)
+            && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
+                .get()
+                .unwrap_or(false)
+        {
             return false;
         }
 
@@ -35,8 +39,7 @@ impl<'a> StaticRouteVisitor<'a> {
         // the `&mut self` call below. `parse_graph()` is the safe backref
         // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
         let parse_graph = self.c.parse_graph();
-        let all_import_records: &[import_record::List] =
-            parse_graph.ast.items_import_records();
+        let all_import_records: &[import_record::List] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries
             .list

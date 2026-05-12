@@ -5,7 +5,6 @@
 
 #![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
 #![warn(unused_must_use)]
-
 // ═══════════════════════════════════════════════════════════════════════
 // B-1 GATE-AND-STUB
 // All Phase-A draft bodies are preserved below behind ``.
@@ -24,46 +23,70 @@
 // + constants only); their heavy submodules (Stream/ClientSession/…) remain
 // gated inside H2Client.rs/H3Client.rs until the cluster above lands.
 #![warn(unreachable_pub)]
-#[path = "AsyncHTTP.rs"]                            pub mod async_http;
-#[path = "CertificateInfo.rs"]                      pub mod certificate_info;
-#[path = "Decompressor.rs"]                         pub mod decompressor;
-#[path = "H2Client.rs"]                             pub mod h2_client;
-#[path = "H2FrameParser.rs"]                        pub mod h2_frame_parser;
-#[path = "H3Client.rs"]                             pub mod h3_client;
-#[path = "HTTPCertError.rs"]                        pub mod http_cert_error;
-#[path = "HTTPContext.rs"]                          pub mod http_context;
-#[path = "HTTPRequestBody.rs"]                      pub mod http_request_body;
-#[path = "HTTPThread.rs"]                           pub mod http_thread;
-#[path = "HeaderBuilder.rs"]                        pub mod header_builder;
-#[path = "HeaderValueIterator.rs"]                  pub mod header_value_iterator;
-#[path = "Headers.rs"]                              pub mod headers;
-#[path = "InitError.rs"]                            pub mod init_error;
-#[path = "InternalState.rs"]                        pub mod internal_state;
-#[path = "ProxyTunnel.rs"]                          pub mod proxy_tunnel;
-#[path = "SendFile.rs"]                             pub mod send_file;
-#[path = "Signals.rs"]                              pub mod signals;
-#[path = "ThreadSafeStreamBuffer.rs"]               pub mod thread_safe_stream_buffer;
-#[path = "lshpack.rs"]                              pub mod lshpack;
-#[path = "websocket.rs"]                            pub mod websocket;
-#[path = "websocket_http_client.rs"]                pub mod websocket_http_client;
-#[path = "zlib.rs"]                                 pub mod zlib;
+#[path = "AsyncHTTP.rs"]
+pub mod async_http;
+#[path = "CertificateInfo.rs"]
+pub mod certificate_info;
+#[path = "Decompressor.rs"]
+pub mod decompressor;
+#[path = "H2Client.rs"]
+pub mod h2_client;
+#[path = "H2FrameParser.rs"]
+pub mod h2_frame_parser;
+#[path = "H3Client.rs"]
+pub mod h3_client;
+#[path = "HeaderBuilder.rs"]
+pub mod header_builder;
+#[path = "HeaderValueIterator.rs"]
+pub mod header_value_iterator;
+#[path = "Headers.rs"]
+pub mod headers;
+#[path = "HTTPCertError.rs"]
+pub mod http_cert_error;
+#[path = "HTTPContext.rs"]
+pub mod http_context;
+#[path = "HTTPRequestBody.rs"]
+pub mod http_request_body;
+#[path = "HTTPThread.rs"]
+pub mod http_thread;
+#[path = "InitError.rs"]
+pub mod init_error;
+#[path = "InternalState.rs"]
+pub mod internal_state;
+#[path = "lshpack.rs"]
+pub mod lshpack;
+#[path = "ProxyTunnel.rs"]
+pub mod proxy_tunnel;
+#[path = "SendFile.rs"]
+pub mod send_file;
+#[path = "Signals.rs"]
+pub mod signals;
+#[path = "ThreadSafeStreamBuffer.rs"]
+pub mod thread_safe_stream_buffer;
+#[path = "websocket.rs"]
+pub mod websocket;
+#[path = "websocket_http_client.rs"]
+pub mod websocket_http_client;
+#[path = "zlib.rs"]
+pub mod zlib;
 
 // ── crate-root re-exports (real types from un-gated modules) ──
-pub use signals::Signals;
-pub use internal_state::InternalState;
-pub use http_request_body::HTTPRequestBody;
-pub use certificate_info::CertificateInfo;
-pub use http_cert_error::HTTPCertError;
-pub use headers::{Headers, HeadersExt};
-pub use header_builder::HeaderBuilder;
-pub use decompressor::Decompressor;
-pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
-pub use send_file::SendFile;
-pub use proxy_tunnel::ProxyTunnel;
-pub use http_context::{HTTPContext, HTTPSocket};
-pub use http_thread::HttpThread as HTTPThread;
 pub use async_http::AsyncHTTP;
-#[path = "ssl_config.rs"] pub mod ssl_config;
+pub use certificate_info::CertificateInfo;
+pub use decompressor::Decompressor;
+pub use header_builder::HeaderBuilder;
+pub use headers::{Headers, HeadersExt};
+pub use http_cert_error::HTTPCertError;
+pub use http_context::{HTTPContext, HTTPSocket};
+pub use http_request_body::HTTPRequestBody;
+pub use http_thread::HttpThread as HTTPThread;
+pub use internal_state::InternalState;
+pub use proxy_tunnel::ProxyTunnel;
+pub use send_file::SendFile;
+pub use signals::Signals;
+pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
+#[path = "ssl_config.rs"]
+pub mod ssl_config;
 pub use ssl_config::SSLConfig;
 // PORT NOTE: SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
@@ -75,8 +98,8 @@ pub use bun_uws::ssl_wrapper::SSLWrapper;
 // name `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
-pub use h3_client as h3;
 pub use h2_client as H2;
+pub use h3_client as h3;
 pub use h3_client as H3;
 pub use http_context as new_http_context;
 pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
@@ -88,21 +111,31 @@ pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use HTTPClientResult as http_client_result;
-pub use bun_http_types::Method::Method;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
+pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum HTTPVerboseLevel { #[default] None, Headers, Curl }
+pub enum HTTPVerboseLevel {
+    #[default]
+    None,
+    Headers,
+    Curl,
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum Protocol { #[default] Http1_1, Http2, Http3 }
+pub enum Protocol {
+    #[default]
+    Http1_1,
+    Http2,
+    Http3,
+}
 
-pub use init_error::InitError;
-pub use header_value_iterator::HeaderValueIterator;
 pub use bun_http_types::Encoding::Encoding;
+pub use header_value_iterator::HeaderValueIterator;
+pub use init_error::InitError;
 
 /// Zig: `pub const extremely_verbose = false;` — compile-time switch.
 pub const extremely_verbose: bool = false;
@@ -155,9 +188,9 @@ pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPa
 // the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
 // ═══════════════════════════════════════════════════════════════════════
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -461,7 +494,9 @@ impl<'a> HTTPClientResult<'a> {
     pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
         HTTPClientResult {
             // SAFETY: caller contract — the buffer outlives the stored result.
-            body: self.body.map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
+            body: self
+                .body
+                .map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
             has_more: self.has_more,
             redirected: self.redirected,
             can_stream: self.can_stream,
@@ -542,9 +577,9 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use core::ptr::NonNull;
-use bun_url::URL;
 use bun_core::ZigStringSlice;
+use bun_url::URL;
+use core::ptr::NonNull;
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -650,7 +685,9 @@ impl<'a> HTTPClient<'a> {
     /// `h2_client::ClientSession::{stream_client_mut, pending_client_mut}`,
     /// `h2_client::PendingConnect::waiter_mut`, and `h3_client::client_mut`.
     #[inline(always)]
-    pub(crate) fn from_erased_backref<'b>(p: NonNull<HTTPClient<'static>>) -> &'b mut HTTPClient<'static> {
+    pub(crate) fn from_erased_backref<'b>(
+        p: NonNull<HTTPClient<'static>>,
+    ) -> &'b mut HTTPClient<'static> {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *p.as_ptr() }
     }
@@ -714,13 +751,15 @@ pub fn http_thread() -> &'static mut HTTPThread {
     unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
 }
 #[inline]
-pub fn http_thread_mut() -> &'static mut HTTPThread { http_thread() }
+pub fn http_thread_mut() -> &'static mut HTTPThread {
+    http_thread()
+}
 
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
-pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER:
-    bun_core::RacyCell<Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>> =
-    bun_core::RacyCell::new(None);
+pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
+    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
+> = bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Prelude: imports, constants, helper fns, and bridge impls the
@@ -734,16 +773,16 @@ use core::mem::offset_of;
 use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::ArrayHashMap;
-use bun_core::{FeatureFlags, Global, Output, err};
-use bun_core::{immutable as strings, OwnedString, String as BunString, Tag as BunStringTag};
 use bun_core::StringBuilder;
+use bun_core::{FeatureFlags, Global, Output, err};
+use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
 use bun_uws as uws;
 // TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
 // PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
 // once `bun_wyhash::Wyhash` (std algorithm) lands so proxy_auth_hash() and
 // header-name hashing match any component still computing the Zig hash.
-use bun_wyhash::Wyhash11 as Wyhash;
 use bun_http_types::ETag::StringPointer;
+use bun_wyhash::Wyhash11 as Wyhash;
 
 use crate::headers::api;
 use crate::http_context::HTTPSocket as HttpSocket;
@@ -761,8 +800,7 @@ const HOST_HEADER_NAME: &[u8] = b"Host";
 const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
-const CONNECTION_HEADER: picohttp::Header =
-    picohttp::Header::new(b"Connection", b"keep-alive");
+const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
@@ -772,7 +810,8 @@ const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
+const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
+{
     ACCEPT_ENCODING_HEADER_NO_COMPRESSION
 } else {
     ACCEPT_ENCODING_HEADER_COMPRESSION
@@ -782,7 +821,11 @@ fn get_user_agent_header() -> picohttp::Header {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
     picohttp::Header::new(
         b"User-Agent",
-        if !ua.is_empty() { ua } else { Global::user_agent.as_bytes() },
+        if !ua.is_empty() {
+            ua
+        } else {
+            Global::user_agent.as_bytes()
+        },
     )
 }
 
@@ -793,7 +836,9 @@ fn get_user_agent_header() -> picohttp::Header {
 // `LazyLock`. The per-header `match` arms inside `build_request` /
 // `handle_response_metadata` already call `hash_header_const` at runtime.
 #[inline(always)]
-fn hash_header_const(name: &[u8]) -> u64 { hash_header_name(name) }
+fn hash_header_const(name: &[u8]) -> u64 {
+    hash_header_name(name)
+}
 
 static AUTHORIZATION_HEADER_HASH: std::sync::LazyLock<u64> =
     std::sync::LazyLock::new(|| hash_header_name(b"Authorization"));
@@ -861,7 +906,11 @@ pub use scratch::temp_hostname;
 // expose one, so define it locally and TODO(b2) wire through to
 // `configure_http_client_with_alpn` once that lands.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum AlpnOffer { H1, H2Only, H1OrH2 }
+pub enum AlpnOffer {
+    H1,
+    H2Only,
+    H1OrH2,
+}
 
 /// Port of `BoringSSL.SSL.configureHTTPClientWithALPN` (boringssl.zig:19066).
 /// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
@@ -884,7 +933,9 @@ pub fn configure_http_client_with_alpn(
 
         const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
         const ALPN_H2: &[u8] = &[2, b'h', b'2'];
-        const ALPN_H2_H1: &[u8] = &[2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
+        const ALPN_H2_H1: &[u8] = &[
+            2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',
+        ];
         let alpns: &'static [u8] = match offer {
             AlpnOffer::H1 => ALPN_H1,
             AlpnOffer::H1OrH2 => ALPN_H2_H1,
@@ -908,9 +959,15 @@ fn socket_is_closed_or_has_error<const SSL: bool>(socket: &HttpSocket<SSL>) -> b
 }
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
-    fn timeout(&self, seconds: c_uint) { uws::NewSocketHandler::<SSL>::timeout(self, seconds) }
-    fn set_timeout_minutes(&self, minutes: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes) }
-    fn set_timeout(&self, seconds: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout(self, seconds) }
+    fn timeout(&self, seconds: c_uint) {
+        uws::NewSocketHandler::<SSL>::timeout(self, seconds)
+    }
+    fn set_timeout_minutes(&self, minutes: c_uint) {
+        uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes)
+    }
+    fn set_timeout(&self, seconds: c_uint) {
+        uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
+    }
 }
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
@@ -1016,10 +1073,7 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
-fn write_proxy_connect(
-    writer: &mut Vec<u8>,
-    client: &HTTPClient,
-) -> Result<(), bun_core::Error> {
+fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
     } else if client.url.is_https() {
@@ -1130,7 +1184,9 @@ pub fn print_request(
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
     Output::pretty_errorln(&format_args!(
         "> {} {} {}",
-        ver, BStr::new(request.method), BStr::new(url),
+        ver,
+        BStr::new(request.method),
+        BStr::new(url),
     ));
     for header in request.headers {
         Output::pretty_errorln(&format_args!("> {}", header));
@@ -1427,12 +1483,14 @@ impl<'a> HTTPClient<'a> {
                     if self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
-                        let cert_size = unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
-                        let mut cert =
-                            vec![0u8; usize::try_from(cert_size).expect("int cast")].into_boxed_slice();
+                        let cert_size =
+                            unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
+                        let mut cert = vec![0u8; usize::try_from(cert_size).expect("int cast")]
+                            .into_boxed_slice();
                         let mut cert_ptr = cert.as_mut_ptr();
                         // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size = unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
+                        let result_size =
+                            unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
                         debug_assert!(result_size == cert_size);
 
                         self.state.certificate_info = Some(CertificateInfo {
@@ -1517,8 +1575,10 @@ impl<'a> HTTPClient<'a> {
 
         if IS_SSL {
             // SAFETY: socket.get_native_handle() returns a valid *mut SSL on TLS sockets
-            let ssl_ptr: *mut boringssl::c::SSL =
-                socket.get_native_handle().map(|p| p.cast()).unwrap_or(core::ptr::null_mut());
+            let ssl_ptr: *mut boringssl::c::SSL = socket
+                .get_native_handle()
+                .map(|p| p.cast())
+                .unwrap_or(core::ptr::null_mut());
             // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
             if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
@@ -1571,12 +1631,17 @@ impl<'a> HTTPClient<'a> {
         if self.unix_socket_path.slice().len() > 0 {
             return false;
         }
-        if matches!(self.state.original_request_body, HTTPRequestBody::Sendfile(_)) {
+        if matches!(
+            self.state.original_request_body,
+            HTTPRequestBody::Sendfile(_)
+        ) {
             return false;
         }
         self.flags.force_http2
             || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
-            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get().unwrap_or(false)
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
+                .get()
+                .unwrap_or(false)
     }
 
     pub fn alpn_offer(&self) -> AlpnOffer {
@@ -1607,7 +1672,10 @@ impl<'a> HTTPClient<'a> {
         if self.unix_socket_path.slice().len() > 0 {
             return false;
         }
-        if matches!(self.state.original_request_body, HTTPRequestBody::Sendfile(_)) {
+        if matches!(
+            self.state.original_request_body,
+            HTTPRequestBody::Sendfile(_)
+        ) {
             return false;
         }
         h3_alt_svc_enabled()
@@ -1622,8 +1690,10 @@ impl<'a> HTTPClient<'a> {
         }
 
         if IS_SSL {
-            let ssl_ptr: *mut boringssl::c::SSL =
-                socket.get_native_handle().map(|p| p.cast()).unwrap_or(core::ptr::null_mut());
+            let ssl_ptr: *mut boringssl::c::SSL = socket
+                .get_native_handle()
+                .map(|p| p.cast())
+                .unwrap_or(core::ptr::null_mut());
             let mut proto: *const u8 = core::ptr::null();
             let mut proto_len: c_uint = 0;
             // SAFETY: ssl_ptr is a live *mut SSL for this socket; out-params are
@@ -2041,8 +2111,7 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
                         let value = self.header_str(header_values[i]);
-                        if !value.eq_ignore_ascii_case(b"h2")
-                            && !value.eq_ignore_ascii_case(b"h2c")
+                        if !value.eq_ignore_ascii_case(b"h2") && !value.eq_ignore_ascii_case(b"h2c")
                         {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
@@ -2062,7 +2131,8 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            request_headers_buf[header_count] = picohttp::Header::new(name, self.header_str(header_values[i]));
+            request_headers_buf[header_count] =
+                picohttp::Header::new(name, self.header_str(header_values[i]));
 
             header_count += 1;
         }
@@ -2083,7 +2153,8 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_host_header {
-            request_headers_buf[header_count] = picohttp::Header::new(HOST_HEADER_NAME, self.url.host);
+            request_headers_buf[header_count] =
+                picohttp::Header::new(HOST_HEADER_NAME, self.url.host);
             header_count += 1;
         }
 
@@ -2099,13 +2170,15 @@ impl<'a> HTTPClient<'a> {
                         // User explicitly set Content-Length and did not set Transfer-Encoding;
                         // preserve Content-Length instead of using chunked encoding.
                         // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] = picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
+                        request_headers_buf[header_count] =
+                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
                         header_count += 1;
                     }
                     // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
                     // which was already added to request_headers_buf. We respect that and
                     // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding && self.flags.upgrade_state == HTTPUpgradeState::None
+                } else if add_transfer_encoding
+                    && self.flags.upgrade_state == HTTPUpgradeState::None
                 {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
@@ -2127,7 +2200,8 @@ impl<'a> HTTPClient<'a> {
                 header_count += 1;
             }
         } else if let Some(content_length) = original_content_length {
-            request_headers_buf[header_count] = picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
+            request_headers_buf[header_count] =
+                picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
             header_count += 1;
         }
 
@@ -2248,7 +2322,10 @@ impl<'a> HTTPClient<'a> {
         self.close_proxy_tunnel(false);
         self.flags.protocol = Protocol::Http1_1;
 
-        self.start(HTTPRequestBody::Bytes(request_body), body_out::as_mut(body_out_str));
+        self.start(
+            HTTPRequestBody::Bytes(request_body),
+            body_out::as_mut(body_out_str),
+        );
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2317,7 +2394,11 @@ impl<'a> HTTPClient<'a> {
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
-                        if !h3::ClientContext::as_mut(ctx).connect(self, self.url.hostname, alt_port) {
+                        if !h3::ClientContext::as_mut(ctx).connect(
+                            self,
+                            self.url.hostname,
+                            alt_port,
+                        ) {
                             self.fail(err!(ConnectionRefused));
                         }
                         self.complete_connecting_process();
@@ -2344,7 +2425,11 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             };
-            if !h3::ClientContext::as_mut(ctx).connect(self, self.url.hostname, self.url.get_port_auto()) {
+            if !h3::ClientContext::as_mut(ctx).connect(
+                self,
+                self.url.hostname,
+                self.url.get_port_auto(),
+            ) {
                 self.fail(err!(ConnectionRefused));
             }
             self.complete_connecting_process();
@@ -2493,8 +2578,7 @@ impl<'a> HTTPClient<'a> {
         Ok(InitialRequestPayloadResult {
             has_sent_headers,
             has_sent_body,
-            try_sending_more_data: amount == to_send.len()
-                && (!has_sent_body || !has_sent_headers),
+            try_sending_more_data: amount == to_send.len() && (!has_sent_body || !has_sent_headers),
         })
     }
 
@@ -2652,15 +2736,14 @@ impl<'a> HTTPClient<'a> {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
                 self.set_timeout(socket);
-                let result = match self
-                    .send_initial_request_payload::<IS_FIRST_CALL, IS_SSL>(socket)
-                {
-                    Ok(r) => r,
-                    Err(err) => {
-                        self.close_and_fail::<IS_SSL>(err, socket);
-                        return;
-                    }
-                };
+                let result =
+                    match self.send_initial_request_payload::<IS_FIRST_CALL, IS_SSL>(socket) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            self.close_and_fail::<IS_SSL>(err, socket);
+                            return;
+                        }
+                    };
                 let has_sent_headers = result.has_sent_headers;
                 let has_sent_body = result.has_sent_body;
                 let try_sending_more_data = result.try_sending_more_data;
@@ -2740,7 +2823,9 @@ impl<'a> HTTPClient<'a> {
                     }
                     HTTPRequestBody::Sendfile(sendfile) => {
                         if IS_SSL {
-                            panic!("sendfile is only supported without SSL. This code should never have been reached!");
+                            panic!(
+                                "sendfile is only supported without SSL. This code should never have been reached!"
+                            );
                         }
 
                         // PORT NOTE: sendfile.write() takes the raw fd, not the socket handle.
@@ -2756,7 +2841,8 @@ impl<'a> HTTPClient<'a> {
                             crate::send_file::Status::Again => {
                                 // PORT NOTE: mark_needs_more_for_sendfile is `const SSL=false`-only;
                                 // this arm is unreachable for SSL (panic above).
-                                uws::SocketTCP::from_any(socket.socket).mark_needs_more_for_sendfile();
+                                uws::SocketTCP::from_any(socket.socket)
+                                    .mark_needs_more_for_sendfile();
                             }
                         }
                     }
@@ -2775,7 +2861,9 @@ impl<'a> HTTPClient<'a> {
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            let Ok(sent) = ProxyTunnel::write(proxy, to_send) else { return };
+                            let Ok(sent) = ProxyTunnel::write(proxy, to_send) else {
+                                return;
+                            };
 
                             self.state.request_sent_len += sent;
                             self.state.request_body =
@@ -2790,7 +2878,9 @@ impl<'a> HTTPClient<'a> {
                             self.flush_stream::<IS_SSL>(socket);
                         }
                         HTTPRequestBody::Sendfile(_) => {
-                            panic!("sendfile is only supported without SSL. This code should never have been reached!");
+                            panic!(
+                                "sendfile is only supported without SSL. This code should never have been reached!"
+                            );
                         }
                     }
                 }
@@ -2817,12 +2907,10 @@ impl<'a> HTTPClient<'a> {
                     if !self.request_body().is_empty()
                         && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
                     {
-                        let spare =
-                            temporary_send_buffer.capacity() - temporary_send_buffer.len();
+                        let spare = temporary_send_buffer.capacity() - temporary_send_buffer.len();
                         let wrote = spare.min(self.request_body().len());
                         debug_assert!(wrote > 0);
-                        temporary_send_buffer
-                            .extend_from_slice(&self.request_body()[0..wrote]);
+                        temporary_send_buffer.extend_from_slice(&self.request_body()[0..wrote]);
                         // PERF(port): was raw ptr write into spare capacity + len bump
                     }
 
@@ -2832,7 +2920,9 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(!socket.is_closed());
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let Ok(amount) = ProxyTunnel::write(proxy, to_send) else { return };
+                    let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {
+                        return;
+                    };
 
                     if IS_FIRST_CALL {
                         if amount == 0 {
@@ -2930,17 +3020,28 @@ impl<'a> HTTPClient<'a> {
         ctx: *mut GenHttpContext<IS_SSL>,
         socket: HttpSocket<IS_SSL>,
     ) {
-        bun_core::scoped_log!(fetch, "handleOnDataHeader data: {}", BStr::new(incoming_data));
+        bun_core::scoped_log!(
+            fetch,
+            "handleOnDataHeader data: {}",
+            BStr::new(incoming_data)
+        );
         // PORT NOTE: reshaped for borrowck — `to_read` aliases either
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
         // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
         // so subsequent `&mut self` calls don't trip the checker.
         let mut to_read = bun_ptr::RawSlice::new(incoming_data);
-        macro_rules! to_read { () => { to_read.slice() } }
+        macro_rules! to_read {
+            () => {
+                to_read.slice()
+            };
+        }
         let mut needs_move = true;
         if !self.state.response_message_buffer.list.is_empty() {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            let _ = self.state.response_message_buffer.append_slice_exact(incoming_data);
+            let _ = self
+                .state
+                .response_message_buffer
+                .append_slice_exact(incoming_data);
             to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
             needs_move = false;
         }
@@ -2960,8 +3061,11 @@ impl<'a> HTTPClient<'a> {
             }
 
             let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(to_read!(), shared_resp, Some(&mut amount_read))
-            {
+            let response = match picohttp::Response::parse_parts(
+                to_read!(),
+                shared_resp,
+                Some(&mut amount_read),
+            ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
@@ -2994,7 +3098,8 @@ impl<'a> HTTPClient<'a> {
                 }
                 // special case for websocket upgrade
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-                self.signals.store(signals::Field::Upgraded, true, Ordering::Relaxed);
+                self.signals
+                    .store(signals::Field::Upgraded, true, Ordering::Relaxed);
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
                 break;
@@ -3192,13 +3297,16 @@ impl<'a> HTTPClient<'a> {
     /// The leader of a coalesced cold connect has learned the ALPN outcome (or
     /// failed). Dispatch every waiter accordingly.
     fn resolve_pending_h2(&mut self, mut resolution: PendingH2Resolution<'_>) {
-        let Some(pc_ptr) = self.pending_h2.take() else { return };
+        let Some(pc_ptr) = self.pending_h2.take() else {
+            return;
+        };
         // `pc_ptr` is a backref into the context's `pending_h2_connects` Vec,
         // set in `HTTPContext::connect`; unregister_from swaps the owning Box
         // out so we can iterate and drop it here.
-        let Some(pc) =
-            h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()))
-        else {
+        let Some(pc) = h2::PendingConnect::unregister_from(
+            pc_ptr.as_ptr(),
+            Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()),
+        ) else {
             return;
         };
         // pc drops at scope exit (was `defer pc.deinit()`)
@@ -3369,7 +3477,16 @@ impl<'a> HTTPClient<'a> {
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
+        let (
+            has_more,
+            redirected,
+            can_stream,
+            is_http2,
+            fail,
+            metadata,
+            body_size,
+            certificate_info,
+        ) = {
             let r = self.to_result();
             (
                 r.has_more,
@@ -3403,7 +3520,10 @@ impl<'a> HTTPClient<'a> {
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
                 self.state.request_stage == RequestStage::Done
                     && t.write_buffer.is_empty()
-                    && t.wrapper.as_ref().map(|w| !w.is_shutdown()).unwrap_or(false)
+                    && t.wrapper
+                        .as_ref()
+                        .map(|w| !w.is_shutdown())
+                        .unwrap_or(false)
             } else {
                 true
             };
@@ -3449,15 +3569,22 @@ impl<'a> HTTPClient<'a> {
                 // they're distinct values when a Host header override is set.
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
-                    self.flags.did_have_handshaking_error
-                        && !self.flags.reject_unauthorized,
+                    self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
                     self.connected_url.hostname,
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
                     tunnel,
                     if had_tunnel { self.url.hostname } else { b"" },
-                    if had_tunnel { self.url.get_port_auto() } else { 0 },
-                    if had_tunnel { self.proxy_auth_hash() } else { 0 },
+                    if had_tunnel {
+                        self.url.get_port_auto()
+                    } else {
+                        0
+                    },
+                    if had_tunnel {
+                        self.proxy_auth_hash()
+                    } else {
+                        0
+                    },
                     None,
                 );
             } else {
@@ -3522,7 +3649,16 @@ impl<'a> HTTPClient<'a> {
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
+        let (
+            has_more,
+            redirected,
+            can_stream,
+            is_http2,
+            fail,
+            metadata,
+            body_size,
+            certificate_info,
+        ) = {
             let r = self.to_result();
             (
                 r.has_more,
@@ -3606,7 +3742,10 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(HTTPRequestBody::Bytes(request_body), body_out::as_mut(body_out_str));
+        self.start(
+            HTTPRequestBody::Bytes(request_body),
+            body_out::as_mut(body_out_str),
+        );
     }
 
     pub fn progress_update_h3(&mut self) {
@@ -3669,7 +3808,12 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.result_callback.run(
             self.parent_async_http(),
-            HTTPClientResult { fail: None, metadata: None, has_more: false, ..Default::default() },
+            HTTPClientResult {
+                fail: None,
+                metadata: None,
+                has_more: false,
+                ..Default::default()
+            },
         );
     }
 
@@ -3774,7 +3918,9 @@ impl<'a> HTTPClient<'a> {
                 self.state
                     .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
             } else {
-                self.state.get_body_buffer().append_slice_exact(incoming_data)?;
+                self.state
+                    .get_body_buffer()
+                    .append_slice_exact(incoming_data)?;
             }
 
             if self.state.response_message_buffer.owns(incoming_data) {
@@ -3834,14 +3980,19 @@ impl<'a> HTTPClient<'a> {
         // done or streaming
         let is_done =
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
-        if is_done || self.signals.get(signals::Field::ResponseBodyStreaming) || content_length.is_none() {
+        if is_done
+            || self.signals.get(signals::Field::ResponseBodyStreaming)
+            || content_length.is_none()
+        {
             let is_final_chunk = is_done;
             // PORT NOTE: Zig passes `buffer.*` BY VALUE (http.zig:2614). Mirror that by
             // moving the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
             // so any `&` into `self.state` held across the call would be aliased UB.
             let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-            let processed = self.state.process_body_buffer(buffer_snap, is_final_chunk)?;
+            let processed = self
+                .state
+                .process_body_buffer(buffer_snap, is_final_chunk)?;
 
             // We can only use the libdeflate fast path when we are not streaming
             // If we ever call processBodyBuffer again, it cannot go through the fast path.
@@ -3981,9 +4132,7 @@ impl<'a> HTTPClient<'a> {
         let pret = unsafe {
             picohttp::phr_decode_chunked(
                 &raw mut self.state.chunked_decoder,
-                buffer
-                    .as_mut_ptr()
-                    .add(buffer.len().saturating_sub(in_len)),
+                buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
                 &raw mut bytes_decoded,
             )
         };
@@ -4022,7 +4171,10 @@ impl<'a> HTTPClient<'a> {
                 self.state.flags.received_last_chunk = true;
                 self.handle_response_body_from_single_packet(buffer)?;
                 debug_assert!(
-                    self.body_out_str().map(|b| b.list.as_ptr()).unwrap_or(core::ptr::null()) != buffer.as_ptr()
+                    self.body_out_str()
+                        .map(|b| b.list.as_ptr())
+                        .unwrap_or(core::ptr::null())
+                        != buffer.as_ptr()
                 );
                 self.report_progress(buffer.len());
 
@@ -4212,7 +4364,10 @@ impl<'a> HTTPClient<'a> {
                         // source to replay from, so only 303 (which drops the body
                         // and switches to GET) may be followed.
                         if status_code != 303
-                            && matches!(self.state.original_request_body, HTTPRequestBody::Stream(_))
+                            && matches!(
+                                self.state.original_request_body,
+                                HTTPRequestBody::Stream(_)
+                            )
                         {
                             return Err(err!(RequestBodyNotReusable));
                         }
@@ -4268,8 +4423,10 @@ impl<'a> HTTPClient<'a> {
                                     debug_assert!(string_builder.cap == string_builder.len);
                                 }
 
-                                let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                                let input =
+                                    BunString::borrow_utf8(string_builder.allocated_slice());
+                                let normalized_url =
+                                    OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                                     return Err(err!(RedirectURLInvalid));
@@ -4280,7 +4437,11 @@ impl<'a> HTTPClient<'a> {
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
                                     unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
+                                is_same_origin = strings::eql_case_insensitive_ascii(
+                                    strings::without_trailing_slash(new_url.origin),
+                                    strings::without_trailing_slash(self.url.origin),
+                                    true,
+                                );
                                 self.url = new_url;
                                 // connected_url still borrows from the previous hop's buffer
                                 // until doRedirect releases the socket, so park it in
@@ -4323,8 +4484,10 @@ impl<'a> HTTPClient<'a> {
                                     debug_assert!(string_builder.cap == string_builder.len);
                                 }
 
-                                let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                                let input =
+                                    BunString::borrow_utf8(string_builder.allocated_slice());
+                                let normalized_url =
+                                    OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     return Err(err!(RedirectURLInvalid));
                                 }
@@ -4334,7 +4497,11 @@ impl<'a> HTTPClient<'a> {
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
                                     unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
+                                is_same_origin = strings::eql_case_insensitive_ascii(
+                                    strings::without_trailing_slash(new_url.origin),
+                                    strings::without_trailing_slash(self.url.origin),
+                                    true,
+                                );
                                 self.url = new_url;
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =
@@ -4354,7 +4521,11 @@ impl<'a> HTTPClient<'a> {
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
                                 self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(self.url.origin), strings::without_trailing_slash(original_url.origin), true);
+                                is_same_origin = strings::eql_case_insensitive_ascii(
+                                    strings::without_trailing_slash(self.url.origin),
+                                    strings::without_trailing_slash(original_url.origin),
+                                    true,
+                                );
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =
                                     core::mem::replace(&mut self.redirect, new_url);
@@ -4365,7 +4536,8 @@ impl<'a> HTTPClient<'a> {
                         // - internalResponse's status is 301 or 302 and request's method is `POST`
                         // - internalResponse's status is 303 and request's method is not `GET` or `HEAD`
                         // then:
-                        if ((status_code == 301 || status_code == 302) && self.method == Method::POST)
+                        if ((status_code == 301 || status_code == 302)
+                            && self.method == Method::POST)
                             || (status_code == 303
                                 && self.method != Method::GET
                                 && self.method != Method::HEAD)
@@ -4405,8 +4577,7 @@ impl<'a> HTTPClient<'a> {
                                             let hash = hash_header_name(name);
                                             for hash_value in REQUEST_BODY_HEADER {
                                                 if hash == hash_header_const(hash_value) {
-                                                    let _ =
-                                                        self.header_entries.ordered_remove(i);
+                                                    let _ = self.header_entries.ordered_remove(i);
                                                     len = self.header_entries.len();
                                                     continue 'outer;
                                                 }
@@ -4432,23 +4603,29 @@ impl<'a> HTTPClient<'a> {
                             // PORT NOTE: was a `const` table in Zig; LazyLock hashes
                             // aren't const, so build at runtime.
                             let headers_to_remove: [H; 3] = [
-                                H { name: b"Authorization", hash: *AUTHORIZATION_HEADER_HASH },
+                                H {
+                                    name: b"Authorization",
+                                    hash: *AUTHORIZATION_HEADER_HASH,
+                                },
                                 H {
                                     name: b"Proxy-Authorization",
                                     hash: *PROXY_AUTHORIZATION_HEADER_HASH,
                                 },
-                                H { name: b"Cookie", hash: *COOKIE_HEADER_HASH },
+                                H {
+                                    name: b"Cookie",
+                                    hash: *COOKIE_HEADER_HASH,
+                                },
                             ];
                             for to_remove in headers_to_remove.iter() {
-                                let found = self
-                                    .header_entries
-                                    .items_name()
-                                    .iter()
-                                    .position(|name_ptr| {
-                                        let name = self.header_str(*name_ptr);
-                                        name.len() == to_remove.name.len()
-                                            && hash_header_name(name) == to_remove.hash
-                                    });
+                                let found =
+                                    self.header_entries
+                                        .items_name()
+                                        .iter()
+                                        .position(|name_ptr| {
+                                            let name = self.header_str(*name_ptr);
+                                            name.len() == to_remove.name.len()
+                                                && hash_header_name(name) == to_remove.hash
+                                        });
                                 if let Some(i) = found {
                                     self.header_entries.ordered_remove(i);
                                 }

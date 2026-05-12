@@ -12,11 +12,11 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
-use core::ffi::{c_uint, c_void, CStr};
+use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{host_fn, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
@@ -120,8 +120,14 @@ impl UpgradedDuplex {
 
         this.ssl_error = CertError {
             error_no: ssl_error.error_no,
-            code: ssl_error.code().filter(|_| ssl_error.error_no != 0).map(Into::into),
-            reason: ssl_error.reason().filter(|_| ssl_error.error_no != 0).map(Into::into),
+            code: ssl_error
+                .code()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
+            reason: ssl_error
+                .reason()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
         };
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
     }
@@ -147,7 +153,9 @@ impl UpgradedDuplex {
         if vm.is_shutting_down() {
             return;
         }
-        let Some(duplex) = self.origin.get() else { return };
+        let Some(duplex) = self.origin.get() else {
+            return;
+        };
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
@@ -213,9 +221,9 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
-            || self
-                .vm
-                .map_or(true, |vm| vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running);
+            || self.vm.map_or(true, |vm| {
+                vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+            });
 
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
         self.event_loop_timer.heap = Default::default();
@@ -249,10 +257,46 @@ impl UpgradedDuplex {
         array.ensure_still_alive();
 
         let this_ptr = std::ptr::from_mut(self).cast::<c_void>();
-        array.put_index(global, 0, lazy_js_handler(&mut self.on_data_callback, global, __jsc_host_on_received_data, this_ptr))?;
-        array.put_index(global, 1, lazy_js_handler(&mut self.on_end_callback, global, __jsc_host_on_end, this_ptr))?;
-        array.put_index(global, 2, lazy_js_handler(&mut self.on_writable_callback, global, __jsc_host_on_writable, this_ptr))?;
-        array.put_index(global, 3, lazy_js_handler(&mut self.on_close_callback, global, __jsc_host_on_close_js, this_ptr))?;
+        array.put_index(
+            global,
+            0,
+            lazy_js_handler(
+                &mut self.on_data_callback,
+                global,
+                __jsc_host_on_received_data,
+                this_ptr,
+            ),
+        )?;
+        array.put_index(
+            global,
+            1,
+            lazy_js_handler(
+                &mut self.on_end_callback,
+                global,
+                __jsc_host_on_end,
+                this_ptr,
+            ),
+        )?;
+        array.put_index(
+            global,
+            2,
+            lazy_js_handler(
+                &mut self.on_writable_callback,
+                global,
+                __jsc_host_on_writable,
+                this_ptr,
+            ),
+        )?;
+        array.put_index(
+            global,
+            3,
+            lazy_js_handler(
+                &mut self.on_close_callback,
+                global,
+                __jsc_host_on_close_js,
+                this_ptr,
+            ),
+        )?;
 
         Ok(array)
     }
@@ -295,7 +339,8 @@ impl UpgradedDuplex {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
             unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
         });
-        let ctx_nn = NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
+        let ctx_nn =
+            NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
         self.wrapper = Some(WrapperType::init_with_ctx(
             ctx_nn,
             is_client,
@@ -417,7 +462,10 @@ impl UpgradedDuplex {
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         timer_all().insert(&raw mut self.event_loop_timer);
     }
 
@@ -571,7 +619,11 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
     // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe { (*this.cast::<UpgradedDuplex>()).ssl().unwrap_or(core::ptr::null_mut()) }
+    unsafe {
+        (*this.cast::<UpgradedDuplex>())
+            .ssl()
+            .unwrap_or(core::ptr::null_mut())
+    }
 }
 
 // ported from: src/runtime/socket/UpgradedDuplex.zig

@@ -48,11 +48,7 @@ impl AnyTaskJobCtx for SecretsCtx {
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        Bun__SecretsJobOptions__runFromJS(
-            SecretsJobOptions::opaque_mut(self.ctx),
-            global,
-            promise,
-        );
+        Bun__SecretsJobOptions__runFromJS(SecretsJobOptions::opaque_mut(self.ctx), global, promise);
         scope.assert_no_exception_except_termination()
     }
 }
@@ -76,7 +72,10 @@ pub extern "C" fn Bun__Secrets__scheduleJob(
 ) {
     SecretsJob::create_and_schedule(
         global,
-        SecretsCtx { ctx: options, promise: Strong::create(promise, global) },
+        SecretsCtx {
+            ctx: options,
+            promise: Strong::create(promise, global),
+        },
     )
     .expect("SecretsCtx::init is infallible");
 }

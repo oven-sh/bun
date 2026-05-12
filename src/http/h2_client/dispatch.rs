@@ -3,7 +3,7 @@
 //! lifecycle and delivery; everything that interprets bytes off the wire lives
 //! here.
 
-use super::client_session::{stream_mut, ClientSession};
+use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
@@ -30,7 +30,11 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
             break;
         }
         let mut header = wire::FrameHeader::default();
-        wire::FrameHeader::from::<true>(&mut header, &remaining[0..wire::FrameHeader::BYTE_SIZE], 0);
+        wire::FrameHeader::from::<true>(
+            &mut header,
+            &remaining[0..wire::FrameHeader::BYTE_SIZE],
+            0,
+        );
         // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
         let sid = wire::UInt31WithReserved::from({ header.stream_identifier }).uint31();
@@ -133,7 +137,10 @@ pub fn dispatch_frame(
             }
             let mut i: usize = 0;
             while i + wire::SettingsPayloadUnit::BYTE_SIZE <= payload.len() {
-                let mut unit = wire::SettingsPayloadUnit { r#type: 0, value: 0 };
+                let mut unit = wire::SettingsPayloadUnit {
+                    r#type: 0,
+                    value: 0,
+                };
                 wire::SettingsPayloadUnit::from::<true>(
                     &mut unit,
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
@@ -213,8 +220,8 @@ pub fn dispatch_frame(
                 session.fatal_error = Some(err!(HTTP2FrameSizeError));
                 return;
             }
-            let inc =
-                i32::try_from(wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31()).expect("int cast");
+            let inc = i32::try_from(wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31())
+                .expect("int cast");
             if stream_id == 0 {
                 // RFC 9113 §6.9: zero increment on stream 0 is a
                 // connection PROTOCOL_ERROR; §6.9.1: overflow past
@@ -376,9 +383,7 @@ pub fn dispatch_frame(
             }
         }
         FT_CONTINUATION => {
-            if session.expecting_continuation == 0
-                || stream_id != session.expecting_continuation
-            {
+            if session.expecting_continuation == 0 || stream_id != session.expecting_continuation {
                 session.fatal_error = Some(err!(HTTP2ProtocolError));
                 return;
             }
@@ -496,9 +501,7 @@ pub fn dispatch_frame(
                         Some(err!(HTTP2StreamReset))
                     }
                 }
-                x if x == wire::ErrorCode::REFUSED_STREAM as u32 => {
-                    Some(err!(HTTP2RefusedStream))
-                }
+                x if x == wire::ErrorCode::REFUSED_STREAM as u32 => Some(err!(HTTP2RefusedStream)),
                 _ => Some(err!(HTTP2StreamReset)),
             };
         }
@@ -599,11 +602,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
             // §8.3.2: only `:status` is defined for responses, MUST appear
             // before any regular field, and MUST NOT repeat. §8.1: not
             // allowed in trailers.
-            if stream.status_code != 0
-                || seen_regular
-                || seen_status
-                || result.name != b":status"
-            {
+            if stream.status_code != 0 || seen_regular || seen_status || result.name != b":status" {
                 malformed = true;
                 continue;
             }
@@ -704,23 +703,25 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         stream.sent_end_stream();
     }
     let bytes = stream.decoded_bytes.as_ptr();
-    stream
-        .decoded_headers
-        .reserve_exact(bounds.len().saturating_sub(stream.decoded_headers.capacity()));
+    stream.decoded_headers.reserve_exact(
+        bounds
+            .len()
+            .saturating_sub(stream.decoded_headers.capacity()),
+    );
     for b in &bounds {
         // PORT NOTE: self-referential — decoded_headers stores raw-ptr slices
         // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
         // this is sound as long as decoded_bytes is not reallocated before
         // delivery (it isn't — only ever appended to once per END_HEADERS).
         // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
-        let name = unsafe {
-            bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize)
-        };
-        let value = unsafe {
-            bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize)
-        };
+        let name =
+            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
+        let value =
+            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
         // PERF(port): was appendAssumeCapacity — profile in Phase B
-        stream.decoded_headers.push(picohttp::Header::new(name, value));
+        stream
+            .decoded_headers
+            .push(picohttp::Header::new(name, value));
     }
 }
 

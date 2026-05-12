@@ -5,27 +5,24 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
+use crate::lockfile_real::package::Alphabetizer;
+use bun_install::Dependency;
+use bun_install::Lockfile;
 use bun_install::PackageID;
 use bun_install::Resolution;
-use bun_install::Dependency;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
-use bun_install::Lockfile;
 use bun_install::lockfile::package;
-use crate::lockfile_real::package::Alphabetizer;
 // PORT NOTE: `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (Zig's `slice.items(.field)` is
 // comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
-use crate::lockfile_real::Printer;
 use crate::integrity;
+use crate::lockfile_real::Printer;
 
 pub struct Yarn;
 
 // TODO(port): narrow error set (only writer + alloc errors are produced)
-pub fn print(
-    this: &mut Printer,
-    writer: &mut impl bun_io::Write,
-) -> Result<(), bun_core::Error> {
+pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
@@ -46,10 +43,7 @@ pub fn print(
     packages(this, writer)
 }
 
-fn packages(
-    this: &mut Printer,
-    writer: &mut impl bun_io::Write,
-) -> Result<(), bun_core::Error> {
+fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     let slice = this.lockfile.packages.slice();
     let names: &[SemverString] = slice.items_name();
     let resolved: &[Resolution] = slice.items_resolution();
@@ -98,8 +92,7 @@ fn packages(
                 resolutions = &resolutions[k + 1..];
             }
 
-            let dependency_versions =
-                &mut all_requested_versions_buf[requested_version_start..];
+            let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
                 // PERF(port): was std.sort.insertion — profile in Phase B
                 dependency_versions.sort_by(|a, b| {

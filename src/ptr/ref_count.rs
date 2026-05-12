@@ -1287,7 +1287,9 @@ pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
-fn return_address() -> usize { bun_core::return_address() }
+fn return_address() -> usize {
+    bun_core::return_address()
+}
 
 #[cfg(debug_assertions)]
 #[inline(always)]

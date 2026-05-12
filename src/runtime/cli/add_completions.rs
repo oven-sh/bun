@@ -5,11 +5,32 @@
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FirstLetter {
-    A = b'a', B = b'b', C = b'c', D = b'd', E = b'e', F = b'f',
-    G = b'g', H = b'h', I = b'i', J = b'j', K = b'k', L = b'l',
-    M = b'm', N = b'n', O = b'o', P = b'p', Q = b'q', R = b'r',
-    S = b's', T = b't', U = b'u', V = b'v', W = b'w', X = b'x',
-    Y = b'y', Z = b'z',
+    A = b'a',
+    B = b'b',
+    C = b'c',
+    D = b'd',
+    E = b'e',
+    F = b'f',
+    G = b'g',
+    H = b'h',
+    I = b'i',
+    J = b'j',
+    K = b'k',
+    L = b'l',
+    M = b'm',
+    N = b'n',
+    O = b'o',
+    P = b'p',
+    Q = b'q',
+    R = b'r',
+    S = b's',
+    T = b't',
+    U = b'u',
+    V = b'v',
+    W = b'w',
+    X = b'x',
+    Y = b'y',
+    Z = b'z',
 }
 
 /// Largest per-letter package list length (Zig: `pub const biggest_list`).

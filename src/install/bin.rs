@@ -4,11 +4,12 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
-use bun_paths::{self as path, AbsPath, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-use bun_paths::resolve_path;
+use bun_core::{ZStr, w};
 use bun_paths::platform::Auto as PlatformAuto;
+use bun_paths::resolve_path;
+use bun_paths::strings;
+use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer};
 use bun_semver::{ExternalString, String};
-use bun_paths::strings; use bun_core::{ w, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
 use crate::bun_json::{Expr, ExprData};
@@ -40,7 +41,9 @@ impl Default for Bin {
         Bin {
             tag: Tag::None,
             _padding_tag: [0; 3],
-            value: Value { map: ExternalStringList::default() },
+            value: Value {
+                map: ExternalStringList::default(),
+            },
         }
     }
 }
@@ -206,10 +209,16 @@ impl Bin {
             match props.len() {
                 0 => {}
                 1 => {
-                    let Some(bin_name) = props[0].key.as_ref().and_then(Expr::as_utf8_string_literal) else {
+                    let Some(bin_name) =
+                        props[0].key.as_ref().and_then(Expr::as_utf8_string_literal)
+                    else {
                         return Ok(Bin::default());
                     };
-                    let Some(value) = props[0].value.as_ref().and_then(Expr::as_utf8_string_literal) else {
+                    let Some(value) = props[0]
+                        .value
+                        .as_ref()
+                        .and_then(Expr::as_utf8_string_literal)
+                    else {
                         return Ok(Bin::default());
                     };
 
@@ -225,7 +234,9 @@ impl Bin {
                     let current_len = extern_strings.len();
                     let num_props: usize = props.len() * 2;
                     extern_strings
-                        .try_reserve_exact((current_len + num_props).saturating_sub(extern_strings.len()))
+                        .try_reserve_exact(
+                            (current_len + num_props).saturating_sub(extern_strings.len()),
+                        )
                         .map_err(|_| AllocError)?;
                     // PORT NOTE: reshaped for borrowck — Zig bumped `items.len += num_props`
                     // up-front and wrote into the spare-capacity region by raw pointer
@@ -236,10 +247,16 @@ impl Bin {
                     // divergence.
                     let mut i: usize = 0;
                     for bin_prop in props {
-                        let Some(key_str) = bin_prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
+                        let Some(key_str) =
+                            bin_prop.key.as_ref().and_then(Expr::as_utf8_string_literal)
+                        else {
                             return Ok(Bin::default());
                         };
-                        let Some(value_str) = bin_prop.value.as_ref().and_then(Expr::as_utf8_string_literal) else {
+                        let Some(value_str) = bin_prop
+                            .value
+                            .as_ref()
+                            .and_then(Expr::as_utf8_string_literal)
+                        else {
                             return Ok(Bin::default());
                         };
                         extern_strings.push(buf.append_external(key_str)?);
@@ -303,7 +320,11 @@ impl Bin {
                 match self.tag {
                     Tag::None => {}
                     Tag::File => {
-                        write!(writer, "{}", self.value.file.fmt_json(buf, Default::default()))?;
+                        write!(
+                            writer,
+                            "{}",
+                            self.value.file.fmt_json(buf, Default::default())
+                        )?;
                     }
                     Tag::NamedFile => {
                         writer.write_char('{')?;
@@ -316,7 +337,11 @@ impl Bin {
                         writer.write_char('}')?;
                     }
                     Tag::Dir => {
-                        write!(writer, "{}", self.value.dir.fmt_json(buf, Default::default()))?;
+                        write!(
+                            writer,
+                            "{}",
+                            self.value.dir.fmt_json(buf, Default::default())
+                        )?;
                     }
                     Tag::Map => {
                         writer.write_char('{')?;
@@ -348,7 +373,11 @@ impl Bin {
             match self.tag {
                 Tag::None => {}
                 Tag::File => {
-                    write!(writer, "{}", self.value.file.fmt_json(buf, Default::default()))?;
+                    write!(
+                        writer,
+                        "{}",
+                        self.value.file.fmt_json(buf, Default::default())
+                    )?;
                 }
                 Tag::NamedFile => {
                     writer.write_str("{\n")?;
@@ -365,7 +394,11 @@ impl Bin {
                     writer.write_char('}')?;
                 }
                 Tag::Dir => {
-                    write!(writer, "{}", self.value.dir.fmt_json(buf, Default::default()))?;
+                    write!(
+                        writer,
+                        "{}",
+                        self.value.dir.fmt_json(buf, Default::default())
+                    )?;
                 }
                 Tag::Map => {
                     writer.write_char('{')?;
@@ -694,7 +727,10 @@ pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    if let Some(i) = name.iter().rposition(|&b| b == b'/' || b == b'\\' || b == b':') {
+    if let Some(i) = name
+        .iter()
+        .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
+    {
         return &name[i + 1..];
     }
 
@@ -761,17 +797,23 @@ impl<'a> Linker<'a> {
         #[cfg(windows)]
         {
             let mut dest_buf = WPathBuffer::uninit();
-            let abs_dest_w = strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
+            let abs_dest_w = strings::convert_utf8_to_utf16_in_buffer(
+                dest_buf.as_mut_slice(),
+                abs_dest.as_bytes(),
+            );
             let abs_dest_w_len = abs_dest_w.len();
             let bunx_suffix = w!(".bunx\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
+            dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
+                .copy_from_slice(bunx_suffix);
             // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-            let abs_bunx_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+            let abs_bunx_file =
+                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
             let _ = sys::unlink_w(abs_bunx_file);
             let exe_suffix = w!(".exe\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
             // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-            let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
+            let abs_exe_file =
+                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
             let _ = sys::unlink_w(abs_exe_file);
         }
     }
@@ -843,8 +885,7 @@ impl<'a> Linker<'a> {
 
         // any error here is ignored
         let chunk_len = 'brk: {
-            let Ok(bin_for_reading) =
-                sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0)
+            let Ok(bin_for_reading) = sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0)
             else {
                 return;
             };
@@ -927,8 +968,11 @@ impl<'a> Linker<'a> {
 
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
-        let tmppath =
-            resolve_path::join_abs_string_buf_z::<PlatformAuto>(dir_path, &mut tmppath_buf, &[tmpname.as_bytes()]);
+        let tmppath = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
+            dir_path,
+            &mut tmppath_buf,
+            &[tmpname.as_bytes()],
+        );
         let mut needs_unlink = true;
         let unlink_guard = scopeguard::guard(&mut needs_unlink, |needs_unlink| {
             if *needs_unlink {
@@ -1022,7 +1066,8 @@ impl<'a> Linker<'a> {
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
 
         // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-        let abs_bunx_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+        let abs_bunx_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
         let bunx_file = 'bunx_file: {
             match sys::File::openat_os_path(
@@ -1046,7 +1091,8 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ =
+                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::File::openat_os_path(
@@ -1154,7 +1200,8 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        let rel_target = resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+        let rel_target =
+            resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
@@ -1180,7 +1227,8 @@ impl<'a> Linker<'a> {
                     // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ =
+                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
@@ -1382,7 +1430,12 @@ impl<'a> Linker<'a> {
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = Self::resolve_bin_target(is_redirect, package_dir, target, unscoped_package_name);
+                        let r = Self::resolve_bin_target(
+                            is_redirect,
+                            package_dir,
+                            target,
+                            unscoped_package_name,
+                        );
                         // SAFETY: `resolve_bin_target` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER` (via `join_abs_string_z`); the
                         // returned slice does not actually borrow `self` or
@@ -1413,7 +1466,12 @@ impl<'a> Linker<'a> {
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = Self::resolve_bin_target(is_redirect, package_dir, target, normalized_name);
+                        let r = Self::resolve_bin_target(
+                            is_redirect,
+                            package_dir,
+                            target,
+                            normalized_name,
+                        );
                         // SAFETY: thread-local buffer; see Tag::File above.
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
@@ -1447,7 +1505,12 @@ impl<'a> Linker<'a> {
 
                         let abs_target: &ZStr = {
                             let package_dir = &self.abs_target_buf[0..package_dir_len];
-                            let r = Self::resolve_bin_target(is_redirect, package_dir, bin_target, normalized_bin_dest);
+                            let r = Self::resolve_bin_target(
+                                is_redirect,
+                                package_dir,
+                                bin_target,
+                                normalized_bin_dest,
+                            );
                             // SAFETY: thread-local buffer; see Tag::File above.
                             ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                         };
@@ -1476,7 +1539,8 @@ impl<'a> Linker<'a> {
                     // for normalizing `target`
                     let abs_target_dir: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
+                        let r =
+                            resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
                         // SAFETY: `join_abs_string_z` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
                         // `package_dir`. Detached so `abs_target_buf` can be
@@ -1550,8 +1614,7 @@ impl<'a> Linker<'a> {
         // PORT NOTE: see `link()` — detach abs_target_buf borrow via raw ptr.
         let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
         // SAFETY: abs_target_buf is not written between here and use.
-        let package_dir =
-            unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
+        let package_dir = unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {

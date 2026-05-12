@@ -4,9 +4,9 @@ use enumset::{EnumSet, EnumSetType};
 
 use bun_alloc as allocators;
 #[allow(unused_imports)]
-use bun_core::feature_flags as FeatureFlags;
-#[allow(unused_imports)]
 use bun_core::Generation;
+#[allow(unused_imports)]
+use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
 #[allow(unused_imports)]
@@ -261,7 +261,9 @@ impl DirInfo {
     /// shared-mutable and Rust forbids manufacturing aliased `&mut`. Callers
     /// dereference at the use site where exclusivity is locally provable.
     pub fn get_entries(&self, generation: Generation) -> Option<*mut fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries_at(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(std::ptr::from_mut(*entries)),
             fs::EntriesOption::Err(_) => None,
@@ -275,7 +277,9 @@ impl DirInfo {
     /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
     /// `get_entries` + per-site raw deref whenever the caller only reads.
     pub fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries_at(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
@@ -406,20 +410,34 @@ pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 /// methods are shadowed by inherent methods under dot-syntax (Rust resolves
 /// inherent before trait), so the bodies below delegate without recursing.
 pub trait HashMapExt {
-    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
-    fn put(&mut self, result: &mut crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error>;
+    fn get_or_put(
+        &mut self,
+        key: &[u8],
+    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
+    fn put(
+        &mut self,
+        result: &mut crate::__phase_a_body::allocators::Result,
+        value: DirInfo,
+    ) -> core::result::Result<*mut DirInfo, bun_core::Error>;
     fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
 impl HashMapExt for HashMap {
     #[inline]
-    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+    fn get_or_put(
+        &mut self,
+        key: &[u8],
+    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }
     #[inline]
-    fn put(&mut self, result: &mut crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+    fn put(
+        &mut self,
+        result: &mut crate::__phase_a_body::allocators::Result,
+        value: DirInfo,
+    ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
         // Spec bun_alloc.zig:615 `put(self: *Self, result: *Result, value) !*ValueType` —
         // `result.index` is written back, so `&mut`. Inherent returns `&mut DirInfo`;
         // erase to `*mut` so callers can stash it past borrowck. NOTE (Stacked Borrows):
@@ -429,7 +447,9 @@ impl HashMapExt for HashMap {
         // pointers from a single bound `&mut HashMap` (see resolver.rs `dir_info_cached_*`).
         // TODO(port): derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
         // provenance) so slot pointers survive sibling retags outright.
-        self.put(result, value).map(|v| std::ptr::from_mut::<DirInfo>(v)).map_err(Into::into)
+        self.put(result, value)
+            .map(|v| std::ptr::from_mut::<DirInfo>(v))
+            .map_err(Into::into)
     }
     #[inline]
     fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {

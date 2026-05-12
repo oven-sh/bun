@@ -1,6 +1,6 @@
 //! `createPostgresError` / `postgresErrorToJS` bridges.
 
-use crate::jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
 use bun_sql::postgres::any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
 
 pub fn create_postgres_error(

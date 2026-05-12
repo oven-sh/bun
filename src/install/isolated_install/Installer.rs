@@ -1,42 +1,41 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
+use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
-use bun_ast::Log;
+use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
-use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{thread_pool, Mutex, ThreadPool, UnboundedQueue};
+use bun_threading::{Mutex, ThreadPool, UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
-use bun_sys::{FdExt as _, FdDirExt as _};
+use bun_sys::{FdDirExt as _, FdExt as _};
 
-use crate::{
-    self as install, bin, invalid_dependency_id, Bin, DependencyID, Lockfile, PackageID,
-    PackageManager, PackageNameHash, Resolution, TaskCallbackContext,
-    TruncatedPackageNameHash,
-};
 use crate::bin_real;
-use crate::resolution;
-use crate::postinstall_optimizer;
-use crate::postinstall_optimizer::PostinstallOptimizer;
+use crate::lockfile::package;
+use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
-use crate::lockfile_real::PackageIDSlice;
-use crate::lockfile::package;
+use crate::postinstall_optimizer;
+use crate::postinstall_optimizer::PostinstallOptimizer;
+use crate::resolution;
+use crate::{
+    self as install, Bin, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
+    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+};
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
-use crate::lockfile_real::package::{PackageColumns as _, PackageColumns as _};
-use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::Do;
-use crate::bun_fs;
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
-use super::symlinker::{self, Symlinker};
 use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
+use super::symlinker::{self, Symlinker};
+use crate::bun_fs;
+use crate::lockfile_real::package::{PackageColumns as _};
+use crate::package_manager_real::directories;
+use crate::package_manager_real::package_manager_options::Do;
 
 /// Zig: `Resolution.Tag` — Rust can't nest a type inside a struct, so the
 /// enum lives at module level in `crate::resolution`.
@@ -175,7 +174,9 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
-        manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
+        manager
+            .thread_pool
+            .schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
@@ -207,9 +208,8 @@ impl<'a> Installer<'a> {
                 let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];
 
-                let patch_info = bun_core::handle_oom(
-                    self.package_patch_info(pkg_name, pkg_name_hash, pkg_res),
-                );
+                let patch_info =
+                    bun_core::handle_oom(self.package_patch_info(pkg_name, pkg_name_hash, pkg_res));
 
                 if let PatchInfo::Patch(patch) = &patch_info {
                     let mut log = Log::init();
@@ -217,7 +217,8 @@ impl<'a> Installer<'a> {
                     if log.has_errors() {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
-                        entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize]
+                            .store(Step::Done as u32, Ordering::Relaxed);
                         self.on_task_fail(entry_id, TaskError::Patching(log));
                         continue;
                     }
@@ -254,7 +255,10 @@ impl<'a> Installer<'a> {
                 entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
-                    TaskError::Download(DownloadError { err, url: url.into() }),
+                    TaskError::Download(DownloadError {
+                        err,
+                        url: url.into(),
+                    }),
                 );
             }
             // callbacks dropped here
@@ -461,7 +465,8 @@ impl<'a> Installer<'a> {
         }
 
         // .monotonic is okay because the task isn't running right now.
-        self.store.entries.items_step()[entry_id.get() as usize].store(Step::Blocked as u32, Ordering::Relaxed);
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Blocked as u32, Ordering::Relaxed);
     }
 
     /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
@@ -477,7 +482,8 @@ impl<'a> Installer<'a> {
 
         let deps = &entry_deps[entry_id.get() as usize];
         for dep in deps.slice() {
-            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32 {
+            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32
+            {
                 parent_dedupe.clear_retaining_capacity();
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
                     continue;
@@ -579,7 +585,8 @@ impl<'a> Installer<'a> {
             }
 
             // .monotonic is okay because the task isn't running right now.
-            entry_steps[entry_id.get() as usize].store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
+            entry_steps[entry_id.get() as usize]
+                .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
             self.start_task(entry_id);
         }
     }
@@ -690,17 +697,14 @@ pub enum Step {
     CheckIfBlocked,
 
     // blocked can only happen here
-
     SymlinkDependencyBinaries,
     RunPreinstall,
 
     // pause here while preinstall runs
-
     Binaries,
     RunPostInstallAndPrePostPrepare, // "run (post)install and (pre/post)prepare"
 
     // pause again while remaining scripts run.
-
     Done,
 
     // only the main thread sets blocked, and only the main thread
@@ -882,14 +886,13 @@ impl Task {
                     let pkg_cache_dir_subpath_init = match pkg_res.tag {
                         ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
-                                ResolutionTag::Folder => {
-                                    pkg_res.folder().slice(string_buf)
-                                }
+                                ResolutionTag::Folder => pkg_res.folder().slice(string_buf),
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };
                             // the folder does not exist in the cache. xdev is per folder dependency
-                            let folder_dir = match bun_sys::open_dir_for_iteration(Fd::cwd(), path) {
+                            let folder_dir = match bun_sys::open_dir_for_iteration(Fd::cwd(), path)
+                            {
                                 sys::Result::Ok(fd) => fd,
                                 sys::Result::Err(err) => {
                                     return Ok(Yield::failure(TaskError::LinkPackage(err)));
@@ -902,10 +905,10 @@ impl Task {
                             'backend: loop {
                                 match backend {
                                     InstallMethod::Hardlink => {
-                                        let mut src =
-                                            OsAutoAbsPath::init_top_level_dir_long_path();
+                                        let mut src = OsAutoAbsPath::init_top_level_dir_long_path();
                                         if pkg_res.tag == ResolutionTag::Folder {
-                                            let _ = src.append_join(pkg_res.folder().slice(string_buf));
+                                            let _ =
+                                                src.append_join(pkg_res.folder().slice(string_buf));
                                         }
 
                                         let mut dest = OsAutoPath::init();
@@ -930,20 +933,35 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to hardlink package folder\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(hardlinker.src.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
-                                                        bun_core::fmt::fmt_os_path(hardlinker.dest.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                        bun_core::fmt::fmt_os_path(
+                                                            hardlinker.src.slice(),
+                                                            bun_core::fmt::PathFormatOptions {
+                                                                path_sep:
+                                                                    bun_core::fmt::PathSep::Auto,
+                                                                escape_backslashes: false
+                                                            }
+                                                        ),
+                                                        bun_core::fmt::fmt_os_path(
+                                                            hardlinker.dest.slice(),
+                                                            bun_core::fmt::PathFormatOptions {
+                                                                path_sep:
+                                                                    bun_core::fmt::PathSep::Auto,
+                                                                escape_backslashes: false
+                                                            }
+                                                        ),
                                                     ));
                                                     Output::flush();
                                                 }
-                                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                                return Ok(Yield::failure(TaskError::LinkPackage(
+                                                    err,
+                                                )));
                                             }
                                         }
                                         break 'backend;
                                     }
 
                                     InstallMethod::Copyfile => {
-                                        let mut src_path =
-                                            OsAutoAbsPath::init();
+                                        let mut src_path = OsAutoAbsPath::init();
 
                                         #[cfg(windows)]
                                         {
@@ -966,9 +984,7 @@ impl Task {
                                                 )
                                             };
 
-                                            if src_path_len == 0
-                                                || src_path_len as usize >= cap
-                                            {
+                                            if src_path_len == 0 || src_path_len as usize >= cap {
                                                 use bun_sys::windows::Win32ErrorExt as _;
                                                 let err: sys::SystemErrno = if src_path_len == 0 {
                                                     bun_sys::windows::Win32Error::get()
@@ -1006,12 +1022,28 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(file_copier.src_path.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
-                                                        bun_core::fmt::fmt_os_path(file_copier.dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                        bun_core::fmt::fmt_os_path(
+                                                            file_copier.src_path.slice(),
+                                                            bun_core::fmt::PathFormatOptions {
+                                                                path_sep:
+                                                                    bun_core::fmt::PathSep::Auto,
+                                                                escape_backslashes: false
+                                                            }
+                                                        ),
+                                                        bun_core::fmt::fmt_os_path(
+                                                            file_copier.dest_subpath.slice(),
+                                                            bun_core::fmt::PathFormatOptions {
+                                                                path_sep:
+                                                                    bun_core::fmt::PathSep::Auto,
+                                                                escape_backslashes: false
+                                                            }
+                                                        ),
                                                     ));
                                                     Output::flush();
                                                 }
-                                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                                return Ok(Yield::failure(TaskError::LinkPackage(
+                                                    err,
+                                                )));
                                             }
                                         }
                                         break 'backend;
@@ -1049,16 +1081,20 @@ impl Task {
                                     pkg_res.github(),
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
-                                    manager,
-                                    *pkg_res.local_tarball(),
-                                    patch_info.contents_hash(),
-                                ),
-                                ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
-                                    manager,
-                                    *pkg_res.remote_tarball(),
-                                    patch_info.contents_hash(),
-                                ),
+                                ResolutionTag::LocalTarball => {
+                                    directories::cached_tarball_folder_name(
+                                        manager,
+                                        *pkg_res.local_tarball(),
+                                        patch_info.contents_hash(),
+                                    )
+                                }
+                                ResolutionTag::RemoteTarball => {
+                                    directories::cached_tarball_folder_name(
+                                        manager,
+                                        *pkg_res.remote_tarball(),
+                                        patch_info.contents_hash(),
+                                    )
+                                }
 
                                 _ => {
                                     if Environment::CI_ASSERT {
@@ -1116,7 +1152,9 @@ impl Task {
                             #[cfg(not(windows))]
                             {
                                 if let Some(st) = sys::lstat(local.slice_z()).ok() {
-                                    sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
+                                    sys::posix::s_islnk(
+                                        u32::try_from(st.st_mode).expect("int cast"),
+                                    )
                                 } else {
                                     false
                                 }
@@ -1156,31 +1194,39 @@ impl Task {
                         // earlier run with the same suffix (vanishingly
                         // unlikely with a 64-bit random suffix, but cheap).
                         let mut staging = AutoAbsPath::init();
-                        installer.append_global_store_entry_path(&mut staging, self.entry_id, Which::Staging);
+                        installer.append_global_store_entry_path(
+                            &mut staging,
+                            self.entry_id,
+                            Which::Staging,
+                        );
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
 
                     // PORT NOTE: reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
                     // becomes a guard that *owns* the `Option<Fd>` so the loop body can reassign
                     // through `*cached_package_dir` without an outstanding closure borrow.
-                    let mut cached_package_dir =
-                        scopeguard::guard(None::<Fd>, |dir| {
-                            if let Some(d) = dir {
-                                d.close();
-                            }
-                        });
+                    let mut cached_package_dir = scopeguard::guard(None::<Fd>, |dir| {
+                        if let Some(d) = dir {
+                            d.close();
+                        }
+                    });
 
                     // .monotonic access of `supported_backend` is okay because it's an
                     // optimization. It's okay if another thread doesn't see an update to this
                     // value "in time".
-                    let mut backend = InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
+                    let mut backend =
+                        InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
                     'backend: loop {
                         // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
                         // before the labeled-switch and passes it by-value (struct copy)
                         // into each backend's helper. Rust moves it, so rebuild per
                         // iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
                         let mut dest_subpath = OsAutoPath::init();
-                        installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
+                        installer.append_real_store_path(
+                            &mut dest_subpath,
+                            self.entry_id,
+                            Which::Staging,
+                        );
                         match backend {
                             InstallMethod::Clonefile => {
                                 #[cfg(not(target_os = "macos"))]
@@ -1224,12 +1270,18 @@ impl Task {
                                         sys::Result::Ok(()) => {}
                                         sys::Result::Err(err) => match err.get_errno() {
                                             sys::Errno::EXDEV => {
-                                                installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
+                                                installer.supported_backend.store(
+                                                    InstallMethod::Copyfile as u8,
+                                                    Ordering::Relaxed,
+                                                );
                                                 backend = InstallMethod::Copyfile;
                                                 continue 'backend;
                                             }
                                             sys::Errno::EOPNOTSUPP => {
-                                                installer.supported_backend.store(InstallMethod::Hardlink as u8, Ordering::Relaxed);
+                                                installer.supported_backend.store(
+                                                    InstallMethod::Hardlink as u8,
+                                                    Ordering::Relaxed,
+                                                );
                                                 backend = InstallMethod::Hardlink;
                                                 continue 'backend;
                                             }
@@ -1264,7 +1316,8 @@ impl Task {
                                     }
                                 };
 
-                                let mut src = OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
+                                let mut src = OsAutoAbsPath::from_long_path(cache_dir_path.slice())
+                                    .assume_ok();
                                 let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                 let mut hardlinker = Hardlinker::init(
@@ -1278,7 +1331,10 @@ impl Task {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
                                         if err.get_errno() == sys::Errno::EXDEV {
-                                            installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
+                                            installer.supported_backend.store(
+                                                InstallMethod::Copyfile as u8,
+                                                Ordering::Relaxed,
+                                            );
                                             backend = InstallMethod::Copyfile;
                                             continue 'backend;
                                         }
@@ -1287,7 +1343,13 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to hardlink package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(hardlinker.dest.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path(
+                                                    hardlinker.dest.slice(),
+                                                    bun_core::fmt::PathFormatOptions {
+                                                        path_sep: bun_core::fmt::PathSep::Auto,
+                                                        escape_backslashes: false
+                                                    }
+                                                ),
                                             ));
                                             Output::flush();
                                         }
@@ -1312,7 +1374,13 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to open cache directory for copyfile\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path((&dest_subpath).slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path(
+                                                    (&dest_subpath).slice(),
+                                                    bun_core::fmt::PathFormatOptions {
+                                                        path_sep: bun_core::fmt::PathSep::Auto,
+                                                        escape_backslashes: false
+                                                    }
+                                                ),
                                             ));
                                             Output::flush();
                                         }
@@ -1339,7 +1407,13 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(file_copier.dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path(
+                                                    file_copier.dest_subpath.slice(),
+                                                    bun_core::fmt::PathFormatOptions {
+                                                        path_sep: bun_core::fmt::PathSep::Auto,
+                                                        escape_backslashes: false
+                                                    }
+                                                ),
                                             ));
                                             Output::flush();
                                         }
@@ -1374,7 +1448,9 @@ impl Task {
                         let _ = dest.append(dep_name); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                         if let Some(entry_node_modules_name) = installer
-                            .entry_store_node_modules_package_name(dep_id, pkg_id, &pkg_res, pkg_names)
+                            .entry_store_node_modules_package_name(
+                                dep_id, pkg_id, &pkg_res, pkg_names,
+                            )
                         {
                             if strings::eql_long(dep_name, entry_node_modules_name, true) {
                                 // nest the dependency in another node_modules if the name is the same as the entry name
@@ -1479,8 +1555,7 @@ impl Task {
                     // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
                     // of this entry are not finished. Do not count cycles towards blocking.
 
-                    let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> =
-                        ArrayHashMap::default();
+                    let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
                     if installer.is_task_blocked(self.entry_id, &mut parent_dedupe) {
                         return Ok(Yield::Blocked);
@@ -1573,25 +1648,28 @@ impl Task {
                         {
                             break 'enqueue_lifecycle_scripts;
                         }
-                        let mut pkg_scripts: package::scripts::Scripts = pkg_script_lists[pkg_id as usize];
+                        let mut pkg_scripts: package::scripts::Scripts =
+                            pkg_script_lists[pkg_id as usize];
                         let manager = manager_ref.get();
                         if is_trusted
-                            && manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
-                                postinstall_optimizer::PkgInfo {
-                                    name_hash: pkg_name_hash,
-                                    version: if pkg_res.tag == ResolutionTag::Npm {
-                                        Some(pkg_res.npm().version)
-                                    } else {
-                                        None
+                            && manager
+                                .postinstall_optimizer
+                                .should_ignore_lifecycle_scripts(
+                                    postinstall_optimizer::PkgInfo {
+                                        name_hash: pkg_name_hash,
+                                        version: if pkg_res.tag == ResolutionTag::Npm {
+                                            Some(pkg_res.npm().version)
+                                        } else {
+                                            None
+                                        },
+                                        version_buf: lockfile.buffers.string_bytes.as_slice(),
                                     },
-                                    version_buf: lockfile.buffers.string_bytes.as_slice(),
-                                },
-                                lockfile.buffers.resolutions.as_slice(),
-                                pkg_metas,
-                                manager.options.cpu,
-                                manager.options.os,
-                                None,
-                            )
+                                    lockfile.buffers.resolutions.as_slice(),
+                                    pkg_metas,
+                                    manager.options.cpu,
+                                    manager.options.os,
+                                    None,
+                                )
                         {
                             break 'enqueue_lifecycle_scripts;
                         }
@@ -1734,7 +1812,8 @@ impl Task {
                         );
                         target_node_modules_path = Some(p);
 
-                        let replacement_node_id = entry_node_ids[replacement_entry_id.get() as usize];
+                        let replacement_node_id =
+                            entry_node_ids[replacement_entry_id.get() as usize];
                         let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                         target_package_name = strings::StringOrTinyString::init(
                             lockfile.str(&pkg_names[replacement_pkg_id as usize]),
@@ -1745,10 +1824,11 @@ impl Task {
                     // `node_modules_path` in the common (no-replacement) case —
                     // mirrors the Zig `*AbsPath` aliasing. The Linker field is a
                     // raw `*const AbsPath` for exactly this reason.
-                    let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
-                        Some(p) => p,
-                        None => &raw const node_modules_path,
-                    };
+                    let target_nm_ptr: *const DefaultAbsPath =
+                        match target_node_modules_path.as_ref() {
+                            Some(p) => p,
+                            None => &raw const node_modules_path,
+                        };
                     let mut bin_linker = bin_real::Linker {
                         bin,
                         global_bin_path: manager_ref.options.bin_path,
@@ -1774,7 +1854,8 @@ impl Task {
                         target_node_modules_path = None;
 
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
-                        bin_linker.target_package_name = strings::StringOrTinyString::init(dep_name);
+                        bin_linker.target_package_name =
+                            strings::StringOrTinyString::init(dep_name);
 
                         if manager_ref.options.log_level.is_verbose() {
                             Output::pretty_errorln(format_args!(
@@ -1862,9 +1943,7 @@ impl Task {
     /// Called from task thread
     pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
-        let this: &mut Task = unsafe {
-            &mut *bun_core::from_field_ptr!(Task, task, task)
-        };
+        let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
         let res = match this.run() {
             Ok(r) => r,
@@ -2002,12 +2081,17 @@ impl<'a> Installer<'a> {
 
         let mut version_buf: Vec<u8> = Vec::new();
 
-        write!(&mut version_buf, "{}@", bstr::BStr::new(pkg_name.slice(string_buf)))
-            .map_err(|_| bun_alloc::AllocError)?;
+        write!(
+            &mut version_buf,
+            "{}@",
+            bstr::BStr::new(pkg_name.slice(string_buf))
+        )
+        .map_err(|_| bun_alloc::AllocError)?;
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
-                if let Some(workspace_version) = self.lockfile().workspace_versions.get(&pkg_name_hash)
+                if let Some(workspace_version) =
+                    self.lockfile().workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
                         .map_err(|_| bun_alloc::AllocError)?;
@@ -2025,7 +2109,11 @@ impl<'a> Installer<'a> {
 
         let name_and_version_hash = bun_semver::semver_string::Builder::string_hash(&version_buf);
 
-        if let Some(patch) = self.lockfile().patched_dependencies.get(&name_and_version_hash) {
+        if let Some(patch) = self
+            .lockfile()
+            .patched_dependencies
+            .get(&name_and_version_hash)
+        {
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
                 patch_path: patch.path.slice(string_buf).into(),
@@ -2058,8 +2146,14 @@ impl<'a> Installer<'a> {
         // OOM/capacity: Zig aborts; port keeps fire-and-forget
         let _ = hidden_hoisted_node_modules.append(
             // "node_modules" + sep + ".bun" + sep + "node_modules"
-            const_format::concatcp!("node_modules", paths::SEP_STR, ".bun", paths::SEP_STR, "node_modules")
-                .as_bytes(),
+            const_format::concatcp!(
+                "node_modules",
+                paths::SEP_STR,
+                ".bun",
+                paths::SEP_STR,
+                "node_modules"
+            )
+            .as_bytes(),
         );
         let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
@@ -2182,7 +2276,11 @@ impl<'a> Installer<'a> {
         let mut seen: StringHashMap<()> = StringHashMap::default();
 
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
-        self.append_real_store_node_modules_path(&mut node_modules_path, parent_entry_id, Which::Staging);
+        self.append_real_store_node_modules_path(
+            &mut node_modules_path,
+            parent_entry_id,
+            Which::Staging,
+        );
 
         for dep in entry_deps[parent_entry_id.get() as usize].slice() {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
@@ -2209,7 +2307,11 @@ impl<'a> Installer<'a> {
                 pkg_id,
             ) {
                 let mut p = DefaultAbsPath::init_top_level_dir();
-                self.append_real_store_node_modules_path(&mut p, replacement_entry_id, Which::Final);
+                self.append_real_store_node_modules_path(
+                    &mut p,
+                    replacement_entry_id,
+                    Which::Final,
+                );
                 target_node_modules_path = Some(p);
 
                 let replacement_node_id = entry_node_ids[replacement_entry_id.get() as usize];
@@ -2584,9 +2686,7 @@ impl<'a> Installer<'a> {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
                     let pkg_name = pkg_names[pkg_id as usize];
-                    buf.append(
-                        NODE_MODULES_BUN.as_bytes(),
-                    );
+                    buf.append(NODE_MODULES_BUN.as_bytes());
                     buf.append_fmt(format_args!(
                         "{}",
                         store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
@@ -2625,9 +2725,7 @@ impl<'a> Installer<'a> {
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];
-                buf.append(
-                    NODE_MODULES_BUN.as_bytes(),
-                );
+                buf.append(NODE_MODULES_BUN.as_bytes());
                 buf.append_fmt(format_args!(
                     "{}",
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),

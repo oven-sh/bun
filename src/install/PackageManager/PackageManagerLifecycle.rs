@@ -5,29 +5,29 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::ArrayHashMap;
-use bun_core::{fmt as bun_fmt, handle_oom, Output, ZBox};
 use bun_core::fmt::PathSep;
-use bun_paths::{self as Path, AutoAbsPath, EnvPath};
+use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
+use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
+use bun_paths::{self as Path, AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
-use bun_core::{strings, ZStr};
 use bun_sys as Syscall;
 use bun_threading::Mutex;
 
 use crate::bun_fs::FileSystem;
 
-use bun_install::lockfile::{self, Lockfile, Package};
-use crate::resolution_real::Tag as ResolutionTag;
-use bun_install::{
-    invalid_package_id, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
-};
+use super::directories;
+use super::package_manager_options::Do;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
-use super::directories;
-use super::package_manager_options::Do;
+use crate::resolution_real::Tag as ResolutionTag;
+use bun_install::lockfile::{self, Lockfile, Package};
+use bun_install::{
+    PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
+};
 
 pub struct LifecycleScriptTimeLog {
     mutex: Mutex,
@@ -159,13 +159,17 @@ impl PackageManager {
                     write!(
                         &mut name_and_version,
                         "{}@{}",
-                        BStr::new(pkg.name.slice(self.lockfile.buffers.string_bytes.as_slice())),
-                        pkg.resolution
-                            .fmt(self.lockfile.buffers.string_bytes.as_slice(), PathSep::Posix),
+                        BStr::new(
+                            pkg.name
+                                .slice(self.lockfile.buffers.string_bytes.as_slice())
+                        ),
+                        pkg.resolution.fmt(
+                            self.lockfile.buffers.string_bytes.as_slice(),
+                            PathSep::Posix
+                        ),
                     )
                     .expect("unreachable");
-                    let name_and_version_hash =
-                        SemverStringBuilder::string_hash(&name_and_version);
+                    let name_and_version_hash = SemverStringBuilder::string_hash(&name_and_version);
                     let Some(patched_dep) = self
                         .lockfile
                         .patched_dependencies
@@ -320,13 +324,11 @@ impl PackageManager {
         if longest_running.is_null() {
             return;
         }
-        if self.cached_tick_for_slow_lifecycle_script_logging
-            == self.event_loop.iteration_number()
+        if self.cached_tick_for_slow_lifecycle_script_logging == self.event_loop.iteration_number()
         {
             return;
         }
-        self.cached_tick_for_slow_lifecycle_script_logging =
-            self.event_loop.iteration_number();
+        self.cached_tick_for_slow_lifecycle_script_logging = self.event_loop.iteration_number();
         // SAFETY: `peek()` returned a non-null intrusive heap node owned by
         // `active_lifecycle_scripts`; only read for its `started_at` /
         // `package_name` fields below.
@@ -512,8 +514,9 @@ impl PackageManager {
         // find all deps originating from --trust packages from cli
         let mut set: ArrayHashMap<TruncatedPackageNameHash, ()> = ArrayHashMap::default();
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
-            let root_id =
-                self.root_package_id.get(&self.lockfile, self.workspace_name_hash) as usize;
+            let root_id = self
+                .root_package_id
+                .get(&self.lockfile, self.workspace_name_hash) as usize;
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];
             let mut dep_id = root_deps.off;
             let end = dep_id.saturating_add(root_deps.len);
@@ -586,7 +589,11 @@ pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: u
 }
 
 #[inline]
-pub fn set_preinstall_state(this: &mut PackageManager, package_id: PackageID, value: PreinstallState) {
+pub fn set_preinstall_state(
+    this: &mut PackageManager,
+    package_id: PackageID,
+    value: PreinstallState,
+) {
     this.set_preinstall_state(package_id, value)
 }
 

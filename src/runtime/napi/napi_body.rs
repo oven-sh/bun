@@ -3,24 +3,24 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, Ordering};
 
-use bun_io::KeepAlive;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue,
-    Strong, StrongOptional, Task,
-};
+use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::ConcurrentTask::AutoDeinit;
+use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_io::KeepAlive;
 #[allow(unused_imports)]
 use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_event_loop::AnyTask::AnyTask;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{Taskable, TaskTag, task_tag};
-use bun_threading::Mutex;
+use bun_jsc::{
+    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromise, JSPromiseStrong,
+    JSValue, Strong, StrongOptional, Task,
+};
 use bun_threading::Condition as Condvar;
+use bun_threading::Mutex;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
@@ -36,7 +36,11 @@ trait JSValueNapiExt {
 }
 
 unsafe extern "C" {
-    fn JSC__JSValue__isStrictEqual(this: JSValue, other: JSValue, global: *mut JSGlobalObject) -> bool;
+    fn JSC__JSValue__isStrictEqual(
+        this: JSValue,
+        other: JSValue,
+        global: *mut JSGlobalObject,
+    ) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
     fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
 }
@@ -46,7 +50,11 @@ impl JSValueNapiExt for JSValue {
     /// values instead of triggering UB on the cell-type read.
     #[inline]
     fn js_type_loose(self) -> jsc::JSType {
-        if self.is_cell() { self.js_type() } else { jsc::JSType::Cell }
+        if self.is_cell() {
+            self.js_type()
+        } else {
+            jsc::JSType::Cell
+        }
     }
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
         // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
@@ -140,12 +148,7 @@ impl NapiEnv {
     /// accessed by napi_get_last_error_info
     pub fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
         // SAFETY: napi_set_last_error accepts null env.
-        unsafe {
-            napi_set_last_error(
-                self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()),
-                err,
-            )
-        }
+        unsafe { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
     }
 
     /// Convenience wrapper for set_last_error(.ok)
@@ -321,7 +324,10 @@ impl NapiHandleScope {
     /// `Drop` is a no-op.
     #[must_use]
     pub fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
-        NapiHandleScopeGuard { scope: Self::open(env, false), env }
+        NapiHandleScopeGuard {
+            scope: Self::open(env, false),
+            env,
+        }
     }
 }
 
@@ -618,7 +624,11 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_boolean(env_: napi_env, value: bool, result_: *mut napi_value) -> napi_status {
+pub extern "C" fn napi_get_boolean(
+    env_: napi_env,
+    value: bool,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_boolean");
     let env = get_env!(env_);
     env.check_gc();
@@ -673,7 +683,11 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_int32(env_: napi_env, value: i32, result_: *mut napi_value) -> napi_status {
+pub extern "C" fn napi_create_int32(
+    env_: napi_env,
+    value: i32,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int32");
     let env = get_env!(env_);
     env.check_gc();
@@ -683,7 +697,11 @@ pub extern "C" fn napi_create_int32(env_: napi_env, value: i32, result_: *mut na
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_uint32(env_: napi_env, value: u32, result_: *mut napi_value) -> napi_status {
+pub extern "C" fn napi_create_uint32(
+    env_: napi_env,
+    value: u32,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_uint32");
     let env = get_env!(env_);
     env.check_gc();
@@ -693,7 +711,11 @@ pub extern "C" fn napi_create_uint32(env_: napi_env, value: u32, result_: *mut n
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_int64(env_: napi_env, value: i64, result_: *mut napi_value) -> napi_status {
+pub extern "C" fn napi_create_int64(
+    env_: napi_env,
+    value: i64,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int64");
     let env = get_env!(env_);
     env.check_gc();
@@ -732,7 +754,11 @@ pub extern "C" fn napi_create_string_latin1(
         }
     };
 
-    bun_output::scoped_log!(napi, "napi_create_string_latin1: {}", bstr::BStr::new(slice));
+    bun_output::scoped_log!(
+        napi,
+        "napi_create_string_latin1: {}",
+        bstr::BStr::new(slice)
+    );
 
     if slice.is_empty() {
         let js = match bun_core::String::empty().to_js(env.to_js()) {
@@ -858,17 +884,48 @@ pub extern "C" fn napi_create_string_utf16(
 
 // TODO(port): move to napi_sys
 unsafe extern "C" {
-    pub fn napi_create_symbol(env: napi_env, description: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_typeof(env: napi_env, value: napi_value, result: *mut napi_valuetype) -> napi_status;
-    pub fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
+    pub fn napi_create_symbol(
+        env: napi_env,
+        description: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_error(
+        env: napi_env,
+        code: napi_value,
+        msg: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_type_error(
+        env: napi_env,
+        code: napi_value,
+        msg: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_range_error(
+        env: napi_env,
+        code: napi_value,
+        msg: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_typeof(
+        env: napi_env,
+        value: napi_value,
+        result: *mut napi_valuetype,
+    ) -> napi_status;
+    pub fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64)
+    -> napi_status;
     pub fn napi_get_value_int32(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
-    pub fn napi_get_value_uint32(env: napi_env, value: napi_value, result: *mut u32) -> napi_status;
+    pub fn napi_get_value_uint32(env: napi_env, value: napi_value, result: *mut u32)
+    -> napi_status;
     pub fn napi_get_value_int64(env: napi_env, value: napi_value, result: *mut i64) -> napi_status;
     pub fn napi_get_value_bool(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
-    pub fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr: *mut c_char, bufsize: usize, result_ptr: *mut usize) -> napi_status;
+    pub fn napi_get_value_string_latin1(
+        env: napi_env,
+        value: napi_value,
+        buf_ptr: *mut c_char,
+        bufsize: usize,
+        result_ptr: *mut usize,
+    ) -> napi_status;
     /// Copies a JavaScript string into a UTF-8 string buffer. The result is the
     /// number of bytes (excluding the null terminator) copied into buf.
     /// A sufficient buffer size should be greater than the length of string,
@@ -877,11 +934,35 @@ unsafe extern "C" {
     /// If buf is NULL, this method returns the length of the string (in bytes)
     /// via the result parameter.
     /// The result argument is optional unless buf is NULL.
-    pub fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: *mut u8, bufsize: usize, result_ptr: *mut usize) -> napi_status;
-    pub fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: *mut char16_t, bufsize: usize, result_ptr: *mut usize) -> napi_status;
-    pub fn napi_coerce_to_bool(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_coerce_to_object(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status;
+    pub fn napi_get_value_string_utf8(
+        env: napi_env,
+        value: napi_value,
+        buf_ptr: *mut u8,
+        bufsize: usize,
+        result_ptr: *mut usize,
+    ) -> napi_status;
+    pub fn napi_get_value_string_utf16(
+        env: napi_env,
+        value: napi_value,
+        buf_ptr: *mut char16_t,
+        bufsize: usize,
+        result_ptr: *mut usize,
+    ) -> napi_status;
+    pub fn napi_coerce_to_bool(
+        env: napi_env,
+        value: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_coerce_to_number(
+        env: napi_env,
+        value: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_coerce_to_object(
+        env: napi_env,
+        value: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -903,9 +984,7 @@ pub extern "C" fn napi_get_prototype(
 
     result.set(
         env,
-        JSValue::c(unsafe {
-            JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref())
-        }),
+        JSValue::c(unsafe { JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref()) }),
     );
     env.ok()
 }
@@ -920,15 +999,44 @@ pub extern "C" fn napi_get_prototype(
 // }
 
 unsafe extern "C" {
-    pub fn napi_set_element(env: napi_env, object: napi_value, index: c_uint, value: napi_value) -> napi_status;
-    pub fn napi_has_element(env: napi_env, object: napi_value, index: c_uint, result: *mut bool) -> napi_status;
-    pub fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *mut napi_value) -> napi_status;
-    pub fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *mut bool) -> napi_status;
-    pub fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: *const napi_property_descriptor) -> napi_status;
+    pub fn napi_set_element(
+        env: napi_env,
+        object: napi_value,
+        index: c_uint,
+        value: napi_value,
+    ) -> napi_status;
+    pub fn napi_has_element(
+        env: napi_env,
+        object: napi_value,
+        index: c_uint,
+        result: *mut bool,
+    ) -> napi_status;
+    pub fn napi_get_element(
+        env: napi_env,
+        object: napi_value,
+        index: u32,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_delete_element(
+        env: napi_env,
+        object: napi_value,
+        index: u32,
+        result: *mut bool,
+    ) -> napi_status;
+    pub fn napi_define_properties(
+        env: napi_env,
+        object: napi_value,
+        property_count: usize,
+        properties: *const napi_property_descriptor,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_array(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
+pub extern "C" fn napi_is_array(
+    env_: napi_env,
+    value_: napi_value,
+    result_: *mut bool,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
     let env = get_env!(env_);
     env.check_gc();
@@ -979,11 +1087,40 @@ pub extern "C" fn napi_strict_equals(
 }
 
 unsafe extern "C" {
-    pub fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: *const napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: *const napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *mut bool) -> napi_status;
-    pub fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: *mut usize, argv: *mut napi_value, this_arg: *mut napi_value, data: *mut *mut c_void) -> napi_status;
-    pub fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *mut napi_value) -> napi_status;
+    pub fn napi_call_function(
+        env: napi_env,
+        recv: napi_value,
+        func: napi_value,
+        argc: usize,
+        argv: *const napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_new_instance(
+        env: napi_env,
+        constructor: napi_value,
+        argc: usize,
+        argv: *const napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_instanceof(
+        env: napi_env,
+        object: napi_value,
+        constructor: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
+    pub fn napi_get_cb_info(
+        env: napi_env,
+        cbinfo: napi_callback_info,
+        argc: *mut usize,
+        argv: *mut napi_value,
+        this_arg: *mut napi_value,
+        data: *mut *mut c_void,
+    ) -> napi_status;
+    pub fn napi_get_new_target(
+        env: napi_env,
+        cbinfo: napi_callback_info,
+        result: *mut napi_value,
+    ) -> napi_status;
     pub fn napi_define_class(
         env: napi_env,
         utf8name: *const c_char,
@@ -994,17 +1131,51 @@ unsafe extern "C" {
         properties: *const napi_property_descriptor,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_wrap(env: napi_env, js_object: napi_value, native_object: *mut c_void, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut napi_ref) -> napi_status;
-    pub fn napi_unwrap(env: napi_env, js_object: napi_value, result: *mut *mut c_void) -> napi_status;
-    pub fn napi_remove_wrap(env: napi_env, js_object: napi_value, result: *mut *mut c_void) -> napi_status;
+    pub fn napi_wrap(
+        env: napi_env,
+        js_object: napi_value,
+        native_object: *mut c_void,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut napi_ref,
+    ) -> napi_status;
+    pub fn napi_unwrap(
+        env: napi_env,
+        js_object: napi_value,
+        result: *mut *mut c_void,
+    ) -> napi_status;
+    pub fn napi_remove_wrap(
+        env: napi_env,
+        js_object: napi_value,
+        result: *mut *mut c_void,
+    ) -> napi_status;
     pub fn napi_create_object(env: napi_env, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_external(env: napi_env, data: *mut c_void, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut napi_value) -> napi_status;
-    pub fn napi_get_value_external(env: napi_env, value: napi_value, result: *mut *mut c_void) -> napi_status;
-    pub fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: *mut napi_ref) -> napi_status;
+    pub fn napi_create_external(
+        env: napi_env,
+        data: *mut c_void,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_get_value_external(
+        env: napi_env,
+        value: napi_value,
+        result: *mut *mut c_void,
+    ) -> napi_status;
+    pub fn napi_create_reference(
+        env: napi_env,
+        value: napi_value,
+        initial_refcount: u32,
+        result: *mut napi_ref,
+    ) -> napi_status;
     pub fn napi_delete_reference(env: napi_env, ref_: napi_ref) -> napi_status;
     pub fn napi_reference_ref(env: napi_env, ref_: napi_ref, result: *mut u32) -> napi_status;
     pub fn napi_reference_unref(env: napi_env, ref_: napi_ref, result: *mut u32) -> napi_status;
-    pub fn napi_get_reference_value(env: napi_env, ref_: napi_ref, result: *mut napi_value) -> napi_status;
+    pub fn napi_get_reference_value(
+        env: napi_env,
+        ref_: napi_ref,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -1073,11 +1244,17 @@ pub extern "C" fn napi_make_callback(
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = get_env!(env_);
     let (recv, func) = (recv_.get(), func_.get());
-    if func.is_empty_or_undefined_or_null() || (!func.is_callable() && !func.is_async_context_frame()) {
+    if func.is_empty_or_undefined_or_null()
+        || (!func.is_callable() && !func.is_async_context_frame())
+    {
         return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
     }
 
-    let this_value = if !recv.is_empty() { recv } else { JSValue::UNDEFINED };
+    let this_value = if !recv.is_empty() {
+        recv
+    } else {
+        JSValue::UNDEFINED
+    };
     let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
         // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
         // [args, args+arg_count) is valid.
@@ -1181,8 +1358,17 @@ pub extern "C" fn napi_escape_handle(
 }
 
 unsafe extern "C" {
-    pub fn napi_type_tag_object(env: napi_env, value: napi_value, tag: *const napi_type_tag) -> napi_status;
-    pub fn napi_check_object_type_tag(env: napi_env, value: napi_value, tag: *const napi_type_tag, result: *mut bool) -> napi_status;
+    pub fn napi_type_tag_object(
+        env: napi_env,
+        value: napi_value,
+        tag: *const napi_type_tag,
+    ) -> napi_status;
+    pub fn napi_check_object_type_tag(
+        env: napi_env,
+        value: napi_value,
+        tag: *const napi_type_tag,
+        result: *mut bool,
+    ) -> napi_status;
 }
 
 // do nothing for both of these
@@ -1206,12 +1392,24 @@ pub extern "C" fn napi_close_callback_scope(_env: napi_env, _scope: *mut c_void)
 unsafe extern "C" {
     pub fn napi_throw(env: napi_env, error: napi_value) -> napi_status;
     pub fn napi_throw_error(env: napi_env, code: *const c_char, msg: *const c_char) -> napi_status;
-    pub fn napi_throw_type_error(env: napi_env, code: *const c_char, msg: *const c_char) -> napi_status;
-    pub fn napi_throw_range_error(env: napi_env, code: *const c_char, msg: *const c_char) -> napi_status;
+    pub fn napi_throw_type_error(
+        env: napi_env,
+        code: *const c_char,
+        msg: *const c_char,
+    ) -> napi_status;
+    pub fn napi_throw_range_error(
+        env: napi_env,
+        code: *const c_char,
+        msg: *const c_char,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut bool) -> napi_status {
+pub extern "C" fn napi_is_error(
+    env_: napi_env,
+    value_: napi_value,
+    result: *mut bool,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     let env = get_env!(env_);
     env.check_gc();
@@ -1223,7 +1421,8 @@ pub extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut
 
 unsafe extern "C" {
     pub fn napi_is_exception_pending(env: napi_env, result: *mut bool) -> napi_status;
-    pub fn napi_get_and_clear_last_exception(env: napi_env, result: *mut napi_value) -> napi_status;
+    pub fn napi_get_and_clear_last_exception(env: napi_env, result: *mut napi_value)
+    -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -1243,8 +1442,20 @@ pub extern "C" fn napi_is_arraybuffer(
 
 unsafe extern "C" {
     // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify in Phase B which is the source of truth.
-    pub fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: *mut *mut c_void, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_external_arraybuffer(env: napi_env, external_data: *mut c_void, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut napi_value) -> napi_status;
+    pub fn napi_create_arraybuffer(
+        env: napi_env,
+        byte_length: usize,
+        data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_external_arraybuffer(
+        env: napi_env,
+        external_data: *mut c_void,
+        byte_length: usize,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -1300,7 +1511,8 @@ pub extern "C" fn napi_get_typedarray_info(
         // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
         // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
         // straight to `napi_typedarray_type`.
-        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type) else {
+        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
+        else {
             return env.invalid_arg();
         };
         *ty = napi_ty;
@@ -1330,16 +1542,27 @@ pub extern "C" fn napi_get_typedarray_info(
 }
 
 unsafe extern "C" {
-    pub fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *mut napi_value) -> napi_status;
+    pub fn napi_create_dataview(
+        env: napi_env,
+        length: usize,
+        arraybuffer: napi_value,
+        byte_offset: usize,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_dataview(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
+pub extern "C" fn napi_is_dataview(
+    env_: napi_env,
+    value_: napi_value,
+    result_: *mut bool,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_dataview");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
-    *result = !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
+    *result =
+        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
     env.ok()
 }
 
@@ -1469,12 +1692,24 @@ pub extern "C" fn napi_is_promise(
 }
 
 unsafe extern "C" {
-    pub fn napi_run_script(env: napi_env, script: napi_value, result: *mut napi_value) -> napi_status;
-    pub fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: *mut i64) -> napi_status;
+    pub fn napi_run_script(
+        env: napi_env,
+        script: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_adjust_external_memory(
+        env: napi_env,
+        change_in_bytes: i64,
+        adjusted_value: *mut i64,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi_value) -> napi_status {
+pub extern "C" fn napi_create_date(
+    env_: napi_env,
+    time: f64,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -1489,7 +1724,11 @@ pub extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: *mut bool) -> napi_status {
+pub extern "C" fn napi_is_date(
+    env_: napi_env,
+    value_: napi_value,
+    is_date_: *mut bool,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
     let env = get_env!(env_);
     env.check_gc();
@@ -1501,18 +1740,71 @@ pub extern "C" fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: *mu
 
 unsafe extern "C" {
     pub fn napi_get_date_value(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
-    pub fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: *mut c_void, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: napi_ref) -> napi_status;
-    pub fn napi_create_bigint_int64(env: napi_env, value: i64, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: *const u64, result: *mut napi_value) -> napi_status;
-    pub fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: *mut i64, lossless: *mut bool) -> napi_status;
-    pub fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: *mut u64, lossless: *mut bool) -> napi_status;
-    pub fn napi_get_value_bigint_words(env: napi_env, value: napi_value, sign_bit: *mut c_int, word_count: *mut usize, words: *mut u64) -> napi_status;
-    pub fn napi_get_all_property_names(env: napi_env, object: napi_value, key_mode: napi_key_collection_mode, key_filter: napi_key_filter, key_conversion: napi_key_conversion, result: *mut napi_value) -> napi_status;
-    pub fn napi_set_instance_data(env: napi_env, data: *mut c_void, finalize_cb: napi_finalize, finalize_hint: *mut c_void) -> napi_status;
+    pub fn napi_add_finalizer(
+        env: napi_env,
+        js_object: napi_value,
+        native_object: *mut c_void,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: napi_ref,
+    ) -> napi_status;
+    pub fn napi_create_bigint_int64(
+        env: napi_env,
+        value: i64,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_bigint_uint64(
+        env: napi_env,
+        value: u64,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_bigint_words(
+        env: napi_env,
+        sign_bit: c_int,
+        word_count: usize,
+        words: *const u64,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_get_value_bigint_int64(
+        env: napi_env,
+        value: napi_value,
+        result: *mut i64,
+        lossless: *mut bool,
+    ) -> napi_status;
+    pub fn napi_get_value_bigint_uint64(
+        env: napi_env,
+        value: napi_value,
+        result: *mut u64,
+        lossless: *mut bool,
+    ) -> napi_status;
+    pub fn napi_get_value_bigint_words(
+        env: napi_env,
+        value: napi_value,
+        sign_bit: *mut c_int,
+        word_count: *mut usize,
+        words: *mut u64,
+    ) -> napi_status;
+    pub fn napi_get_all_property_names(
+        env: napi_env,
+        object: napi_value,
+        key_mode: napi_key_collection_mode,
+        key_filter: napi_key_filter,
+        key_conversion: napi_key_conversion,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_set_instance_data(
+        env: napi_env,
+        data: *mut c_void,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+    ) -> napi_status;
     pub fn napi_get_instance_data(env: napi_env, data: *mut *mut c_void) -> napi_status;
     pub fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) -> napi_status;
-    pub fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
+    pub fn napi_is_detached_arraybuffer(
+        env: napi_env,
+        value: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1607,8 +1899,10 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                self.event_loop
-                    .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
+                self.event_loop.enqueue_task_concurrent(
+                    self.concurrent_task
+                        .from(self_ptr, AutoDeinit::ManualDeinit),
+                );
                 return;
             }
         }
@@ -1616,8 +1910,10 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        self.event_loop
-            .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
+        self.event_loop.enqueue_task_concurrent(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        );
     }
 
     pub fn cancel(&mut self) -> bool {
@@ -1650,11 +1946,12 @@ impl napi_async_work {
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
-        let status: NapiStatus = if self.status.load(Ordering::SeqCst) == AsyncWorkStatus::Cancelled as u32 {
-            NapiStatus::cancelled
-        } else {
-            NapiStatus::ok
-        };
+        let status: NapiStatus =
+            if self.status.load(Ordering::SeqCst) == AsyncWorkStatus::Cancelled as u32 {
+                NapiStatus::cancelled
+            } else {
+                NapiStatus::ok
+            };
 
         complete(env, status as napi_status, self.data);
 
@@ -1785,8 +2082,20 @@ pub extern "C" fn napi_fatal_error(
 }
 
 unsafe extern "C" {
-    pub fn napi_create_buffer(env: napi_env, length: usize, data: *mut *mut c_void, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_external_buffer(env: napi_env, length: usize, data: *mut c_void, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut napi_value) -> napi_status;
+    pub fn napi_create_buffer(
+        env: napi_env,
+        length: usize,
+        data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    pub fn napi_create_external_buffer(
+        env: napi_env,
+        length: usize,
+        data: *mut c_void,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -1812,7 +2121,11 @@ pub extern "C" fn napi_create_buffer_copy(
         }
         write_out(
             result_data,
-            if length > 0 { array_buf.ptr.cast::<c_void>() } else { ptr::null_mut() },
+            if length > 0 {
+                array_buf.ptr.cast::<c_void>()
+            } else {
+                ptr::null_mut()
+            },
         );
     }
 
@@ -1846,11 +2159,41 @@ pub extern "C" fn napi_get_buffer_info(
 }
 
 unsafe extern "C" {
-    fn node_api_create_syntax_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status;
-    fn node_api_symbol_for(env: napi_env, utf8: *const c_char, length: usize, result: *mut napi_value) -> napi_status;
-    fn node_api_throw_syntax_error(env: napi_env, code: *const c_char, msg: *const c_char) -> napi_status;
-    fn node_api_create_external_string_latin1(env: napi_env, str_: *mut u8, length: usize, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut JSValue, copied: *mut bool) -> napi_status;
-    fn node_api_create_external_string_utf16(env: napi_env, str_: *mut u16, length: usize, finalize_cb: napi_finalize, finalize_hint: *mut c_void, result: *mut JSValue, copied: *mut bool) -> napi_status;
+    fn node_api_create_syntax_error(
+        env: napi_env,
+        code: napi_value,
+        msg: napi_value,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_symbol_for(
+        env: napi_env,
+        utf8: *const c_char,
+        length: usize,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_throw_syntax_error(
+        env: napi_env,
+        code: *const c_char,
+        msg: *const c_char,
+    ) -> napi_status;
+    fn node_api_create_external_string_latin1(
+        env: napi_env,
+        str_: *mut u8,
+        length: usize,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut JSValue,
+        copied: *mut bool,
+    ) -> napi_status;
+    fn node_api_create_external_string_utf16(
+        env: napi_env,
+        str_: *mut u16,
+        length: usize,
+        finalize_cb: napi_finalize,
+        finalize_hint: *mut c_void,
+        result: *mut JSValue,
+        copied: *mut bool,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -1875,7 +2218,10 @@ pub extern "C" fn napi_create_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
+pub extern "C" fn napi_delete_async_work(
+    env_: napi_env,
+    work_: *mut napi_async_work,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -1889,7 +2235,10 @@ pub extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
+pub extern "C" fn napi_queue_async_work(
+    env_: napi_env,
+    work_: *mut napi_async_work,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -1903,7 +2252,10 @@ pub extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_w
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
+pub extern "C" fn napi_cancel_async_work(
+    env_: napi_env,
+    work_: *mut napi_async_work,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -1937,7 +2289,10 @@ type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop) -> napi_status {
+pub extern "C" fn napi_get_uv_event_loop(
+    env_: napi_env,
+    loop_: *mut napi_event_loop,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
@@ -1961,11 +2316,31 @@ pub extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_
 
 unsafe extern "C" {
     pub fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status;
-    pub fn napi_add_async_cleanup_hook(env: napi_env, function: napi_async_cleanup_hook, data: *mut c_void, handle_out: *mut napi_async_cleanup_hook_handle) -> napi_status;
-    pub fn napi_add_env_cleanup_hook(env: napi_env, function: Option<extern "C" fn(*mut c_void)>, data: *mut c_void) -> napi_status;
-    pub fn napi_create_typedarray(env: napi_env, type_: napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *mut napi_value) -> napi_status;
+    pub fn napi_add_async_cleanup_hook(
+        env: napi_env,
+        function: napi_async_cleanup_hook,
+        data: *mut c_void,
+        handle_out: *mut napi_async_cleanup_hook_handle,
+    ) -> napi_status;
+    pub fn napi_add_env_cleanup_hook(
+        env: napi_env,
+        function: Option<extern "C" fn(*mut c_void)>,
+        data: *mut c_void,
+    ) -> napi_status;
+    pub fn napi_create_typedarray(
+        env: napi_env,
+        type_: napi_typedarray_type,
+        length: usize,
+        arraybuffer: napi_value,
+        byte_offset: usize,
+        result: *mut napi_value,
+    ) -> napi_status;
     pub fn napi_remove_async_cleanup_hook(handle: napi_async_cleanup_hook_handle) -> napi_status;
-    pub fn napi_remove_env_cleanup_hook(env: napi_env, function: Option<extern "C" fn(*mut c_void)>, data: *mut c_void) -> napi_status;
+    pub fn napi_remove_env_cleanup_hook(
+        env: napi_env,
+        function: Option<extern "C" fn(*mut c_void)>,
+        data: *mut c_void,
+    ) -> napi_status;
 
     fn napi_internal_cleanup_env_cpp(env: napi_env);
     fn napi_internal_check_gc(env: napi_env);
@@ -1989,13 +2364,21 @@ pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
-    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT.get().unwrap_or(false) {
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
+        .get()
+        .unwrap_or(false)
+    {
         bun_crash_handler::suppress_reporting();
     }
 }
 
 unsafe extern "C" {
-    fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: *mut c_void, data: *mut c_void);
+    fn napi_internal_remove_finalizer(
+        env: napi_env,
+        fun: napi_finalize,
+        hint: *mut c_void,
+        data: *mut c_void,
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2021,13 +2404,19 @@ impl Finalizer {
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut()
-                .uncaught_exception(env_ref.to_js(), exception, false);
+            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
+                env_ref.to_js(),
+                exception,
+                false,
+            );
         }
 
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut()
-                .uncaught_exception(env_ref.to_js(), exception, false);
+            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
+                env_ref.to_js(),
+                exception,
+                false,
+            );
         }
     }
 
@@ -2051,7 +2440,9 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
 ) {
     let Some(fun) = fun else { return };
     // SAFETY: env may be null per Zig's `orelse return`.
-    let Some(env_ref) = (unsafe { env.as_ref() }) else { return };
+    let Some(env_ref) = (unsafe { env.as_ref() }) else {
+        return;
+    };
     let this = Finalizer {
         fun,
         // SAFETY: env_ref points to a live C++-owned napi_env.
@@ -2221,7 +2612,9 @@ impl ThreadSafeFunction {
     }
 
     fn maybe_queue_finalizer(&mut self) {
-        let prev = self.closing.swap(ClosingState::Closed as u8, Ordering::SeqCst);
+        let prev = self
+            .closing
+            .swap(ClosingState::Closed as u8, Ordering::SeqCst);
         match prev {
             x if x == ClosingState::Closing as u8 || x == ClosingState::NotClosing as u8 => {
                 // TODO: is this boolean necessary? Can we rely just on the closing value?
@@ -2371,7 +2764,8 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                self.event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                self.event_loop
+                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -2412,7 +2806,8 @@ impl ThreadSafeFunction {
     }
 
     pub fn ref_(&mut self) {
-        self.poll_ref.ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        self.poll_ref
+            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
     }
 
     pub fn unref(&mut self) {
@@ -2654,18 +3049,21 @@ mod v8_api {
         pub fn _ZN2v811HandleScopeD1Ev() -> *mut c_void;
         pub fn _ZN2v811HandleScopeD2Ev() -> *mut c_void;
         pub fn _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE() -> *mut c_void;
-        pub fn _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt() -> *mut c_void;
+        pub fn _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt()
+        -> *mut c_void;
         pub fn _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub fn _ZN2v814ObjectTemplate21SetInternalFieldCountEi() -> *mut c_void;
         pub fn _ZNK2v814ObjectTemplate18InternalFieldCountEv() -> *mut c_void;
-        pub fn _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE() -> *mut c_void;
+        pub fn _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE()
+        -> *mut c_void;
         pub fn _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm() -> *mut c_void;
         pub fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() -> *mut c_void;
         pub fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() -> *mut c_void;
         pub fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() -> *mut c_void;
         pub fn _ZNK2v85Array6LengthEv() -> *mut c_void;
         pub fn _ZN2v85Array3NewEPNS_7IsolateEi() -> *mut c_void;
-        pub fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_() -> *mut c_void;
+        pub fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_()
+        -> *mut c_void;
         pub fn _ZN2v85Array9CheckCastEPNS_5ValueE() -> *mut c_void;
         pub fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() -> *mut c_void;
         pub fn _ZNK2v85Value9IsBooleanEv() -> *mut c_void;
@@ -2699,7 +3097,8 @@ mod v8_api {
         pub fn _ZNK2v86String19ContainsOnlyOneByteEv() -> *mut c_void;
         pub fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() -> *mut c_void;
         pub fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
-        pub fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE() -> *mut c_void;
+        pub fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE()
+        -> *mut c_void;
         pub fn _ZNK2v88Function7GetNameEv() -> *mut c_void;
         pub fn _ZNK2v85Value10IsFunctionEv() -> *mut c_void;
         pub fn _ZNK2v85Value5IsMapEv() -> *mut c_void;
@@ -2894,7 +3293,8 @@ mod posix_platform_specific_v8_apis {}
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() -> *mut c_void;
+        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        -> *mut c_void;
     }
 }
 #[cfg(all(not(windows), any(target_os = "macos", target_os = "freebsd")))]
@@ -2902,7 +3302,8 @@ mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     // FreeBSD's base libc++ uses the same `std::__1::` inline namespace as Apple's.
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() -> *mut c_void;
+        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        -> *mut c_void;
     }
 }
 #[cfg(all(
@@ -2914,7 +3315,8 @@ mod posix_platform_specific_v8_apis {
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE() -> *mut c_void;
+        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
+        -> *mut c_void;
     }
 }
 
@@ -2926,111 +3328,321 @@ mod posix_platform_specific_v8_apis {
 mod uv_functions_to_export {
     // TODO(port): move to napi_sys
     unsafe extern "C" {
-        pub fn uv_accept(); pub fn uv_async_init(); pub fn uv_async_send();
-        pub fn uv_available_parallelism(); pub fn uv_backend_fd(); pub fn uv_backend_timeout();
-        pub fn uv_barrier_destroy(); pub fn uv_barrier_init(); pub fn uv_barrier_wait();
-        pub fn uv_buf_init(); pub fn uv_cancel(); pub fn uv_chdir();
-        pub fn uv_check_init(); pub fn uv_check_start(); pub fn uv_check_stop();
-        pub fn uv_clock_gettime(); pub fn uv_close(); pub fn uv_cond_broadcast();
-        pub fn uv_cond_destroy(); pub fn uv_cond_init(); pub fn uv_cond_signal();
-        pub fn uv_cond_timedwait(); pub fn uv_cond_wait(); pub fn uv_cpu_info();
-        pub fn uv_cpumask_size(); pub fn uv_cwd(); pub fn uv_default_loop();
-        pub fn uv_disable_stdio_inheritance(); pub fn uv_dlclose(); pub fn uv_dlerror();
-        pub fn uv_dlopen(); pub fn uv_dlsym(); pub fn uv_err_name();
-        pub fn uv_err_name_r(); pub fn uv_exepath(); pub fn uv_fileno();
-        pub fn uv_free_cpu_info(); pub fn uv_free_interface_addresses(); pub fn uv_freeaddrinfo();
-        pub fn uv_fs_access(); pub fn uv_fs_chmod(); pub fn uv_fs_chown();
-        pub fn uv_fs_close(); pub fn uv_fs_closedir(); pub fn uv_fs_copyfile();
-        pub fn uv_fs_event_getpath(); pub fn uv_fs_event_init(); pub fn uv_fs_event_start();
-        pub fn uv_fs_event_stop(); pub fn uv_fs_fchmod(); pub fn uv_fs_fchown();
-        pub fn uv_fs_fdatasync(); pub fn uv_fs_fstat(); pub fn uv_fs_fsync();
-        pub fn uv_fs_ftruncate(); pub fn uv_fs_futime(); pub fn uv_fs_get_path();
-        pub fn uv_fs_get_ptr(); pub fn uv_fs_get_result(); pub fn uv_fs_get_statbuf();
-        pub fn uv_fs_get_system_error(); pub fn uv_fs_get_type(); pub fn uv_fs_lchown();
-        pub fn uv_fs_link(); pub fn uv_fs_lstat(); pub fn uv_fs_lutime();
-        pub fn uv_fs_mkdir(); pub fn uv_fs_mkdtemp(); pub fn uv_fs_mkstemp();
-        pub fn uv_fs_open(); pub fn uv_fs_opendir(); pub fn uv_fs_poll_getpath();
-        pub fn uv_fs_poll_init(); pub fn uv_fs_poll_start(); pub fn uv_fs_poll_stop();
-        pub fn uv_fs_read(); pub fn uv_fs_readdir(); pub fn uv_fs_readlink();
-        pub fn uv_fs_realpath(); pub fn uv_fs_rename(); pub fn uv_fs_req_cleanup();
-        pub fn uv_fs_rmdir(); pub fn uv_fs_scandir(); pub fn uv_fs_scandir_next();
-        pub fn uv_fs_sendfile(); pub fn uv_fs_stat(); pub fn uv_fs_statfs();
-        pub fn uv_fs_symlink(); pub fn uv_fs_unlink(); pub fn uv_fs_utime();
-        pub fn uv_fs_write(); pub fn uv_get_available_memory(); pub fn uv_get_constrained_memory();
-        pub fn uv_get_free_memory(); pub fn uv_get_osfhandle(); pub fn uv_get_process_title();
-        pub fn uv_get_total_memory(); pub fn uv_getaddrinfo(); pub fn uv_getnameinfo();
-        pub fn uv_getrusage(); pub fn uv_getrusage_thread(); pub fn uv_gettimeofday();
-        pub fn uv_guess_handle(); pub fn uv_handle_get_data(); pub fn uv_handle_get_loop();
-        pub fn uv_handle_get_type(); pub fn uv_handle_set_data(); pub fn uv_handle_size();
-        pub fn uv_handle_type_name(); pub fn uv_has_ref(); pub fn uv_hrtime();
-        pub fn uv_idle_init(); pub fn uv_idle_start(); pub fn uv_idle_stop();
-        pub fn uv_if_indextoiid(); pub fn uv_if_indextoname(); pub fn uv_inet_ntop();
-        pub fn uv_inet_pton(); pub fn uv_interface_addresses(); pub fn uv_ip_name();
-        pub fn uv_ip4_addr(); pub fn uv_ip4_name(); pub fn uv_ip6_addr();
-        pub fn uv_ip6_name(); pub fn uv_is_active(); pub fn uv_is_closing();
-        pub fn uv_is_readable(); pub fn uv_is_writable(); pub fn uv_key_create();
-        pub fn uv_key_delete(); pub fn uv_key_get(); pub fn uv_key_set();
-        pub fn uv_kill(); pub fn uv_library_shutdown(); pub fn uv_listen();
-        pub fn uv_loadavg(); pub fn uv_loop_alive(); pub fn uv_loop_close();
-        pub fn uv_loop_configure(); pub fn uv_loop_delete(); pub fn uv_loop_fork();
-        pub fn uv_loop_get_data(); pub fn uv_loop_init(); pub fn uv_loop_new();
-        pub fn uv_loop_set_data(); pub fn uv_loop_size(); pub fn uv_metrics_idle_time();
-        pub fn uv_metrics_info(); pub fn uv_mutex_destroy(); pub fn uv_mutex_init();
-        pub fn uv_mutex_init_recursive(); pub fn uv_mutex_lock(); pub fn uv_mutex_trylock();
-        pub fn uv_mutex_unlock(); pub fn uv_now(); pub fn uv_once();
-        pub fn uv_open_osfhandle(); pub fn uv_os_environ(); pub fn uv_os_free_environ();
-        pub fn uv_os_free_group(); pub fn uv_os_free_passwd(); pub fn uv_os_get_group();
-        pub fn uv_os_get_passwd(); pub fn uv_os_get_passwd2(); pub fn uv_os_getenv();
-        pub fn uv_os_gethostname(); pub fn uv_os_getpid(); pub fn uv_os_getppid();
-        pub fn uv_os_getpriority(); pub fn uv_os_homedir(); pub fn uv_os_setenv();
-        pub fn uv_os_setpriority(); pub fn uv_os_tmpdir(); pub fn uv_os_uname();
-        pub fn uv_os_unsetenv(); pub fn uv_pipe(); pub fn uv_pipe_bind();
-        pub fn uv_pipe_bind2(); pub fn uv_pipe_chmod(); pub fn uv_pipe_connect();
-        pub fn uv_pipe_connect2(); pub fn uv_pipe_getpeername(); pub fn uv_pipe_getsockname();
-        pub fn uv_pipe_init(); pub fn uv_pipe_open(); pub fn uv_pipe_pending_count();
-        pub fn uv_pipe_pending_instances(); pub fn uv_pipe_pending_type(); pub fn uv_poll_init();
-        pub fn uv_poll_init_socket(); pub fn uv_poll_start(); pub fn uv_poll_stop();
-        pub fn uv_prepare_init(); pub fn uv_prepare_start(); pub fn uv_prepare_stop();
-        pub fn uv_print_active_handles(); pub fn uv_print_all_handles(); pub fn uv_process_get_pid();
-        pub fn uv_process_kill(); pub fn uv_queue_work(); pub fn uv_random();
-        pub fn uv_read_start(); pub fn uv_read_stop(); pub fn uv_recv_buffer_size();
-        pub fn uv_ref(); pub fn uv_replace_allocator(); pub fn uv_req_get_data();
-        pub fn uv_req_get_type(); pub fn uv_req_set_data(); pub fn uv_req_size();
-        pub fn uv_req_type_name(); pub fn uv_resident_set_memory(); pub fn uv_run();
-        pub fn uv_rwlock_destroy(); pub fn uv_rwlock_init(); pub fn uv_rwlock_rdlock();
-        pub fn uv_rwlock_rdunlock(); pub fn uv_rwlock_tryrdlock(); pub fn uv_rwlock_trywrlock();
-        pub fn uv_rwlock_wrlock(); pub fn uv_rwlock_wrunlock(); pub fn uv_sem_destroy();
-        pub fn uv_sem_init(); pub fn uv_sem_post(); pub fn uv_sem_trywait();
-        pub fn uv_sem_wait(); pub fn uv_send_buffer_size(); pub fn uv_set_process_title();
-        pub fn uv_setup_args(); pub fn uv_shutdown(); pub fn uv_signal_init();
-        pub fn uv_signal_start(); pub fn uv_signal_start_oneshot(); pub fn uv_signal_stop();
-        pub fn uv_sleep(); pub fn uv_socketpair(); pub fn uv_spawn();
-        pub fn uv_stop(); pub fn uv_stream_get_write_queue_size(); pub fn uv_stream_set_blocking();
-        pub fn uv_strerror(); pub fn uv_strerror_r(); pub fn uv_tcp_bind();
-        pub fn uv_tcp_close_reset(); pub fn uv_tcp_connect(); pub fn uv_tcp_getpeername();
-        pub fn uv_tcp_getsockname(); pub fn uv_tcp_init(); pub fn uv_tcp_init_ex();
-        pub fn uv_tcp_keepalive(); pub fn uv_tcp_nodelay(); pub fn uv_tcp_open();
-        pub fn uv_tcp_simultaneous_accepts(); pub fn uv_thread_create(); pub fn uv_thread_create_ex();
-        pub fn uv_thread_detach(); pub fn uv_thread_equal(); pub fn uv_thread_getaffinity();
-        pub fn uv_thread_getcpu(); pub fn uv_thread_getname(); pub fn uv_thread_getpriority();
-        pub fn uv_thread_join(); pub fn uv_thread_self(); pub fn uv_thread_setaffinity();
-        pub fn uv_thread_setname(); pub fn uv_thread_setpriority(); pub fn uv_timer_again();
-        pub fn uv_timer_get_due_in(); pub fn uv_timer_get_repeat(); pub fn uv_timer_init();
-        pub fn uv_timer_set_repeat(); pub fn uv_timer_start(); pub fn uv_timer_stop();
-        pub fn uv_translate_sys_error(); pub fn uv_try_write(); pub fn uv_try_write2();
-        pub fn uv_tty_get_vterm_state(); pub fn uv_tty_get_winsize(); pub fn uv_tty_init();
-        pub fn uv_tty_reset_mode(); pub fn uv_tty_set_mode(); pub fn uv_tty_set_vterm_state();
-        pub fn uv_udp_bind(); pub fn uv_udp_connect(); pub fn uv_udp_get_send_queue_count();
-        pub fn uv_udp_get_send_queue_size(); pub fn uv_udp_getpeername(); pub fn uv_udp_getsockname();
-        pub fn uv_udp_init(); pub fn uv_udp_init_ex(); pub fn uv_udp_open();
-        pub fn uv_udp_recv_start(); pub fn uv_udp_recv_stop(); pub fn uv_udp_send();
-        pub fn uv_udp_set_broadcast(); pub fn uv_udp_set_membership(); pub fn uv_udp_set_multicast_interface();
-        pub fn uv_udp_set_multicast_loop(); pub fn uv_udp_set_multicast_ttl(); pub fn uv_udp_set_source_membership();
-        pub fn uv_udp_set_ttl(); pub fn uv_udp_try_send(); pub fn uv_udp_try_send2();
-        pub fn uv_udp_using_recvmmsg(); pub fn uv_unref(); pub fn uv_update_time();
-        pub fn uv_uptime(); pub fn uv_utf16_length_as_wtf8(); pub fn uv_utf16_to_wtf8();
-        pub fn uv_version(); pub fn uv_version_string(); pub fn uv_walk();
-        pub fn uv_write(); pub fn uv_write2(); pub fn uv_wtf8_length_as_utf16();
+        pub fn uv_accept();
+        pub fn uv_async_init();
+        pub fn uv_async_send();
+        pub fn uv_available_parallelism();
+        pub fn uv_backend_fd();
+        pub fn uv_backend_timeout();
+        pub fn uv_barrier_destroy();
+        pub fn uv_barrier_init();
+        pub fn uv_barrier_wait();
+        pub fn uv_buf_init();
+        pub fn uv_cancel();
+        pub fn uv_chdir();
+        pub fn uv_check_init();
+        pub fn uv_check_start();
+        pub fn uv_check_stop();
+        pub fn uv_clock_gettime();
+        pub fn uv_close();
+        pub fn uv_cond_broadcast();
+        pub fn uv_cond_destroy();
+        pub fn uv_cond_init();
+        pub fn uv_cond_signal();
+        pub fn uv_cond_timedwait();
+        pub fn uv_cond_wait();
+        pub fn uv_cpu_info();
+        pub fn uv_cpumask_size();
+        pub fn uv_cwd();
+        pub fn uv_default_loop();
+        pub fn uv_disable_stdio_inheritance();
+        pub fn uv_dlclose();
+        pub fn uv_dlerror();
+        pub fn uv_dlopen();
+        pub fn uv_dlsym();
+        pub fn uv_err_name();
+        pub fn uv_err_name_r();
+        pub fn uv_exepath();
+        pub fn uv_fileno();
+        pub fn uv_free_cpu_info();
+        pub fn uv_free_interface_addresses();
+        pub fn uv_freeaddrinfo();
+        pub fn uv_fs_access();
+        pub fn uv_fs_chmod();
+        pub fn uv_fs_chown();
+        pub fn uv_fs_close();
+        pub fn uv_fs_closedir();
+        pub fn uv_fs_copyfile();
+        pub fn uv_fs_event_getpath();
+        pub fn uv_fs_event_init();
+        pub fn uv_fs_event_start();
+        pub fn uv_fs_event_stop();
+        pub fn uv_fs_fchmod();
+        pub fn uv_fs_fchown();
+        pub fn uv_fs_fdatasync();
+        pub fn uv_fs_fstat();
+        pub fn uv_fs_fsync();
+        pub fn uv_fs_ftruncate();
+        pub fn uv_fs_futime();
+        pub fn uv_fs_get_path();
+        pub fn uv_fs_get_ptr();
+        pub fn uv_fs_get_result();
+        pub fn uv_fs_get_statbuf();
+        pub fn uv_fs_get_system_error();
+        pub fn uv_fs_get_type();
+        pub fn uv_fs_lchown();
+        pub fn uv_fs_link();
+        pub fn uv_fs_lstat();
+        pub fn uv_fs_lutime();
+        pub fn uv_fs_mkdir();
+        pub fn uv_fs_mkdtemp();
+        pub fn uv_fs_mkstemp();
+        pub fn uv_fs_open();
+        pub fn uv_fs_opendir();
+        pub fn uv_fs_poll_getpath();
+        pub fn uv_fs_poll_init();
+        pub fn uv_fs_poll_start();
+        pub fn uv_fs_poll_stop();
+        pub fn uv_fs_read();
+        pub fn uv_fs_readdir();
+        pub fn uv_fs_readlink();
+        pub fn uv_fs_realpath();
+        pub fn uv_fs_rename();
+        pub fn uv_fs_req_cleanup();
+        pub fn uv_fs_rmdir();
+        pub fn uv_fs_scandir();
+        pub fn uv_fs_scandir_next();
+        pub fn uv_fs_sendfile();
+        pub fn uv_fs_stat();
+        pub fn uv_fs_statfs();
+        pub fn uv_fs_symlink();
+        pub fn uv_fs_unlink();
+        pub fn uv_fs_utime();
+        pub fn uv_fs_write();
+        pub fn uv_get_available_memory();
+        pub fn uv_get_constrained_memory();
+        pub fn uv_get_free_memory();
+        pub fn uv_get_osfhandle();
+        pub fn uv_get_process_title();
+        pub fn uv_get_total_memory();
+        pub fn uv_getaddrinfo();
+        pub fn uv_getnameinfo();
+        pub fn uv_getrusage();
+        pub fn uv_getrusage_thread();
+        pub fn uv_gettimeofday();
+        pub fn uv_guess_handle();
+        pub fn uv_handle_get_data();
+        pub fn uv_handle_get_loop();
+        pub fn uv_handle_get_type();
+        pub fn uv_handle_set_data();
+        pub fn uv_handle_size();
+        pub fn uv_handle_type_name();
+        pub fn uv_has_ref();
+        pub fn uv_hrtime();
+        pub fn uv_idle_init();
+        pub fn uv_idle_start();
+        pub fn uv_idle_stop();
+        pub fn uv_if_indextoiid();
+        pub fn uv_if_indextoname();
+        pub fn uv_inet_ntop();
+        pub fn uv_inet_pton();
+        pub fn uv_interface_addresses();
+        pub fn uv_ip_name();
+        pub fn uv_ip4_addr();
+        pub fn uv_ip4_name();
+        pub fn uv_ip6_addr();
+        pub fn uv_ip6_name();
+        pub fn uv_is_active();
+        pub fn uv_is_closing();
+        pub fn uv_is_readable();
+        pub fn uv_is_writable();
+        pub fn uv_key_create();
+        pub fn uv_key_delete();
+        pub fn uv_key_get();
+        pub fn uv_key_set();
+        pub fn uv_kill();
+        pub fn uv_library_shutdown();
+        pub fn uv_listen();
+        pub fn uv_loadavg();
+        pub fn uv_loop_alive();
+        pub fn uv_loop_close();
+        pub fn uv_loop_configure();
+        pub fn uv_loop_delete();
+        pub fn uv_loop_fork();
+        pub fn uv_loop_get_data();
+        pub fn uv_loop_init();
+        pub fn uv_loop_new();
+        pub fn uv_loop_set_data();
+        pub fn uv_loop_size();
+        pub fn uv_metrics_idle_time();
+        pub fn uv_metrics_info();
+        pub fn uv_mutex_destroy();
+        pub fn uv_mutex_init();
+        pub fn uv_mutex_init_recursive();
+        pub fn uv_mutex_lock();
+        pub fn uv_mutex_trylock();
+        pub fn uv_mutex_unlock();
+        pub fn uv_now();
+        pub fn uv_once();
+        pub fn uv_open_osfhandle();
+        pub fn uv_os_environ();
+        pub fn uv_os_free_environ();
+        pub fn uv_os_free_group();
+        pub fn uv_os_free_passwd();
+        pub fn uv_os_get_group();
+        pub fn uv_os_get_passwd();
+        pub fn uv_os_get_passwd2();
+        pub fn uv_os_getenv();
+        pub fn uv_os_gethostname();
+        pub fn uv_os_getpid();
+        pub fn uv_os_getppid();
+        pub fn uv_os_getpriority();
+        pub fn uv_os_homedir();
+        pub fn uv_os_setenv();
+        pub fn uv_os_setpriority();
+        pub fn uv_os_tmpdir();
+        pub fn uv_os_uname();
+        pub fn uv_os_unsetenv();
+        pub fn uv_pipe();
+        pub fn uv_pipe_bind();
+        pub fn uv_pipe_bind2();
+        pub fn uv_pipe_chmod();
+        pub fn uv_pipe_connect();
+        pub fn uv_pipe_connect2();
+        pub fn uv_pipe_getpeername();
+        pub fn uv_pipe_getsockname();
+        pub fn uv_pipe_init();
+        pub fn uv_pipe_open();
+        pub fn uv_pipe_pending_count();
+        pub fn uv_pipe_pending_instances();
+        pub fn uv_pipe_pending_type();
+        pub fn uv_poll_init();
+        pub fn uv_poll_init_socket();
+        pub fn uv_poll_start();
+        pub fn uv_poll_stop();
+        pub fn uv_prepare_init();
+        pub fn uv_prepare_start();
+        pub fn uv_prepare_stop();
+        pub fn uv_print_active_handles();
+        pub fn uv_print_all_handles();
+        pub fn uv_process_get_pid();
+        pub fn uv_process_kill();
+        pub fn uv_queue_work();
+        pub fn uv_random();
+        pub fn uv_read_start();
+        pub fn uv_read_stop();
+        pub fn uv_recv_buffer_size();
+        pub fn uv_ref();
+        pub fn uv_replace_allocator();
+        pub fn uv_req_get_data();
+        pub fn uv_req_get_type();
+        pub fn uv_req_set_data();
+        pub fn uv_req_size();
+        pub fn uv_req_type_name();
+        pub fn uv_resident_set_memory();
+        pub fn uv_run();
+        pub fn uv_rwlock_destroy();
+        pub fn uv_rwlock_init();
+        pub fn uv_rwlock_rdlock();
+        pub fn uv_rwlock_rdunlock();
+        pub fn uv_rwlock_tryrdlock();
+        pub fn uv_rwlock_trywrlock();
+        pub fn uv_rwlock_wrlock();
+        pub fn uv_rwlock_wrunlock();
+        pub fn uv_sem_destroy();
+        pub fn uv_sem_init();
+        pub fn uv_sem_post();
+        pub fn uv_sem_trywait();
+        pub fn uv_sem_wait();
+        pub fn uv_send_buffer_size();
+        pub fn uv_set_process_title();
+        pub fn uv_setup_args();
+        pub fn uv_shutdown();
+        pub fn uv_signal_init();
+        pub fn uv_signal_start();
+        pub fn uv_signal_start_oneshot();
+        pub fn uv_signal_stop();
+        pub fn uv_sleep();
+        pub fn uv_socketpair();
+        pub fn uv_spawn();
+        pub fn uv_stop();
+        pub fn uv_stream_get_write_queue_size();
+        pub fn uv_stream_set_blocking();
+        pub fn uv_strerror();
+        pub fn uv_strerror_r();
+        pub fn uv_tcp_bind();
+        pub fn uv_tcp_close_reset();
+        pub fn uv_tcp_connect();
+        pub fn uv_tcp_getpeername();
+        pub fn uv_tcp_getsockname();
+        pub fn uv_tcp_init();
+        pub fn uv_tcp_init_ex();
+        pub fn uv_tcp_keepalive();
+        pub fn uv_tcp_nodelay();
+        pub fn uv_tcp_open();
+        pub fn uv_tcp_simultaneous_accepts();
+        pub fn uv_thread_create();
+        pub fn uv_thread_create_ex();
+        pub fn uv_thread_detach();
+        pub fn uv_thread_equal();
+        pub fn uv_thread_getaffinity();
+        pub fn uv_thread_getcpu();
+        pub fn uv_thread_getname();
+        pub fn uv_thread_getpriority();
+        pub fn uv_thread_join();
+        pub fn uv_thread_self();
+        pub fn uv_thread_setaffinity();
+        pub fn uv_thread_setname();
+        pub fn uv_thread_setpriority();
+        pub fn uv_timer_again();
+        pub fn uv_timer_get_due_in();
+        pub fn uv_timer_get_repeat();
+        pub fn uv_timer_init();
+        pub fn uv_timer_set_repeat();
+        pub fn uv_timer_start();
+        pub fn uv_timer_stop();
+        pub fn uv_translate_sys_error();
+        pub fn uv_try_write();
+        pub fn uv_try_write2();
+        pub fn uv_tty_get_vterm_state();
+        pub fn uv_tty_get_winsize();
+        pub fn uv_tty_init();
+        pub fn uv_tty_reset_mode();
+        pub fn uv_tty_set_mode();
+        pub fn uv_tty_set_vterm_state();
+        pub fn uv_udp_bind();
+        pub fn uv_udp_connect();
+        pub fn uv_udp_get_send_queue_count();
+        pub fn uv_udp_get_send_queue_size();
+        pub fn uv_udp_getpeername();
+        pub fn uv_udp_getsockname();
+        pub fn uv_udp_init();
+        pub fn uv_udp_init_ex();
+        pub fn uv_udp_open();
+        pub fn uv_udp_recv_start();
+        pub fn uv_udp_recv_stop();
+        pub fn uv_udp_send();
+        pub fn uv_udp_set_broadcast();
+        pub fn uv_udp_set_membership();
+        pub fn uv_udp_set_multicast_interface();
+        pub fn uv_udp_set_multicast_loop();
+        pub fn uv_udp_set_multicast_ttl();
+        pub fn uv_udp_set_source_membership();
+        pub fn uv_udp_set_ttl();
+        pub fn uv_udp_try_send();
+        pub fn uv_udp_try_send2();
+        pub fn uv_udp_using_recvmmsg();
+        pub fn uv_unref();
+        pub fn uv_update_time();
+        pub fn uv_uptime();
+        pub fn uv_utf16_length_as_wtf8();
+        pub fn uv_utf16_to_wtf8();
+        pub fn uv_version();
+        pub fn uv_version_string();
+        pub fn uv_walk();
+        pub fn uv_write();
+        pub fn uv_write2();
+        pub fn uv_wtf8_length_as_utf16();
         pub fn uv_wtf8_to_utf16();
     }
 }
@@ -3051,47 +3663,143 @@ pub fn fix_dead_code_elimination() {
 
     // napi_functions_to_export
     keep_symbols!(
-        napi_acquire_threadsafe_function, napi_add_async_cleanup_hook, napi_add_env_cleanup_hook,
-        napi_add_finalizer, napi_adjust_external_memory, napi_async_destroy, napi_async_init,
-        napi_call_function, napi_call_threadsafe_function, napi_cancel_async_work,
-        napi_check_object_type_tag, napi_close_callback_scope, napi_close_escapable_handle_scope,
-        napi_close_handle_scope, napi_coerce_to_bool, napi_coerce_to_number, napi_coerce_to_object,
-        napi_create_array, napi_create_array_with_length, napi_create_arraybuffer,
-        napi_create_async_work, napi_create_bigint_int64, napi_create_bigint_uint64,
-        napi_create_bigint_words, napi_create_buffer, napi_create_buffer_copy,
-        napi_create_dataview, napi_create_date, napi_create_double, napi_create_error,
-        napi_create_external, napi_create_external_arraybuffer, napi_create_external_buffer,
-        napi_create_int32, napi_create_int64, napi_create_object, napi_create_promise,
-        napi_create_range_error, napi_create_reference, napi_create_string_latin1,
-        napi_create_string_utf16, napi_create_string_utf8, napi_create_symbol,
-        napi_create_threadsafe_function, napi_create_type_error, napi_create_typedarray,
-        napi_create_uint32, napi_define_class, napi_define_properties, napi_delete_async_work,
-        napi_delete_element, napi_delete_reference, napi_detach_arraybuffer, napi_escape_handle,
-        napi_fatal_error, napi_fatal_exception, napi_get_all_property_names,
-        napi_get_and_clear_last_exception, napi_get_array_length, napi_get_arraybuffer_info,
-        napi_get_boolean, napi_get_buffer_info, napi_get_cb_info, napi_get_dataview_info,
-        napi_get_date_value, napi_get_element, napi_get_global, napi_get_instance_data,
-        napi_get_last_error_info, napi_get_new_target, napi_get_node_version, napi_get_null,
-        napi_get_prototype, napi_get_reference_value, napi_get_threadsafe_function_context,
-        napi_get_typedarray_info, napi_get_undefined, napi_get_uv_event_loop,
-        napi_get_value_bigint_int64, napi_get_value_bigint_uint64, napi_get_value_bigint_words,
-        napi_get_value_bool, napi_get_value_double, napi_get_value_external, napi_get_value_int32,
-        napi_get_value_int64, napi_get_value_string_latin1, napi_get_value_string_utf16,
-        napi_get_value_string_utf8, napi_get_value_uint32, napi_get_version, napi_has_element,
-        napi_instanceof, napi_is_array, napi_is_arraybuffer, napi_is_buffer, napi_is_dataview,
-        napi_is_date, napi_is_detached_arraybuffer, napi_is_error, napi_is_exception_pending,
-        napi_is_promise, napi_is_typedarray, napi_make_callback, napi_new_instance,
-        napi_open_callback_scope, napi_open_escapable_handle_scope, napi_open_handle_scope,
-        napi_queue_async_work, napi_ref_threadsafe_function, napi_reference_ref,
-        napi_reference_unref, napi_reject_deferred, napi_release_threadsafe_function,
-        napi_remove_async_cleanup_hook, napi_remove_env_cleanup_hook, napi_remove_wrap,
-        napi_resolve_deferred, napi_run_script, napi_set_element, napi_set_instance_data,
-        napi_strict_equals, napi_throw, napi_throw_error, napi_throw_range_error,
-        napi_throw_type_error, napi_type_tag_object, napi_typeof, napi_unref_threadsafe_function,
-        napi_unwrap, napi_wrap,
+        napi_acquire_threadsafe_function,
+        napi_add_async_cleanup_hook,
+        napi_add_env_cleanup_hook,
+        napi_add_finalizer,
+        napi_adjust_external_memory,
+        napi_async_destroy,
+        napi_async_init,
+        napi_call_function,
+        napi_call_threadsafe_function,
+        napi_cancel_async_work,
+        napi_check_object_type_tag,
+        napi_close_callback_scope,
+        napi_close_escapable_handle_scope,
+        napi_close_handle_scope,
+        napi_coerce_to_bool,
+        napi_coerce_to_number,
+        napi_coerce_to_object,
+        napi_create_array,
+        napi_create_array_with_length,
+        napi_create_arraybuffer,
+        napi_create_async_work,
+        napi_create_bigint_int64,
+        napi_create_bigint_uint64,
+        napi_create_bigint_words,
+        napi_create_buffer,
+        napi_create_buffer_copy,
+        napi_create_dataview,
+        napi_create_date,
+        napi_create_double,
+        napi_create_error,
+        napi_create_external,
+        napi_create_external_arraybuffer,
+        napi_create_external_buffer,
+        napi_create_int32,
+        napi_create_int64,
+        napi_create_object,
+        napi_create_promise,
+        napi_create_range_error,
+        napi_create_reference,
+        napi_create_string_latin1,
+        napi_create_string_utf16,
+        napi_create_string_utf8,
+        napi_create_symbol,
+        napi_create_threadsafe_function,
+        napi_create_type_error,
+        napi_create_typedarray,
+        napi_create_uint32,
+        napi_define_class,
+        napi_define_properties,
+        napi_delete_async_work,
+        napi_delete_element,
+        napi_delete_reference,
+        napi_detach_arraybuffer,
+        napi_escape_handle,
+        napi_fatal_error,
+        napi_fatal_exception,
+        napi_get_all_property_names,
+        napi_get_and_clear_last_exception,
+        napi_get_array_length,
+        napi_get_arraybuffer_info,
+        napi_get_boolean,
+        napi_get_buffer_info,
+        napi_get_cb_info,
+        napi_get_dataview_info,
+        napi_get_date_value,
+        napi_get_element,
+        napi_get_global,
+        napi_get_instance_data,
+        napi_get_last_error_info,
+        napi_get_new_target,
+        napi_get_node_version,
+        napi_get_null,
+        napi_get_prototype,
+        napi_get_reference_value,
+        napi_get_threadsafe_function_context,
+        napi_get_typedarray_info,
+        napi_get_undefined,
+        napi_get_uv_event_loop,
+        napi_get_value_bigint_int64,
+        napi_get_value_bigint_uint64,
+        napi_get_value_bigint_words,
+        napi_get_value_bool,
+        napi_get_value_double,
+        napi_get_value_external,
+        napi_get_value_int32,
+        napi_get_value_int64,
+        napi_get_value_string_latin1,
+        napi_get_value_string_utf16,
+        napi_get_value_string_utf8,
+        napi_get_value_uint32,
+        napi_get_version,
+        napi_has_element,
+        napi_instanceof,
+        napi_is_array,
+        napi_is_arraybuffer,
+        napi_is_buffer,
+        napi_is_dataview,
+        napi_is_date,
+        napi_is_detached_arraybuffer,
+        napi_is_error,
+        napi_is_exception_pending,
+        napi_is_promise,
+        napi_is_typedarray,
+        napi_make_callback,
+        napi_new_instance,
+        napi_open_callback_scope,
+        napi_open_escapable_handle_scope,
+        napi_open_handle_scope,
+        napi_queue_async_work,
+        napi_ref_threadsafe_function,
+        napi_reference_ref,
+        napi_reference_unref,
+        napi_reject_deferred,
+        napi_release_threadsafe_function,
+        napi_remove_async_cleanup_hook,
+        napi_remove_env_cleanup_hook,
+        napi_remove_wrap,
+        napi_resolve_deferred,
+        napi_run_script,
+        napi_set_element,
+        napi_set_instance_data,
+        napi_strict_equals,
+        napi_throw,
+        napi_throw_error,
+        napi_throw_range_error,
+        napi_throw_type_error,
+        napi_type_tag_object,
+        napi_typeof,
+        napi_unref_threadsafe_function,
+        napi_unwrap,
+        napi_wrap,
         // -- node-api
-        node_api_create_syntax_error, node_api_symbol_for, node_api_throw_syntax_error,
-        node_api_create_external_string_latin1, node_api_create_external_string_utf16,
+        node_api_create_syntax_error,
+        node_api_symbol_for,
+        node_api_throw_syntax_error,
+        node_api_create_external_string_latin1,
+        node_api_create_external_string_utf16,
     );
 
     // uv_functions_to_export
@@ -3102,73 +3810,321 @@ pub fn fix_dead_code_elimination() {
     {
         use uv_functions_to_export::*;
         keep_symbols!(
-            uv_accept, uv_async_init, uv_async_send, uv_available_parallelism, uv_backend_fd,
-            uv_backend_timeout, uv_barrier_destroy, uv_barrier_init, uv_barrier_wait, uv_buf_init,
-            uv_cancel, uv_chdir, uv_check_init, uv_check_start, uv_check_stop, uv_clock_gettime,
-            uv_close, uv_cond_broadcast, uv_cond_destroy, uv_cond_init, uv_cond_signal,
-            uv_cond_timedwait, uv_cond_wait, uv_cpu_info, uv_cpumask_size, uv_cwd,
-            uv_default_loop, uv_disable_stdio_inheritance, uv_dlclose, uv_dlerror, uv_dlopen,
-            uv_dlsym, uv_err_name, uv_err_name_r, uv_exepath, uv_fileno, uv_free_cpu_info,
-            uv_free_interface_addresses, uv_freeaddrinfo, uv_fs_access, uv_fs_chmod, uv_fs_chown,
-            uv_fs_close, uv_fs_closedir, uv_fs_copyfile, uv_fs_event_getpath, uv_fs_event_init,
-            uv_fs_event_start, uv_fs_event_stop, uv_fs_fchmod, uv_fs_fchown, uv_fs_fdatasync,
-            uv_fs_fstat, uv_fs_fsync, uv_fs_ftruncate, uv_fs_futime, uv_fs_get_path,
-            uv_fs_get_ptr, uv_fs_get_result, uv_fs_get_statbuf, uv_fs_get_system_error,
-            uv_fs_get_type, uv_fs_lchown, uv_fs_link, uv_fs_lstat, uv_fs_lutime, uv_fs_mkdir,
-            uv_fs_mkdtemp, uv_fs_mkstemp, uv_fs_open, uv_fs_opendir, uv_fs_poll_getpath,
-            uv_fs_poll_init, uv_fs_poll_start, uv_fs_poll_stop, uv_fs_read, uv_fs_readdir,
-            uv_fs_readlink, uv_fs_realpath, uv_fs_rename, uv_fs_req_cleanup, uv_fs_rmdir,
-            uv_fs_scandir, uv_fs_scandir_next, uv_fs_sendfile, uv_fs_stat, uv_fs_statfs,
-            uv_fs_symlink, uv_fs_unlink, uv_fs_utime, uv_fs_write, uv_get_available_memory,
-            uv_get_constrained_memory, uv_get_free_memory, uv_get_osfhandle, uv_get_process_title,
-            uv_get_total_memory, uv_getaddrinfo, uv_getnameinfo, uv_getrusage,
-            uv_getrusage_thread, uv_gettimeofday, uv_guess_handle, uv_handle_get_data,
-            uv_handle_get_loop, uv_handle_get_type, uv_handle_set_data, uv_handle_size,
-            uv_handle_type_name, uv_has_ref, uv_hrtime, uv_idle_init, uv_idle_start, uv_idle_stop,
-            uv_if_indextoiid, uv_if_indextoname, uv_inet_ntop, uv_inet_pton,
-            uv_interface_addresses, uv_ip_name, uv_ip4_addr, uv_ip4_name, uv_ip6_addr,
-            uv_ip6_name, uv_is_active, uv_is_closing, uv_is_readable, uv_is_writable,
-            uv_key_create, uv_key_delete, uv_key_get, uv_key_set, uv_kill, uv_library_shutdown,
-            uv_listen, uv_loadavg, uv_loop_alive, uv_loop_close, uv_loop_configure,
-            uv_loop_delete, uv_loop_fork, uv_loop_get_data, uv_loop_init, uv_loop_new,
-            uv_loop_set_data, uv_loop_size, uv_metrics_idle_time, uv_metrics_info,
-            uv_mutex_destroy, uv_mutex_init, uv_mutex_init_recursive, uv_mutex_lock,
-            uv_mutex_trylock, uv_mutex_unlock, uv_now, uv_once, uv_open_osfhandle, uv_os_environ,
-            uv_os_free_environ, uv_os_free_group, uv_os_free_passwd, uv_os_get_group,
-            uv_os_get_passwd, uv_os_get_passwd2, uv_os_getenv, uv_os_gethostname, uv_os_getpid,
-            uv_os_getppid, uv_os_getpriority, uv_os_homedir, uv_os_setenv, uv_os_setpriority,
-            uv_os_tmpdir, uv_os_uname, uv_os_unsetenv, uv_pipe, uv_pipe_bind, uv_pipe_bind2,
-            uv_pipe_chmod, uv_pipe_connect, uv_pipe_connect2, uv_pipe_getpeername,
-            uv_pipe_getsockname, uv_pipe_init, uv_pipe_open, uv_pipe_pending_count,
-            uv_pipe_pending_instances, uv_pipe_pending_type, uv_poll_init, uv_poll_init_socket,
-            uv_poll_start, uv_poll_stop, uv_prepare_init, uv_prepare_start, uv_prepare_stop,
-            uv_print_active_handles, uv_print_all_handles, uv_process_get_pid, uv_process_kill,
-            uv_queue_work, uv_random, uv_read_start, uv_read_stop, uv_recv_buffer_size, uv_ref,
-            uv_replace_allocator, uv_req_get_data, uv_req_get_type, uv_req_set_data, uv_req_size,
-            uv_req_type_name, uv_resident_set_memory, uv_run, uv_rwlock_destroy, uv_rwlock_init,
-            uv_rwlock_rdlock, uv_rwlock_rdunlock, uv_rwlock_tryrdlock, uv_rwlock_trywrlock,
-            uv_rwlock_wrlock, uv_rwlock_wrunlock, uv_sem_destroy, uv_sem_init, uv_sem_post,
-            uv_sem_trywait, uv_sem_wait, uv_send_buffer_size, uv_set_process_title, uv_setup_args,
-            uv_shutdown, uv_signal_init, uv_signal_start, uv_signal_start_oneshot, uv_signal_stop,
-            uv_sleep, uv_socketpair, uv_spawn, uv_stop, uv_stream_get_write_queue_size,
-            uv_stream_set_blocking, uv_strerror, uv_strerror_r, uv_tcp_bind, uv_tcp_close_reset,
-            uv_tcp_connect, uv_tcp_getpeername, uv_tcp_getsockname, uv_tcp_init, uv_tcp_init_ex,
-            uv_tcp_keepalive, uv_tcp_nodelay, uv_tcp_open, uv_tcp_simultaneous_accepts,
-            uv_thread_create, uv_thread_create_ex, uv_thread_detach, uv_thread_equal,
-            uv_thread_getaffinity, uv_thread_getcpu, uv_thread_getname, uv_thread_getpriority,
-            uv_thread_join, uv_thread_self, uv_thread_setaffinity, uv_thread_setname,
-            uv_thread_setpriority, uv_timer_again, uv_timer_get_due_in, uv_timer_get_repeat,
-            uv_timer_init, uv_timer_set_repeat, uv_timer_start, uv_timer_stop,
-            uv_translate_sys_error, uv_try_write, uv_try_write2, uv_tty_get_vterm_state,
-            uv_tty_get_winsize, uv_tty_init, uv_tty_reset_mode, uv_tty_set_mode,
-            uv_tty_set_vterm_state, uv_udp_bind, uv_udp_connect, uv_udp_get_send_queue_count,
-            uv_udp_get_send_queue_size, uv_udp_getpeername, uv_udp_getsockname, uv_udp_init,
-            uv_udp_init_ex, uv_udp_open, uv_udp_recv_start, uv_udp_recv_stop, uv_udp_send,
-            uv_udp_set_broadcast, uv_udp_set_membership, uv_udp_set_multicast_interface,
-            uv_udp_set_multicast_loop, uv_udp_set_multicast_ttl, uv_udp_set_source_membership,
-            uv_udp_set_ttl, uv_udp_try_send, uv_udp_try_send2, uv_udp_using_recvmmsg, uv_unref,
-            uv_update_time, uv_uptime, uv_utf16_length_as_wtf8, uv_utf16_to_wtf8, uv_version,
-            uv_version_string, uv_walk, uv_write, uv_write2, uv_wtf8_length_as_utf16,
+            uv_accept,
+            uv_async_init,
+            uv_async_send,
+            uv_available_parallelism,
+            uv_backend_fd,
+            uv_backend_timeout,
+            uv_barrier_destroy,
+            uv_barrier_init,
+            uv_barrier_wait,
+            uv_buf_init,
+            uv_cancel,
+            uv_chdir,
+            uv_check_init,
+            uv_check_start,
+            uv_check_stop,
+            uv_clock_gettime,
+            uv_close,
+            uv_cond_broadcast,
+            uv_cond_destroy,
+            uv_cond_init,
+            uv_cond_signal,
+            uv_cond_timedwait,
+            uv_cond_wait,
+            uv_cpu_info,
+            uv_cpumask_size,
+            uv_cwd,
+            uv_default_loop,
+            uv_disable_stdio_inheritance,
+            uv_dlclose,
+            uv_dlerror,
+            uv_dlopen,
+            uv_dlsym,
+            uv_err_name,
+            uv_err_name_r,
+            uv_exepath,
+            uv_fileno,
+            uv_free_cpu_info,
+            uv_free_interface_addresses,
+            uv_freeaddrinfo,
+            uv_fs_access,
+            uv_fs_chmod,
+            uv_fs_chown,
+            uv_fs_close,
+            uv_fs_closedir,
+            uv_fs_copyfile,
+            uv_fs_event_getpath,
+            uv_fs_event_init,
+            uv_fs_event_start,
+            uv_fs_event_stop,
+            uv_fs_fchmod,
+            uv_fs_fchown,
+            uv_fs_fdatasync,
+            uv_fs_fstat,
+            uv_fs_fsync,
+            uv_fs_ftruncate,
+            uv_fs_futime,
+            uv_fs_get_path,
+            uv_fs_get_ptr,
+            uv_fs_get_result,
+            uv_fs_get_statbuf,
+            uv_fs_get_system_error,
+            uv_fs_get_type,
+            uv_fs_lchown,
+            uv_fs_link,
+            uv_fs_lstat,
+            uv_fs_lutime,
+            uv_fs_mkdir,
+            uv_fs_mkdtemp,
+            uv_fs_mkstemp,
+            uv_fs_open,
+            uv_fs_opendir,
+            uv_fs_poll_getpath,
+            uv_fs_poll_init,
+            uv_fs_poll_start,
+            uv_fs_poll_stop,
+            uv_fs_read,
+            uv_fs_readdir,
+            uv_fs_readlink,
+            uv_fs_realpath,
+            uv_fs_rename,
+            uv_fs_req_cleanup,
+            uv_fs_rmdir,
+            uv_fs_scandir,
+            uv_fs_scandir_next,
+            uv_fs_sendfile,
+            uv_fs_stat,
+            uv_fs_statfs,
+            uv_fs_symlink,
+            uv_fs_unlink,
+            uv_fs_utime,
+            uv_fs_write,
+            uv_get_available_memory,
+            uv_get_constrained_memory,
+            uv_get_free_memory,
+            uv_get_osfhandle,
+            uv_get_process_title,
+            uv_get_total_memory,
+            uv_getaddrinfo,
+            uv_getnameinfo,
+            uv_getrusage,
+            uv_getrusage_thread,
+            uv_gettimeofday,
+            uv_guess_handle,
+            uv_handle_get_data,
+            uv_handle_get_loop,
+            uv_handle_get_type,
+            uv_handle_set_data,
+            uv_handle_size,
+            uv_handle_type_name,
+            uv_has_ref,
+            uv_hrtime,
+            uv_idle_init,
+            uv_idle_start,
+            uv_idle_stop,
+            uv_if_indextoiid,
+            uv_if_indextoname,
+            uv_inet_ntop,
+            uv_inet_pton,
+            uv_interface_addresses,
+            uv_ip_name,
+            uv_ip4_addr,
+            uv_ip4_name,
+            uv_ip6_addr,
+            uv_ip6_name,
+            uv_is_active,
+            uv_is_closing,
+            uv_is_readable,
+            uv_is_writable,
+            uv_key_create,
+            uv_key_delete,
+            uv_key_get,
+            uv_key_set,
+            uv_kill,
+            uv_library_shutdown,
+            uv_listen,
+            uv_loadavg,
+            uv_loop_alive,
+            uv_loop_close,
+            uv_loop_configure,
+            uv_loop_delete,
+            uv_loop_fork,
+            uv_loop_get_data,
+            uv_loop_init,
+            uv_loop_new,
+            uv_loop_set_data,
+            uv_loop_size,
+            uv_metrics_idle_time,
+            uv_metrics_info,
+            uv_mutex_destroy,
+            uv_mutex_init,
+            uv_mutex_init_recursive,
+            uv_mutex_lock,
+            uv_mutex_trylock,
+            uv_mutex_unlock,
+            uv_now,
+            uv_once,
+            uv_open_osfhandle,
+            uv_os_environ,
+            uv_os_free_environ,
+            uv_os_free_group,
+            uv_os_free_passwd,
+            uv_os_get_group,
+            uv_os_get_passwd,
+            uv_os_get_passwd2,
+            uv_os_getenv,
+            uv_os_gethostname,
+            uv_os_getpid,
+            uv_os_getppid,
+            uv_os_getpriority,
+            uv_os_homedir,
+            uv_os_setenv,
+            uv_os_setpriority,
+            uv_os_tmpdir,
+            uv_os_uname,
+            uv_os_unsetenv,
+            uv_pipe,
+            uv_pipe_bind,
+            uv_pipe_bind2,
+            uv_pipe_chmod,
+            uv_pipe_connect,
+            uv_pipe_connect2,
+            uv_pipe_getpeername,
+            uv_pipe_getsockname,
+            uv_pipe_init,
+            uv_pipe_open,
+            uv_pipe_pending_count,
+            uv_pipe_pending_instances,
+            uv_pipe_pending_type,
+            uv_poll_init,
+            uv_poll_init_socket,
+            uv_poll_start,
+            uv_poll_stop,
+            uv_prepare_init,
+            uv_prepare_start,
+            uv_prepare_stop,
+            uv_print_active_handles,
+            uv_print_all_handles,
+            uv_process_get_pid,
+            uv_process_kill,
+            uv_queue_work,
+            uv_random,
+            uv_read_start,
+            uv_read_stop,
+            uv_recv_buffer_size,
+            uv_ref,
+            uv_replace_allocator,
+            uv_req_get_data,
+            uv_req_get_type,
+            uv_req_set_data,
+            uv_req_size,
+            uv_req_type_name,
+            uv_resident_set_memory,
+            uv_run,
+            uv_rwlock_destroy,
+            uv_rwlock_init,
+            uv_rwlock_rdlock,
+            uv_rwlock_rdunlock,
+            uv_rwlock_tryrdlock,
+            uv_rwlock_trywrlock,
+            uv_rwlock_wrlock,
+            uv_rwlock_wrunlock,
+            uv_sem_destroy,
+            uv_sem_init,
+            uv_sem_post,
+            uv_sem_trywait,
+            uv_sem_wait,
+            uv_send_buffer_size,
+            uv_set_process_title,
+            uv_setup_args,
+            uv_shutdown,
+            uv_signal_init,
+            uv_signal_start,
+            uv_signal_start_oneshot,
+            uv_signal_stop,
+            uv_sleep,
+            uv_socketpair,
+            uv_spawn,
+            uv_stop,
+            uv_stream_get_write_queue_size,
+            uv_stream_set_blocking,
+            uv_strerror,
+            uv_strerror_r,
+            uv_tcp_bind,
+            uv_tcp_close_reset,
+            uv_tcp_connect,
+            uv_tcp_getpeername,
+            uv_tcp_getsockname,
+            uv_tcp_init,
+            uv_tcp_init_ex,
+            uv_tcp_keepalive,
+            uv_tcp_nodelay,
+            uv_tcp_open,
+            uv_tcp_simultaneous_accepts,
+            uv_thread_create,
+            uv_thread_create_ex,
+            uv_thread_detach,
+            uv_thread_equal,
+            uv_thread_getaffinity,
+            uv_thread_getcpu,
+            uv_thread_getname,
+            uv_thread_getpriority,
+            uv_thread_join,
+            uv_thread_self,
+            uv_thread_setaffinity,
+            uv_thread_setname,
+            uv_thread_setpriority,
+            uv_timer_again,
+            uv_timer_get_due_in,
+            uv_timer_get_repeat,
+            uv_timer_init,
+            uv_timer_set_repeat,
+            uv_timer_start,
+            uv_timer_stop,
+            uv_translate_sys_error,
+            uv_try_write,
+            uv_try_write2,
+            uv_tty_get_vterm_state,
+            uv_tty_get_winsize,
+            uv_tty_init,
+            uv_tty_reset_mode,
+            uv_tty_set_mode,
+            uv_tty_set_vterm_state,
+            uv_udp_bind,
+            uv_udp_connect,
+            uv_udp_get_send_queue_count,
+            uv_udp_get_send_queue_size,
+            uv_udp_getpeername,
+            uv_udp_getsockname,
+            uv_udp_init,
+            uv_udp_init_ex,
+            uv_udp_open,
+            uv_udp_recv_start,
+            uv_udp_recv_stop,
+            uv_udp_send,
+            uv_udp_set_broadcast,
+            uv_udp_set_membership,
+            uv_udp_set_multicast_interface,
+            uv_udp_set_multicast_loop,
+            uv_udp_set_multicast_ttl,
+            uv_udp_set_source_membership,
+            uv_udp_set_ttl,
+            uv_udp_try_send,
+            uv_udp_try_send2,
+            uv_udp_using_recvmmsg,
+            uv_unref,
+            uv_update_time,
+            uv_uptime,
+            uv_utf16_length_as_wtf8,
+            uv_utf16_to_wtf8,
+            uv_version,
+            uv_version_string,
+            uv_walk,
+            uv_write,
+            uv_write2,
+            uv_wtf8_length_as_utf16,
             uv_wtf8_to_utf16,
         );
     }
@@ -3237,31 +4193,81 @@ pub fn fix_dead_code_elimination() {
     {
         use v8_api::*;
         keep_symbols!(
-            v8_Isolate_TryGetCurrent, v8_Isolate_GetCurrent, v8_Isolate_GetCurrentContext,
-            node_AddEnvironmentCleanupHook, node_RemoveEnvironmentCleanupHook, v8_Number_New,
-            v8_Number_Value, v8_String_NewFromUtf8, v8_String_WriteUtf8,
-            v8_api_internal_ToLocalEmpty, v8_String_Length, v8_External_New, v8_External_Value,
-            v8_Object_New, v8_Object_Set_key, v8_Object_Set_index, v8_Object_SetInternalField,
-            v8_Object_SlowGetInternalField, v8_Object_Get_index, v8_Object_Get_key,
-            v8_HandleScope_CreateHandle, v8_HandleScope_ctor, v8_HandleScope_dtor,
-            v8_FunctionTemplate_GetFunction, v8_FunctionTemplate_New,
-            v8_ObjectTemplate_NewInstance, v8_ObjectTemplate_SetInternalFieldCount,
-            v8_ObjectTemplate_InternalFieldCount, v8_ObjectTemplate_New,
-            v8_EscapableHandleScopeBase_EscapeSlot, v8_EscapableHandleScopeBase_ctor,
-            v8_internal_IsolateFromNeverReadOnlySpaceObject, v8_Array_New_elements,
-            v8_Array_Length, v8_Array_New_len, v8_Array_New_fn, v8_Array_Iterate,
-            v8_Array_CheckCast, v8_Function_SetName, v8_Value_IsBoolean, v8_Boolean_Value,
-            v8_Value_FullIsTrue, v8_Value_FullIsFalse, v8_EscapableHandleScope_dtor,
-            v8_EscapableHandleScope_ctor, v8_Value_IsObject, v8_Value_IsNumber,
-            v8_Value_IsUint32, v8_Value_Uint32Value, v8_Value_IsUndefined, v8_Value_IsNull,
-            v8_Value_IsNullOrUndefined, v8_Value_IsTrue, v8_Value_IsFalse, v8_Value_IsString,
-            v8_Value_StrictEquals, v8_Boolean_New, v8_Object_GetInternalField,
-            v8_Context_GetIsolate, v8_String_NewFromOneByte, v8_String_IsExternal,
-            v8_String_IsExternalOneByte, v8_String_IsExternalTwoByte, v8_String_IsOneByte,
-            v8_String_Utf8Length, v8_String_ContainsOnlyOneByte,
-            v8_api_internal_GlobalizeReference, v8_api_internal_DisposeGlobal,
-            v8_api_internal_GetFunctionTemplateData, v8_Function_GetName, v8_Value_IsFunction,
-            v8_Value_IsMap, v8_Value_IsArray, v8_Value_IsInt32, v8_Value_IsBigInt,
+            v8_Isolate_TryGetCurrent,
+            v8_Isolate_GetCurrent,
+            v8_Isolate_GetCurrentContext,
+            node_AddEnvironmentCleanupHook,
+            node_RemoveEnvironmentCleanupHook,
+            v8_Number_New,
+            v8_Number_Value,
+            v8_String_NewFromUtf8,
+            v8_String_WriteUtf8,
+            v8_api_internal_ToLocalEmpty,
+            v8_String_Length,
+            v8_External_New,
+            v8_External_Value,
+            v8_Object_New,
+            v8_Object_Set_key,
+            v8_Object_Set_index,
+            v8_Object_SetInternalField,
+            v8_Object_SlowGetInternalField,
+            v8_Object_Get_index,
+            v8_Object_Get_key,
+            v8_HandleScope_CreateHandle,
+            v8_HandleScope_ctor,
+            v8_HandleScope_dtor,
+            v8_FunctionTemplate_GetFunction,
+            v8_FunctionTemplate_New,
+            v8_ObjectTemplate_NewInstance,
+            v8_ObjectTemplate_SetInternalFieldCount,
+            v8_ObjectTemplate_InternalFieldCount,
+            v8_ObjectTemplate_New,
+            v8_EscapableHandleScopeBase_EscapeSlot,
+            v8_EscapableHandleScopeBase_ctor,
+            v8_internal_IsolateFromNeverReadOnlySpaceObject,
+            v8_Array_New_elements,
+            v8_Array_Length,
+            v8_Array_New_len,
+            v8_Array_New_fn,
+            v8_Array_Iterate,
+            v8_Array_CheckCast,
+            v8_Function_SetName,
+            v8_Value_IsBoolean,
+            v8_Boolean_Value,
+            v8_Value_FullIsTrue,
+            v8_Value_FullIsFalse,
+            v8_EscapableHandleScope_dtor,
+            v8_EscapableHandleScope_ctor,
+            v8_Value_IsObject,
+            v8_Value_IsNumber,
+            v8_Value_IsUint32,
+            v8_Value_Uint32Value,
+            v8_Value_IsUndefined,
+            v8_Value_IsNull,
+            v8_Value_IsNullOrUndefined,
+            v8_Value_IsTrue,
+            v8_Value_IsFalse,
+            v8_Value_IsString,
+            v8_Value_StrictEquals,
+            v8_Boolean_New,
+            v8_Object_GetInternalField,
+            v8_Context_GetIsolate,
+            v8_String_NewFromOneByte,
+            v8_String_IsExternal,
+            v8_String_IsExternalOneByte,
+            v8_String_IsExternalTwoByte,
+            v8_String_IsOneByte,
+            v8_String_Utf8Length,
+            v8_String_ContainsOnlyOneByte,
+            v8_api_internal_GlobalizeReference,
+            v8_api_internal_DisposeGlobal,
+            v8_api_internal_GetFunctionTemplateData,
+            v8_Function_GetName,
+            v8_Value_IsFunction,
+            v8_Value_IsMap,
+            v8_Value_IsArray,
+            v8_Value_IsInt32,
+            v8_Value_IsBigInt,
             v8_api_internal_FromJustIsNothing,
         );
     }
@@ -3321,9 +4327,11 @@ impl NapiFinalizerTask {
 
         if vm.is_shutting_down() {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
-            global_this.bun_vm().as_mut()
-                .rare_data()
-                .push_cleanup_hook(vm.global(), this.cast::<c_void>(), Self::run_as_cleanup_hook);
+            global_this.bun_vm().as_mut().rare_data().push_cleanup_hook(
+                vm.global(),
+                this.cast::<c_void>(),
+                Self::run_as_cleanup_hook,
+            );
         } else {
             vm.event_loop_ref().enqueue_task(Task::init(this));
         }

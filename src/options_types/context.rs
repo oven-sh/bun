@@ -7,8 +7,8 @@
 //! `ContextData` below so call sites that write `Command::ContextData::create()`
 //! keep working.
 
-use bun_collections::ArrayHashMap;
 use crate::schema::api;
+use bun_collections::ArrayHashMap;
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;
@@ -156,7 +156,10 @@ impl ContextData {
     #[track_caller]
     #[inline]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
-        assert!(!self.log.is_null(), "ContextData::log_mut() before create_context_data()");
+        assert!(
+            !self.log.is_null(),
+            "ContextData::log_mut() before create_context_data()"
+        );
         // SAFETY: `self.log` is non-null (asserted) and points at the
         // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
         // contract guarantees no overlapping borrow of the same `Log`.
@@ -168,7 +171,10 @@ impl ContextData {
     #[track_caller]
     #[inline]
     pub fn log_ref(&self) -> &bun_ast::Log {
-        assert!(!self.log.is_null(), "ContextData::log_ref() before create_context_data()");
+        assert!(
+            !self.log.is_null(),
+            "ContextData::log_ref() before create_context_data()"
+        );
         // SAFETY: `self.log` is non-null (asserted) and points at the
         // process-static `Cli::LOG_`; shared `&` may freely alias other
         // shared borrows. Callers of `log_mut` are obligated not to hold a

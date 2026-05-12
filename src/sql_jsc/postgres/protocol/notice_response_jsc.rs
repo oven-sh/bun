@@ -1,7 +1,7 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::StringBuilder;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
+use bun_jsc::zig_string::ZigString;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 use bun_sql::postgres::protocol::notice_response::NoticeResponse;
 

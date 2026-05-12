@@ -986,7 +986,6 @@ pub enum Code {
     MODULE_NOT_FOUND,
 
     // -- Deprecated ---
-
     /// The value passed to postMessage() contained an object that is not supported for transferring.
     ERR_CANNOT_TRANSFER_OBJECT,
 

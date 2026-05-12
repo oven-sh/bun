@@ -1,14 +1,14 @@
 use core::ffi::CStr;
 use std::sync::Arc;
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, shell_openat, unsupported_flag, FlagParser, Interpreter, NodeId, ParseFlagResult,
+    FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat, unsupported_flag,
 };
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Cat {
@@ -63,15 +63,14 @@ impl Cat {
                 Err(e) => {
                     return Builtin::fail_parse(interp, cmd, Kind::Cat, e, || {
                         Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
-                    })
+                    });
                 }
             }
         };
         Self::state_mut(interp, cmd).opts = opts;
 
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        let should_read_from_stdin =
-            filepath_start.is_none() || filepath_start == Some(argc);
+        let should_read_from_stdin = filepath_start.is_none() || filepath_start == Some(argc);
 
         Self::state_mut(interp, cmd).state = if should_read_from_stdin {
             CatState::ExecStdin {
@@ -125,9 +124,12 @@ impl Cat {
         let branch = match &Self::state_mut(interp, cmd).state {
             CatState::Idle => panic!("Invalid state"),
             CatState::ExecStdin { .. } => Branch::Stdin,
-            CatState::ExecFilepathArgs { args_start, idx, .. } => {
-                Branch::FileArg { args_start: *args_start, idx: *idx }
-            }
+            CatState::ExecFilepathArgs {
+                args_start, idx, ..
+            } => Branch::FileArg {
+                args_start: *args_start,
+                idx: *idx,
+            },
             CatState::WaitingWriteErr => Branch::WaitingErr,
             CatState::Done => Branch::Done,
         };
@@ -165,7 +167,10 @@ impl Cat {
                     _ => unreachable!("needs_io() returned true"),
                 };
                 reader.set_interp(interp_ptr);
-                reader.add_reader(ReaderChildPtr { node: cmd, tag: ReaderTag::Cat });
+                reader.add_reader(ReaderChildPtr {
+                    node: cmd,
+                    tag: ReaderTag::Cat,
+                });
                 reader.start()
             }
             Branch::FileArg { args_start, idx } => {
@@ -226,7 +231,10 @@ impl Cat {
                     *out_done = false;
                     *slot = Some(reader.clone());
                 }
-                reader.add_reader(ReaderChildPtr { node: cmd, tag: ReaderTag::Cat });
+                reader.add_reader(ReaderChildPtr {
+                    node: cmd,
+                    tag: ReaderTag::Cat,
+                });
                 reader.start()
             }
             Branch::WaitingErr => Yield::failed(),
@@ -245,12 +253,19 @@ impl Cat {
             // Spec: `defer e.deref(); @intCast(@intFromEnum(e.getErrno()))`.
             let errno = e.get_errno() as ExitCode;
             e.deref();
-            let rchild = ReaderChildPtr { node: cmd, tag: ReaderTag::Cat };
+            let rchild = ReaderChildPtr {
+                node: cmd,
+                tag: ReaderTag::Cat,
+            };
             // Writing to stdout errored: cancel everything and finish.
             // PORT NOTE: reshaped for borrowck — pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it (= Zig deref).
             match &mut Self::state_mut(interp, cmd).state {
-                CatState::ExecStdin { in_done, errno: st_errno, .. } => {
+                CatState::ExecStdin {
+                    in_done,
+                    errno: st_errno,
+                    ..
+                } => {
                     *st_errno = errno;
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
@@ -273,7 +288,12 @@ impl Cat {
         }
 
         let step = match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin { chunks_queued, chunks_done, in_done, .. } => {
+            CatState::ExecStdin {
+                chunks_queued,
+                chunks_done,
+                in_done,
+                ..
+            } => {
                 *chunks_done += 1;
                 if *in_done && *chunks_done >= *chunks_queued {
                     Step::Done(0)
@@ -292,7 +312,11 @@ impl Cat {
                 if *chunks_done >= *chunks_queued {
                     *out_done = true;
                 }
-                if *in_done && *out_done { Step::Next } else { Step::Suspend }
+                if *in_done && *out_done {
+                    Step::Next
+                } else {
+                    Step::Suspend
+                }
             }
             CatState::WaitingWriteErr => Step::Done(1),
             _ => panic!("Invalid state"),
@@ -347,7 +371,12 @@ impl Cat {
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin { chunks_queued, chunks_done, in_done, errno: st_errno } => {
+            CatState::ExecStdin {
+                chunks_queued,
+                chunks_done,
+                in_done,
+                errno: st_errno,
+            } => {
                 *st_errno = errno;
                 *in_done = true;
                 if errno != 0 {
@@ -364,7 +393,12 @@ impl Cat {
                 }
             }
             CatState::ExecFilepathArgs {
-                chunks_queued, chunks_done, in_done, out_done, reader, ..
+                chunks_queued,
+                chunks_done,
+                in_done,
+                out_done,
+                reader,
+                ..
             } => {
                 *in_done = true;
                 if errno != 0 {

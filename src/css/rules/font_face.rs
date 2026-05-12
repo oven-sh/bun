@@ -3,8 +3,8 @@ use crate::css_rules::Location;
 use crate::css_values::angle::Angle;
 use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
-use crate::{PrintErr, Printer};
 use crate::generics::DeepClone as _;
+use crate::{PrintErr, Printer};
 
 use super::ArrayList;
 
@@ -67,11 +67,19 @@ impl FontFaceProperty {
 
         match self {
             FontFaceProperty::Source(value) => write_property_multi!(dest, "src", value.as_slice()),
-            FontFaceProperty::FontFamily(value) => write_property_single!(dest, "font-family", value),
+            FontFaceProperty::FontFamily(value) => {
+                write_property_single!(dest, "font-family", value)
+            }
             FontFaceProperty::FontStyle(value) => write_property_single!(dest, "font-style", value),
-            FontFaceProperty::FontWeight(value) => write_property_single!(dest, "font-weight", value),
-            FontFaceProperty::FontStretch(value) => write_property_single!(dest, "font-stretch", value),
-            FontFaceProperty::UnicodeRange(value) => write_property_multi!(dest, "unicode-range", value.as_slice()),
+            FontFaceProperty::FontWeight(value) => {
+                write_property_single!(dest, "font-weight", value)
+            }
+            FontFaceProperty::FontStretch(value) => {
+                write_property_single!(dest, "font-stretch", value)
+            }
+            FontFaceProperty::UnicodeRange(value) => {
+                write_property_multi!(dest, "unicode-range", value.as_slice())
+            }
             FontFaceProperty::Custom(custom) => {
                 dest.write_str(custom.name.as_str())?;
                 dest.delim(b':', false)?;
@@ -90,9 +98,14 @@ impl FontFaceProperty {
             FontFaceProperty::FontStyle(v) => FontFaceProperty::FontStyle(v.deep_clone(arena)),
             FontFaceProperty::FontWeight(v) => FontFaceProperty::FontWeight(v.deep_clone(arena)),
             FontFaceProperty::FontStretch(v) => FontFaceProperty::FontStretch(v.deep_clone(arena)),
-            FontFaceProperty::UnicodeRange(v) => {
-                FontFaceProperty::UnicodeRange(v.iter().map(|r| UnicodeRange { start: r.start, end: r.end }).collect())
-            }
+            FontFaceProperty::UnicodeRange(v) => FontFaceProperty::UnicodeRange(
+                v.iter()
+                    .map(|r| UnicodeRange {
+                        start: r.start,
+                        end: r.end,
+                    })
+                    .collect(),
+            ),
             FontFaceProperty::Custom(v) => FontFaceProperty::Custom(v.deep_clone(arena)),
         }
     }
@@ -203,11 +216,15 @@ impl UnicodeRange {
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
         } else {
-            return Err(input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens)));
+            return Err(
+                input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens))
+            );
         };
 
         if range.end > 0x10FFFF || range.start > range.end {
-            return Err(input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens)));
+            return Err(
+                input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens))
+            );
         }
 
         Ok(range)
@@ -245,7 +262,9 @@ impl UnicodeRange {
                         Ok(vv) => vv.clone(),
                         Err(e) => return Err(e),
                     };
-                    if !(matches!(next, css::Token::Ident(_)) || matches!(next, css::Token::Delim(d) if d == '?' as u32)) {
+                    if !(matches!(next, css::Token::Ident(_))
+                        || matches!(next, css::Token::Delim(d) if d == '?' as u32))
+                    {
                         return Err(input.new_basic_unexpected_token_error(next));
                     }
                     return Self::parse_question_marks(input);
@@ -290,17 +309,25 @@ impl UnicodeRange {
             if text.is_empty() {
                 return Some(UnicodeRange {
                     start: first_hex_value << u32::try_from(question_marks * 4).expect("int cast"),
-                    end: ((first_hex_value + 1) << u32::try_from(question_marks * 4).expect("int cast")) - 1,
+                    end: ((first_hex_value + 1)
+                        << u32::try_from(question_marks * 4).expect("int cast"))
+                        - 1,
                 });
             }
         } else if text.is_empty() {
-            return Some(UnicodeRange { start: first_hex_value, end: first_hex_value });
+            return Some(UnicodeRange {
+                start: first_hex_value,
+                end: first_hex_value,
+            });
         } else {
             if !text.is_empty() && text[0] == b'-' {
                 text = &text[1..];
                 let (second_hex_value, hex_digit_count2) = Self::consume_hex(&mut text);
                 if hex_digit_count2 > 0 && hex_digit_count2 <= 6 && text.is_empty() {
-                    return Some(UnicodeRange { start: first_hex_value, end: second_hex_value });
+                    return Some(UnicodeRange {
+                        start: first_hex_value,
+                        end: second_hex_value,
+                    });
                 }
             }
         }
@@ -371,7 +398,10 @@ impl FontStyle {
                 } else {
                     angle
                 };
-                return Ok(FontStyle::Oblique(Size2D { a: angle, b: second_angle }));
+                return Ok(FontStyle::Oblique(Size2D {
+                    a: angle,
+                    b: second_angle,
+                }));
             }
         })
     }
@@ -612,7 +642,10 @@ impl UrlSource {
             Err(e) => return Err(e),
         };
 
-        let format = if input.try_parse(|i| i.expect_function_matching(b"format")).is_ok() {
+        let format = if input
+            .try_parse(|i| i.expect_function_matching(b"format"))
+            .is_ok()
+        {
             match input.parse_nested_block(FontFormat::parse) {
                 Ok(vv) => Some(vv),
                 Err(e) => return Err(e),
@@ -621,7 +654,10 @@ impl UrlSource {
             None
         };
 
-        let tech = if input.try_parse(|i| i.expect_function_matching(b"tech")).is_ok() {
+        let tech = if input
+            .try_parse(|i| i.expect_function_matching(b"tech"))
+            .is_ok()
+        {
             match input.parse_nested_block(|i| i.parse_list(FontTechnology::parse)) {
                 Ok(vv) => vv,
                 Err(e) => return Err(e),
@@ -728,22 +764,41 @@ const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::{FontFamily, FontStretch, FontWeight};
     use bun_core::strings;
-    use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
+    use css::css_parser::{
+        AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
+    };
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 
     impl AtRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type AtRule = FontFaceProperty;
 
-        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
+        fn parse_prelude(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Prelude> {
+            Err(
+                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
+                    [u8],
+                >(name))),
+            )
         }
 
-        fn parse_block(_this: &mut Self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::AtRule> {
+        fn parse_block(
+            _this: &mut Self,
+            _: Self::Prelude,
+            _: &ParserState,
+            input: &mut Parser,
+        ) -> Result<Self::AtRule> {
             Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
         }
 
-        fn rule_without_block(_this: &mut Self, _: Self::Prelude, _: &ParserState) -> Maybe<Self::AtRule, ()> {
+        fn rule_without_block(
+            _this: &mut Self,
+            _: Self::Prelude,
+            _: &ParserState,
+        ) -> Maybe<Self::AtRule, ()> {
             Err(())
         }
     }
@@ -756,7 +811,12 @@ const _: () = {
             Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
 
-        fn parse_block(_this: &mut Self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::QualifiedRule> {
+        fn parse_block(
+            _this: &mut Self,
+            _: Self::Prelude,
+            _: &ParserState,
+            input: &mut Parser,
+        ) -> Result<Self::QualifiedRule> {
             Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
     }
@@ -764,7 +824,11 @@ const _: () = {
     impl DeclarationParser for FontFaceDeclarationParser {
         type Declaration = FontFaceProperty;
 
-        fn parse_value(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
             let state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(name, b"src") {

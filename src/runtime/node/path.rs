@@ -1,9 +1,11 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::{bun_string_jsc as BunString, host_fn, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
+use crate::jsc::{
+    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString, host_fn,
+};
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_paths::{self, Platform, MAX_PATH_BYTES};
-use bun_core::{strings, ZigString, ZigStringSlice};
+use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
 /// Local shim for `bun.String.createUTF8ForJS` over `[T]` (T = u8 | u16).
@@ -16,7 +18,7 @@ use bun_sys;
 /// `bun.String.cloneUTF16(...).toJS(...)` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    use crate::jsc::{bun_string_jsc, StringJsc as _};
+    use crate::jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
@@ -150,7 +152,9 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).all(|(x, y)| to_lower_t(*x) == to_lower_t(*y))
+    a.iter()
+        .zip(b.iter())
+        .all(|(x, y)| to_lower_t(*x) == to_lower_t(*y))
 }
 
 /// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
@@ -160,10 +164,18 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
 #[inline]
 fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     if !T::IS_U16 {
-        return T::from_u8(u8::try_from(a_c.as_u32()).expect("int cast").to_ascii_lowercase());
+        return T::from_u8(
+            u8::try_from(a_c.as_u32())
+                .expect("int cast")
+                .to_ascii_lowercase(),
+        );
     }
     if a_c.as_u32() < 128 {
-        T::from_u8(u8::try_from(a_c.as_u32()).expect("int cast").to_ascii_lowercase())
+        T::from_u8(
+            u8::try_from(a_c.as_u32())
+                .expect("int cast")
+                .to_ascii_lowercase(),
+        )
     } else {
         a_c
     }
@@ -224,7 +236,14 @@ impl<'a, T: PathCharCwd> PathParsed<'a, T> {
         let base = create_js_string_t::<T>(global_object, self.base)?;
         let ext = create_js_string_t::<T>(global_object, self.ext)?;
         let name_val = create_js_string_t::<T>(global_object, self.name)?;
-        Ok(PathParsedObject__create(global_object, root, dir, base, ext, name_val))
+        Ok(PathParsedObject__create(
+            global_object,
+            root,
+            dir,
+            base,
+            ext,
+            name_val,
+        ))
     }
 }
 
@@ -641,7 +660,11 @@ pub fn basename(
         validate_string(global_object, _suffix_ptr, format_args!("ext"))?;
     }
 
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
@@ -728,7 +751,11 @@ pub fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     if len == 1 {
         // `path` contains just a path separator, exit early to avoid
         // unnecessary work or a dot.
-        return if is_sep_t(byte0) { path } else { l::<T>(CHAR_STR_DOT) };
+        return if is_sep_t(byte0) {
+            path
+        } else {
+            l::<T>(CHAR_STR_DOT)
+        };
     }
 
     // Try to match a root
@@ -850,7 +877,11 @@ pub fn dirname(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
@@ -1096,7 +1127,11 @@ pub fn extname(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
@@ -1172,7 +1207,11 @@ fn _format_t<'a, T: PathCharCwd>(
         if name_len > 0 {
             memmove(&mut buf[0..name_len], _name);
         }
-        base_or_name_ext_range = if buf_size > 0 { (0, buf_size) } else { (0, base_len) };
+        base_or_name_ext_range = if buf_size > 0 {
+            (0, buf_size)
+        } else {
+            (0, base_len)
+        };
     }
 
     // Translated from the following JS code:
@@ -1191,7 +1230,10 @@ fn _format_t<'a, T: PathCharCwd>(
         buf_size = buf_offset + base_len;
         // Move all bytes to the right by dirLen + (maybe 1 for the separator).
         // Use copy_within because baseOrNameExt and buf overlap.
-        buf.copy_within(base_or_name_ext_range.0..base_or_name_ext_range.1, buf_offset);
+        buf.copy_within(
+            base_or_name_ext_range.0..base_or_name_ext_range.1,
+            buf_offset,
+        );
     }
     memmove(&mut buf[0..dir_len], dir_or_root);
     buf_size = dir_len + base_len;
@@ -1233,14 +1275,17 @@ pub fn format_js_t<T: PathCharCwd>(
     let base_len = path_object.base.len();
     let dir_len = path_object.dir.len();
     // Add one for the possible separator.
-    let buf_len: usize = (1
-        + (if dir_len > 0 { dir_len } else { path_object.root.len() })
-        + (if base_len > 0 {
+    let buf_len: usize =
+        (1 + (if dir_len > 0 {
+            dir_len
+        } else {
+            path_object.root.len()
+        }) + (if base_len > 0 {
             base_len
         } else {
             path_object.name.len() + path_object.ext.len()
         }))
-    .max(path_size::<T>());
+        .max(path_size::<T>());
     let mut scratch = PathScratch::<T>::new(pool, buf_len);
     let buf = scratch.slice();
     if is_windows {
@@ -1256,9 +1301,18 @@ pub fn format(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_object_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_object_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
-    validate_object(global_object, path_object_ptr, format_args!("pathObject"), Default::default())?;
+    validate_object(
+        global_object,
+        path_object_ptr,
+        format_args!("pathObject"),
+        Default::default(),
+    )?;
 
     // PERF(port): was stack-fallback — profile in Phase B
 
@@ -1317,7 +1371,13 @@ pub fn format(
         global_object,
         pool,
         is_windows,
-        &PathParsed { root, dir, base, ext, name: _name },
+        &PathParsed {
+            root,
+            dir,
+            base,
+            ext,
+            name: _name,
+        },
     )
 }
 
@@ -1344,7 +1404,11 @@ pub fn is_absolute(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
@@ -1565,7 +1629,11 @@ pub fn join_js_t<T: PathCharCwd>(
     // Adding 8 bytes when Windows for the possible UNC root.
     let mut buf_len: usize = if is_windows { 8 } else { 0 };
     for path in paths {
-        buf_len += if !path.is_empty() { path.len() + 1 } else { path.len() };
+        buf_len += if !path.is_empty() {
+            path.len() + 1
+        } else {
+            path.len()
+        };
     }
     buf_len = buf_len.max(path_size::<T>());
     let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
@@ -2042,7 +2110,11 @@ pub fn normalize(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -2133,7 +2205,11 @@ pub fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
     if let Some(_end) = end {
         let _pre_dot_state = pre_dot_state.unwrap_or(0);
         let _start_dot = start_dot.unwrap_or(0);
-        start = if start_part == 0 && _is_absolute { 1 } else { start_part };
+        start = if start_part == 0 && _is_absolute {
+            1
+        } else {
+            start_part
+        };
         if start_dot.is_none()
             // We saw a non-dot character immediately before the dot
             || (pre_dot_state.is_some() && _pre_dot_state == 0)
@@ -2155,7 +2231,13 @@ pub fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
         dir = l::<T>(CHAR_STR_FORWARD_SLASH);
     }
 
-    PathParsed { root, dir, base, ext, name: _name }
+    PathParsed {
+        root,
+        dir,
+        base,
+        ext,
+        name: _name,
+    }
 }
 
 // Based on Node v21.6.1 path.win32.parse
@@ -2171,7 +2253,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
 
     let len = path.len();
     if len == 0 {
-        return PathParsed { root, dir, base, ext, name: _name };
+        return PathParsed {
+            root,
+            dir,
+            base,
+            ext,
+            name: _name,
+        };
     }
 
     let is_sep_t = is_sep_windows_t::<T>;
@@ -2189,7 +2277,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
             base = path;
             _name = path;
         }
-        return PathParsed { root, dir, base, ext, name: _name };
+        return PathParsed {
+            root,
+            dir,
+            base,
+            ext,
+            name: _name,
+        };
     }
 
     // Try to match a root
@@ -2236,7 +2330,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
             // unnecessary work
             root = path;
             dir = path;
-            return PathParsed { root, dir, base, ext, name: _name };
+            return PathParsed {
+                root,
+                dir,
+                base,
+                ext,
+                name: _name,
+            };
         }
         root_end = 2;
         if is_sep_t(path[2]) {
@@ -2245,7 +2345,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
                 // unnecessary work
                 root = path;
                 dir = path;
-                return PathParsed { root, dir, base, ext, name: _name };
+                return PathParsed {
+                    root,
+                    dir,
+                    base,
+                    ext,
+                    name: _name,
+                };
             }
             root_end = 3;
         }
@@ -2333,7 +2439,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
         dir = root;
     }
 
-    PathParsed { root, dir, base, ext, name: _name }
+    PathParsed {
+        root,
+        dir,
+        base,
+        ext,
+        name: _name,
+    }
 }
 
 pub fn parse_posix_js_t<T: PathCharCwd>(
@@ -2368,7 +2480,11 @@ pub fn parse(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let path_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
@@ -2692,7 +2808,11 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     if last_common_sep.is_none() {
         // If toStart would go negative make it toOrigLen - 1 to
         // mimic String#slice with a negative start.
-        to_start = if to_start > 0 { to_start - 1 } else { to_orig_len - 1 };
+        to_start = if to_start > 0 {
+            to_start - 1
+        } else {
+            to_orig_len - 1
+        };
     } else {
         to_start += last_common_sep.unwrap();
     }
@@ -2757,8 +2877,9 @@ pub fn relative_js_t<T: PathCharCwd>(
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend, and for
     // worst-case ".." expansion: each 2-byte path component (e.g. "a/") generates
     // 3 bytes of output ("/..", ~1.5x). Use 2x as a safe upper bound.
-    let buf_len = ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
-        .max(path_size::<T>());
+    let buf_len =
+        ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
+            .max(path_size::<T>());
     // +1 for null terminator; ×3 for buf/buf2/buf3 carved from one slab.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
@@ -2776,9 +2897,17 @@ pub fn relative(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    let from_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
+    let from_ptr: JSValue = if args_len > 0 {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     crate::node::validators_impl::validate_string(global_object, from_ptr, format_args!("from"))?;
-    let to_ptr: JSValue = if args_len > 1 { args[1] } else { JSValue::UNDEFINED };
+    let to_ptr: JSValue = if args_len > 1 {
+        args[1]
+    } else {
+        JSValue::UNDEFINED
+    };
     crate::node::validators_impl::validate_string(global_object, to_ptr, format_args!("to"))?;
 
     let from_zig_str = from_ptr.get_zig_string(global_object)?;
@@ -2815,7 +2944,11 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize = 0;
     let mut buf_size: usize = 0;
 
-    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).expect("int cast") };
+    let mut i_i64: i64 = if paths.is_empty() {
+        -1
+    } else {
+        i64::try_from(paths.len() - 1).expect("int cast")
+    };
     while i_i64 > -2 && !resolved_absolute {
         // PORT NOTE: reshaped for borrowck — `path` may borrow from tmp_buf which lives
         // in this scope; copy into buf2 before reusing.
@@ -2925,7 +3058,11 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     let mut buf_size: usize = 0;
     let mut env_path_len: Option<usize> = None;
 
-    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).expect("int cast") };
+    let mut i_i64: i64 = if paths.is_empty() {
+        -1
+    } else {
+        i64::try_from(paths.len() - 1).expect("int cast")
+    };
     while i_i64 > -2 {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
@@ -3004,7 +3141,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                     buf2[0] = T::from_u8(b'=');
                     buf_offset = buf_size;
                     buf_size += resolved_device_len;
-                    memmove(&mut buf2[buf_offset..buf_size], &tmp_buf[0..resolved_device_len]);
+                    memmove(
+                        &mut buf2[buf_offset..buf_size],
+                        &tmp_buf[0..resolved_device_len],
+                    );
                     if T::IS_U16 {
                         // `getenv_w` requires the NUL be addressable via the slice's
                         // pointer (it forwards `.as_ptr()` as LPCWSTR). `buf2` is a
@@ -3035,7 +3175,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                     if T::IS_U16 {
                         buf_size = r.len();
                         // T == u16 when IS_U16; bytemuck checks the layout at runtime.
-                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
+                        let dst: &mut [u16] =
+                            bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
                         memmove(dst, &r);
                     } else {
                         // Reuse buf2 because it's used for path.
@@ -3252,11 +3393,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 // PORT NOTE: path may alias buf2 (env path branch); use ptr::copy.
                 // SAFETY: handles overlap.
                 unsafe {
-                    core::ptr::copy(
-                        path_ptr.add(root_end),
-                        buf2.as_mut_ptr(),
-                        slice_len,
-                    );
+                    core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
                 }
             }
             buf_offset = buf_size;
@@ -3301,7 +3438,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         // Use copy_within because resolvedTail and buf overlap.
         buf.copy_within(0..resolved_tail_len, buf_offset);
         buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
-        memmove(&mut buf[0..resolved_device_len], &tmp_buf[0..resolved_device_len]);
+        memmove(
+            &mut buf[0..resolved_device_len],
+            &tmp_buf[0..resolved_device_len],
+        );
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }
@@ -3312,7 +3452,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         buf_size = buf_offset + resolved_tail_len;
         // Use copy_within because resolvedTail and buf overlap.
         buf.copy_within(0..resolved_tail_len, buf_offset);
-        memmove(&mut buf[0..resolved_device_len], &tmp_buf[0..resolved_device_len]);
+        memmove(
+            &mut buf[0..resolved_device_len],
+            &tmp_buf[0..resolved_device_len],
+        );
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }

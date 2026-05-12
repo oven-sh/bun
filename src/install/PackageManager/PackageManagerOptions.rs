@@ -1,14 +1,14 @@
-use bun_core::{strings, ZStr};
-use bun_core::{env_var, Output};
+use bun_core::{Output, env_var};
+use bun_core::{ZStr, strings};
 use bun_paths::{self as Path, PathBuffer};
 use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
 
-use bun_install::{Features, Npm};
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
+use bun_install::{Features, Npm};
 
 // PORT NOTE: `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
@@ -275,8 +275,8 @@ impl LogLevel {
     }
 }
 
-pub use bun_install_types::NodeLinker::NodeLinker;
 pub use crate::config_version::ConfigVersion;
+pub use bun_install_types::NodeLinker::NodeLinker;
 
 #[derive(Default, Copy, Clone)]
 pub struct Update {
@@ -289,46 +289,63 @@ pub struct Update {
 // (mkdir -p + open dir). Return type was `!std.fs.Dir`; callers store the raw
 // `Fd` (`options.global_bin_dir: Fd`), so unwrap to `.fd`.
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
-    use bun_paths::{resolve_path::join_abs_string_buf, platform};
+    use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Dir::cwd().make_open_path(home_dir, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(home_dir, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
     if !explicit_global_dir.is_empty() {
-        return Dir::cwd().make_open_path(explicit_global_dir, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(explicit_global_dir, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd().make_open_path(path, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(path, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME.get().or_else(|| env_var::HOME.get()) {
+    if let Some(home_dir) = env_var::XDG_CACHE_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())
+    {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd().make_open_path(path, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(path, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
     Err(bun_core::err!("No global directory found"))
 }
 
-pub fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> Result<bun_sys::Fd, bun_core::Error> {
-    use bun_paths::{resolve_path::join_abs_string_buf, platform};
+pub fn open_global_bin_dir(
+    opts_: Option<&Api::BunInstall>,
+) -> Result<bun_sys::Fd, bun_core::Error> {
+    use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
-        return Dir::cwd().make_open_path(home_dir, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(home_dir, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
     if let Some(opts) = opts_ {
         if let Some(home_dir) = &opts.global_bin_dir {
             if !home_dir.is_empty() {
-                return Dir::cwd().make_open_path(home_dir, OpenDirOptions::default()).map(|d| d.fd);
+                return Dir::cwd()
+                    .make_open_path(home_dir, OpenDirOptions::default())
+                    .map(|d| d.fd);
             }
         }
     }
@@ -337,17 +354,26 @@ pub fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> Result<bun_sys::F
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 1] = [b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd().make_open_path(path, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(path, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME.get().or_else(|| env_var::HOME.get()) {
+    if let Some(home_dir) = env_var::XDG_CACHE_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())
+    {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd().make_open_path(path, OpenDirOptions::default()).map(|d| d.fd);
+        return Dir::cwd()
+            .make_open_path(path, OpenDirOptions::default())
+            .map(|d| d.fd);
     }
 
-    Err(bun_core::err!("Missing global bin directory: try setting $BUN_INSTALL"))
+    Err(bun_core::err!(
+        "Missing global bin directory: try setting $BUN_INSTALL"
+    ))
 }
 
 // PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
@@ -943,9 +969,7 @@ bitflags::bitflags! {
 
 impl Default for Enable {
     fn default() -> Self {
-        Enable::MANIFEST_CACHE
-            | Enable::MANIFEST_CACHE_CONTROL
-            | Enable::CACHE
+        Enable::MANIFEST_CACHE | Enable::MANIFEST_CACHE_CONTROL | Enable::CACHE
     }
 }
 
@@ -953,53 +977,176 @@ impl Default for Enable {
 // `if options.do.install_packages { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Do {
-    #[inline] pub fn save_lockfile(&self) -> bool { self.contains(Do::SAVE_LOCKFILE) }
-    #[inline] pub fn set_save_lockfile(&mut self, v: bool) { self.set(Do::SAVE_LOCKFILE, v); }
-    #[inline] pub fn load_lockfile(&self) -> bool { self.contains(Do::LOAD_LOCKFILE) }
-    #[inline] pub fn set_load_lockfile(&mut self, v: bool) { self.set(Do::LOAD_LOCKFILE, v); }
-    #[inline] pub fn install_packages(&self) -> bool { self.contains(Do::INSTALL_PACKAGES) }
-    #[inline] pub fn set_install_packages(&mut self, v: bool) { self.set(Do::INSTALL_PACKAGES, v); }
-    #[inline] pub fn write_package_json(&self) -> bool { self.contains(Do::WRITE_PACKAGE_JSON) }
-    #[inline] pub fn set_write_package_json(&mut self, v: bool) { self.set(Do::WRITE_PACKAGE_JSON, v); }
-    #[inline] pub fn run_scripts(&self) -> bool { self.contains(Do::RUN_SCRIPTS) }
-    #[inline] pub fn set_run_scripts(&mut self, v: bool) { self.set(Do::RUN_SCRIPTS, v); }
-    #[inline] pub fn save_yarn_lock(&self) -> bool { self.contains(Do::SAVE_YARN_LOCK) }
-    #[inline] pub fn set_save_yarn_lock(&mut self, v: bool) { self.set(Do::SAVE_YARN_LOCK, v); }
-    #[inline] pub fn print_meta_hash_string(&self) -> bool { self.contains(Do::PRINT_META_HASH_STRING) }
-    #[inline] pub fn set_print_meta_hash_string(&mut self, v: bool) { self.set(Do::PRINT_META_HASH_STRING, v); }
-    #[inline] pub fn verify_integrity(&self) -> bool { self.contains(Do::VERIFY_INTEGRITY) }
-    #[inline] pub fn set_verify_integrity(&mut self, v: bool) { self.set(Do::VERIFY_INTEGRITY, v); }
-    #[inline] pub fn summary(&self) -> bool { self.contains(Do::SUMMARY) }
-    #[inline] pub fn set_summary(&mut self, v: bool) { self.set(Do::SUMMARY, v); }
-    #[inline] pub fn trust_dependencies_from_args(&self) -> bool { self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS) }
-    #[inline] pub fn set_trust_dependencies_from_args(&mut self, v: bool) { self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v); }
-    #[inline] pub fn update_to_latest(&self) -> bool { self.contains(Do::UPDATE_TO_LATEST) }
-    #[inline] pub fn set_update_to_latest(&mut self, v: bool) { self.set(Do::UPDATE_TO_LATEST, v); }
-    #[inline] pub fn analyze(&self) -> bool { self.contains(Do::ANALYZE) }
-    #[inline] pub fn set_analyze(&mut self, v: bool) { self.set(Do::ANALYZE, v); }
-    #[inline] pub fn recursive(&self) -> bool { self.contains(Do::RECURSIVE) }
-    #[inline] pub fn set_recursive(&mut self, v: bool) { self.set(Do::RECURSIVE, v); }
-    #[inline] pub fn prefetch_resolved_tarballs(&self) -> bool { self.contains(Do::PREFETCH_RESOLVED_TARBALLS) }
-    #[inline] pub fn set_prefetch_resolved_tarballs(&mut self, v: bool) { self.set(Do::PREFETCH_RESOLVED_TARBALLS, v); }
+    #[inline]
+    pub fn save_lockfile(&self) -> bool {
+        self.contains(Do::SAVE_LOCKFILE)
+    }
+    #[inline]
+    pub fn set_save_lockfile(&mut self, v: bool) {
+        self.set(Do::SAVE_LOCKFILE, v);
+    }
+    #[inline]
+    pub fn load_lockfile(&self) -> bool {
+        self.contains(Do::LOAD_LOCKFILE)
+    }
+    #[inline]
+    pub fn set_load_lockfile(&mut self, v: bool) {
+        self.set(Do::LOAD_LOCKFILE, v);
+    }
+    #[inline]
+    pub fn install_packages(&self) -> bool {
+        self.contains(Do::INSTALL_PACKAGES)
+    }
+    #[inline]
+    pub fn set_install_packages(&mut self, v: bool) {
+        self.set(Do::INSTALL_PACKAGES, v);
+    }
+    #[inline]
+    pub fn write_package_json(&self) -> bool {
+        self.contains(Do::WRITE_PACKAGE_JSON)
+    }
+    #[inline]
+    pub fn set_write_package_json(&mut self, v: bool) {
+        self.set(Do::WRITE_PACKAGE_JSON, v);
+    }
+    #[inline]
+    pub fn run_scripts(&self) -> bool {
+        self.contains(Do::RUN_SCRIPTS)
+    }
+    #[inline]
+    pub fn set_run_scripts(&mut self, v: bool) {
+        self.set(Do::RUN_SCRIPTS, v);
+    }
+    #[inline]
+    pub fn save_yarn_lock(&self) -> bool {
+        self.contains(Do::SAVE_YARN_LOCK)
+    }
+    #[inline]
+    pub fn set_save_yarn_lock(&mut self, v: bool) {
+        self.set(Do::SAVE_YARN_LOCK, v);
+    }
+    #[inline]
+    pub fn print_meta_hash_string(&self) -> bool {
+        self.contains(Do::PRINT_META_HASH_STRING)
+    }
+    #[inline]
+    pub fn set_print_meta_hash_string(&mut self, v: bool) {
+        self.set(Do::PRINT_META_HASH_STRING, v);
+    }
+    #[inline]
+    pub fn verify_integrity(&self) -> bool {
+        self.contains(Do::VERIFY_INTEGRITY)
+    }
+    #[inline]
+    pub fn set_verify_integrity(&mut self, v: bool) {
+        self.set(Do::VERIFY_INTEGRITY, v);
+    }
+    #[inline]
+    pub fn summary(&self) -> bool {
+        self.contains(Do::SUMMARY)
+    }
+    #[inline]
+    pub fn set_summary(&mut self, v: bool) {
+        self.set(Do::SUMMARY, v);
+    }
+    #[inline]
+    pub fn trust_dependencies_from_args(&self) -> bool {
+        self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
+    }
+    #[inline]
+    pub fn set_trust_dependencies_from_args(&mut self, v: bool) {
+        self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
+    }
+    #[inline]
+    pub fn update_to_latest(&self) -> bool {
+        self.contains(Do::UPDATE_TO_LATEST)
+    }
+    #[inline]
+    pub fn set_update_to_latest(&mut self, v: bool) {
+        self.set(Do::UPDATE_TO_LATEST, v);
+    }
+    #[inline]
+    pub fn analyze(&self) -> bool {
+        self.contains(Do::ANALYZE)
+    }
+    #[inline]
+    pub fn set_analyze(&mut self, v: bool) {
+        self.set(Do::ANALYZE, v);
+    }
+    #[inline]
+    pub fn recursive(&self) -> bool {
+        self.contains(Do::RECURSIVE)
+    }
+    #[inline]
+    pub fn set_recursive(&mut self, v: bool) {
+        self.set(Do::RECURSIVE, v);
+    }
+    #[inline]
+    pub fn prefetch_resolved_tarballs(&self) -> bool {
+        self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
+    }
+    #[inline]
+    pub fn set_prefetch_resolved_tarballs(&mut self, v: bool) {
+        self.set(Do::PREFETCH_RESOLVED_TARBALLS, v);
+    }
 }
 
 // Field-style accessors for Zig parity (`options.enable.cache = false` /
 // `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Enable {
-    #[inline] pub fn cache(&self) -> bool { self.contains(Enable::CACHE) }
-    #[inline] pub fn set_cache(&mut self, v: bool) { self.set(Enable::CACHE, v); }
-    #[inline] pub fn manifest_cache(&self) -> bool { self.contains(Enable::MANIFEST_CACHE) }
-    #[inline] pub fn set_manifest_cache(&mut self, v: bool) { self.set(Enable::MANIFEST_CACHE, v); }
-    #[inline] pub fn manifest_cache_control(&self) -> bool { self.contains(Enable::MANIFEST_CACHE_CONTROL) }
-    #[inline] pub fn set_manifest_cache_control(&mut self, v: bool) { self.set(Enable::MANIFEST_CACHE_CONTROL, v); }
-    #[inline] pub fn fail_early(&self) -> bool { self.contains(Enable::FAIL_EARLY) }
-    #[inline] pub fn frozen_lockfile(&self) -> bool { self.contains(Enable::FROZEN_LOCKFILE) }
-    #[inline] pub fn force_save_lockfile(&self) -> bool { self.contains(Enable::FORCE_SAVE_LOCKFILE) }
-    #[inline] pub fn force_install(&self) -> bool { self.contains(Enable::FORCE_INSTALL) }
-    #[inline] pub fn exact_versions(&self) -> bool { self.contains(Enable::EXACT_VERSIONS) }
-    #[inline] pub fn only_missing(&self) -> bool { self.contains(Enable::ONLY_MISSING) }
-    #[inline] pub fn global_virtual_store(&self) -> bool { self.contains(Enable::GLOBAL_VIRTUAL_STORE) }
+    #[inline]
+    pub fn cache(&self) -> bool {
+        self.contains(Enable::CACHE)
+    }
+    #[inline]
+    pub fn set_cache(&mut self, v: bool) {
+        self.set(Enable::CACHE, v);
+    }
+    #[inline]
+    pub fn manifest_cache(&self) -> bool {
+        self.contains(Enable::MANIFEST_CACHE)
+    }
+    #[inline]
+    pub fn set_manifest_cache(&mut self, v: bool) {
+        self.set(Enable::MANIFEST_CACHE, v);
+    }
+    #[inline]
+    pub fn manifest_cache_control(&self) -> bool {
+        self.contains(Enable::MANIFEST_CACHE_CONTROL)
+    }
+    #[inline]
+    pub fn set_manifest_cache_control(&mut self, v: bool) {
+        self.set(Enable::MANIFEST_CACHE_CONTROL, v);
+    }
+    #[inline]
+    pub fn fail_early(&self) -> bool {
+        self.contains(Enable::FAIL_EARLY)
+    }
+    #[inline]
+    pub fn frozen_lockfile(&self) -> bool {
+        self.contains(Enable::FROZEN_LOCKFILE)
+    }
+    #[inline]
+    pub fn force_save_lockfile(&self) -> bool {
+        self.contains(Enable::FORCE_SAVE_LOCKFILE)
+    }
+    #[inline]
+    pub fn force_install(&self) -> bool {
+        self.contains(Enable::FORCE_INSTALL)
+    }
+    #[inline]
+    pub fn exact_versions(&self) -> bool {
+        self.contains(Enable::EXACT_VERSIONS)
+    }
+    #[inline]
+    pub fn only_missing(&self) -> bool {
+        self.contains(Enable::ONLY_MISSING)
+    }
+    #[inline]
+    pub fn global_virtual_store(&self) -> bool {
+        self.contains(Enable::GLOBAL_VIRTUAL_STORE)
+    }
 }
 
 // ported from: src/install/PackageManager/PackageManagerOptions.zig

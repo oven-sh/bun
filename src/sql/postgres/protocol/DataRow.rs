@@ -1,5 +1,5 @@
-use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::postgres::AnyPostgresError;
+use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
 // Zig: `context: anytype` + `comptime forEach: fn(@TypeOf(context), u32, ?*Data) AnyPostgresError!bool`
@@ -23,7 +23,11 @@ pub fn decode<C: Copy, R: ReaderContext>(
         match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                if !for_each(context, u32::try_from(index).expect("int cast"), Some(&mut empty))? {
+                if !for_each(
+                    context,
+                    u32::try_from(index).expect("int cast"),
+                    Some(&mut empty),
+                )? {
                     break;
                 }
             }
@@ -34,7 +38,11 @@ pub fn decode<C: Copy, R: ReaderContext>(
             }
             _ => {
                 let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
-                if !for_each(context, u32::try_from(index).expect("int cast"), Some(&mut bytes))? {
+                if !for_each(
+                    context,
+                    u32::try_from(index).expect("int cast"),
+                    Some(&mut bytes),
+                )? {
                     break;
                 }
             }

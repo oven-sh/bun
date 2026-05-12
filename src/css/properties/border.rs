@@ -1,17 +1,16 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::{
-    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer,
-    PropertyCategory, PropertyHandlerContext, Result as CssResult,
-    SmallList, Targets,
-};
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::css_properties::custom::UnparsedProperty;
 use crate::css_values::color::{ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
-use crate::css_properties::custom::UnparsedProperty;
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
+use crate::{
+    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, PropertyCategory,
+    PropertyHandlerContext, Result as CssResult, SmallList, Targets,
+};
+use bun_alloc::ArenaVecExt as _;
 
 use super::border_image::BorderImageHandler;
 use super::border_radius::BorderRadiusHandler;
@@ -206,8 +205,7 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
 pub enum LineStyle {
     /// No border.
     None,
@@ -261,7 +259,7 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-     // blocked_on: Length::is_compatible
+    // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
@@ -586,7 +584,7 @@ bitflags::bitflags! {
     }
 }
 
- // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
+// blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
@@ -666,189 +664,267 @@ pub struct BorderHandler {
 
 // Real `handle_property`/`finalize` bodies live in `border_handler_body` below.
 mod border_handler_body {
-use super::*;
-use crate::generics::{DeepClone, CssEql};
-// ──────────────────────────────────────────────────────────────────────────
-// FlushContext + flush_category! (Zig: nested struct with inline fns and
-// extensive comptime string-dispatch)
-// ──────────────────────────────────────────────────────────────────────────
-// PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
-// sensitive and the flush_category!() callsites in `flush()` need these.
+    use super::*;
+    use crate::generics::{CssEql, DeepClone};
+    // ──────────────────────────────────────────────────────────────────────────
+    // FlushContext + flush_category! (Zig: nested struct with inline fns and
+    // extensive comptime string-dispatch)
+    // ──────────────────────────────────────────────────────────────────────────
+    // PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
+    // sensitive and the flush_category!() callsites in `flush()` need these.
 
-struct FlushContext<'a, 'bump, 'ctx> {
-    // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
-    // here because the per-side BorderShorthand pointers are passed separately.
-    flushed_properties: &'a mut BorderProperty,
-    dest: &'a mut DeclarationList<'bump>,
-    ctx: &'a mut PropertyHandlerContext<'ctx>,
-    // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
-    // arena is recovered once via `dest.bump()` and threaded here.
-    arena: &'bump Bump,
-    logical_supported: bool,
-    logical_shorthand_supported: bool,
-}
+    struct FlushContext<'a, 'bump, 'ctx> {
+        // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
+        // here because the per-side BorderShorthand pointers are passed separately.
+        flushed_properties: &'a mut BorderProperty,
+        dest: &'a mut DeclarationList<'bump>,
+        ctx: &'a mut PropertyHandlerContext<'ctx>,
+        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
+        // arena is recovered once via `dest.bump()` and threaded here.
+        arena: &'bump Bump,
+        logical_supported: bool,
+        logical_shorthand_supported: bool,
+    }
 
-// `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
-// PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
-// expressions that read `f.arena` without tripping E0502.
-macro_rules! fc_logical_prop {
-    // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
-    // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
-    // `__val` cannot `deep_clone()` into both `Property` variants. Recast via
-    // `clone_as::<Q>()` instead. Callers always pass a `to_border()` result here,
-    // so the `__val` annotation drives `P` inference for that call.
-    ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
-        let __val: BorderLeft = $val;
-        let f = &mut *$f;
-        f.ctx.add_logical_rule(
-            Property::BorderLeft(__val.clone_as(f.arena)),
-            Property::BorderRight(__val.clone_as(f.arena)),
-        );
-    }};
-    ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
-        let __val: BorderRight = $val;
-        let f = &mut *$f;
-        f.ctx.add_logical_rule(
-            Property::BorderRight(__val.clone_as(f.arena)),
-            Property::BorderLeft(__val.clone_as(f.arena)),
-        );
-    }};
-    ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
-        let __val = $val;
-        let f = &mut *$f;
-        f.ctx.add_logical_rule(
-            Property::$ltr(__val.deep_clone(f.arena)),
-            Property::$rtl(__val.deep_clone(f.arena)),
-        );
-    }};
-}
+    // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
+    // PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
+    // expressions that read `f.arena` without tripping E0502.
+    macro_rules! fc_logical_prop {
+        // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
+        // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
+        // `__val` cannot `deep_clone()` into both `Property` variants. Recast via
+        // `clone_as::<Q>()` instead. Callers always pass a `to_border()` result here,
+        // so the `__val` annotation drives `P` inference for that call.
+        ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
+            let __val: BorderLeft = $val;
+            let f = &mut *$f;
+            f.ctx.add_logical_rule(
+                Property::BorderLeft(__val.clone_as(f.arena)),
+                Property::BorderRight(__val.clone_as(f.arena)),
+            );
+        }};
+        ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
+            let __val: BorderRight = $val;
+            let f = &mut *$f;
+            f.ctx.add_logical_rule(
+                Property::BorderRight(__val.clone_as(f.arena)),
+                Property::BorderLeft(__val.clone_as(f.arena)),
+            );
+        }};
+        ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
+            let __val = $val;
+            let f = &mut *$f;
+            f.ctx.add_logical_rule(
+                Property::$ltr(__val.deep_clone(f.arena)),
+                Property::$rtl(__val.deep_clone(f.arena)),
+            );
+        }};
+    }
 
-// `f.push(p, val)`
-// PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
-// off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
-// the bitflags const is derived via try_from_property_id so a single ident suffices.
-macro_rules! fc_push {
-    ($f:expr, $p:ident, $val:expr) => {{
-        let __val = $val;
-        let f = &mut *$f;
-        f.flushed_properties
-            .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-        f.dest.push(Property::$p(__val.deep_clone(f.arena)));
-    }};
-}
+    // `f.push(p, val)`
+    // PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
+    // off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
+    // the bitflags const is derived via try_from_property_id so a single ident suffices.
+    macro_rules! fc_push {
+        ($f:expr, $p:ident, $val:expr) => {{
+            let __val = $val;
+            let f = &mut *$f;
+            f.flushed_properties
+                .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
+            f.dest.push(Property::$p(__val.deep_clone(f.arena)));
+        }};
+    }
 
-// `f.fallbacks(p, _val)`
-macro_rules! fc_fallbacks {
-    ($f:expr, $p:ident, $val:expr) => {{
-        let mut val = $val;
-        let f = &mut *$f;
-        if !f
-            .flushed_properties
-            .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
-        {
-            let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
-            for fallback in css::generic::slice(&fbs) {
-                f.dest.push(Property::$p(fallback.clone()));
+    // `f.fallbacks(p, _val)`
+    macro_rules! fc_fallbacks {
+        ($f:expr, $p:ident, $val:expr) => {{
+            let mut val = $val;
+            let f = &mut *$f;
+            if !f
+                .flushed_properties
+                .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
+            {
+                let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
+                for fallback in css::generic::slice(&fbs) {
+                    f.dest.push(Property::$p(fallback.clone()));
+                }
             }
-        }
-        fc_push!(f, $p, val);
-    }};
-}
+            fc_push!(f, $p, val);
+        }};
+    }
 
-// `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
-// In Rust we dispatch on the Property variant ident.
-macro_rules! fc_prop {
-    // border-inline-start*
-    ($f:expr, BorderInlineStart, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStart, $val); }
-        else { fc_logical_prop!($f, BorderLeft, BorderRight, $val); }
-    }};
-    ($f:expr, BorderInlineStartWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineStartWidth, $val); }
-        else { fc_logical_prop!($f, BorderLeftWidth, BorderRightWidth, $val); }
-    }};
-    ($f:expr, BorderInlineStartColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStartColor, $val); }
-        else { fc_logical_prop!($f, BorderLeftColor, BorderRightColor, $val); }
-    }};
-    ($f:expr, BorderInlineStartStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineStartStyle, $val); }
-        else { fc_logical_prop!($f, BorderLeftStyle, BorderRightStyle, $val); }
-    }};
-    // border-inline-end*
-    ($f:expr, BorderInlineEnd, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEnd, $val); }
-        else { fc_logical_prop!($f, BorderRight, BorderLeft, $val); }
-    }};
-    ($f:expr, BorderInlineEndWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineEndWidth, $val); }
-        else { fc_logical_prop!($f, BorderRightWidth, BorderLeftWidth, $val); }
-    }};
-    ($f:expr, BorderInlineEndColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEndColor, $val); }
-        else { fc_logical_prop!($f, BorderRightColor, BorderLeftColor, $val); }
-    }};
-    ($f:expr, BorderInlineEndStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineEndStyle, $val); }
-        else { fc_logical_prop!($f, BorderRightStyle, BorderLeftStyle, $val); }
-    }};
-    // border-block-start*
-    ($f:expr, BorderBlockStart, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStart, $val); }
-        else { fc_fallbacks!($f, BorderTop, $val); }
-    }};
-    ($f:expr, BorderBlockStartWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockStartWidth, $val); }
-        else { fc_push!($f, BorderTopWidth, $val); }
-    }};
-    ($f:expr, BorderBlockStartColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStartColor, $val); }
-        else { fc_fallbacks!($f, BorderTopColor, $val); }
-    }};
-    ($f:expr, BorderBlockStartStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockStartStyle, $val); }
-        else { fc_push!($f, BorderTopStyle, $val); }
-    }};
-    // border-block-end*
-    ($f:expr, BorderBlockEnd, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEnd, $val); }
-        else { fc_fallbacks!($f, BorderBottom, $val); }
-    }};
-    ($f:expr, BorderBlockEndWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockEndWidth, $val); }
-        else { fc_push!($f, BorderBottomWidth, $val); }
-    }};
-    ($f:expr, BorderBlockEndColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEndColor, $val); }
-        else { fc_fallbacks!($f, BorderBottomColor, $val); }
-    }};
-    ($f:expr, BorderBlockEndStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockEndStyle, $val); }
-        else { fc_push!($f, BorderBottomStyle, $val); }
-    }};
-    // Color/shorthand props that always use fallbacks
-    ($f:expr, BorderLeftColor, $val:expr) => { fc_fallbacks!($f, BorderLeftColor, $val) };
-    ($f:expr, BorderRightColor, $val:expr) => { fc_fallbacks!($f, BorderRightColor, $val) };
-    ($f:expr, BorderTopColor, $val:expr) => { fc_fallbacks!($f, BorderTopColor, $val) };
-    ($f:expr, BorderBottomColor, $val:expr) => { fc_fallbacks!($f, BorderBottomColor, $val) };
-    ($f:expr, BorderColor, $val:expr) => { fc_fallbacks!($f, BorderColor, $val) };
-    ($f:expr, BorderBlockColor, $val:expr) => { fc_fallbacks!($f, BorderBlockColor, $val) };
-    ($f:expr, BorderInlineColor, $val:expr) => { fc_fallbacks!($f, BorderInlineColor, $val) };
-    ($f:expr, BorderLeft, $val:expr) => { fc_fallbacks!($f, BorderLeft, $val) };
-    ($f:expr, BorderRight, $val:expr) => { fc_fallbacks!($f, BorderRight, $val) };
-    ($f:expr, BorderTop, $val:expr) => { fc_fallbacks!($f, BorderTop, $val) };
-    ($f:expr, BorderBottom, $val:expr) => { fc_fallbacks!($f, BorderBottom, $val) };
-    ($f:expr, BorderInline, $val:expr) => { fc_fallbacks!($f, BorderInline, $val) };
-    ($f:expr, BorderBlock, $val:expr) => { fc_fallbacks!($f, BorderBlock, $val) };
-    ($f:expr, Border, $val:expr) => { fc_fallbacks!($f, Border, $val) };
-    // Everything else: plain push
-    ($f:expr, $p:ident, $val:expr) => { fc_push!($f, $p, $val) };
-}
+    // `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
+    // In Rust we dispatch on the Property variant ident.
+    macro_rules! fc_prop {
+        // border-inline-start*
+        ($f:expr, BorderInlineStart, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderInlineStart, $val);
+            } else {
+                fc_logical_prop!($f, BorderLeft, BorderRight, $val);
+            }
+        }};
+        ($f:expr, BorderInlineStartWidth, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderInlineStartWidth, $val);
+            } else {
+                fc_logical_prop!($f, BorderLeftWidth, BorderRightWidth, $val);
+            }
+        }};
+        ($f:expr, BorderInlineStartColor, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderInlineStartColor, $val);
+            } else {
+                fc_logical_prop!($f, BorderLeftColor, BorderRightColor, $val);
+            }
+        }};
+        ($f:expr, BorderInlineStartStyle, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderInlineStartStyle, $val);
+            } else {
+                fc_logical_prop!($f, BorderLeftStyle, BorderRightStyle, $val);
+            }
+        }};
+        // border-inline-end*
+        ($f:expr, BorderInlineEnd, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderInlineEnd, $val);
+            } else {
+                fc_logical_prop!($f, BorderRight, BorderLeft, $val);
+            }
+        }};
+        ($f:expr, BorderInlineEndWidth, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderInlineEndWidth, $val);
+            } else {
+                fc_logical_prop!($f, BorderRightWidth, BorderLeftWidth, $val);
+            }
+        }};
+        ($f:expr, BorderInlineEndColor, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderInlineEndColor, $val);
+            } else {
+                fc_logical_prop!($f, BorderRightColor, BorderLeftColor, $val);
+            }
+        }};
+        ($f:expr, BorderInlineEndStyle, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderInlineEndStyle, $val);
+            } else {
+                fc_logical_prop!($f, BorderRightStyle, BorderLeftStyle, $val);
+            }
+        }};
+        // border-block-start*
+        ($f:expr, BorderBlockStart, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderBlockStart, $val);
+            } else {
+                fc_fallbacks!($f, BorderTop, $val);
+            }
+        }};
+        ($f:expr, BorderBlockStartWidth, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderBlockStartWidth, $val);
+            } else {
+                fc_push!($f, BorderTopWidth, $val);
+            }
+        }};
+        ($f:expr, BorderBlockStartColor, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderBlockStartColor, $val);
+            } else {
+                fc_fallbacks!($f, BorderTopColor, $val);
+            }
+        }};
+        ($f:expr, BorderBlockStartStyle, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderBlockStartStyle, $val);
+            } else {
+                fc_push!($f, BorderTopStyle, $val);
+            }
+        }};
+        // border-block-end*
+        ($f:expr, BorderBlockEnd, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderBlockEnd, $val);
+            } else {
+                fc_fallbacks!($f, BorderBottom, $val);
+            }
+        }};
+        ($f:expr, BorderBlockEndWidth, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderBlockEndWidth, $val);
+            } else {
+                fc_push!($f, BorderBottomWidth, $val);
+            }
+        }};
+        ($f:expr, BorderBlockEndColor, $val:expr) => {{
+            if $f.logical_supported {
+                fc_fallbacks!($f, BorderBlockEndColor, $val);
+            } else {
+                fc_fallbacks!($f, BorderBottomColor, $val);
+            }
+        }};
+        ($f:expr, BorderBlockEndStyle, $val:expr) => {{
+            if $f.logical_supported {
+                fc_push!($f, BorderBlockEndStyle, $val);
+            } else {
+                fc_push!($f, BorderBottomStyle, $val);
+            }
+        }};
+        // Color/shorthand props that always use fallbacks
+        ($f:expr, BorderLeftColor, $val:expr) => {
+            fc_fallbacks!($f, BorderLeftColor, $val)
+        };
+        ($f:expr, BorderRightColor, $val:expr) => {
+            fc_fallbacks!($f, BorderRightColor, $val)
+        };
+        ($f:expr, BorderTopColor, $val:expr) => {
+            fc_fallbacks!($f, BorderTopColor, $val)
+        };
+        ($f:expr, BorderBottomColor, $val:expr) => {
+            fc_fallbacks!($f, BorderBottomColor, $val)
+        };
+        ($f:expr, BorderColor, $val:expr) => {
+            fc_fallbacks!($f, BorderColor, $val)
+        };
+        ($f:expr, BorderBlockColor, $val:expr) => {
+            fc_fallbacks!($f, BorderBlockColor, $val)
+        };
+        ($f:expr, BorderInlineColor, $val:expr) => {
+            fc_fallbacks!($f, BorderInlineColor, $val)
+        };
+        ($f:expr, BorderLeft, $val:expr) => {
+            fc_fallbacks!($f, BorderLeft, $val)
+        };
+        ($f:expr, BorderRight, $val:expr) => {
+            fc_fallbacks!($f, BorderRight, $val)
+        };
+        ($f:expr, BorderTop, $val:expr) => {
+            fc_fallbacks!($f, BorderTop, $val)
+        };
+        ($f:expr, BorderBottom, $val:expr) => {
+            fc_fallbacks!($f, BorderBottom, $val)
+        };
+        ($f:expr, BorderInline, $val:expr) => {
+            fc_fallbacks!($f, BorderInline, $val)
+        };
+        ($f:expr, BorderBlock, $val:expr) => {
+            fc_fallbacks!($f, BorderBlock, $val)
+        };
+        ($f:expr, Border, $val:expr) => {
+            fc_fallbacks!($f, Border, $val)
+        };
+        // Everything else: plain push
+        ($f:expr, $p:ident, $val:expr) => {
+            fc_push!($f, $p, $val)
+        };
+    }
 
-// `flushCategory(...)` — was a fn with comptime string params + nested `State`
-// struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
-// names remain compile-time idents and the nested closures become local macros.
-macro_rules! flush_category {
+    // `flushCategory(...)` — was a fn with comptime string params + nested `State`
+    // struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
+    // names remain compile-time idents and the nested closures become local macros.
+    macro_rules! flush_category {
     (
         $f:expr,
         $block_start_prop:ident, $block_start_width:ident, $block_start_style:ident, $block_start_color:ident, $block_start:expr,
@@ -1157,279 +1233,370 @@ macro_rules! flush_category {
         }
     }};
 }
-use flush_category;
+    use flush_category;
 
+    impl BorderHandler {
+        pub fn handle_property(
+            &mut self,
+            property: &Property,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) -> bool {
+            // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
+            // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+            let arena = dest.bump();
 
-impl BorderHandler {
-    pub fn handle_property(
-        &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) -> bool {
-        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
-        // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
-        let arena = dest.bump();
+            // Helper macros — Zig used local comptime closures with @field string access.
 
-        // Helper macros — Zig used local comptime closures with @field string access.
-
-        macro_rules! flush_helper {
-            ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
-                if $category != self.category {
-                    self.flush(dest, context);
-                }
-
-                if let Some(existing) = &self.$key.$prop {
-                    if !existing.eql($val)
-                        && context.targets.browsers.is_some()
-                        && !css::generic::is_compatible($val, context.targets.browsers.unwrap())
-                    {
+            macro_rules! flush_helper {
+                ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
+                    if $category != self.category {
                         self.flush(dest, context);
                     }
+
+                    if let Some(existing) = &self.$key.$prop {
+                        if !existing.eql($val)
+                            && context.targets.browsers.is_some()
+                            && !css::generic::is_compatible($val, context.targets.browsers.unwrap())
+                        {
+                            self.flush(dest, context);
+                        }
+                    }
+                }};
+            }
+
+            macro_rules! property_helper {
+                ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
+                    flush_helper!($key, $prop, $val, $category);
+                    self.$key.$prop = Some($val.deep_clone(arena));
+                    self.category = $category;
+                    self.has_any = true;
+                }};
+            }
+
+            macro_rules! set_border_helper {
+                ($key:ident, $val:expr, $category:expr) => {{
+                    if $category != self.category {
+                        self.flush(dest, context);
+                    }
+
+                    self.$key.set_border(arena, $val);
+                    self.category = $category;
+                    self.has_any = true;
+                }};
+            }
+
+            use PropertyCategory::{Logical, Physical};
+
+            match property {
+                Property::BorderTopColor(val) => property_helper!(border_top, color, val, Physical),
+                Property::BorderBottomColor(val) => {
+                    property_helper!(border_bottom, color, val, Physical)
                 }
-            }};
-        }
-
-        macro_rules! property_helper {
-            ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
-                flush_helper!($key, $prop, $val, $category);
-                self.$key.$prop = Some($val.deep_clone(arena));
-                self.category = $category;
-                self.has_any = true;
-            }};
-        }
-
-        macro_rules! set_border_helper {
-            ($key:ident, $val:expr, $category:expr) => {{
-                if $category != self.category {
-                    self.flush(dest, context);
+                Property::BorderLeftColor(val) => {
+                    property_helper!(border_left, color, val, Physical)
                 }
+                Property::BorderRightColor(val) => {
+                    property_helper!(border_right, color, val, Physical)
+                }
+                Property::BorderBlockStartColor(val) => {
+                    property_helper!(border_block_start, color, val, Logical)
+                }
+                Property::BorderBlockEndColor(val) => {
+                    property_helper!(border_block_end, color, val, Logical)
+                }
+                Property::BorderBlockColor(val) => {
+                    property_helper!(border_block_start, color, &val.start, Logical);
+                    property_helper!(border_block_end, color, &val.end, Logical);
+                }
+                Property::BorderInlineStartColor(val) => {
+                    property_helper!(border_inline_start, color, val, Logical)
+                }
+                Property::BorderInlineEndColor(val) => {
+                    property_helper!(border_inline_end, color, val, Logical)
+                }
+                Property::BorderInlineColor(val) => {
+                    property_helper!(border_inline_start, color, &val.start, Logical);
+                    property_helper!(border_inline_end, color, &val.end, Logical);
+                }
+                Property::BorderTopWidth(val) => property_helper!(border_top, width, val, Physical),
+                Property::BorderBottomWidth(val) => {
+                    property_helper!(border_bottom, width, val, Physical)
+                }
+                Property::BorderLeftWidth(val) => {
+                    property_helper!(border_left, width, val, Physical)
+                }
+                Property::BorderRightWidth(val) => {
+                    property_helper!(border_right, width, val, Physical)
+                }
+                Property::BorderBlockStartWidth(val) => {
+                    property_helper!(border_block_start, width, val, Logical)
+                }
+                Property::BorderBlockEndWidth(val) => {
+                    property_helper!(border_block_end, width, val, Logical)
+                }
+                Property::BorderBlockWidth(val) => {
+                    property_helper!(border_block_start, width, &val.start, Logical);
+                    property_helper!(border_block_end, width, &val.end, Logical);
+                }
+                Property::BorderInlineStartWidth(val) => {
+                    property_helper!(border_inline_start, width, val, Logical)
+                }
+                Property::BorderInlineEndWidth(val) => {
+                    property_helper!(border_inline_end, width, val, Logical)
+                }
+                Property::BorderInlineWidth(val) => {
+                    property_helper!(border_inline_start, width, &val.start, Logical);
+                    property_helper!(border_inline_end, width, &val.end, Logical);
+                }
+                Property::BorderTopStyle(val) => property_helper!(border_top, style, val, Physical),
+                Property::BorderBottomStyle(val) => {
+                    property_helper!(border_bottom, style, val, Physical)
+                }
+                Property::BorderLeftStyle(val) => {
+                    property_helper!(border_left, style, val, Physical)
+                }
+                Property::BorderRightStyle(val) => {
+                    property_helper!(border_right, style, val, Physical)
+                }
+                Property::BorderBlockStartStyle(val) => {
+                    property_helper!(border_block_start, style, val, Logical)
+                }
+                Property::BorderBlockEndStyle(val) => {
+                    property_helper!(border_block_end, style, val, Logical)
+                }
+                Property::BorderBlockStyle(val) => {
+                    property_helper!(border_block_start, style, &val.start, Logical);
+                    property_helper!(border_block_end, style, &val.end, Logical);
+                }
+                Property::BorderInlineStartStyle(val) => {
+                    property_helper!(border_inline_start, style, val, Logical)
+                }
+                Property::BorderInlineEndStyle(val) => {
+                    property_helper!(border_inline_end, style, val, Logical)
+                }
+                Property::BorderInlineStyle(val) => {
+                    property_helper!(border_inline_start, style, &val.start, Logical);
+                    property_helper!(border_inline_end, style, &val.end, Logical);
+                }
+                Property::BorderTop(val) => set_border_helper!(border_top, val, Physical),
+                Property::BorderBottom(val) => set_border_helper!(border_bottom, val, Physical),
+                Property::BorderLeft(val) => set_border_helper!(border_left, val, Physical),
+                Property::BorderRight(val) => set_border_helper!(border_right, val, Physical),
+                Property::BorderBlockStart(val) => {
+                    set_border_helper!(border_block_start, val, Logical)
+                }
+                Property::BorderBlockEnd(val) => set_border_helper!(border_block_end, val, Logical),
+                Property::BorderInlineStart(val) => {
+                    set_border_helper!(border_inline_start, val, Logical)
+                }
+                Property::BorderInlineEnd(val) => {
+                    set_border_helper!(border_inline_end, val, Logical)
+                }
+                Property::BorderBlock(val) => {
+                    set_border_helper!(border_block_start, val, Logical);
+                    set_border_helper!(border_block_end, val, Logical);
+                }
+                Property::BorderInline(val) => {
+                    set_border_helper!(border_inline_start, val, Logical);
+                    set_border_helper!(border_inline_end, val, Logical);
+                }
+                Property::BorderWidth(val) => {
+                    property_helper!(border_top, width, &val.top, Physical);
+                    property_helper!(border_right, width, &val.right, Physical);
+                    property_helper!(border_bottom, width, &val.bottom, Physical);
+                    property_helper!(border_left, width, &val.left, Physical);
 
-                self.$key.set_border(arena, $val);
-                self.category = $category;
-                self.has_any = true;
-            }};
-        }
+                    self.border_block_start.width = None;
+                    self.border_block_end.width = None;
+                    self.border_inline_start.width = None;
+                    self.border_inline_end.width = None;
+                    self.has_any = true;
+                }
+                Property::BorderStyle(val) => {
+                    property_helper!(border_top, style, &val.top, Physical);
+                    property_helper!(border_right, style, &val.right, Physical);
+                    property_helper!(border_bottom, style, &val.bottom, Physical);
+                    property_helper!(border_left, style, &val.left, Physical);
 
-        use PropertyCategory::{Logical, Physical};
+                    self.border_block_start.style = None;
+                    self.border_block_end.style = None;
+                    self.border_inline_start.style = None;
+                    self.border_inline_end.style = None;
+                    self.has_any = true;
+                }
+                Property::BorderColor(val) => {
+                    property_helper!(border_top, color, &val.top, Physical);
+                    property_helper!(border_right, color, &val.right, Physical);
+                    property_helper!(border_bottom, color, &val.bottom, Physical);
+                    property_helper!(border_left, color, &val.left, Physical);
 
-        match property {
-            Property::BorderTopColor(val) => property_helper!(border_top, color, val, Physical),
-            Property::BorderBottomColor(val) => property_helper!(border_bottom, color, val, Physical),
-            Property::BorderLeftColor(val) => property_helper!(border_left, color, val, Physical),
-            Property::BorderRightColor(val) => property_helper!(border_right, color, val, Physical),
-            Property::BorderBlockStartColor(val) => property_helper!(border_block_start, color, val, Logical),
-            Property::BorderBlockEndColor(val) => property_helper!(border_block_end, color, val, Logical),
-            Property::BorderBlockColor(val) => {
-                property_helper!(border_block_start, color, &val.start, Logical);
-                property_helper!(border_block_end, color, &val.end, Logical);
-            }
-            Property::BorderInlineStartColor(val) => property_helper!(border_inline_start, color, val, Logical),
-            Property::BorderInlineEndColor(val) => property_helper!(border_inline_end, color, val, Logical),
-            Property::BorderInlineColor(val) => {
-                property_helper!(border_inline_start, color, &val.start, Logical);
-                property_helper!(border_inline_end, color, &val.end, Logical);
-            }
-            Property::BorderTopWidth(val) => property_helper!(border_top, width, val, Physical),
-            Property::BorderBottomWidth(val) => property_helper!(border_bottom, width, val, Physical),
-            Property::BorderLeftWidth(val) => property_helper!(border_left, width, val, Physical),
-            Property::BorderRightWidth(val) => property_helper!(border_right, width, val, Physical),
-            Property::BorderBlockStartWidth(val) => property_helper!(border_block_start, width, val, Logical),
-            Property::BorderBlockEndWidth(val) => property_helper!(border_block_end, width, val, Logical),
-            Property::BorderBlockWidth(val) => {
-                property_helper!(border_block_start, width, &val.start, Logical);
-                property_helper!(border_block_end, width, &val.end, Logical);
-            }
-            Property::BorderInlineStartWidth(val) => property_helper!(border_inline_start, width, val, Logical),
-            Property::BorderInlineEndWidth(val) => property_helper!(border_inline_end, width, val, Logical),
-            Property::BorderInlineWidth(val) => {
-                property_helper!(border_inline_start, width, &val.start, Logical);
-                property_helper!(border_inline_end, width, &val.end, Logical);
-            }
-            Property::BorderTopStyle(val) => property_helper!(border_top, style, val, Physical),
-            Property::BorderBottomStyle(val) => property_helper!(border_bottom, style, val, Physical),
-            Property::BorderLeftStyle(val) => property_helper!(border_left, style, val, Physical),
-            Property::BorderRightStyle(val) => property_helper!(border_right, style, val, Physical),
-            Property::BorderBlockStartStyle(val) => property_helper!(border_block_start, style, val, Logical),
-            Property::BorderBlockEndStyle(val) => property_helper!(border_block_end, style, val, Logical),
-            Property::BorderBlockStyle(val) => {
-                property_helper!(border_block_start, style, &val.start, Logical);
-                property_helper!(border_block_end, style, &val.end, Logical);
-            }
-            Property::BorderInlineStartStyle(val) => property_helper!(border_inline_start, style, val, Logical),
-            Property::BorderInlineEndStyle(val) => property_helper!(border_inline_end, style, val, Logical),
-            Property::BorderInlineStyle(val) => {
-                property_helper!(border_inline_start, style, &val.start, Logical);
-                property_helper!(border_inline_end, style, &val.end, Logical);
-            }
-            Property::BorderTop(val) => set_border_helper!(border_top, val, Physical),
-            Property::BorderBottom(val) => set_border_helper!(border_bottom, val, Physical),
-            Property::BorderLeft(val) => set_border_helper!(border_left, val, Physical),
-            Property::BorderRight(val) => set_border_helper!(border_right, val, Physical),
-            Property::BorderBlockStart(val) => set_border_helper!(border_block_start, val, Logical),
-            Property::BorderBlockEnd(val) => set_border_helper!(border_block_end, val, Logical),
-            Property::BorderInlineStart(val) => set_border_helper!(border_inline_start, val, Logical),
-            Property::BorderInlineEnd(val) => set_border_helper!(border_inline_end, val, Logical),
-            Property::BorderBlock(val) => {
-                set_border_helper!(border_block_start, val, Logical);
-                set_border_helper!(border_block_end, val, Logical);
-            }
-            Property::BorderInline(val) => {
-                set_border_helper!(border_inline_start, val, Logical);
-                set_border_helper!(border_inline_end, val, Logical);
-            }
-            Property::BorderWidth(val) => {
-                property_helper!(border_top, width, &val.top, Physical);
-                property_helper!(border_right, width, &val.right, Physical);
-                property_helper!(border_bottom, width, &val.bottom, Physical);
-                property_helper!(border_left, width, &val.left, Physical);
+                    self.border_block_start.color = None;
+                    self.border_block_end.color = None;
+                    self.border_inline_start.color = None;
+                    self.border_inline_end.color = None;
+                    self.has_any = true;
+                }
+                Property::Border(val) => {
+                    self.border_top.set_border(arena, val);
+                    self.border_bottom.set_border(arena, val);
+                    self.border_left.set_border(arena, val);
+                    self.border_right.set_border(arena, val);
 
-                self.border_block_start.width = None;
-                self.border_block_end.width = None;
-                self.border_inline_start.width = None;
-                self.border_inline_end.width = None;
-                self.has_any = true;
-            }
-            Property::BorderStyle(val) => {
-                property_helper!(border_top, style, &val.top, Physical);
-                property_helper!(border_right, style, &val.right, Physical);
-                property_helper!(border_bottom, style, &val.bottom, Physical);
-                property_helper!(border_left, style, &val.left, Physical);
+                    self.border_block_start.reset(arena);
+                    self.border_block_end.reset(arena);
+                    self.border_inline_start.reset(arena);
+                    self.border_inline_end.reset(arena);
 
-                self.border_block_start.style = None;
-                self.border_block_end.style = None;
-                self.border_inline_start.style = None;
-                self.border_inline_end.style = None;
-                self.has_any = true;
-            }
-            Property::BorderColor(val) => {
-                property_helper!(border_top, color, &val.top, Physical);
-                property_helper!(border_right, color, &val.right, Physical);
-                property_helper!(border_bottom, color, &val.bottom, Physical);
-                property_helper!(border_left, color, &val.left, Physical);
-
-                self.border_block_start.color = None;
-                self.border_block_end.color = None;
-                self.border_inline_start.color = None;
-                self.border_inline_end.color = None;
-                self.has_any = true;
-            }
-            Property::Border(val) => {
-                self.border_top.set_border(arena, val);
-                self.border_bottom.set_border(arena, val);
-                self.border_left.set_border(arena, val);
-                self.border_right.set_border(arena, val);
-
-                self.border_block_start.reset(arena);
-                self.border_block_end.reset(arena);
-                self.border_inline_start.reset(arena);
-                self.border_inline_end.reset(arena);
-
-                // Setting the `border` property resets `border-image`
-                self.border_image_handler.reset();
-                self.has_any = true;
-            }
-            Property::Unparsed(val) => {
-                if is_border_property(val.property_id.tag()) {
-                    self.flush(dest, context);
-                    self.flush_unparsed(val, dest, context);
-                } else {
+                    // Setting the `border` property resets `border-image`
+                    self.border_image_handler.reset();
+                    self.has_any = true;
+                }
+                Property::Unparsed(val) => {
+                    if is_border_property(val.property_id.tag()) {
+                        self.flush(dest, context);
+                        self.flush_unparsed(val, dest, context);
+                    } else {
+                        if self.border_image_handler.will_flush(property) {
+                            self.flush(dest, context);
+                        }
+                        return self
+                            .border_image_handler
+                            .handle_property(property, dest, context)
+                            || self
+                                .border_radius_handler
+                                .handle_property(property, dest, context);
+                    }
+                }
+                _ => {
                     if self.border_image_handler.will_flush(property) {
                         self.flush(dest, context);
                     }
-                    return self.border_image_handler.handle_property(property, dest, context)
-                        || self.border_radius_handler.handle_property(property, dest, context);
+                    return self
+                        .border_image_handler
+                        .handle_property(property, dest, context)
+                        || self
+                            .border_radius_handler
+                            .handle_property(property, dest, context);
                 }
             }
-            _ => {
-                if self.border_image_handler.will_flush(property) {
-                    self.flush(dest, context);
-                }
-                return self.border_image_handler.handle_property(property, dest, context)
-                    || self.border_radius_handler.handle_property(property, dest, context);
+
+            true
+        }
+
+        pub fn finalize(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            self.flush(dest, context);
+            self.flushed_properties = BorderProperty::empty();
+            self.border_image_handler.finalize(dest, context);
+            self.border_radius_handler.finalize(dest, context);
+        }
+
+        fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+            if !self.has_any {
+                return;
             }
+
+            self.has_any = false;
+
+            let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
+            let logical_shorthand_supported =
+                !context.should_compile_logical(Feature::LogicalBorderShorthand);
+
+            // PORT NOTE: reshaped for borrowck — Zig stored `self: *BorderHandler` in
+            // FlushContext and accessed self.border_* through it. We instead take
+            // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
+            let arena = dest.bump();
+            let mut flctx = FlushContext {
+                flushed_properties: &mut self.flushed_properties,
+                dest,
+                ctx: context,
+                arena,
+                logical_supported,
+                logical_shorthand_supported,
+            };
+
+            flush_category!(
+                &mut flctx,
+                BorderTop,
+                BorderTopWidth,
+                BorderTopStyle,
+                BorderTopColor,
+                &mut self.border_top,
+                BorderBottom,
+                BorderBottomWidth,
+                BorderBottomStyle,
+                BorderBottomColor,
+                &mut self.border_bottom,
+                BorderLeft,
+                BorderLeftWidth,
+                BorderLeftStyle,
+                BorderLeftColor,
+                &mut self.border_left,
+                BorderRight,
+                BorderRightWidth,
+                BorderRightStyle,
+                BorderRightColor,
+                &mut self.border_right,
+                is_logical = false
+            );
+
+            flush_category!(
+                &mut flctx,
+                BorderBlockStart,
+                BorderBlockStartWidth,
+                BorderBlockStartStyle,
+                BorderBlockStartColor,
+                &mut self.border_block_start,
+                BorderBlockEnd,
+                BorderBlockEndWidth,
+                BorderBlockEndStyle,
+                BorderBlockEndColor,
+                &mut self.border_block_end,
+                BorderInlineStart,
+                BorderInlineStartWidth,
+                BorderInlineStartStyle,
+                BorderInlineStartColor,
+                &mut self.border_inline_start,
+                BorderInlineEnd,
+                BorderInlineEndWidth,
+                BorderInlineEndStyle,
+                BorderInlineEndColor,
+                &mut self.border_inline_end,
+                is_logical = true
+            );
+
+            self.border_top.reset(arena);
+            self.border_bottom.reset(arena);
+            self.border_left.reset(arena);
+            self.border_right.reset(arena);
+            self.border_block_start.reset(arena);
+            self.border_block_end.reset(arena);
+            self.border_inline_start.reset(arena);
+            self.border_inline_end.reset(arena);
         }
 
-        true
-    }
+        fn flush_unparsed(
+            &mut self,
+            unparsed: &UnparsedProperty,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let arena = dest.bump();
+            let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
+            if logical_supported {
+                let mut up = unparsed.deep_clone(arena);
+                context.add_unparsed_fallbacks(arena, &mut up);
+                self.flushed_properties
+                    .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
+                dest.push(Property::Unparsed(up));
+                return;
+            }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
-        self.flush(dest, context);
-        self.flushed_properties = BorderProperty::empty();
-        self.border_image_handler.finalize(dest, context);
-        self.border_radius_handler.finalize(dest, context);
-    }
-
-    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
-        if !self.has_any {
-            return;
-        }
-
-        self.has_any = false;
-
-        let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
-        let logical_shorthand_supported =
-            !context.should_compile_logical(Feature::LogicalBorderShorthand);
-
-        // PORT NOTE: reshaped for borrowck — Zig stored `self: *BorderHandler` in
-        // FlushContext and accessed self.border_* through it. We instead take
-        // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
-        let arena = dest.bump();
-        let mut flctx = FlushContext {
-            flushed_properties: &mut self.flushed_properties,
-            dest,
-            ctx: context,
-            arena,
-            logical_supported,
-            logical_shorthand_supported,
-        };
-
-        flush_category!(
-            &mut flctx,
-            BorderTop, BorderTopWidth, BorderTopStyle, BorderTopColor, &mut self.border_top,
-            BorderBottom, BorderBottomWidth, BorderBottomStyle, BorderBottomColor, &mut self.border_bottom,
-            BorderLeft, BorderLeftWidth, BorderLeftStyle, BorderLeftColor, &mut self.border_left,
-            BorderRight, BorderRightWidth, BorderRightStyle, BorderRightColor, &mut self.border_right,
-            is_logical = false
-        );
-
-        flush_category!(
-            &mut flctx,
-            BorderBlockStart, BorderBlockStartWidth, BorderBlockStartStyle, BorderBlockStartColor, &mut self.border_block_start,
-            BorderBlockEnd, BorderBlockEndWidth, BorderBlockEndStyle, BorderBlockEndColor, &mut self.border_block_end,
-            BorderInlineStart, BorderInlineStartWidth, BorderInlineStartStyle, BorderInlineStartColor, &mut self.border_inline_start,
-            BorderInlineEnd, BorderInlineEndWidth, BorderInlineEndStyle, BorderInlineEndColor, &mut self.border_inline_end,
-            is_logical = true
-        );
-
-        self.border_top.reset(arena);
-        self.border_bottom.reset(arena);
-        self.border_left.reset(arena);
-        self.border_right.reset(arena);
-        self.border_block_start.reset(arena);
-        self.border_block_end.reset(arena);
-        self.border_inline_start.reset(arena);
-        self.border_inline_end.reset(arena);
-    }
-
-    fn flush_unparsed(
-        &mut self,
-        unparsed: &UnparsedProperty,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
-        let arena = dest.bump();
-        let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
-        if logical_supported {
-            let mut up = unparsed.deep_clone(arena);
-            context.add_unparsed_fallbacks(arena, &mut up);
-            self.flushed_properties
-                .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
-            dest.push(Property::Unparsed(up));
-            return;
-        }
-
-        macro_rules! prop {
+            macro_rules! prop {
             ($id:ident) => {{
                 let _ = &dest; // autofix (matches Zig: `_ = d;`)
                 let mut upppppppppp =
@@ -1441,102 +1608,110 @@ impl BorderHandler {
             }};
         }
 
-        macro_rules! logical_prop {
-            ($ltr:ident, $rtl:ident) => {{
-                context.add_logical_rule(
-                    Property::Unparsed(
-                        unparsed.with_property_id(arena, PropertyId::$ltr),
-                    ),
-                    Property::Unparsed(
-                        unparsed.with_property_id(arena, PropertyId::$rtl),
-                    ),
-                );
-            }};
-        }
+            macro_rules! logical_prop {
+                ($ltr:ident, $rtl:ident) => {{
+                    context.add_logical_rule(
+                        Property::Unparsed(unparsed.with_property_id(arena, PropertyId::$ltr)),
+                        Property::Unparsed(unparsed.with_property_id(arena, PropertyId::$rtl)),
+                    );
+                }};
+            }
 
-        match unparsed.property_id.tag() {
-            PropertyIdTag::BorderInlineStart => logical_prop!(BorderLeft, BorderRight),
-            PropertyIdTag::BorderInlineStartWidth => logical_prop!(BorderLeftWidth, BorderRightWidth),
-            PropertyIdTag::BorderInlineStartColor => logical_prop!(BorderLeftColor, BorderRightColor),
-            PropertyIdTag::BorderInlineStartStyle => logical_prop!(BorderLeftStyle, BorderRightStyle),
-            PropertyIdTag::BorderInlineEnd => logical_prop!(BorderRight, BorderLeft),
-            PropertyIdTag::BorderInlineEndWidth => logical_prop!(BorderRightWidth, BorderLeftWidth),
-            PropertyIdTag::BorderInlineEndColor => logical_prop!(BorderRightColor, BorderLeftColor),
-            PropertyIdTag::BorderInlineEndStyle => logical_prop!(BorderRightStyle, BorderLeftStyle),
-            PropertyIdTag::BorderBlockStart => prop!(BorderTop),
-            PropertyIdTag::BorderBlockStartWidth => prop!(BorderTopWidth),
-            PropertyIdTag::BorderBlockStartColor => prop!(BorderTopColor),
-            PropertyIdTag::BorderBlockStartStyle => prop!(BorderTopStyle),
-            PropertyIdTag::BorderBlockEnd => prop!(BorderBottom),
-            PropertyIdTag::BorderBlockEndWidth => prop!(BorderBottomWidth),
-            PropertyIdTag::BorderBlockEndColor => prop!(BorderBottomColor),
-            PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
-            _ => {
-                let mut up = unparsed.deep_clone(arena);
-                context.add_unparsed_fallbacks(arena, &mut up);
-                self.flushed_properties
-                    .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
-                dest.push(Property::Unparsed(up));
+            match unparsed.property_id.tag() {
+                PropertyIdTag::BorderInlineStart => logical_prop!(BorderLeft, BorderRight),
+                PropertyIdTag::BorderInlineStartWidth => {
+                    logical_prop!(BorderLeftWidth, BorderRightWidth)
+                }
+                PropertyIdTag::BorderInlineStartColor => {
+                    logical_prop!(BorderLeftColor, BorderRightColor)
+                }
+                PropertyIdTag::BorderInlineStartStyle => {
+                    logical_prop!(BorderLeftStyle, BorderRightStyle)
+                }
+                PropertyIdTag::BorderInlineEnd => logical_prop!(BorderRight, BorderLeft),
+                PropertyIdTag::BorderInlineEndWidth => {
+                    logical_prop!(BorderRightWidth, BorderLeftWidth)
+                }
+                PropertyIdTag::BorderInlineEndColor => {
+                    logical_prop!(BorderRightColor, BorderLeftColor)
+                }
+                PropertyIdTag::BorderInlineEndStyle => {
+                    logical_prop!(BorderRightStyle, BorderLeftStyle)
+                }
+                PropertyIdTag::BorderBlockStart => prop!(BorderTop),
+                PropertyIdTag::BorderBlockStartWidth => prop!(BorderTopWidth),
+                PropertyIdTag::BorderBlockStartColor => prop!(BorderTopColor),
+                PropertyIdTag::BorderBlockStartStyle => prop!(BorderTopStyle),
+                PropertyIdTag::BorderBlockEnd => prop!(BorderBottom),
+                PropertyIdTag::BorderBlockEndWidth => prop!(BorderBottomWidth),
+                PropertyIdTag::BorderBlockEndColor => prop!(BorderBottomColor),
+                PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
+                _ => {
+                    let mut up = unparsed.deep_clone(arena);
+                    context.add_unparsed_fallbacks(arena, &mut up);
+                    self.flushed_properties.insert(
+                        BorderProperty::try_from_property_id(up.property_id.tag()).unwrap(),
+                    );
+                    dest.push(Property::Unparsed(up));
+                }
             }
         }
     }
-}
 
-// ──────────────────────────────────────────────────────────────────────────
-// is_border_property
-// ──────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────
+    // is_border_property
+    // ──────────────────────────────────────────────────────────────────────────
 
-fn is_border_property(property_id: PropertyIdTag) -> bool {
-    use PropertyIdTag as P;
-    matches!(
-        property_id,
-        P::BorderTopColor
-            | P::BorderBottomColor
-            | P::BorderLeftColor
-            | P::BorderRightColor
-            | P::BorderBlockStartColor
-            | P::BorderBlockEndColor
-            | P::BorderBlockColor
-            | P::BorderInlineStartColor
-            | P::BorderInlineEndColor
-            | P::BorderInlineColor
-            | P::BorderTopWidth
-            | P::BorderBottomWidth
-            | P::BorderLeftWidth
-            | P::BorderRightWidth
-            | P::BorderBlockStartWidth
-            | P::BorderBlockEndWidth
-            | P::BorderBlockWidth
-            | P::BorderInlineStartWidth
-            | P::BorderInlineEndWidth
-            | P::BorderInlineWidth
-            | P::BorderTopStyle
-            | P::BorderBottomStyle
-            | P::BorderLeftStyle
-            | P::BorderRightStyle
-            | P::BorderBlockStartStyle
-            | P::BorderBlockEndStyle
-            | P::BorderBlockStyle
-            | P::BorderInlineStartStyle
-            | P::BorderInlineEndStyle
-            | P::BorderInlineStyle
-            | P::BorderTop
-            | P::BorderBottom
-            | P::BorderLeft
-            | P::BorderRight
-            | P::BorderBlockStart
-            | P::BorderBlockEnd
-            | P::BorderInlineStart
-            | P::BorderInlineEnd
-            | P::BorderBlock
-            | P::BorderInline
-            | P::BorderWidth
-            | P::BorderStyle
-            | P::BorderColor
-            | P::Border
-    )
-}
+    fn is_border_property(property_id: PropertyIdTag) -> bool {
+        use PropertyIdTag as P;
+        matches!(
+            property_id,
+            P::BorderTopColor
+                | P::BorderBottomColor
+                | P::BorderLeftColor
+                | P::BorderRightColor
+                | P::BorderBlockStartColor
+                | P::BorderBlockEndColor
+                | P::BorderBlockColor
+                | P::BorderInlineStartColor
+                | P::BorderInlineEndColor
+                | P::BorderInlineColor
+                | P::BorderTopWidth
+                | P::BorderBottomWidth
+                | P::BorderLeftWidth
+                | P::BorderRightWidth
+                | P::BorderBlockStartWidth
+                | P::BorderBlockEndWidth
+                | P::BorderBlockWidth
+                | P::BorderInlineStartWidth
+                | P::BorderInlineEndWidth
+                | P::BorderInlineWidth
+                | P::BorderTopStyle
+                | P::BorderBottomStyle
+                | P::BorderLeftStyle
+                | P::BorderRightStyle
+                | P::BorderBlockStartStyle
+                | P::BorderBlockEndStyle
+                | P::BorderBlockStyle
+                | P::BorderInlineStartStyle
+                | P::BorderInlineEndStyle
+                | P::BorderInlineStyle
+                | P::BorderTop
+                | P::BorderBottom
+                | P::BorderLeft
+                | P::BorderRight
+                | P::BorderBlockStart
+                | P::BorderBlockEnd
+                | P::BorderInlineStart
+                | P::BorderInlineEnd
+                | P::BorderBlock
+                | P::BorderInline
+                | P::BorderWidth
+                | P::BorderStyle
+                | P::BorderColor
+                | P::Border
+        )
+    }
 
-// ported from: src/css/properties/border.zig
-
+    // ported from: src/css/properties/border.zig
 } // mod border_handler_body

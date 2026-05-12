@@ -18,7 +18,7 @@
 #[path = "spawn/stdio.rs"]
 pub mod stdio;
 
-pub use ::bun_spawn::posix_spawn::{bun_spawn, posix_spawn, BunSpawn, PosixSpawn};
+pub use ::bun_spawn::posix_spawn::{BunSpawn, PosixSpawn, bun_spawn, posix_spawn};
 
 // sibling module: src/runtime/api/bun/process.zig — now re-exported from the
 // `bun_spawn` workspace crate.

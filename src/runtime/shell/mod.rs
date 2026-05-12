@@ -30,96 +30,96 @@ pub mod shell_body;
 pub use shell_body as shell;
 
 // ─── compiling submodules ────────────────────────────────────────────────────
-#[path = "util.rs"]
-pub mod util;
-#[path = "RefCountedStr.rs"]
-pub mod ref_counted_str;
-#[path = "EnvStr.rs"]
-pub mod env_str;
 #[path = "EnvMap.rs"]
 pub mod env_map;
+#[path = "EnvStr.rs"]
+pub mod env_str;
+#[path = "RefCountedStr.rs"]
+pub mod ref_counted_str;
+#[path = "util.rs"]
+pub mod util;
 
-#[path = "Yield.rs"]
-pub mod yield_;
+#[path = "Builtin.rs"]
+pub mod builtin;
+#[path = "interpreter.rs"]
+pub mod interpreter;
 #[path = "IO.rs"]
 pub mod io;
 #[path = "IOReader.rs"]
 pub mod io_reader;
 #[path = "IOWriter.rs"]
 pub mod io_writer;
-#[path = "Builtin.rs"]
-pub mod builtin;
-#[path = "interpreter.rs"]
-pub mod interpreter;
 #[path = "ParsedShellScript.rs"]
 pub mod parsed_shell_script;
+#[path = "Yield.rs"]
+pub mod yield_;
 
 #[path = "states"]
 pub mod states {
+    #[path = "Assigns.rs"]
+    pub mod assigns;
+    #[path = "Async.rs"]
+    pub mod r#async;
     #[path = "Base.rs"]
     pub mod base;
+    #[path = "Binary.rs"]
+    pub mod binary;
+    #[path = "Cmd.rs"]
+    pub mod cmd;
+    #[path = "CondExpr.rs"]
+    pub mod cond_expr;
+    #[path = "Expansion.rs"]
+    pub mod expansion;
+    #[path = "If.rs"]
+    pub mod r#if;
+    #[path = "Pipeline.rs"]
+    pub mod pipeline;
     #[path = "Script.rs"]
     pub mod script;
     #[path = "Stmt.rs"]
     pub mod stmt;
-    #[path = "Binary.rs"]
-    pub mod binary;
-    #[path = "Pipeline.rs"]
-    pub mod pipeline;
     #[path = "Subshell.rs"]
     pub mod subshell;
-    #[path = "Async.rs"]
-    pub mod r#async;
-    #[path = "If.rs"]
-    pub mod r#if;
-    #[path = "CondExpr.rs"]
-    pub mod cond_expr;
-    #[path = "Assigns.rs"]
-    pub mod assigns;
-    #[path = "Expansion.rs"]
-    pub mod expansion;
-    #[path = "Cmd.rs"]
-    pub mod cmd;
 }
 
 #[path = "builtin"]
 pub mod builtins {
-    #[path = "true_.rs"]
-    pub mod true_;
-    #[path = "false_.rs"]
-    pub mod false_;
     #[path = "basename.rs"]
     pub mod basename;
-    #[path = "dirname.rs"]
-    pub mod dirname;
-    #[path = "exit.rs"]
-    pub mod exit;
-    #[path = "pwd.rs"]
-    pub mod pwd;
-    #[path = "cd.rs"]
-    pub mod cd;
-    #[path = "echo.rs"]
-    pub mod echo;
-    #[path = "export.rs"]
-    pub mod export;
     #[path = "cat.rs"]
     pub mod cat;
-    #[path = "mv.rs"]
-    pub mod mv;
-    #[path = "rm.rs"]
-    pub mod rm;
-    #[path = "which.rs"]
-    pub mod which;
+    #[path = "cd.rs"]
+    pub mod cd;
+    #[path = "cp.rs"]
+    pub mod cp;
+    #[path = "dirname.rs"]
+    pub mod dirname;
+    #[path = "echo.rs"]
+    pub mod echo;
+    #[path = "exit.rs"]
+    pub mod exit;
+    #[path = "export.rs"]
+    pub mod export;
+    #[path = "false_.rs"]
+    pub mod false_;
     #[path = "ls.rs"]
     pub mod ls;
     #[path = "mkdir.rs"]
     pub mod mkdir;
-    #[path = "touch.rs"]
-    pub mod touch;
-    #[path = "cp.rs"]
-    pub mod cp;
+    #[path = "mv.rs"]
+    pub mod mv;
+    #[path = "pwd.rs"]
+    pub mod pwd;
+    #[path = "rm.rs"]
+    pub mod rm;
     #[path = "seq.rs"]
     pub mod seq;
+    #[path = "touch.rs"]
+    pub mod touch;
+    #[path = "true_.rs"]
+    pub mod true_;
+    #[path = "which.rs"]
+    pub mod which;
     #[path = "yes.rs"]
     pub mod yes;
 }
@@ -127,11 +127,11 @@ pub mod builtins {
 // ─── re-exports ──────────────────────────────────────────────────────────────
 pub use env_map::EnvMap;
 pub use env_str::EnvStr;
-pub use ref_counted_str::RefCountedStr;
-pub use yield_::Yield;
-pub use interpreter::{ExitCode, Interpreter, NodeId, Node, ShellExecEnv};
+pub use interpreter::{ExitCode, Interpreter, Node, NodeId, ShellExecEnv};
 pub use io::IO;
 pub use io_writer as IOWriter;
+pub use ref_counted_str::RefCountedStr;
+pub use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
@@ -143,14 +143,13 @@ pub mod dispatch_tasks;
 #[path = "subproc.rs"]
 pub mod subproc;
 
-pub const SUBSHELL_TODO_ERROR: &str =
-    "Subshells are not implemented, please open GitHub issue!";
+pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
 
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
 pub use bun_shell_parser::{
-    assert_special_char, escape_8bit, needs_escape_utf16, needs_escape_utf8_ascii_latin1,
-    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
+    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, assert_special_char, escape_8bit,
+    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
@@ -163,8 +162,8 @@ pub use bun_shell_parser::{
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
 pub mod ast {
-    use bun_shell_parser::parse::ast as p;
     pub use bun_shell_parser::parse::SmolList;
+    use bun_shell_parser::parse::ast as p;
     pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
 
     pub type Script = p::Script<'static>;

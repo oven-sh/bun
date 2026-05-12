@@ -1,5 +1,5 @@
 use core::ffi::{c_int, c_void};
-use core::mem::{offset_of, MaybeUninit};
+use core::mem::{MaybeUninit, offset_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_sys::windows::libuv as uv;
@@ -7,8 +7,8 @@ use bun_sys::windows::libuv as uv;
 // the trait must be in scope for method resolution on `Box<Pipe>`/`Tty`.
 use bun_sys::windows::libuv::UvHandle as _;
 // `to_error` on `ReturnCode`/`ReturnCodeI64` lives in `bun_sys` (layering).
-use bun_sys::ReturnCodeExt as _;
 use bun_sys::Fd;
+use bun_sys::ReturnCodeExt as _;
 
 bun_core::declare_scope!(PipeSource, hidden);
 
@@ -151,7 +151,8 @@ impl File {
         }
 
         // SAFETY: &mut self.fs is a valid uv_fs_t request; uv_req_t is its base.
-        let cancel_result = unsafe { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
+        let cancel_result =
+            unsafe { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
         if cancel_result == 0 {
             self.state = FileState::Canceling;
         }
@@ -324,7 +325,7 @@ impl Source {
     }
 
     pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
-        bun_core::scoped_log!(PipeSource,"openPipe (fd = {})", fd);
+        bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
         // we should never init using IPC here see ipc.zig
         if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
@@ -345,7 +346,7 @@ impl Source {
     }
 
     pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
-        bun_core::scoped_log!(PipeSource,"openTTY (fd = {})", fd);
+        bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
 
         let uv_fd = fd.uv();
 
@@ -368,7 +369,7 @@ impl Source {
 
     pub fn open_file(fd: Fd) -> Box<File> {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
-        bun_core::scoped_log!(PipeSource,"openFile (fd = {})", fd);
+        bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
         let mut file: Box<File> = Box::new(File::default());
         file.file = fd.uv();
         file
@@ -418,7 +419,11 @@ impl Source {
         match self {
             Source::Tty(tty) => {
                 if let Some(err) = Self::tty_mut(tty)
-                    .set_mode(if value { uv::TtyMode::Raw } else { uv::TtyMode::Normal })
+                    .set_mode(if value {
+                        uv::TtyMode::Raw
+                    } else {
+                        uv::TtyMode::Normal
+                    })
                     .to_error(bun_sys::Tag::uv_tty_set_mode)
                 {
                     bun_sys::Result::Err(err)
@@ -499,7 +504,11 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     // process — same invariant the `Source::Tty` arm relies on, so reuse the
     // shared `tty_mut` accessor.
     if let Some(err) = Source::tty_mut(&mut tty)
-        .set_mode(if raw { uv::TtyMode::Vt } else { uv::TtyMode::Normal })
+        .set_mode(if raw {
+            uv::TtyMode::Vt
+        } else {
+            uv::TtyMode::Normal
+        })
         .to_error(bun_sys::Tag::uv_tty_set_mode)
     {
         return err.errno as c_int;

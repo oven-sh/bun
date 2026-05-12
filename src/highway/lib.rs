@@ -2,18 +2,9 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 unsafe extern "C" {
-    fn highway_char_frequency(
-        text: *const u8,
-        text_len: usize,
-        freqs: *mut i32,
-        delta: i32,
-    );
+    fn highway_char_frequency(text: *const u8, text_len: usize, freqs: *mut i32, delta: i32);
 
-    fn highway_index_of_char(
-        haystack: *const u8,
-        haystack_len: usize,
-        needle: u8,
-    ) -> usize;
+    fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -21,10 +12,7 @@ unsafe extern "C" {
         quote: u8,
     ) -> usize;
 
-    fn highway_index_of_newline_or_non_ascii(
-        haystack: *const u8,
-        haystack_len: usize,
-    ) -> usize;
+    fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
     fn highway_index_of_newline_or_non_ascii_or_ansi(
         haystack: *const u8,
@@ -41,10 +29,7 @@ unsafe extern "C" {
         haystack_len: usize,
     ) -> usize;
 
-    fn highway_contains_newline_or_non_ascii_or_quote(
-        text: *const u8,
-        text_len: usize,
-    ) -> bool;
+    fn highway_contains_newline_or_non_ascii_or_quote(text: *const u8, text_len: usize) -> bool;
 
     fn highway_index_of_needs_escape_for_javascript_string(
         text: *const u8,
@@ -68,11 +53,7 @@ unsafe extern "C" {
         skip_mask: bool,
     );
 
-    fn highway_copy_u16_to_u8(
-        input: *const u16,
-        count: usize,
-        output: *mut u8,
-    );
+    fn highway_copy_u16_to_u8(input: *const u16, count: usize, output: *mut u8);
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -117,14 +98,21 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
 }
 
 #[inline(always)]
-pub fn index_of_interesting_character_in_string_literal(slice: &[u8], quote_type: u8) -> Option<usize> {
+pub fn index_of_interesting_character_in_string_literal(
+    slice: &[u8],
+    quote_type: u8,
+) -> Option<usize> {
     if slice.is_empty() {
         return None;
     }
 
     // SAFETY: slice.ptr/len are a valid readable range.
     let result = unsafe {
-        highway_index_of_interesting_character_in_string_literal(slice.as_ptr(), slice.len(), quote_type)
+        highway_index_of_interesting_character_in_string_literal(
+            slice.as_ptr(),
+            slice.len(),
+            quote_type,
+        )
     };
 
     if result == slice.len() {
@@ -139,14 +127,19 @@ pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
     debug_assert!(!haystack.is_empty());
 
     // SAFETY: haystack.ptr/len are a valid readable range (len > 0 asserted above).
-    let result = unsafe { highway_index_of_newline_or_non_ascii(haystack.as_ptr(), haystack.len()) };
+    let result =
+        unsafe { highway_index_of_newline_or_non_ascii(haystack.as_ptr(), haystack.len()) };
 
     if result == haystack.len() {
         return None;
     }
     if cfg!(debug_assertions) {
         let haystack_char = haystack[result];
-        if !(haystack_char > 127 || haystack_char < 0x20 || haystack_char == b'\r' || haystack_char == b'\n') {
+        if !(haystack_char > 127
+            || haystack_char < 0x20
+            || haystack_char == b'\r'
+            || haystack_char == b'\n')
+        {
             panic!("Invalid character found in indexOfNewlineOrNonASCII");
         }
     }
@@ -159,14 +152,19 @@ pub fn index_of_newline_or_non_ascii_or_ansi(haystack: &[u8]) -> Option<usize> {
     debug_assert!(!haystack.is_empty());
 
     // SAFETY: haystack.ptr/len are a valid readable range (len > 0 asserted above).
-    let result = unsafe { highway_index_of_newline_or_non_ascii_or_ansi(haystack.as_ptr(), haystack.len()) };
+    let result =
+        unsafe { highway_index_of_newline_or_non_ascii_or_ansi(haystack.as_ptr(), haystack.len()) };
 
     if result == haystack.len() {
         return None;
     }
     if cfg!(debug_assertions) {
         let haystack_char = haystack[result];
-        if !(haystack_char > 127 || haystack_char < 0x20 || haystack_char == b'\r' || haystack_char == b'\n') {
+        if !(haystack_char > 127
+            || haystack_char < 0x20
+            || haystack_char == b'\r'
+            || haystack_char == b'\n')
+        {
             panic!("Invalid character found in indexOfNewlineOrNonASCIIOrANSI");
         }
     }
@@ -233,7 +231,12 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
     let result = unsafe {
-        highway_index_of_any_char(haystack.as_ptr(), haystack.len(), chars.as_ptr(), chars.len())
+        highway_index_of_any_char(
+            haystack.as_ptr(),
+            haystack.len(),
+            chars.as_ptr(),
+            chars.len(),
+        )
     };
 
     if result == haystack.len() {

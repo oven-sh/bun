@@ -2,14 +2,14 @@ use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr};
+use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
-use bun_paths::{resolve_path, PathBuffer};
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{closefd, shell_openat, Interpreter, NodeId, ShellTask};
+use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_openat};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Mv {
@@ -40,7 +40,9 @@ pub enum MvState {
         err: Option<bun_sys::Error>,
     },
     Done,
-    WaitingWriteErr { exit_code: ExitCode },
+    WaitingWriteErr {
+        exit_code: ExitCode,
+    },
     Err,
 }
 
@@ -77,7 +79,14 @@ impl Mv {
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
-            enum Tag { Idle, CheckTarget, Executing, WaitingWriteErr, Done, Err }
+            enum Tag {
+                Idle,
+                CheckTarget,
+                Executing,
+                WaitingWriteErr,
+                Done,
+                Err,
+            }
             let tag = match Self::state_mut(interp, cmd).state {
                 MvState::Idle => Tag::Idle,
                 MvState::CheckTarget(_) => Tag::CheckTarget,
@@ -213,8 +222,7 @@ impl Mv {
                     };
                     let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
-                    let mut tasks: Vec<Box<ShellMvBatchedTask>> =
-                        Vec::with_capacity(task_count);
+                    let mut tasks: Vec<Box<ShellMvBatchedTask>> = Vec::with_capacity(task_count);
                     for i in 0..task_count {
                         let start = sources_start + i * BATCH;
                         let end = (start + BATCH).min(target_idx);
@@ -245,8 +253,11 @@ impl Mv {
                     // Now that the AtomicBool has its final address, point
                     // every task at it and schedule.
                     let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                    if let MvState::Executing { error_signal, tasks, .. } =
-                        &mut Self::state_mut(interp, cmd).state
+                    if let MvState::Executing {
+                        error_signal,
+                        tasks,
+                        ..
+                    } = &mut Self::state_mut(interp, cmd).state
                     {
                         let sig = BackRef::new(&*error_signal);
                         for t in tasks.iter_mut() {
@@ -297,14 +308,15 @@ impl Mv {
     }
 
     /// Spec: mv.zig `batchedMoveTaskDone`.
-    pub fn batched_move_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task_idx: usize,
-    ) {
+    pub fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
         let (all_done, had_err) = {
-            let MvState::Executing { task_count, tasks_done, error_signal, tasks, err } =
-                &mut Self::state_mut(interp, cmd).state
+            let MvState::Executing {
+                task_count,
+                tasks_done,
+                error_signal,
+                tasks,
+                err,
+            } = &mut Self::state_mut(interp, cmd).state
             else {
                 unreachable!()
             };
@@ -477,7 +489,11 @@ impl ShellMvBatchedTask {
         if let Some(dir) = this.target_fd {
             let mut buf = PathBuffer::uninit();
             if let Err(e) = Self::move_in_dir(
-                this.cwd, dir, this.target.as_bytes(), &this.sources[0], &mut buf,
+                this.cwd,
+                dir,
+                this.target.as_bytes(),
+                &this.sources[0],
+                &mut buf,
             ) {
                 this.err = Some(e);
             }
@@ -506,7 +522,8 @@ impl ShellMvBatchedTask {
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
-        let len = resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
+        let len =
+            resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
         if len + 1 >= bun_paths::MAX_PATH_BYTES {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
@@ -519,8 +536,7 @@ impl ShellMvBatchedTask {
             // Spec mv.zig:122-128 — surface `target/basename(src)` as the
             // failing path. `with_path` heap-clones, so the Zig
             // `err_path_owned` bookkeeping is unnecessary here (`Drop` frees).
-            let joined =
-                resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
+            let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())
         })
     }
@@ -542,7 +558,11 @@ impl ShellMvBatchedTask {
                 return;
             }
             if let Err(e) = Self::move_in_dir(
-                self.cwd, dir, self.target.as_bytes(), &self.sources[i], &mut buf,
+                self.cwd,
+                dir,
+                self.target.as_bytes(),
+                &self.sources[i],
+                &mut buf,
             ) {
                 self.err = Some(e);
                 return;
@@ -572,7 +592,9 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) {
+        Self::run_from_thread_pool(this)
+    }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
@@ -580,7 +602,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) {
+        Self::run_from_thread_pool(this)
+    }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

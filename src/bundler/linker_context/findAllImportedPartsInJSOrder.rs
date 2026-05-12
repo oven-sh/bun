@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
-use bun_collections::{AutoBitSet, VecExt, HashMap};
 use bun_ast::{ImportKind, ImportRecord};
+use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
     Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,

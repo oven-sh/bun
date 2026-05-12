@@ -128,7 +128,9 @@ impl PropertyRule {
                     let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
 
                     if p2.is_exhausted() {
-                        Some(ParsedComponent::TokenList(TokenList { v: Default::default() }))
+                        Some(ParsedComponent::TokenList(TokenList {
+                            v: Default::default(),
+                        }))
                     } else {
                         Some(syntax.parse_value(&mut p2)?)
                     }
@@ -146,7 +148,13 @@ impl PropertyRule {
             }
         };
 
-        Ok(PropertyRule { name, syntax, inherits, initial_value, loc })
+        Ok(PropertyRule {
+            name,
+            syntax,
+            inherits,
+            initial_value,
+            loc,
+        })
     }
 }
 
@@ -174,7 +182,11 @@ const _: () = {
 
         // TODO(port): the Zig defines a ComptimeStringMap over FieldEnum but never uses it
         // (usage is commented out). Preserved the active if/else-if chain instead.
-        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(
+            this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
             crate::match_ignore_ascii_case! { name, {
                 b"syntax" => {
                     this.syntax = Some(SyntaxString::parse(input)?);
@@ -216,8 +228,16 @@ const _: () = {
         type Prelude = ();
         type AtRule = ();
 
-        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
+        fn parse_prelude(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Prelude> {
+            Err(
+                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
+                    [u8],
+                >(name))),
+            )
         }
 
         fn parse_block(

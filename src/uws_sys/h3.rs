@@ -6,10 +6,10 @@ use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
+use crate::SocketAddress;
 use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
-use crate::SocketAddress;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ListenSocket
@@ -118,7 +118,9 @@ impl Request {
             // SAFETY: synchronous header iteration — `ud` is the unique `&mut Ctx`
             // we registered, (ptr,len) pairs valid for this call, `H` is a ZST.
             unsafe {
-                let Some(ctx) = thunk::user_mut::<Ctx>(ud) else { return };
+                let Some(ctx) = thunk::user_mut::<Ctx>(ud) else {
+                    return;
+                };
                 thunk::zst::<H>()(ctx, thunk::c_slice(n, nl), thunk::c_slice(v, vl));
             }
         }
@@ -191,7 +193,10 @@ impl Response {
     pub fn resume_(&mut self) {
         c::uws_h3_res_resume(self)
     }
-    #[inline] pub fn resume(&mut self) { self.resume_() }
+    #[inline]
+    pub fn resume(&mut self) {
+        self.resume_()
+    }
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_h3_res_timeout(self, seconds)
     }
@@ -257,7 +262,9 @@ impl Response {
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return true };
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return true;
+                };
                 thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
             }
         }
@@ -278,7 +285,9 @@ impl Response {
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return;
+                };
                 thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
         }
@@ -299,7 +308,9 @@ impl Response {
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return;
+                };
                 thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
         }
@@ -326,8 +337,15 @@ impl Response {
             // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
             // `p` is the registered `*mut UD`.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r), thunk::c_slice(chunk_ptr, len), last);
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return;
+                };
+                thunk::zst::<H>()(
+                    ud,
+                    thunk::handle_mut(r),
+                    thunk::c_slice(chunk_ptr, len),
+                    last,
+                );
             }
         }
         c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast())
@@ -428,7 +446,9 @@ impl App {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return;
+                };
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
@@ -446,7 +466,15 @@ impl App {
             RouteKind::Any => c::uws_h3_app_any,
         };
         // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe { f(this, pattern.as_ptr(), pattern.len(), Some(cb::<UD, H>), ud.cast()) }
+        unsafe {
+            f(
+                this,
+                pattern.as_ptr(),
+                pattern.len(),
+                Some(cb::<UD, H>),
+                ud.cast(),
+            )
+        }
     }
 
     pub fn get<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -529,7 +557,9 @@ impl App {
             // SAFETY: uWS callback contract — `p` is the registered `*mut UD`;
             // `ls` (when non-null) is a live listen-socket for this call.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                    return;
+                };
                 thunk::zst::<H>()(ud, ls.as_mut());
             }
         }
@@ -560,7 +590,11 @@ pub struct ListenConfig {
 
 impl Default for ListenConfig {
     fn default() -> Self {
-        Self { port: 0, host: ptr::null(), options: 0 }
+        Self {
+            port: 0,
+            host: ptr::null(),
+            options: 0,
+        }
     }
 }
 
@@ -571,12 +605,9 @@ impl Default for ListenConfig {
 mod c {
     use super::*;
 
-    pub type Handler =
-        Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
-    pub type ListenHandler =
-        Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
-    pub type HeaderCb =
-        unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
+    pub type Handler = Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
+    pub type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
+    pub type HeaderCb = unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
     // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
@@ -596,11 +627,29 @@ mod c {
         pub fn uws_h3_app_get(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_post(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_put(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_delete(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
+        pub fn uws_h3_app_delete(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
         pub fn uws_h3_app_patch(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_head(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_options(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_connect(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
+        pub fn uws_h3_app_options(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub fn uws_h3_app_connect(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
         pub fn uws_h3_app_trace(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_any(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_listen_with_config(
@@ -714,7 +763,11 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
-        pub safe fn uws_h3_req_get_parameter(req: &mut Request, idx: u16, out: &mut *const u8) -> usize;
+        pub safe fn uws_h3_req_get_parameter(
+            req: &mut Request,
+            idx: u16,
+            out: &mut *const u8,
+        ) -> usize;
         // safe: synchronous header iteration — `ud` is forwarded opaquely to
         // `cb` without being dereferenced by the C++ shim itself; `cb` is a
         // by-value fn pointer. No preconditions beyond the live opaque handle.

@@ -7,11 +7,23 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
         b"MySQLConnection",
         crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
     );
-    crate::put_host_functions!(binding, global_object, [
-        ("init", my_sql_context::init, 0),
-        ("createQuery", js_my_sql_query::JSMySQLQuery::create_instance, 6),
-        ("createConnection", js_my_sql_connection::JSMySQLConnection::create_instance, 2),
-    ])
+    crate::put_host_functions!(
+        binding,
+        global_object,
+        [
+            ("init", my_sql_context::init, 0),
+            (
+                "createQuery",
+                js_my_sql_query::JSMySQLQuery::create_instance,
+                6
+            ),
+            (
+                "createConnection",
+                js_my_sql_connection::JSMySQLConnection::create_instance,
+                2
+            ),
+        ]
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -79,20 +91,20 @@ pub mod protocol {
     pub mod any_mysql_error_jsc;
 
     // TODO(b2-blocked): bun_jsc::JSValue method surface (date/number/buffer constructors)
-    
+
     #[path = "DecodeBinaryValue.rs"]
     pub mod decode_binary_value;
 
     // TODO(b2-blocked): bun_jsc::JSValue / bun_jsc::JSObject method surface
-    
+
     #[path = "ResultSet.rs"]
     pub mod result_set;
 }
 
-pub use my_sql_context::MySQLContext;
-pub use my_sql_statement::MySQLStatement;
 pub use my_sql_connection::MySQLConnection;
+pub use my_sql_context::MySQLContext;
 pub use my_sql_query::MySQLQuery;
 pub use my_sql_request_queue::MySQLRequestQueue;
+pub use my_sql_statement::MySQLStatement;
 
 // ported from: src/sql_jsc/mysql.zig

@@ -14,24 +14,24 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
+use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
-use bun_core::{self, env_var, FeatureFlags, Global, Output};
-use bun_jsc::regular_expression::Flags as RegexFlags;
+use bun_core::strings;
+use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
-use bun_options_types::schema::api;
+use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_paths::{platform, PathBuffer};
+use bun_paths::{PathBuffer, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
-use bun_core::strings;
-use bun_core::ZStr;
 
 use crate::cli;
+use crate::cli::Bunfig;
 use crate::cli::colon_list_type::ColonListType;
 use crate::cli::command::{self, Context, Tag as CommandTag};
 use crate::cli::concat_params;
-use crate::cli::Bunfig;
 use crate::cli::{DefineColonList, LoaderColonList};
 
 /// Clone borrowed argv slices into the owning `Vec<Box<[u8]>>` shape used by
@@ -116,7 +116,11 @@ pub type ParamType = clap::Param<clap::Help>;
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
 macro_rules! maybe_debug_params {
     () => {
-        if bun_core::env::SHOW_CRASH_TRACE { DEBUG_PARAMS } else { &[] as &[ParamType] }
+        if bun_core::env::SHOW_CRASH_TRACE {
+            DEBUG_PARAMS
+        } else {
+            &[] as &[ParamType]
+        }
     };
 }
 
@@ -124,21 +128,32 @@ macro_rules! maybe_debug_params {
 // has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
 // still gates extra crash diagnostics. Expose the flag in crash-trace builds
 // (debug/test/asan), which is the closest analogue.
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] =
-    &[parse_param!("--verbose-error-trace             Dump error return traces")];
+const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
+    "--verbose-error-trace             Dump error return traces"
+)];
 macro_rules! maybe_verbose_error_trace {
     () => {
-        if bun_core::env::SHOW_CRASH_TRACE { VERBOSE_ERROR_TRACE_PARAMS } else { &[] as &[ParamType] }
+        if bun_core::env::SHOW_CRASH_TRACE {
+            VERBOSE_ERROR_TRACE_PARAMS
+        } else {
+            &[] as &[ParamType]
+        }
     };
 }
 
 pub const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
-        parse_param!("--env-file <STR>...               Load environment variables from the specified file(s)"),
+        parse_param!(
+            "--env-file <STR>...               Load environment variables from the specified file(s)"
+        ),
         parse_param!("--no-env-file                     Disable automatic loading of .env files"),
-        parse_param!("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."),
-        parse_param!("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"),
+        parse_param!(
+            "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
+        ),
+        parse_param!(
+            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+        ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
     maybe_verbose_error_trace!(),
@@ -146,190 +161,408 @@ pub const BASE_PARAMS_: &[ParamType] = concat_params!(
 );
 
 const DEBUG_PARAMS: &[ParamType] = &[
-    parse_param!("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"),
-    parse_param!("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"),
+    parse_param!(
+        "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
+    ),
+    parse_param!(
+        "--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"
+    ),
 ];
 
 pub const TRANSPILER_PARAMS_: &[ParamType] = &[
-    parse_param!("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"),
+    parse_param!(
+        "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
+    ),
     parse_param!("--preserve-symlinks               Preserve symlinks when resolving files"),
-    parse_param!("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point"),
+    parse_param!(
+        "--preserve-symlinks-main          Preserve symlinks when resolving the main entry point"
+    ),
     parse_param!("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json "),
-    parse_param!("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json"),
-    parse_param!("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON."),
-    parse_param!("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls."),
-    parse_param!("--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET"),
-    parse_param!("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi"),
-    parse_param!("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime"),
-    parse_param!("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime"),
-    parse_param!("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments"),
-    parse_param!("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\""),
+    parse_param!(
+        "--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json"
+    ),
+    parse_param!(
+        "-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON."
+    ),
+    parse_param!(
+        "--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls."
+    ),
+    parse_param!(
+        "--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET"
+    ),
+    parse_param!(
+        "-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi"
+    ),
+    parse_param!(
+        "--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime"
+    ),
+    parse_param!(
+        "--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime"
+    ),
+    parse_param!(
+        "--jsx-fragment <STR>              Changes the function called when compiling JSX fragments"
+    ),
+    parse_param!(
+        "--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\""
+    ),
     parse_param!("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\""),
-    parse_param!("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)"),
-    parse_param!("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__"),
+    parse_param!(
+        "--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)"
+    ),
+    parse_param!(
+        "--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__"
+    ),
 ];
 
 pub const RUNTIME_PARAMS_: &[ParamType] = &[
-    parse_param!("--watch                           Automatically restart the process on file change"),
-    parse_param!("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"),
-    parse_param!("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"),
-    parse_param!("--smol                            Use less memory, but run garbage collection more often"),
-    parse_param!("-r, --preload <STR>...            Import a module before other modules are loaded"),
+    parse_param!(
+        "--watch                           Automatically restart the process on file change"
+    ),
+    parse_param!(
+        "--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"
+    ),
+    parse_param!(
+        "--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"
+    ),
+    parse_param!(
+        "--smol                            Use less memory, but run garbage collection more often"
+    ),
+    parse_param!(
+        "-r, --preload <STR>...            Import a module before other modules are loaded"
+    ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
     parse_param!("--import <STR>...                 Alias of --preload, for Node.js compatibility"),
     parse_param!("--inspect <STR>?                  Activate Bun's debugger"),
-    parse_param!("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing"),
-    parse_param!("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"),
-    parse_param!("--cpu-prof                        Start CPU profiler and write profile to disk on exit"),
+    parse_param!(
+        "--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing"
+    ),
+    parse_param!(
+        "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
+    ),
+    parse_param!(
+        "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
+    ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
-    parse_param!("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved"),
-    parse_param!("--cpu-prof-md                     Output CPU profile in markdown format (grep-friendly, designed for LLM analysis)"),
-    parse_param!("--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"),
-    parse_param!("--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"),
+    parse_param!(
+        "--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved"
+    ),
+    parse_param!(
+        "--cpu-prof-md                     Output CPU profile in markdown format (grep-friendly, designed for LLM analysis)"
+    ),
+    parse_param!(
+        "--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"
+    ),
+    parse_param!(
+        "--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"
+    ),
     parse_param!("--heap-prof-name <STR>            Specify the name of the heap profile file"),
-    parse_param!("--heap-prof-dir <STR>             Specify the directory where the heap profile will be saved"),
-    parse_param!("--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"),
-    parse_param!("--if-present                      Exit without an error if the entrypoint does not exist"),
+    parse_param!(
+        "--heap-prof-dir <STR>             Specify the directory where the heap profile will be saved"
+    ),
+    parse_param!(
+        "--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"
+    ),
+    parse_param!(
+        "--if-present                      Exit without an error if the entrypoint does not exist"
+    ),
     parse_param!("--no-install                      Disable auto install in the Bun runtime"),
-    parse_param!("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always)."),
-    parse_param!("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback."),
+    parse_param!(
+        "--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always)."
+    ),
+    parse_param!(
+        "-i                                Auto-install dependencies during execution. Equivalent to --install=fallback."
+    ),
     parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
-    parse_param!("-p, --print <STR>                 Evaluate argument as a script and print the result"),
-    parse_param!("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"),
-    parse_param!("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm"),
+    parse_param!(
+        "-p, --print <STR>                 Evaluate argument as a script and print the result"
+    ),
+    parse_param!(
+        "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
+    ),
+    parse_param!(
+        "--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm"
+    ),
     parse_param!("--port <STR>                      Set the default port for Bun.serve"),
     parse_param!("-u, --origin <STR>"),
     parse_param!("--conditions <STR>...             Pass custom conditions to resolve"),
     parse_param!("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading"),
-    parse_param!("--experimental-http2-fetch        Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1"),
-    parse_param!("--experimental-http3-fetch        Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1"),
-    parse_param!("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"),
-    parse_param!("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"),
-    parse_param!("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."),
-    parse_param!("--no-deprecation                  Suppress all reporting of the custom deprecation."),
-    parse_param!("--throw-deprecation               Determine whether or not deprecation warnings result in errors."),
+    parse_param!(
+        "--experimental-http2-fetch        Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1"
+    ),
+    parse_param!(
+        "--experimental-http3-fetch        Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1"
+    ),
+    parse_param!(
+        "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
+    ),
+    parse_param!(
+        "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
+    ),
+    parse_param!(
+        "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
+    ),
+    parse_param!(
+        "--no-deprecation                  Suppress all reporting of the custom deprecation."
+    ),
+    parse_param!(
+        "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
+    ),
     parse_param!("--title <STR>                     Set the process title"),
-    parse_param!("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."),
-    parse_param!("--use-system-ca                   Use the system's trusted certificate authorities"),
+    parse_param!(
+        "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
+    ),
+    parse_param!(
+        "--use-system-ca                   Use the system's trusted certificate authorities"
+    ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
-    parse_param!("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""),
-    parse_param!("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""),
-    parse_param!("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)"),
-    parse_param!("--user-agent <STR>               Set the default User-Agent header for HTTP requests"),
+    parse_param!(
+        "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
+    ),
+    parse_param!(
+        "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
+    ),
+    parse_param!(
+        "--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)"
+    ),
+    parse_param!(
+        "--user-agent <STR>               Set the default User-Agent header for HTTP requests"
+    ),
     parse_param!("--cron-title <STR>               Title for cron execution mode"),
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
 ];
 
 pub const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
-    parse_param!("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"),
-    parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"),
-    parse_param!("--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."),
-    parse_param!("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"),
-    parse_param!("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)"),
-    parse_param!("--parallel                        Run multiple scripts concurrently with Foreman-style output"),
-    parse_param!("--sequential                      Run multiple scripts sequentially with Foreman-style output"),
-    parse_param!("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"),
+    parse_param!(
+        "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
+    ),
+    parse_param!(
+        "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
+    ),
+    parse_param!(
+        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+    ),
+    parse_param!(
+        "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
+    ),
+    parse_param!(
+        "--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)"
+    ),
+    parse_param!(
+        "--parallel                        Run multiple scripts concurrently with Foreman-style output"
+    ),
+    parse_param!(
+        "--sequential                      Run multiple scripts sequentially with Foreman-style output"
+    ),
+    parse_param!(
+        "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
+    ),
 ];
 
 pub const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
-        parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
+        parse_param!(
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+        ),
         parse_param!("-v, --version                     Print version and exit"),
         parse_param!("--revision                        Print version with revision and exit"),
     ],
     AUTO_OR_RUN_PARAMS,
 );
-pub const AUTO_PARAMS: &[ParamType] =
-    concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+pub const AUTO_PARAMS: &[ParamType] = concat_params!(
+    AUTO_ONLY_PARAMS,
+    RUNTIME_PARAMS_,
+    TRANSPILER_PARAMS_,
+    BASE_PARAMS_
+);
 
 pub const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
-        parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
+        parse_param!(
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+        ),
     ],
     AUTO_OR_RUN_PARAMS,
 );
-pub const RUN_PARAMS: &[ParamType] =
-    concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+pub const RUN_PARAMS: &[ParamType] = concat_params!(
+    RUN_ONLY_PARAMS,
+    RUNTIME_PARAMS_,
+    TRANSPILER_PARAMS_,
+    BASE_PARAMS_
+);
 
 pub const BUNX_COMMANDS: &[ParamType] = concat_params!(
-    &[parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)")],
+    &[parse_param!(
+        "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
+    )],
     AUTO_ONLY_PARAMS,
 );
 
 // Zig: `if (FeatureFlags.bake_debugging_features) [_]ParamType{...} else [_]ParamType{}`.
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[
-    parse_param!("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"),
+    parse_param!(
+        "--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"
+    ),
     parse_param!("--debug-no-minify                When --app is set, do not minify anything"),
 ];
 macro_rules! maybe_bake_debug_params {
     () => {
-        if FeatureFlags::BAKE_DEBUGGING_FEATURES { BAKE_DEBUG_PARAMS } else { &[] as &[ParamType] }
+        if FeatureFlags::BAKE_DEBUGGING_FEATURES {
+            BAKE_DEBUG_PARAMS
+        } else {
+            &[] as &[ParamType]
+        }
     };
 }
 
 pub const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
-            parse_param!("--production                     Set NODE_ENV=production and enable minification"),
-            parse_param!("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production"),
-            parse_param!("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"),
-            parse_param!("--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"),
-            parse_param!("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable"),
-            parse_param!("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)"),
-            parse_param!("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable"),
-            parse_param!("--compile-autoload-tsconfig      Enable autoloading of tsconfig.json at runtime in standalone executable (default: false)"),
-            parse_param!("--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable"),
-            parse_param!("--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)"),
-            parse_param!("--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"),
-            parse_param!("--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"),
-            parse_param!("--bytecode                       Use a bytecode cache"),
-            parse_param!("--watch                          Automatically restart the process on file change"),
-            parse_param!("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled"),
-            parse_param!("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\""),
-            parse_param!("--outdir <STR>                   Default to \"dist\" if multiple files"),
-            parse_param!("--outfile <STR>                  Write to a file"),
-            parse_param!("--metafile <STR>?                Write a JSON file with metadata about the build"),
-            parse_param!("--metafile-md <STR>?             Write a markdown file with a visualization of the module graph (LLM-friendly)"),
-            parse_param!("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'"),
-            parse_param!("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs"),
-            parse_param!("--footer <STR>                   Add a footer to the bundled output such as // built with bun!"),
-            parse_param!("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\", or \"cjs\" with --bytecode."),
-            parse_param!("--root <STR>                     Root directory used for multiple entry points"),
-            parse_param!("--splitting                      Enable code splitting"),
-            parse_param!("--public-path <STR>              A prefix to be appended to any import paths in bundled code"),
-            parse_param!("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"),
-            parse_param!("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."),
-            parse_param!("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."),
-            parse_param!("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\"."),
-            parse_param!("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\""),
-            parse_param!("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\""),
-            parse_param!("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\""),
-            parse_param!("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"),
-            parse_param!("--no-bundle                      Transpile file only, do not bundle"),
-            parse_param!("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."),
-            parse_param!("--minify                         Enable all minification flags"),
-            parse_param!("--minify-syntax                  Minify syntax and inline data"),
-            parse_param!("--minify-whitespace              Minify whitespace"),
-            parse_param!("--minify-identifiers             Minify identifiers"),
-            parse_param!("--keep-names                     Preserve original function and class names when minifying"),
-            parse_param!("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"),
-            parse_param!("--dump-environment-variables"),
-            parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
-            parse_param!("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."),
-            parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
-            parse_param!("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."),
-            parse_param!("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable"),
-            parse_param!("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon"),
-            parse_param!("--windows-title <STR>            When using --compile targeting Windows, set the executable product name"),
-            parse_param!("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name"),
-            parse_param!("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)"),
-            parse_param!("--windows-description <STR>      When using --compile targeting Windows, set the executable description"),
-        parse_param!("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"),
+        parse_param!(
+            "--production                     Set NODE_ENV=production and enable minification"
+        ),
+        parse_param!(
+            "--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production"
+        ),
+        parse_param!(
+            "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
+        ),
+        parse_param!(
+            "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
+        ),
+        parse_param!(
+            "--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable"
+        ),
+        parse_param!(
+            "--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)"
+        ),
+        parse_param!(
+            "--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable"
+        ),
+        parse_param!(
+            "--compile-autoload-tsconfig      Enable autoloading of tsconfig.json at runtime in standalone executable (default: false)"
+        ),
+        parse_param!(
+            "--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable"
+        ),
+        parse_param!(
+            "--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)"
+        ),
+        parse_param!(
+            "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
+        ),
+        parse_param!(
+            "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
+        ),
+        parse_param!("--bytecode                       Use a bytecode cache"),
+        parse_param!(
+            "--watch                          Automatically restart the process on file change"
+        ),
+        parse_param!(
+            "--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled"
+        ),
+        parse_param!(
+            "--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\""
+        ),
+        parse_param!("--outdir <STR>                   Default to \"dist\" if multiple files"),
+        parse_param!("--outfile <STR>                  Write to a file"),
+        parse_param!(
+            "--metafile <STR>?                Write a JSON file with metadata about the build"
+        ),
+        parse_param!(
+            "--metafile-md <STR>?             Write a markdown file with a visualization of the module graph (LLM-friendly)"
+        ),
+        parse_param!(
+            "--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'"
+        ),
+        parse_param!(
+            "--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs"
+        ),
+        parse_param!(
+            "--footer <STR>                   Add a footer to the bundled output such as // built with bun!"
+        ),
+        parse_param!(
+            "--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\", or \"cjs\" with --bytecode."
+        ),
+        parse_param!(
+            "--root <STR>                     Root directory used for multiple entry points"
+        ),
+        parse_param!("--splitting                      Enable code splitting"),
+        parse_param!(
+            "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
+        ),
+        parse_param!(
+            "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
+        ),
+        parse_param!(
+            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."
+        ),
+        parse_param!(
+            "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
+        ),
+        parse_param!(
+            "--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\"."
+        ),
+        parse_param!(
+            "--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\""
+        ),
+        parse_param!(
+            "--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\""
+        ),
+        parse_param!(
+            "--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\""
+        ),
+        parse_param!(
+            "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
+        ),
+        parse_param!("--no-bundle                      Transpile file only, do not bundle"),
+        parse_param!(
+            "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
+        ),
+        parse_param!("--minify                         Enable all minification flags"),
+        parse_param!("--minify-syntax                  Minify syntax and inline data"),
+        parse_param!("--minify-whitespace              Minify whitespace"),
+        parse_param!("--minify-identifiers             Minify identifiers"),
+        parse_param!(
+            "--keep-names                     Preserve original function and class names when minifying"
+        ),
+        parse_param!(
+            "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
+        ),
+        parse_param!("--dump-environment-variables"),
+        parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
+        parse_param!(
+            "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
+        ),
+        parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
+        parse_param!(
+            "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
+        ),
+        parse_param!(
+            "--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable"
+        ),
+        parse_param!(
+            "--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon"
+        ),
+        parse_param!(
+            "--windows-title <STR>            When using --compile targeting Windows, set the executable product name"
+        ),
+        parse_param!(
+            "--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name"
+        ),
+        parse_param!(
+            "--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)"
+        ),
+        parse_param!(
+            "--windows-description <STR>      When using --compile targeting Windows, set the executable description"
+        ),
+        parse_param!(
+            "--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"
+        ),
     ],
     maybe_bake_debug_params!(),
 );
@@ -338,37 +571,83 @@ pub const BUILD_PARAMS: &[ParamType] =
 
 // TODO: update test completions
 pub const TEST_ONLY_PARAMS: &[ParamType] = &[
-    parse_param!("--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."),
-    parse_param!("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."),
+    parse_param!(
+        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+    ),
+    parse_param!(
+        "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."
+    ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
-    parse_param!("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"),
-    parse_param!("--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"),
-    parse_param!("--todo                           Include tests that are marked with \"test.todo()\""),
-    parse_param!("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\""),
+    parse_param!(
+        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+    ),
+    parse_param!(
+        "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
+    ),
+    parse_param!(
+        "--todo                           Include tests that are marked with \"test.todo()\""
+    ),
+    parse_param!(
+        "--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\""
+    ),
     parse_param!("--pass-with-no-tests             Exit with code 0 when no tests are found"),
     parse_param!("--concurrent                     Treat all tests as `test.concurrent()` tests"),
     parse_param!("--randomize                      Run tests in random order"),
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
-    parse_param!("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."),
-    parse_param!("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."),
-    parse_param!("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."),
-    parse_param!("-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."),
-    parse_param!("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."),
-    parse_param!("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."),
-    parse_param!("--dots                           Enable dots reporter. Shorthand for --reporter=dots."),
-    parse_param!("--only-failures                  Only display test failures, hiding passing tests."),
-    parse_param!("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20."),
+    parse_param!(
+        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."
+    ),
+    parse_param!(
+        "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
+    ),
+    parse_param!(
+        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+    ),
+    parse_param!(
+        "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
+    ),
+    parse_param!(
+        "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
+    ),
+    parse_param!(
+        "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
+    ),
+    parse_param!(
+        "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
+    ),
+    parse_param!(
+        "--only-failures                  Only display test failures, hiding passing tests."
+    ),
+    parse_param!(
+        "--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20."
+    ),
     parse_param!("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore."),
-    parse_param!("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."),
-    parse_param!("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."),
-    parse_param!("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."),
-    parse_param!("--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5."),
-    parse_param!("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."),
-    parse_param!("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."),
+    parse_param!(
+        "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
+    ),
+    parse_param!(
+        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+    ),
+    parse_param!(
+        "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
+    ),
+    parse_param!(
+        "--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5."
+    ),
+    parse_param!(
+        "--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."
+    ),
+    parse_param!(
+        "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
+    ),
 ];
-pub const TEST_PARAMS: &[ParamType] =
-    concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+pub const TEST_PARAMS: &[ParamType] = concat_params!(
+    TEST_ONLY_PARAMS,
+    RUNTIME_PARAMS_,
+    TRANSPILER_PARAMS_,
+    BASE_PARAMS_
+);
 
 /// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
 /// runtime_params_ ++ transpiler_params_`).
@@ -436,7 +715,6 @@ pub static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
-
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -541,7 +819,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
+                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10)
+                {
                     Ok(v) => Some(v),
                     Err(_) => {
                         Output::pretty_errorln(format_args!(
@@ -558,32 +837,34 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     if cmd == CommandTag::TestCommand {
         if let Some(timeout_ms) = args.option(b"--timeout") {
             if !timeout_ms.is_empty() {
-                ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid timeout: \"{}\"",
-                            BStr::new(timeout_ms)
-                        ));
-                        Output::flush();
-                        Global::exit(1);
-                    }
-                };
+                ctx.test_options.default_timeout_ms =
+                    match strings::parse_int::<u32>(timeout_ms, 10) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error<r>: Invalid timeout: \"{}\"",
+                                BStr::new(timeout_ms)
+                            ));
+                            Output::flush();
+                            Global::exit(1);
+                        }
+                    };
             }
         }
 
         if let Some(max_concurrency) = args.option(b"--max-concurrency") {
             if !max_concurrency.is_empty() {
-                ctx.test_options.max_concurrency = match strings::parse_int::<u32>(max_concurrency, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
-                            BStr::new(max_concurrency)
-                        ));
-                        Global::exit(1);
-                    }
-                };
+                ctx.test_options.max_concurrency =
+                    match strings::parse_int::<u32>(max_concurrency, 10) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
+                                BStr::new(max_concurrency)
+                            ));
+                            Global::exit(1);
+                        }
+                    };
             }
         }
 
@@ -592,7 +873,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         if !args.options(b"--coverage-reporter").is_empty() {
-            ctx.test_options.coverage.reporters = CoverageReporters { text: false, lcov: false };
+            ctx.test_options.coverage.reporters = CoverageReporters {
+                text: false,
+                lcov: false,
+            };
             for reporter in args.options(b"--coverage-reporter") {
                 if *reporter == b"text" {
                     ctx.test_options.coverage.reporters.text = true;
@@ -856,8 +1140,16 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     if !defines_tuple.keys.is_empty() {
         opts.define = Some(api::StringMap {
-            keys: defines_tuple.keys.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-            values: defines_tuple.values.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            keys: defines_tuple
+                .keys
+                .iter()
+                .map(|s| Box::<[u8]>::from(*s))
+                .collect(),
+            values: defines_tuple
+                .values
+                .iter()
+                .map(|s| Box::<[u8]>::from(*s))
+                .collect(),
         });
     }
 
@@ -869,12 +1161,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     let loader_tuple = if cmd != CommandTag::RunAsNodeCommand {
         LoaderColonList::resolve(args.options(b"--loader"))?
     } else {
-        ColonListType { keys: Vec::new(), values: Vec::new() }
+        ColonListType {
+            keys: Vec::new(),
+            values: Vec::new(),
+        }
     };
 
     if !loader_tuple.keys.is_empty() {
         opts.loaders = Some(api::LoaderMap {
-            extensions: loader_tuple.keys.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            extensions: loader_tuple
+                .keys
+                .iter()
+                .map(|s| Box::<[u8]>::from(*s))
+                .collect(),
             loaders: loader_tuple.values,
         });
     }
@@ -1002,7 +1301,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
-            opts.unhandled_rejections = match api::UnhandledRejections::MAP.get(unhandled_rejections) {
+            opts.unhandled_rejections = match api::UnhandledRejections::MAP
+                .get(unhandled_rejections)
+            {
                 Some(v) => Some(*v),
                 None => {
                     Output::err_generic(
@@ -1128,7 +1429,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             ctx.runtime_options.cron_period = p.into();
         }
         if has_cron_title.is_some() != has_cron_period.is_some() {
-            Output::err_generic("--cron-title and --cron-period must be provided together", ());
+            Output::err_generic(
+                "--cron-title and --cron-period must be provided together",
+                (),
+            );
             Global::exit(1);
         }
         if has_cron_title.is_some()
@@ -1243,10 +1547,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else {
             // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
             if args.option(b"--heap-prof-name").is_some() {
-                Output::warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled");
+                Output::warn(
+                    "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
+                );
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                Output::warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled");
+                Output::warn(
+                    "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
+                );
             }
         }
 
@@ -1293,7 +1601,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if let Some(store) = store {
             Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
             // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(store == BunCAStore::System, core::sync::atomic::Ordering::Relaxed);
+            Bun__Node__UseSystemCA.store(
+                store == BunCAStore::System,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         } else {
             // Spec Arguments.zig: `Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system)`
             // is written unconditionally; preserve that always-write semantics
@@ -1463,7 +1774,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     if ctx.bundler_options.bytecode {
                         Output::err_generic(
                             "target must be 'bun' when bytecode is true. Received: {}",
-                            format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(opts.target)),
+                            format_args!(
+                                "{:?}",
+                                <bun_ast::Target as bun_options_types::TargetExt>::from_api(
+                                    opts.target
+                                )
+                            ),
                         );
                         Global::exit(1);
                     }
@@ -1471,7 +1787,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     if ctx.bundler_options.bake {
                         Output::err_generic(
                             "target must be 'bun' when using --app. Received: {}",
-                            format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(opts.target)),
+                            format_args!(
+                                "{:?}",
+                                <bun_ast::Target as bun_options_types::TargetExt>::from_api(
+                                    opts.target
+                                )
+                            ),
                         );
                     }
                 }
@@ -1603,7 +1924,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 Global::crash();
             }
             if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
-                Output::err_generic("--windows-hide-console requires a Windows compile target", ());
+                Output::err_generic(
+                    "--windows-hide-console requires a Windows compile target",
+                    (),
+                );
                 Global::crash();
             }
             if !ctx.bundler_options.compile {
@@ -1693,7 +2017,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 Global::crash();
             }
             if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
-                Output::err_generic("--windows-description requires a Windows compile target", ());
+                Output::err_generic(
+                    "--windows-description requires a Windows compile target",
+                    (),
+                );
                 Global::crash();
             }
             if !ctx.bundler_options.compile {
@@ -1818,10 +2145,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if args.flag(b"--server-components") {
             ctx.bundler_options.server_components = true;
             if let Some(target) = opts.target {
-                if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target)).is_server_side() {
+                if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
+                    .is_server_side()
+                {
                     Output::err_generic(
                         "Cannot use client-side --target={} with --server-components",
-                        format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))),
+                        format_args!(
+                            "{:?}",
+                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(
+                                target
+                            ))
+                        ),
                     );
                     Global::crash();
                 } else {
@@ -1908,7 +2242,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
+                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10)
+                {
                     Ok(v) => Some(v),
                     Err(_) => {
                         Output::pretty_errorln(format_args!(
@@ -2023,7 +2358,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         });
         // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
         // shared with another thread.
-        unsafe { (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load(); }
+        unsafe {
+            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
+        }
     }
 
     if args.flag(b"--no-macros") {
@@ -2055,8 +2392,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         // argv slices are process-lifetime.
         let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
             .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ = cli::debug_flags::PRINT_BREAKPOINTS
-            .set(args.options(b"--breakpoint-print").to_vec());
+        let _ =
+            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
     }
 
     Ok(opts)

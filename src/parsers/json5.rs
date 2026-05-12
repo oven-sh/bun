@@ -13,11 +13,11 @@ use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
-use bun_core::lexer as identifier;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::{E, Expr, G};
 use bun_ast::{Loc, Log, Source};
+use bun_core::lexer as identifier;
 use bun_core::strings;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 pub struct JSON5Parser<'a> {
     source: &'a [u8],
@@ -167,7 +167,9 @@ impl Error {
             | Error::ExpectedClosingBrace { pos }
             | Error::ExpectedClosingBracket { pos }
             | Error::InvalidIdentifier { pos }
-            | Error::TrailingData { pos } => Loc { start: i32::try_from(pos).expect("int cast") },
+            | Error::TrailingData { pos } => Loc {
+                start: i32::try_from(pos).expect("int cast"),
+            },
         };
         let msg: &'static [u8] = match *self {
             Error::Oom | Error::StackOverflow => unreachable!(),
@@ -259,7 +261,10 @@ impl<'a> JSON5Parser<'a> {
             pos: 0,
             bump,
             stack_check: StackCheck::init(),
-            token: Token { loc: Loc::default(), data: TokenData::Eof },
+            token: Token {
+                loc: Loc::default(),
+                data: TokenData::Eof,
+            },
         };
         match parser.parse_root() {
             Ok(result) => Ok(result),
@@ -289,7 +294,9 @@ impl<'a> JSON5Parser<'a> {
         self.token.data = 'next: loop {
             match self.peek() {
                 0 => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     break 'next TokenData::Eof;
                 }
                 // Whitespace — skip without setting loc
@@ -299,58 +306,82 @@ impl<'a> JSON5Parser<'a> {
                 }
                 // Structural
                 b'{' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::LeftBrace;
                 }
                 b'}' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::RightBrace;
                 }
                 b'[' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::LeftBracket;
                 }
                 b']' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::RightBracket;
                 }
                 b':' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::Colon;
                 }
                 b',' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::Comma;
                 }
                 b'+' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::Number(self.scan_signed_value(false)?);
                 }
                 b'-' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     self.pos += 1;
                     break 'next TokenData::Number(self.scan_signed_value(true)?);
                 }
                 // Strings
                 b'"' | b'\'' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     break 'next TokenData::String(self.scan_string()?);
                 }
                 // Numbers
                 b'0'..=b'9' | b'.' => {
-                    self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    self.token.loc = Loc {
+                        start: i32::try_from(self.pos).expect("int cast"),
+                    };
                     break 'next TokenData::Number(self.scan_number()?);
                 }
                 // Comments — skip without setting loc
                 b'/' => {
-                    let n = if self.pos + 1 < self.source.len() { self.source[self.pos + 1] } else { 0 };
+                    let n = if self.pos + 1 < self.source.len() {
+                        self.source[self.pos + 1]
+                    } else {
+                        0
+                    };
                     if n == b'/' {
                         self.pos += 2;
                         self.skip_to_end_of_line();
@@ -364,28 +395,41 @@ impl<'a> JSON5Parser<'a> {
                 }
                 c => {
                     if c == b't' {
-                        self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
                         break 'next if self.scan_keyword(b"true") {
                             TokenData::Boolean(true)
                         } else {
                             TokenData::Identifier(self.scan_identifier()?)
                         };
                     } else if c == b'f' {
-                        self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
                         break 'next if self.scan_keyword(b"false") {
                             TokenData::Boolean(false)
                         } else {
                             TokenData::Identifier(self.scan_identifier()?)
                         };
                     } else if c == b'n' {
-                        self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
                         break 'next if self.scan_keyword(b"null") {
                             TokenData::Null
                         } else {
                             TokenData::Identifier(self.scan_identifier()?)
                         };
-                    } else if (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_' || c == b'$' || c == b'\\' {
-                        self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                    } else if (c >= b'a' && c <= b'z')
+                        || (c >= b'A' && c <= b'Z')
+                        || c == b'_'
+                        || c == b'$'
+                        || c == b'\\'
+                    {
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
                         break 'next TokenData::Identifier(self.scan_identifier()?);
                     } else if c >= 0x80 {
                         // Multi-byte: check whitespace first, then identifier
@@ -394,7 +438,9 @@ impl<'a> JSON5Parser<'a> {
                             self.pos += usize::from(mb);
                             continue 'next;
                         }
-                        self.token.loc = Loc { start: i32::try_from(self.pos).expect("int cast") };
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
                         let Some(cp) = self.read_codepoint() else {
                             return Err(ParseError::UnexpectedCharacter);
                         };
@@ -438,7 +484,11 @@ impl<'a> JSON5Parser<'a> {
             }
             b'I' => {
                 if self.scan_keyword(b"Infinity") {
-                    return Ok(if is_negative { f64::NEG_INFINITY } else { f64::INFINITY });
+                    return Ok(if is_negative {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    });
                 }
                 Err(ParseError::UnexpectedCharacter)
             }
@@ -497,7 +547,12 @@ impl<'a> JSON5Parser<'a> {
                     return Ok(Expr::init(E::Number { value: f64::NAN }, loc));
                 } else if s == b"Infinity" {
                     self.scan()?;
-                    return Ok(Expr::init(E::Number { value: f64::INFINITY }, loc));
+                    return Ok(Expr::init(
+                        E::Number {
+                            value: f64::INFINITY,
+                        },
+                        loc,
+                    ));
                 }
                 Err(ParseError::UnexpectedToken)
             }
@@ -714,7 +769,9 @@ impl<'a> JSON5Parser<'a> {
                     {
                         self.pos += 2;
                         let low = self.read_hex4()?;
-                        if let Some(full) = bun_core::strings::decode_surrogate_pair(cp as u16, low as u16) {
+                        if let Some(full) =
+                            bun_core::strings::decode_surrogate_pair(cp as u16, low as u16)
+                        {
                             append_codepoint_to_utf8(buf, full as i32)?;
                         } else {
                             // Invalid low surrogate - just encode both independently
@@ -830,7 +887,8 @@ impl<'a> JSON5Parser<'a> {
             _ => {}
         }
 
-        bun_core::wtf::parse_double(&self.source[start..self.pos]).map_err(|_| ParseError::InvalidNumber)
+        bun_core::wtf::parse_double(&self.source[start..self.pos])
+            .map_err(|_| ParseError::InvalidNumber)
     }
 
     fn scan_hex_number(&mut self) -> Result<f64, ParseError> {
@@ -875,7 +933,9 @@ impl<'a> JSON5Parser<'a> {
 
         // Continue characters
         while self.pos < self.source.len() {
-            let Some(cont_cp) = self.read_codepoint() else { break };
+            let Some(cont_cp) = self.read_codepoint() else {
+                break;
+            };
 
             if cont_cp.cp == i32::from(b'\\') {
                 let escaped_cp = self.parse_identifier_unicode_escape()?;
@@ -1025,11 +1085,17 @@ impl<'a> JSON5Parser<'a> {
         }
         let first = self.source[self.pos];
         if first < 0x80 {
-            return Some(Codepoint { cp: i32::from(first), len: 1 });
+            return Some(Codepoint {
+                cp: i32::from(first),
+                len: 1,
+            });
         }
         let seq_len = strings::wtf8_byte_sequence_length(first);
         if self.pos + usize::from(seq_len) > self.source.len() {
-            return Some(Codepoint { cp: i32::from(first), len: 1 });
+            return Some(Codepoint {
+                cp: i32::from(first),
+                len: 1,
+            });
         }
         // SAFETY: Zig reinterprets the slice ptr as *const [4]u8; we have at least
         // seq_len (≤4) valid bytes at self.pos. decode_wtf8_rune_t reads at most seq_len bytes.
@@ -1043,9 +1109,15 @@ impl<'a> JSON5Parser<'a> {
             )
         };
         if decoded < 0 {
-            return Some(Codepoint { cp: i32::from(first), len: 1 });
+            return Some(Codepoint {
+                cp: i32::from(first),
+                len: 1,
+            });
         }
-        Some(Codepoint { cp: decoded, len: seq_len })
+        Some(Codepoint {
+            cp: decoded,
+            len: seq_len,
+        })
     }
 }
 

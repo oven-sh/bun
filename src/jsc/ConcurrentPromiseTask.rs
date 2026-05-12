@@ -1,6 +1,6 @@
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
-use bun_threading::{work_pool::WorkPool, IntrusiveWorkTask as _, WorkPoolTask};
+use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
@@ -114,8 +114,11 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
-        let task =
-            std::ptr::from_mut(this_ref.concurrent_task.from(this, AutoDeinit::ManualDeinit));
+        let task = std::ptr::from_mut(
+            this_ref
+                .concurrent_task
+                .from(this, AutoDeinit::ManualDeinit),
+        );
         event_loop.enqueue_task_concurrent(task);
     }
 

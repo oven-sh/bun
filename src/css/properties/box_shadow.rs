@@ -1,17 +1,17 @@
 #![allow(dead_code, unused_imports)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::SmallList;
-use crate::generics::{CssEql, DeepClone, IsCompatible};
-use crate::Printer;
 use crate::PrintErr;
-use crate::css_values::color::CssColor;
-use crate::css_values::length::Length;
+use crate::Printer;
+use crate::SmallList;
 use crate::VendorPrefix;
 use crate::css_properties::Property;
-use crate::prefixes::Feature;
 use crate::css_values::color::ColorFallbackKind;
-use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST crate)
+use crate::css_values::color::CssColor;
+use crate::css_values::length::Length;
+use crate::generics::{CssEql, DeepClone, IsCompatible};
+use crate::prefixes::Feature;
+use bun_alloc::Arena;
+use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate)
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
 pub struct BoxShadow {
@@ -35,11 +35,15 @@ pub struct BoxShadow {
 // hand-rolling per-field loops.
 impl<'bump> css::generic::DeepClone<'bump> for BoxShadow {
     #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self { BoxShadow::deep_clone(self, bump) }
+    fn deep_clone(&self, bump: &'bump Arena) -> Self {
+        BoxShadow::deep_clone(self, bump)
+    }
 }
 impl css::generic::CssEql for BoxShadow {
     #[inline]
-    fn eql(&self, other: &Self) -> bool { BoxShadow::eql(self, other) }
+    fn eql(&self, other: &Self) -> bool {
+        BoxShadow::eql(self, other)
+    }
 }
 impl css::generic::IsCompatible for BoxShadow {
     #[inline]
@@ -234,7 +238,7 @@ impl BoxShadowHandler {
                     let mut unparsed = unp.deep_clone(arena);
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-                    
+
                     context.add_unparsed_fallbacks(arena, &mut unparsed);
                     let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));
@@ -286,7 +290,8 @@ impl BoxShadowHandler {
             // build each fully-formed `BoxShadow` and `append`. Behavior is identical.
             macro_rules! build_color_fallback {
                 ($conv:ident) => {{
-                    let mut out: SmallList<BoxShadow, 1> = SmallList::init_capacity(box_shadows.len());
+                    let mut out: SmallList<BoxShadow, 1> =
+                        SmallList::init_capacity(box_shadows.len());
                     for input in box_shadows.slice().iter() {
                         out.append(BoxShadow {
                             color: input

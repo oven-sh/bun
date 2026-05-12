@@ -260,9 +260,9 @@ impl MimallocArena {
         // allocate on that worker (Zig has no equivalent because its
         // `MimallocArena` is not moved post-init).
         #[cfg(debug_assertions)]
-        self.owning_thread.store(debug_thread_stamp(), Ordering::Relaxed);
+        self.owning_thread
+            .store(debug_thread_stamp(), Ordering::Relaxed);
     }
-
 
     /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})` for
     /// the per-module transpile arena (`ModuleLoader.transpile_source_code_arena`).
@@ -292,7 +292,8 @@ impl MimallocArena {
             // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
             // that was *under* the limit can still allocate on the new thread.
             #[cfg(debug_assertions)]
-            self.owning_thread.store(debug_thread_stamp(), Ordering::Relaxed);
+            self.owning_thread
+                .store(debug_thread_stamp(), Ordering::Relaxed);
             self.bytes_since_reset.set(0);
             false
         }
@@ -547,7 +548,8 @@ impl MimallocArena {
         let mut iter = iter.into_iter();
         let len = iter.len();
         self.alloc_slice_fill_with(len, |_| {
-            iter.next().expect("ExactSizeIterator under-reported length")
+            iter.next()
+                .expect("ExactSizeIterator under-reported length")
         })
     }
 
@@ -596,7 +598,10 @@ impl MimallocArena {
     /// separate per-thread default heap to cache.
     #[inline]
     pub fn get_thread_local_default() -> crate::StdAllocator {
-        crate::StdAllocator { ptr: core::ptr::null_mut(), vtable: &GLOBAL_MIMALLOC_VTABLE }
+        crate::StdAllocator {
+            ptr: core::ptr::null_mut(),
+            vtable: &GLOBAL_MIMALLOC_VTABLE,
+        }
     }
 }
 
@@ -676,7 +681,10 @@ unsafe impl Allocator for &MimallocArena {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        alloc_result(self.remap(ptr, old.size(), new.size(), new.align()), new.size())
+        alloc_result(
+            self.remap(ptr, old.size(), new.size(), new.align()),
+            new.size(),
+        )
     }
 
     #[inline]
@@ -701,7 +709,10 @@ unsafe impl Allocator for &MimallocArena {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        alloc_result(self.remap(ptr, old.size(), new.size(), new.align()), new.size())
+        alloc_result(
+            self.remap(ptr, old.size(), new.size(), new.align()),
+            new.size(),
+        )
     }
 }
 
@@ -855,11 +866,15 @@ pub struct ArenaString<'a> {
 impl<'a> ArenaString<'a> {
     #[inline]
     pub fn new_in(arena: &'a MimallocArena) -> Self {
-        Self { buf: Vec::new_in(arena) }
+        Self {
+            buf: Vec::new_in(arena),
+        }
     }
     #[inline]
     pub fn with_capacity_in(cap: usize, arena: &'a MimallocArena) -> Self {
-        Self { buf: Vec::with_capacity_in(cap, arena) }
+        Self {
+            buf: Vec::with_capacity_in(cap, arena),
+        }
     }
     #[inline]
     pub fn from_str_in(s: &str, arena: &'a MimallocArena) -> Self {

@@ -1,11 +1,11 @@
 use bun_collections::VecExt;
 use core::mem::size_of;
 
-use bun_collections::{ByteVecExt, MultiArrayList};
-use bun_core::{declare_scope, err, scoped_log};
 use bun_ast::Loc;
-use bun_semver::String as SemverString;
+use bun_collections::{ByteVecExt, MultiArrayList};
 use bun_core::{self, ZigStringSlice};
+use bun_core::{declare_scope, err, scoped_log};
+use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourceMap};
@@ -140,9 +140,10 @@ impl List {
 
         // PORT NOTE: reshaped for borrowck — move the without_names list out, build the
         // with_names list, then assign back. The old list drops at end of scope.
-        let ListValue::WithoutNames(without_names) =
-            core::mem::replace(&mut self.r#impl, ListValue::WithNames(MultiArrayList::default()))
-        else {
+        let ListValue::WithoutNames(without_names) = core::mem::replace(
+            &mut self.r#impl,
+            ListValue::WithNames(MultiArrayList::default()),
+        ) else {
             unreachable!()
         };
 
@@ -509,8 +510,14 @@ pub fn parse(
         }
     }
 
-    let mut generated = LineColumnOffset { lines: Ordinal::START, columns: Ordinal::START };
-    let mut original = LineColumnOffset { lines: Ordinal::START, columns: Ordinal::START };
+    let mut generated = LineColumnOffset {
+        lines: Ordinal::START,
+        columns: Ordinal::START,
+    };
+    let mut original = LineColumnOffset {
+        lines: Ordinal::START,
+        columns: Ordinal::START,
+    };
     let mut name_index: i32 = 0;
     let mut source_index: i32 = 0;
     let mut needs_sort = false;
@@ -543,7 +550,9 @@ pub fn parse(
                 msg: b"Missing generated column value",
                 err: err!("MissingGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
 
@@ -555,7 +564,9 @@ pub fn parse(
                 msg: b"Invalid generated column value",
                 err: err!("InvalidGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
 
@@ -586,7 +597,9 @@ pub fn parse(
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid source index delta",
                 err: err!("InvalidSourceIndexDelta"),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
                 ..Default::default()
             });
         }
@@ -597,7 +610,9 @@ pub fn parse(
                 msg: b"Invalid source index value",
                 err: err!("InvalidSourceIndexValue"),
                 value: source_index,
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
         remain = &remain[source_index_delta.start..];
@@ -608,7 +623,9 @@ pub fn parse(
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Missing original line",
                 err: err!("MissingOriginalLine"),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
                 ..Default::default()
             });
         }
@@ -619,7 +636,9 @@ pub fn parse(
                 msg: b"Invalid original line value",
                 err: err!("InvalidOriginalLineValue"),
                 value: original.lines.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
         remain = &remain[original_line_delta.start..];
@@ -631,7 +650,9 @@ pub fn parse(
                 msg: b"Missing original column value",
                 err: err!("MissingOriginalColumnValue"),
                 value: original.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
 
@@ -641,7 +662,9 @@ pub fn parse(
                 msg: b"Invalid original column value",
                 err: err!("InvalidOriginalColumnValue"),
                 value: original.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
+                loc: Loc {
+                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                },
             });
         }
         remain = &remain[original_column_delta.start..];
@@ -679,7 +702,8 @@ pub fn parse(
                                     msg: b"Out of memory",
                                     err: err!("OutOfMemory"),
                                     loc: Loc {
-                                        start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                                        start: i32::try_from(bytes.len() - remain.len())
+                                            .expect("int cast"),
                                     },
                                     ..Default::default()
                                 });

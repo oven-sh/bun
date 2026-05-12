@@ -1,15 +1,15 @@
 use std::io::Write as _;
 
 use crate::cli::command::Context;
-use bun_collections::{VecExt, StringArrayHashMap};
-use bun_core::{err, Error, Global, OrWriteFailed as _, Output};
-use bun_install::PackageManager;
-use bun_parsers::json;
 use bun_ast::{self as js_ast, E, Expr, ExprData, G};
-use bun_js_printer as js_printer;
 use bun_ast::{Loc, Log, Source};
-use bun_paths::{self as path, PathBuffer};
+use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
+use bun_core::{Error, Global, OrWriteFailed as _, Output, err};
+use bun_install::PackageManager;
+use bun_js_printer as js_printer;
+use bun_parsers::json;
+use bun_paths::{self as path, PathBuffer};
 use bun_sys;
 
 pub struct PmPkgCommand;
@@ -209,7 +209,11 @@ impl PmPkgCommand {
         let mut results: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
 
         for &key in args {
-            match Self::get_json_value(pkg.root, key, if args.len() > 1 { Some(4) } else { Some(2) }) {
+            match Self::get_json_value(
+                pkg.root,
+                key,
+                if args.len() > 1 { Some(4) } else { Some(2) },
+            ) {
                 Ok(value) => {
                     if args.len() > 1 {
                         if let Some(last_index) = strings::last_index_of_char(&value, b'}') {
@@ -384,8 +388,7 @@ impl PmPkgCommand {
         if let Some(name_prop) = root.get(b"name") {
             if let ExprData::EString(str) = &name_prop.data {
                 let name_str = str.slice8();
-                let lowercase: Vec<u8> =
-                    name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
+                let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 
                 if !strings::eql(name_str, &lowercase) {
                     Self::set_value(&mut root, b"name", &lowercase, false)?;
@@ -402,16 +405,15 @@ impl PmPkgCommand {
 
                     if let ExprData::EString(str) = &value.data {
                         let bin_path = str.slice8();
-                        let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&path);
+                        let mut pkg_dir =
+                            path::resolve_path::dirname::<path::platform::Auto>(&path);
                         if pkg_dir.is_empty() {
                             pkg_dir = cwd;
                         }
                         let mut buf = PathBuffer::uninit();
-                        let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                            pkg_dir,
-                            &mut buf,
-                            &[bin_path],
-                        );
+                        let full_path = path::resolve_path::join_abs_string_buf_z::<
+                            path::platform::Auto,
+                        >(pkg_dir, &mut buf, &[bin_path]);
 
                         if !bun_sys::exists_z(full_path) {
                             Output::warn(format_args!(
@@ -432,9 +434,11 @@ impl PmPkgCommand {
 
     fn format_json(expr: Expr, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
         match &expr.data {
-            ExprData::EBoolean(b) => {
-                Ok(Box::<[u8]>::from(if b.value { &b"true"[..] } else { &b"false"[..] }))
-            }
+            ExprData::EBoolean(b) => Ok(Box::<[u8]>::from(if b.value {
+                &b"true"[..]
+            } else {
+                &b"false"[..]
+            })),
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
                 if n.value.floor() == n.value {
@@ -610,12 +614,7 @@ impl PmPkgCommand {
         Ok(path_parts)
     }
 
-    fn set_value(
-        root: &mut Expr,
-        key: &[u8],
-        value: &[u8],
-        parse_json: bool,
-    ) -> Result<(), Error> {
+    fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Err(err!("InvalidRoot"));
         }
@@ -775,7 +774,12 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number { value: int_val as f64 }, Loc::EMPTY));
+                return Ok(Expr::init(
+                    E::Number {
+                        value: int_val as f64,
+                    },
+                    Loc::EMPTY,
+                ));
             }
 
             if let Some(float_val) = parse_f64(value) {
@@ -887,8 +891,7 @@ impl PmPkgCommand {
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
         let old = bun_alloc::AstAlloc::take(&mut e_obj.properties);
-        let mut new_props: G::PropertyList =
-            G::PropertyList::init_capacity(old_len - 1);
+        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {
@@ -907,11 +910,7 @@ impl PmPkgCommand {
         Ok(true)
     }
 
-    fn save_package_json(
-        path: &[u8],
-        root: Expr,
-        pkg: &PackageJson,
-    ) -> Result<(), Error> {
+    fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
         let preserve_newline =
             !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
 

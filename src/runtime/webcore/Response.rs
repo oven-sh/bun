@@ -9,13 +9,15 @@ use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc as _,
 };
-use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
 use bun_core::Output;
-use bun_jsc::StringJsc as _;
+use bun_core::{
+    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
+};
 use bun_http_types::Method::Method;
+use bun_jsc::StringJsc as _;
 
-use super::body::{Body, BodyMixin, Value as BodyValue};
 use super::blob::Internal as InternalBlob;
+use super::body::{Body, BodyMixin, Value as BodyValue};
 use super::{FetchHeaders, ReadableStream, Request};
 
 // PORT NOTE: codegen (`generated_classes.rs`) re-exports `Blob` from
@@ -27,8 +29,15 @@ use bun_ptr::weak_ptr::WeakPtrData;
 // C++ helper functions for AsyncLocalStorage integration
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub safe fn Response__getAsyncLocalStorageStore(global: &JSGlobalObject, als: JSValue) -> JSValue;
-    pub safe fn Response__mergeAsyncLocalStorageOptions(global: &JSGlobalObject, als_store: JSValue, init_options: JSValue);
+    pub safe fn Response__getAsyncLocalStorageStore(
+        global: &JSGlobalObject,
+        als: JSValue,
+    ) -> JSValue;
+    pub safe fn Response__mergeAsyncLocalStorageOptions(
+        global: &JSGlobalObject,
+        als_store: JSValue,
+        init_options: JSValue,
+    );
 }
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -267,7 +276,8 @@ impl BodyMixin for Response {
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
         self.init.get().headers.as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr()).expect("HeadersRef wraps a non-null *mut FetchHeaders")
+            core::ptr::NonNull::new(h.as_ptr())
+                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
     #[inline]
@@ -412,7 +422,9 @@ impl Response {
         self.body.get().len() as usize
     }
 
-    pub fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+    pub fn get_form_data_encoding(
+        &self,
+    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
@@ -455,7 +467,10 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_body_readable_stream(&self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
+    pub fn get_body_readable_stream(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
         <Self as BodyMixin>::get_body_readable_stream(self, global_object)
     }
 
@@ -482,78 +497,83 @@ impl Response {
 // TODO(b2-blocked): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
 
 mod _jsc_host_fns {
-use super::*;
+    use super::*;
 
-#[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
-#[bun_jsc::host_call]
-pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_old::<1>();
-    let this_value = arguments.ptr[0];
-    if this_value.is_empty_or_undefined_or_null() {
-        return JSValue::FALSE;
-    }
+    #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
+    #[bun_jsc::host_call]
+    pub fn js_function_request_or_response_has_body_value(
+        _global: *mut JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JSValue {
+        let arguments = callframe.arguments_old::<1>();
+        let this_value = arguments.ptr[0];
+        if this_value.is_empty_or_undefined_or_null() {
+            return JSValue::FALSE;
+        }
 
-    if let Some(response) = this_value.as_class_ref::<Response>() {
-        return JSValue::from(!response.body.get().value.get().is_definitely_empty());
-    } else if let Some(request) = this_value.as_class_ref::<Request>() {
-        return JSValue::from(!request.get_body_value().is_definitely_empty());
-    }
-
-    JSValue::FALSE
-}
-
-#[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
-#[bun_jsc::host_call]
-pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
-    global_object: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (global_object, callframe) =
-        (bun_opaque::opaque_deref(global_object), bun_opaque::opaque_deref(callframe));
-    let arguments = callframe.arguments_old::<1>();
-    let this_value = arguments.ptr[0];
-    if this_value.is_empty_or_undefined_or_null() {
-        return JSValue::UNDEFINED;
-    }
-
-    let body: &mut BodyValue = 'brk: {
         if let Some(response) = this_value.as_class_ref::<Response>() {
-            // R-2: `get_body_value` projects `&mut` via `JsCell`.
-            break 'brk response.get_body_value();
+            return JSValue::from(!response.body.get().value.get().is_definitely_empty());
         } else if let Some(request) = this_value.as_class_ref::<Request>() {
-            break 'brk request.get_body_value();
+            return JSValue::from(!request.get_body_value().is_definitely_empty());
         }
 
-        return JSValue::UNDEFINED;
-    };
-
-    // Get the body if it's available synchronously.
-    match body {
-        BodyValue::Used | BodyValue::Empty | BodyValue::Null => JSValue::UNDEFINED,
-        BodyValue::Blob(blob) => {
-            if blob.is_bun_file() {
-                return JSValue::UNDEFINED;
-            }
-            let result = match blob.to_array_buffer(global_object, crate::webcore::Lifetime::Transfer) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            };
-            *body = BodyValue::Used;
-            result
-        }
-        BodyValue::WTFStringImpl(_) | BodyValue::InternalBlob(_) => {
-            let mut any_blob = body.use_as_any_blob();
-            match any_blob.to_array_buffer_transfer(global_object) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            }
-        }
-        BodyValue::Error(_) | BodyValue::Locked(_) => JSValue::UNDEFINED,
+        JSValue::FALSE
     }
-}
 
+    #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
+    #[bun_jsc::host_call]
+    pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
+        global_object: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global_object, callframe) = (
+            bun_opaque::opaque_deref(global_object),
+            bun_opaque::opaque_deref(callframe),
+        );
+        let arguments = callframe.arguments_old::<1>();
+        let this_value = arguments.ptr[0];
+        if this_value.is_empty_or_undefined_or_null() {
+            return JSValue::UNDEFINED;
+        }
+
+        let body: &mut BodyValue = 'brk: {
+            if let Some(response) = this_value.as_class_ref::<Response>() {
+                // R-2: `get_body_value` projects `&mut` via `JsCell`.
+                break 'brk response.get_body_value();
+            } else if let Some(request) = this_value.as_class_ref::<Request>() {
+                break 'brk request.get_body_value();
+            }
+
+            return JSValue::UNDEFINED;
+        };
+
+        // Get the body if it's available synchronously.
+        match body {
+            BodyValue::Used | BodyValue::Empty | BodyValue::Null => JSValue::UNDEFINED,
+            BodyValue::Blob(blob) => {
+                if blob.is_bun_file() {
+                    return JSValue::UNDEFINED;
+                }
+                let result =
+                    match blob.to_array_buffer(global_object, crate::webcore::Lifetime::Transfer) {
+                        Ok(v) => v,
+                        Err(_) => JSValue::ZERO,
+                    };
+                *body = BodyValue::Used;
+                result
+            }
+            BodyValue::WTFStringImpl(_) | BodyValue::InternalBlob(_) => {
+                let mut any_blob = body.use_as_any_blob();
+                match any_blob.to_array_buffer_transfer(global_object) {
+                    Ok(v) => v,
+                    Err(_) => JSValue::ZERO,
+                }
+            }
+            BodyValue::Error(_) | BodyValue::Locked(_) => JSValue::UNDEFINED,
+        }
+    }
 } // mod _jsc_host_fns
 
 impl Response {
@@ -641,10 +661,11 @@ impl Response {
             if let BodyValue::Blob(blob) = self.body.get().value.get() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() {
-                    init.headers
-                        .as_mut()
-                        .unwrap()
-                        .put(HTTPHeaderName::ContentType, content_type, global_this)?;
+                    init.headers.as_mut().unwrap().put(
+                        HTTPHeaderName::ContentType,
+                        content_type,
+                        global_this,
+                    )?;
                 }
             }
         }
@@ -697,7 +718,11 @@ impl Response {
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
         let js_err = |_: JsError| core::fmt::Error;
 
-        write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.get_body_len(), Default::default()))?;
+        write!(
+            writer,
+            "Response ({}) {{\n",
+            bun_core::fmt::size(self.get_body_len(), Default::default())
+        )?;
 
         {
             formatter.indent_inc();
@@ -705,53 +730,117 @@ impl Response {
             // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
             // the raw pointer is only dereferenced in the closure at scope exit, at which point
             // no other borrow of `formatter` is live.
-            let _indent_guard = scopeguard::guard(
-                std::ptr::from_mut::<F>(formatter),
-                |p| unsafe { (*p).indent_dec() },
-            );
+            let _indent_guard = scopeguard::guard(std::ptr::from_mut::<F>(formatter), |p| unsafe {
+                (*p).indent_dec()
+            });
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.is_ok()), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> ")
+            )?;
+            formatter
+                .print_as::<_, ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatAs::Boolean,
+                    writer,
+                    JSValue::from(self.is_ok()),
+                    bun_jsc::JSType::BooleanObject,
+                )
+                .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \""))?;
-            write!(writer, "{}", Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (self.url.get(),)))?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \"")
+            )?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (self.url.get(),))
+            )?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Double, writer, JSValue::js_number(self.init.get().status_code as f64), bun_jsc::JSType::NumberObject).map_err(js_err)?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> ")
+            )?;
+            formatter
+                .print_as::<_, ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatAs::Double,
+                    writer,
+                    JSValue::js_number(self.init.get().status_code as f64),
+                    bun_jsc::JSType::NumberObject,
+                )
+                .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> "))?;
-            write!(writer, "{}", Output::pretty_fmt_args("<r>\"<b>{}<r>\"", ENABLE_ANSI_COLORS, (&self.init.get().status_text,)))?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> ")
+            )?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt_args(
+                    "<r>\"<b>{}<r>\"",
+                    ENABLE_ANSI_COLORS,
+                    (&self.init.get().status_text,)
+                )
+            )?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ")
+            )?;
             let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Private, writer, headers_js, bun_jsc::JSType::DOMWrapper).map_err(js_err)?;
+            formatter
+                .print_as::<_, ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatAs::Private,
+                    writer,
+                    headers_js,
+                    bun_jsc::JSType::DOMWrapper,
+                )
+                .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.redirected.get()), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> ")
+            )?;
+            formatter
+                .print_as::<_, ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatAs::Boolean,
+                    writer,
+                    JSValue::from(self.redirected.get()),
+                    bun_jsc::JSType::BooleanObject,
+                )
+                .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.reset_line();
             // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+            unsafe { self.body.get_mut() }
+                .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             // indent restored by `_indent_guard` on scope exit (incl. error returns)
         }
         writer.write_str("\n")?;
@@ -762,7 +851,11 @@ impl Response {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn do_clone(this: &Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_clone(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
@@ -794,7 +887,9 @@ impl Response {
     }
 
     pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
-        Ok(bun_core::heap::into_raw(Box::new(self.clone_value(global_this)?)))
+        Ok(bun_core::heap::into_raw(Box::new(
+            self.clone_value(global_this)?,
+        )))
     }
 
     fn destroy(this: *mut Response) {
@@ -865,12 +960,16 @@ impl Response {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_json(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn construct_json(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<2>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
-        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args =
+            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
         // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
@@ -881,7 +980,10 @@ impl Response {
         let response = scopeguard::guard(
             Response {
                 body: JsCell::new(Body::new(BodyValue::Empty)),
-                init: JsCell::new(Init { status_code: 200, ..Default::default() }),
+                init: JsCell::new(Init {
+                    status_code: 200,
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             |r| r.body.get().reset(),
@@ -890,14 +992,20 @@ impl Response {
 
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
-            if json_value.is_undefined() || json_value.is_symbol() || json_value.js_type() == bun_jsc::JSType::JSFunction {
-                let err = global_this.create_type_error_instance(format_args!("Value is not JSON serializable"));
+            if json_value.is_undefined()
+                || json_value.is_symbol()
+                || json_value.js_type() == bun_jsc::JSType::JSFunction
+            {
+                let err = global_this
+                    .create_type_error_instance(format_args!("Value is not JSON serializable"));
                 return Err(global_this.throw_value(err));
             }
 
             // BigInt has a different error message to match Node.js exactly
             if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!("Do not know how to serialize a BigInt"));
+                let err = global_this.create_type_error_instance(format_args!(
+                    "Do not know how to serialize a BigInt"
+                ));
                 return Err(global_this.throw_value(err));
             }
 
@@ -925,12 +1033,16 @@ impl Response {
                 if let Some(bytes) = wtf_ref.to_utf8_if_needed() {
                     // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
                     wtf_ref.deref();
-                    response.body.get().value.set(BodyValue::InternalBlob(InternalBlob {
-                        // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
-                        // transfers here as Vec<u8>.
-                        bytes: bytes.into_vec(),
-                        was_string: true,
-                    }));
+                    response
+                        .body
+                        .get()
+                        .value
+                        .set(BodyValue::InternalBlob(InternalBlob {
+                            // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
+                            // transfers here as Vec<u8>.
+                            bytes: bytes.into_vec(),
+                            was_string: true,
+                        }));
                 } else {
                     // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
                     // We already hold the +1 from `leak_wtf_impl`; transfer it
@@ -960,7 +1072,11 @@ impl Response {
 
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
-        headers_ref.put_default(HTTPHeaderName::ContentType, json_mime.value.as_ref(), global_this)?;
+        headers_ref.put_default(
+            HTTPHeaderName::ContentType,
+            json_mime.value.as_ref(),
+            global_this,
+        )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
         let response = scopeguard::ScopeGuard::into_inner(response);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
@@ -969,7 +1085,10 @@ impl Response {
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
-    fn validate_redirect_status_code(global_this: &JSGlobalObject, status_code: i32) -> JsResult<u16> {
+    fn validate_redirect_status_code(
+        global_this: &JSGlobalObject,
+        status_code: i32,
+    ) -> JsResult<u16> {
         match status_code {
             301 | 302 | 303 | 307 | 308 => Ok(u16::try_from(status_code).expect("int cast")),
             _ => {
@@ -982,7 +1101,10 @@ impl Response {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn construct_redirect(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let response = Self::construct_redirect_impl(global_this, callframe)?;
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let ptr = bun_core::heap::into_raw(Box::new(response));
@@ -990,17 +1112,24 @@ impl Response {
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
-    pub fn construct_redirect_impl(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Response> {
+    pub fn construct_redirect_impl(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Response> {
         let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
-        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args =
+            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         let mut url_string_slice = ZigStringSlice::empty();
         // url_string_slice drops at scope exit
         let response: Response = 'brk: {
             let response = Response {
-                init: JsCell::new(Init { status_code: 302, ..Default::default() }),
+                init: JsCell::new(Init {
+                    status_code: 302,
+                    ..Default::default()
+                }),
                 body: JsCell::new(Body::new(BodyValue::Empty)),
                 ..Default::default()
             };
@@ -1020,7 +1149,8 @@ impl Response {
                 if arg_init.is_undefined_or_null() {
                     // no-op
                 } else if arg_init.is_number() {
-                    let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                    let status =
+                        Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                     response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
                     // errdefer response.init.deinit() — handled by Init's drop glue on `?` below
@@ -1028,7 +1158,8 @@ impl Response {
 
                     let status = response.init.get().status_code;
                     if status != 200 {
-                        let status = Self::validate_redirect_status_code(global_this, i32::from(status))?;
+                        let status =
+                            Self::validate_redirect_status_code(global_this, i32::from(status))?;
                         response.init.with_mut(|i| i.status_code = status);
                     }
                 }
@@ -1043,15 +1174,25 @@ impl Response {
         let headers = response.get_or_create_headers(global_this)?;
         // PORT NOTE: reshaped for borrowck — Zig assigned response.init.headers = ...
         // then re-borrowed; here get_or_create_headers already populated init.headers.
-        headers.put(HTTPHeaderName::Location, url_string_slice.slice(), global_this)?;
+        headers.put(
+            HTTPHeaderName::Location,
+            url_string_slice.slice(),
+            global_this,
+        )?;
         Ok(response)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_error(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn construct_error(
+        global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let response = bun_core::heap::into_raw(Box::new(Response {
-            init: JsCell::new(Init { status_code: 0, ..Default::default() }),
+            init: JsCell::new(Init {
+                status_code: 0,
+                ..Default::default()
+            }),
             body: JsCell::new(Body::new(BodyValue::Empty)),
             ..Default::default()
         }));
@@ -1066,7 +1207,11 @@ impl Response {
     // TODO(port): codegen — constructor signature includes js_this (the pre-allocated
     // JS wrapper). The // TODO(b2-blocked): #[bun_jsc::host_fn] macro needs a `constructor` variant that
     // passes the wrapper through.
-    pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame, js_this: JSValue) -> JsResult<*mut Response> {
+    pub fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        js_this: JSValue,
+    ) -> JsResult<*mut Response> {
         let arguments = callframe.arguments_as_array::<2>();
 
         if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
@@ -1081,7 +1226,10 @@ impl Response {
                         )));
                     }
                     let response = Response {
-                        init: JsCell::new(Init { status_code: 302, ..Default::default() }),
+                        init: JsCell::new(Init {
+                            status_code: 302,
+                            ..Default::default()
+                        }),
                         body: JsCell::new(Body::new(BodyValue::Empty)),
                         js_ref: JsCell::new(JsRef::init_weak(js_this)),
                         ..Default::default()
@@ -1124,7 +1272,11 @@ impl Response {
         }
         let mut init: Init = 'brk: {
             if arguments[1].is_undefined_or_null() {
-                break 'brk Init { status_code: 200, headers: None, ..Default::default() };
+                break 'brk Init {
+                    status_code: 200,
+                    headers: None,
+                    ..Default::default()
+                };
             }
             if arguments[1].is_object() {
                 break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
@@ -1241,7 +1393,10 @@ impl Init {
     }
 
     pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
-        let mut result = Init { status_code: 200, ..Default::default() };
+        let mut result = Init {
+            status_code: 200,
+            ..Default::default()
+        };
         // errdefer result.deinit() — Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
 
@@ -1354,7 +1509,10 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
     // it actually returns *Response. Preserving the heap-alloc behavior.
     bun_core::heap::into_raw(Box::new(Response {
         body: JsCell::new(Body::new(BodyValue::Null)),
-        init: JsCell::new(Init { status_code: status, ..Default::default() }),
+        init: JsCell::new(Init {
+            status_code: status,
+            ..Default::default()
+        }),
         ..Default::default()
     }))
 }

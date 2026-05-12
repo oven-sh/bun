@@ -1,7 +1,7 @@
 //! Stats and BigIntStats classes from node:fs
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
 // that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the

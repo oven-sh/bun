@@ -3,17 +3,19 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::api::bun::process::{
+    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
+};
+use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::RunCommand;
-use crate::cli::Command;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
-use bun_io::{BufferedReader, ReadState};
+use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
+use bun_io::{BufferedReader, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
-use bun_core::{strings, ZStr};
 use bun_sys as sys;
 
 // TODO(port): several `[]const u8` fields below are leaked in Zig (program exits). In Zig,
@@ -82,7 +84,11 @@ impl<'a> ProcessHandle<'a> {
 
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast(),
-            if cfg!(unix) { b"-c\0".as_ptr().cast() } else { b"exec\0".as_ptr().cast() },
+            if cfg!(unix) {
+                b"-c\0".as_ptr().cast()
+            } else {
+                b"exec\0".as_ptr().cast()
+            },
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
@@ -161,7 +167,10 @@ impl<'a> ProcessHandle<'a> {
             handle.stderr.start_with_current_pipe()?;
         }
 
-        handle.process = Some(ProcessInfo { ptr: process, status: Status::Running });
+        handle.process = Some(ProcessInfo {
+            ptr: process,
+            status: Status::Running,
+        });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
         let process = unsafe { &mut *process };
@@ -201,7 +210,6 @@ impl<'a> ProcessHandle<'a> {
     pub fn on_reader_error(&mut self, err: sys::Error) {
         let _ = err;
     }
-
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -397,16 +405,25 @@ impl<'a> State<'a> {
     fn elide(data_: &[u8], max_lines: Option<usize>) -> ElideResult<'_> {
         let mut data = data_;
         if data.is_empty() {
-            return ElideResult { content: &[], elided_count: 0 };
+            return ElideResult {
+                content: &[],
+                elided_count: 0,
+            };
         }
         if data[data.len() - 1] == b'\n' {
             data = &data[0..data.len() - 1];
         }
         let Some(max_lines_val) = max_lines else {
-            return ElideResult { content: data, elided_count: 0 };
+            return ElideResult {
+                content: data,
+                elided_count: 0,
+            };
         };
         if max_lines_val == 0 {
-            return ElideResult { content: data, elided_count: 0 };
+            return ElideResult {
+                content: data,
+                elided_count: 0,
+            };
         }
         let mut i: usize = data.len();
         let mut lines: usize = 0;
@@ -427,7 +444,10 @@ impl<'a> State<'a> {
             }
             i -= 1;
         }
-        ElideResult { content, elided_count: elided }
+        ElideResult {
+            content,
+            elided_count: elided,
+        }
     }
 
     fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
@@ -436,7 +456,8 @@ impl<'a> State<'a> {
             return Ok(());
         }
         self.draw_buf.clear();
-        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
+        self.draw_buf
+            .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
         if self.last_lines_written > 0 {
             // move cursor to the beginning of the line and clear it
             self.draw_buf.extend_from_slice(b"\x1b[0G\x1b[K");
@@ -451,7 +472,11 @@ impl<'a> State<'a> {
             let handle = unsafe { &*(&raw const self.handles[idx]) };
             // TODO(port): borrowck — self.handles[idx] borrowed while self.draw_buf is &mut.
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            let elide_lines = if is_abort { None } else { Some(handle.config.elide_count.unwrap_or(10)) };
+            let elide_lines = if is_abort {
+                None
+            } else {
+                Some(handle.config.elide_count.unwrap_or(10))
+            };
             let e = Self::elide(&handle.buffer, elide_lines);
 
             write!(
@@ -472,20 +497,24 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                self.draw_buf.extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
+                self.draw_buf
+                    .extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
                 self.draw_buf.extend_from_slice(line);
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
-                self.draw_buf.extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
+                self.draw_buf
+                    .extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
                 self.draw_buf.extend_from_slice(content);
                 self.draw_buf.push(b'\n');
             }
-            self.draw_buf.extend_from_slice(fmt!("<cyan>└─<r> ").as_bytes());
+            self.draw_buf
+                .extend_from_slice(fmt!("<cyan>└─<r> ").as_bytes());
             if let Some(proc) = &handle.process {
                 match &proc.status {
                     Status::Running => {
-                        self.draw_buf.extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
+                        self.draw_buf
+                            .extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
                     }
                     Status::Exited(exited) => {
                         if exited.code == 0 {
@@ -506,7 +535,8 @@ impl<'a> State<'a> {
                                     )?;
                                 }
                             } else {
-                                self.draw_buf.extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
+                                self.draw_buf
+                                    .extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
                             }
                         } else {
                             write!(
@@ -528,7 +558,8 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Err(_) => {
-                        self.draw_buf.extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
+                        self.draw_buf
+                            .extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
                     }
                 }
             } else {
@@ -539,7 +570,8 @@ impl<'a> State<'a> {
                 )?;
             }
         }
-        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
+        self.draw_buf
+            .extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
         self.last_lines_written = 0;
         for &c in &self.draw_buf {
             if c == b'\n' {
@@ -610,7 +642,9 @@ impl AbortHandler {
     }
 
     #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(dw_ctrl_type: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
+    extern "system" fn windows_ctrl_handler(
+        dw_ctrl_type: bun_sys::windows::DWORD,
+    ) -> bun_sys::windows::BOOL {
         if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
             SHOULD_ABORT.store(true, Ordering::SeqCst);
             return bun_sys::windows::TRUE;
@@ -634,7 +668,10 @@ impl AbortHandler {
         #[cfg(not(unix))]
         {
             // TODO(port): move to <area>_sys
-            let res = bun_sys::c::SetConsoleCtrlHandler(Some(Self::windows_ctrl_handler), bun_sys::windows::TRUE);
+            let res = bun_sys::c::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::TRUE,
+            );
             if res == 0 {
                 if cfg!(debug_assertions) {
                     Output::warn("Failed to set abort handler\n");
@@ -659,7 +696,9 @@ fn windows_is_terminal() -> bool {
     res == bun_sys::windows::FILE_TYPE_CHAR
 }
 
-pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
+pub fn run_scripts_with_filter(
+    ctx: Command::Context,
+) -> Result<core::convert::Infallible, bun_core::Error> {
     // TODO(port): Zig return type is `!noreturn`; using Result<Infallible, _> for `?` support.
     // PORT NOTE: own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
@@ -695,8 +734,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         ctx.filters.iter().map(|f| f.as_ref()).collect()
     };
 
-    let filter_instance =
-        FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
+    let filter_instance = FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
@@ -717,15 +755,15 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let mut package_json_iter =
-        FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
+    let mut package_json_iter = FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
     // defer package_json_iter.deinit() — handled by Drop
 
     // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
-        let dirpath = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
+        let dirpath =
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
         let path = strings::without_trailing_slash(dirpath);
 
         // When using --workspaces, skip the root package to prevent recursion
@@ -745,7 +783,9 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         };
         // TODO(port): PackageJSON::parse signature — enum args are placeholders.
 
-        let Some(pkgscripts) = &pkgjson.scripts else { continue };
+        let Some(pkgscripts) = &pkgjson.scripts else {
+            continue;
+        };
 
         if !filter_instance.matches(path, &pkgjson.name) {
             continue;
@@ -761,7 +801,10 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             run_in_bun,
         )?;
 
-        for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]].iter().enumerate() {
+        for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
+            .iter()
+            .enumerate()
+        {
             let Some(original_content) = pkgscripts.get(*name) else {
                 if i == 1 && ctx.workspaces && !ctx.if_present {
                     Output::err_generic(
@@ -849,9 +892,9 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(
-        MiniEventLoop::as_event_loop_ctx(event_loop),
-    );
+    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(
+        event_loop,
+    ));
     let shell_bin: &'static ZStr = {
         #[cfg(unix)]
         {
@@ -884,9 +927,13 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         last_lines_written: 0,
         pretty_output: {
             #[cfg(windows)]
-            { windows_is_terminal() && Output::enable_ansi_colors_stdout() }
+            {
+                windows_is_terminal() && Output::enable_ansi_colors_stdout()
+            }
             #[cfg(not(windows))]
-            { Output::enable_ansi_colors_stdout() }
+            {
+                Output::enable_ansi_colors_stdout()
+            }
         },
         shell_bin,
         aborted: false,
@@ -926,12 +973,17 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                     bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&script.package_json_path).into(),
+                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                    &script.package_json_path,
+                )
+                .into(),
                 #[cfg(windows)]
-                windows: spawn::WindowsOptions { loop_: EventLoopHandle::init_mini(event_loop), ..Default::default() },
+                windows: spawn::WindowsOptions {
+                    loop_: EventLoopHandle::init_mini(event_loop),
+                    ..Default::default()
+                },
                 stream: true,
-                ..Default::default()
-                // TODO(port): SpawnOptions remaining fields
+                ..Default::default() // TODO(port): SpawnOptions remaining fields
             },
             start_time: None,
             end_time: None,

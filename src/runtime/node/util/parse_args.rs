@@ -1,11 +1,11 @@
 use core::fmt;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_core::{OwnedString, String, ZigString};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 use super::parse_args_utils::{
-    classify_token, find_option_by_short_name, is_option_like_value, OptionDefinition,
-    OptionValueType, TokenSubtype,
+    OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
+    is_option_like_value,
 };
 use super::validators;
 
@@ -37,9 +37,7 @@ enum ValueRef {
 impl ValueRef {
     pub fn as_bun_string(&self, global: &JSGlobalObject) -> String {
         match self {
-            ValueRef::Jsvalue(str) => str
-                .to_bun_string(global)
-                .expect("unexpected exception"),
+            ValueRef::Jsvalue(str) => str.to_bun_string(global).expect("unexpected exception"),
             ValueRef::Bunstr(str) => *str,
         }
     }
@@ -147,8 +145,7 @@ impl OptionToken {
             let str = {
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
-                write!(cursor, "-{}", raw.substring_with_len(i, i + 1))
-                    .expect("unreachable");
+                write!(cursor, "-{}", raw.substring_with_len(i, i + 1)).expect("unreachable");
                 let written = 8 - cursor.len();
                 &buf[..written]
             };
@@ -275,9 +272,17 @@ fn check_option_usage(
                         bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                         format_args!(
                             "Option '{}{}{}--{} <value>' argument missing",
-                            if !option.short_name.is_empty() { "-" } else { "" },
+                            if !option.short_name.is_empty() {
+                                "-"
+                            } else {
+                                ""
+                            },
                             option.short_name,
-                            if !option.short_name.is_empty() { ", " } else { "" },
+                            if !option.short_name.is_empty() {
+                                ", "
+                            } else {
+                                ""
+                            },
                             token.name.as_bun_string(global),
                         ),
                     );
@@ -290,9 +295,17 @@ fn check_option_usage(
                         bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                         format_args!(
                             "Option '{}{}{}--{}' does not take an argument",
-                            if !option.short_name.is_empty() { "-" } else { "" },
+                            if !option.short_name.is_empty() {
+                                "-"
+                            } else {
+                                ""
+                            },
                             option.short_name,
-                            if !option.short_name.is_empty() { ", " } else { "" },
+                            if !option.short_name.is_empty() {
+                                ", "
+                            } else {
+                                ""
+                            },
                             token.name.as_bun_string(global),
                         ),
                     );
@@ -419,7 +432,10 @@ fn parse_option_definitions(
             if short_option_str.length() != 1 {
                 let err = global.to_type_error(
                     bun_jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("options.{}.short must be a single character", option.long_name),
+                    format_args!(
+                        "options.{}.short must be a single character",
+                        option.long_name
+                    ),
                 );
                 return Err(global.throw_value(err));
             }
@@ -479,9 +495,17 @@ fn parse_option_definitions(
             "[OptionDef] \"{}\" (type={}, short={}, multiple={}, default={})",
             String::init(long_option),
             <&'static str>::from(option.r#type),
-            if !option.short_name.is_empty() { option.short_name } else { String::static_("none") },
+            if !option.short_name.is_empty() {
+                option.short_name
+            } else {
+                String::static_("none")
+            },
             option.multiple as u8,
-            if option.default_value.is_some() { "set" } else { "none" },
+            if option.default_value.is_some() {
+                "set"
+            } else {
+                "none"
+            },
         );
 
         option_definitions.push(option);
@@ -576,8 +600,7 @@ fn tokenize_args(
                 let original_arg_idx = index;
                 let arg_len = arg.length();
                 for idx_in_optgroup in 1..arg_len {
-                    let short_option =
-                        arg.substring_with_len(idx_in_optgroup, idx_in_optgroup + 1);
+                    let short_option = arg.substring_with_len(idx_in_optgroup, idx_in_optgroup + 1);
                     let option_idx = find_option_by_short_name(&short_option, options);
                     let option_type: OptionValueType =
                         option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
@@ -665,13 +688,12 @@ fn tokenize_args(
                 // e.g. '--foo'
                 let mut long_option = arg.substring(2);
 
-                let negative =
-                    if ctx.allow_negative && long_option.has_prefix_comptime(b"no-") {
-                        long_option = long_option.substring(3);
-                        true
-                    } else {
-                        false
-                    };
+                let negative = if ctx.allow_negative && long_option.has_prefix_comptime(b"no-") {
+                    long_option = long_option.substring(3);
+                    true
+                } else {
+                    false
+                };
 
                 let option_idx = find_option_by_long_name(long_option, options);
                 let option_type: OptionValueType =
@@ -818,8 +840,16 @@ impl<'a> ParseArgsState<'a> {
             obj.put(global, ZigString::static_("kind"), kind_jsvalue);
             match &token_generic {
                 Token::Option(token) => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(token.index as f64));
-                    obj.put(global, ZigString::static_("name"), token.name.as_js_value(global)?);
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(token.index as f64),
+                    );
+                    obj.put(
+                        global,
+                        ZigString::static_("name"),
+                        token.name.as_js_value(global)?,
+                    );
                     obj.put(
                         global,
                         ZigString::static_("rawName"),
@@ -840,11 +870,23 @@ impl<'a> ParseArgsState<'a> {
                     );
                 }
                 Token::Positional { index, value } => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index as f64));
-                    obj.put(global, ZigString::static_("value"), value.as_js_value(global)?);
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(*index as f64),
+                    );
+                    obj.put(
+                        global,
+                        ZigString::static_("value"),
+                        value.as_js_value(global)?,
+                    );
                 }
                 Token::OptionTerminator { index } => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index as f64));
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(*index as f64),
+                    );
                 }
             }
             self.tokens.push(global, obj)?;
@@ -861,7 +903,11 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     // Phase 0: parse the config object
     //
 
-    let config = if config_value.is_undefined() { None } else { Some(config_value) };
+    let config = if config_value.is_undefined() {
+        None
+    } else {
+        Some(config_value)
+    };
 
     // Phase 0.A: Get and validate type of input args
     let config_args: JSValue = match config {
@@ -921,8 +967,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let allow_positionals =
         validators::validate_boolean(global, config_allow_positionals, "allowPositionals")?;
 
-    let return_tokens =
-        validators::validate_boolean(global, config_return_tokens, "tokens")?;
+    let return_tokens = validators::validate_boolean(global, config_return_tokens, "tokens")?;
     let allow_negative =
         validators::validate_boolean(global, config_allow_negative, "allowNegative")?;
 

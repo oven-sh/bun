@@ -10,32 +10,32 @@ use bstr::BStr;
 use bun_alloc::Arena as Bump;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
-use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install_types::DependencyGroup;
-use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
+use bun_install::lockfile::package::{PackageColumns as _};
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    self, install_with_manager, populate_manifest_cache, LogLevel, ManifestCacheOptions,
-    ManifestLoad, Subcommand, WorkspaceFilter, ROOT_PACKAGE_JSON_PATH,
+    self, LogLevel, ManifestCacheOptions, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand,
+    WorkspaceFilter, install_with_manager, populate_manifest_cache,
 };
 use bun_install::{
-    resolution, CommandLineArguments, DependencyID, GetJsonOptions, GetJsonResult, PackageID,
-    PackageManager, WorkspacePackageJsonCacheEntry, INVALID_PACKAGE_ID,
+    CommandLineArguments, DependencyID, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID,
+    PackageID, PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
+use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
+use bun_resolver::fs::FileSystem;
 // PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
 // types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
 // logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
 // helpers below must operate on that type. The earlier draft imported
 // `bun_ast::Expr`, which is a distinct struct and would not unify
 // with `MapEntry.root`.
-use bun_ast::{self, self as js_ast, expr as js_expr, Expr, E};
 use bun_ast::Loc;
+use bun_ast::{self, self as js_ast, E, Expr, expr as js_expr};
+use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
-use bun_core::strings;
 
 use crate::Command;
 
@@ -47,7 +47,11 @@ pub struct TerminalHyperlink<'a> {
 
 impl<'a> TerminalHyperlink<'a> {
     pub fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
-        TerminalHyperlink { link, text, enabled }
+        TerminalHyperlink {
+            link,
+            text,
+            enabled,
+        }
     }
 }
 
@@ -265,22 +269,19 @@ impl UpdateInteractiveCommand {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
         let silent = cli.silent;
 
-        let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli, Subcommand::Update) {
-                Ok(v) => v,
-                Err(err) => {
-                    if !silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
-                            Output::err_generic("missing package.json, nothing outdated", ());
-                        }
-                        Output::err_generic(
-                            "failed to initialize bun install: {s}",
-                            (err.name(),),
-                        );
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
+        {
+            Ok(v) => v,
+            Err(err) => {
+                if !silent {
+                    if err == bun_core::err!("MissingPackageJSON") {
+                        Output::err_generic("missing package.json, nothing outdated", ());
                     }
-                    Global::crash();
+                    Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
                 }
-            };
+                Global::crash();
+            }
+        };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
@@ -326,7 +327,10 @@ impl UpdateInteractiveCommand {
                 match manager.workspace_package_json_cache.get_with_path(
                     log,
                     package_json_path,
-                    GetJsonOptions { guess_indentation: true, ..Default::default() },
+                    GetJsonOptions {
+                        guess_indentation: true,
+                        ..Default::default()
+                    },
                 ) {
                     GetJsonResult::ParseErr(err) => {
                         Output::err_generic(
@@ -453,7 +457,10 @@ impl UpdateInteractiveCommand {
                 match manager.workspace_package_json_cache.get_with_path(
                     log,
                     package_json_path,
-                    GetJsonOptions { guess_indentation: true, ..Default::default() },
+                    GetJsonOptions {
+                        guess_indentation: true,
+                        ..Default::default()
+                    },
                 ) {
                     GetJsonResult::ParseErr(err) => {
                         Output::err_generic(
@@ -473,10 +480,7 @@ impl UpdateInteractiveCommand {
                 };
 
             // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(
-                &mut updates_for_workspace[..],
-                &mut package_json.root,
-            )?;
+            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -525,7 +529,9 @@ impl UpdateInteractiveCommand {
                     // for every subcommand and is non-null for the command's
                     // lifetime.
                     if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager.log_mut().print(std::ptr::from_mut(Output::error_writer()))?;
+                        manager
+                            .log_mut()
+                            .print(std::ptr::from_mut(Output::error_writer()))?;
                     }
                 }
                 Global::crash();
@@ -601,8 +607,13 @@ impl UpdateInteractiveCommand {
                 // Store catalog updates for later processing
                 let catalog_key: Box<[u8]> = if let Some(catalog_name) = &pkg.catalog_name {
                     let mut v = Vec::new();
-                    write!(&mut v, "{}:{}", BStr::new(&pkg.name), BStr::new(catalog_name))
-                        .expect("OOM");
+                    write!(
+                        &mut v,
+                        "{}:{}",
+                        BStr::new(&pkg.name),
+                        BStr::new(catalog_name)
+                    )
+                    .expect("OOM");
                     v.into_boxed_slice()
                 } else {
                     pkg.name.clone()
@@ -648,7 +659,9 @@ impl UpdateInteractiveCommand {
         let has_catalog_updates = !catalog_updates.is_empty();
 
         if !has_package_updates && !has_catalog_updates {
-            Output::prettyln(format_args!("<r><yellow>!</r> No packages selected for update"));
+            Output::prettyln(format_args!(
+                "<r><yellow>!</r> No packages selected for update"
+            ));
             return Ok(());
         }
 
@@ -769,8 +782,7 @@ impl UpdateInteractiveCommand {
         let converted_filters: Vec<WorkspaceFilter> = filters
             .iter()
             .map(|filter| {
-                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0)
-                    .expect("OOM")
+                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0).expect("OOM")
             })
             .collect();
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
@@ -792,19 +804,16 @@ impl UpdateInteractiveCommand {
                             }
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
                             let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    res.workspace().slice(string_buf)
-                                }
+                                resolution::Tag::Workspace => res.workspace().slice(string_buf),
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
                             };
 
-                            let abs_res_path =
-                                path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
-                                    top_level_dir,
-                                    &mut path_buf.0,
-                                    &[res_path],
-                                );
+                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
+                                path::platform::Posix,
+                            >(
+                                top_level_dir, &mut path_buf.0, &[res_path]
+                            );
 
                             if !glob::r#match(
                                 pattern,
@@ -921,8 +930,7 @@ impl UpdateInteractiveCommand {
         let excludes = manager.options.minimum_release_age_excludes.as_deref();
         let update_to_latest = manager.options.do_.update_to_latest();
         let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;
-        let global_uses_default_registry =
-            manager.options.scope.url_hash == default_url_hash;
+        let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
 
@@ -947,8 +955,7 @@ impl UpdateInteractiveCommand {
                 {
                     continue;
                 }
-                let resolution =
-                    manager.lockfile.packages.items_resolution()[package_id as usize];
+                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
                 if resolution.tag != resolution::Tag::Npm {
                     continue;
                 }
@@ -1031,8 +1038,12 @@ impl UpdateInteractiveCommand {
                 let current_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
 
                 version_buf.clear();
-                write!(version_buf, "{}", update_version.version.fmt(&manifest.string_buf))
-                    .expect("OOM");
+                write!(
+                    version_buf,
+                    "{}",
+                    update_version.version.fmt(&manifest.string_buf)
+                )
+                .expect("OOM");
                 let update_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
 
                 version_buf.clear();
@@ -1215,7 +1226,12 @@ impl UpdateInteractiveCommand {
             use bun_sys::windows;
             let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
                 Some(h) => h,
-                None => return TerminalSize { height: 20, width: 80 },
+                None => {
+                    return TerminalSize {
+                        height: 20,
+                        width: 80,
+                    };
+                }
             };
 
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
@@ -1234,7 +1250,10 @@ impl UpdateInteractiveCommand {
                 };
             }
         }
-        TerminalSize { height: 20, width: 80 } // Default fallback
+        TerminalSize {
+            height: 20,
+            width: 80,
+        } // Default fallback
     }
 
     fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
@@ -1249,7 +1268,11 @@ impl UpdateInteractiveCommand {
         // Put ellipsis in the middle to show both start and end of package name
         let ellipsis = "…".as_bytes();
         let available_chars = max_width - 1; // Reserve 1 char for ellipsis
-        let start_chars = if only_end { available_chars } else { available_chars / 2 };
+        let start_chars = if only_end {
+            available_chars
+        } else {
+            available_chars / 2
+        };
         let end_chars = available_chars - start_chars;
 
         let mut result = vec![0u8; start_chars + ellipsis.len() + end_chars];
@@ -1295,11 +1318,12 @@ impl UpdateInteractiveCommand {
 
         // Set raw mode — RAII guard restores the original terminal mode on Drop.
         #[cfg(windows)]
-        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-            set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-            unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
-        });
+        let _restore =
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+            });
 
         #[cfg(unix)]
         let _restore = bun_core::tty::RawModeGuard::new(0);
@@ -1566,7 +1590,10 @@ impl UpdateInteractiveCommand {
                                 selected_count
                             ));
                         } else {
-                            Output::pretty(format_args!("<r>{}<r>", BStr::new(pkg.dependency_type)));
+                            Output::pretty(format_args!(
+                                "<r>{}<r>",
+                                BStr::new(pkg.dependency_type)
+                            ));
                         }
 
                         // Calculate padding to align column headers with values
@@ -1574,7 +1601,9 @@ impl UpdateInteractiveCommand {
                         // Calculate actual displayed text length including count if present
                         let dep_type_text_len: usize = if selected_count > 0 {
                             // TODO(port): std.fmt.count("{d}") — count decimal digits
-                            pkg.dependency_type.len() + 1 + (bun_core::fmt::fast_digit_count(selected_count as u64) as usize) // +1 for space
+                            pkg.dependency_type.len()
+                                + 1
+                                + (bun_core::fmt::fast_digit_count(selected_count as u64) as usize) // +1 for space
                         } else {
                             pkg.dependency_type.len()
                         };
@@ -1740,35 +1769,37 @@ impl UpdateInteractiveCommand {
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
 
-                    let package_url: Box<[u8]> = if Output::enable_ansi_colors_stdout()
-                        && pkg.uses_default_registry
-                    {
-                        let ver: &[u8] = 'brk: {
-                            if selected {
-                                if pkg.use_latest {
-                                    break 'brk &pkg.latest_version;
+                    let package_url: Box<[u8]> =
+                        if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
+                            let ver: &[u8] = 'brk: {
+                                if selected {
+                                    if pkg.use_latest {
+                                        break 'brk &pkg.latest_version;
+                                    } else {
+                                        break 'brk &pkg.update_version;
+                                    }
                                 } else {
-                                    break 'brk &pkg.update_version;
+                                    break 'brk &pkg.current_version;
                                 }
-                            } else {
-                                break 'brk &pkg.current_version;
-                            }
+                            };
+                            let mut v = Vec::new();
+                            write!(
+                                &mut v,
+                                "https://npmjs.org/package/{}/v/{}",
+                                BStr::new(&pkg.name),
+                                BStr::new(ver)
+                            )
+                            .unwrap();
+                            v.into_boxed_slice()
+                        } else {
+                            Box::default()
                         };
-                        let mut v = Vec::new();
-                        write!(
-                            &mut v,
-                            "https://npmjs.org/package/{}/v/{}",
-                            BStr::new(&pkg.name),
-                            BStr::new(ver)
-                        )
-                        .unwrap();
-                        v.into_boxed_slice()
-                    } else {
-                        Box::default()
-                    };
 
-                    let hyperlink =
-                        TerminalHyperlink::new(&package_url, &display_name, !package_url.is_empty());
+                    let hyperlink = TerminalHyperlink::new(
+                        &package_url,
+                        &display_name,
+                        !package_url.is_empty(),
+                    );
 
                     if selected {
                         if checkbox_color == "red" {
@@ -2007,7 +2038,11 @@ impl UpdateInteractiveCommand {
                     Output::pretty(format_args!(
                         "  <d>↓ {} more package{} below<r>",
                         state.packages.len() - viewport_end,
-                        if state.packages.len() - viewport_end == 1 { "" } else { "s" }
+                        if state.packages.len() - viewport_end == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
                     ));
                     lines_displayed += 1;
                 }
@@ -2112,9 +2147,13 @@ impl UpdateInteractiveCommand {
                 }
                 27 => {
                     // escape sequence
-                    let Ok(seq) = reader.take_byte() else { continue };
+                    let Ok(seq) = reader.take_byte() else {
+                        continue;
+                    };
                     if seq == b'[' {
-                        let Ok(arrow) = reader.take_byte() else { continue };
+                        let Ok(arrow) = reader.take_byte() else {
+                            continue;
+                        };
                         match arrow {
                             b'A' => {
                                 // up arrow
@@ -2146,7 +2185,9 @@ impl UpdateInteractiveCommand {
                             }
                             b'5' => {
                                 // Page Up
-                                let Ok(tilde) = reader.take_byte() else { continue };
+                                let Ok(tilde) = reader.take_byte() else {
+                                    continue;
+                                };
                                 if tilde == b'~' {
                                     // Move up by viewport height
                                     if state.cursor >= state.viewport_height {
@@ -2159,7 +2200,9 @@ impl UpdateInteractiveCommand {
                             }
                             b'6' => {
                                 // Page Down
-                                let Ok(tilde) = reader.take_byte() else { continue };
+                                let Ok(tilde) = reader.take_byte() else {
+                                    continue;
+                                };
                                 if tilde == b'~' {
                                     // Move down by viewport height
                                     if state.cursor + state.viewport_height < state.packages.len() {
@@ -2184,7 +2227,8 @@ impl UpdateInteractiveCommand {
                                             .split(|b| *b == b';')
                                             .filter(|s| !s.is_empty());
                                         if let Some(button_str) = parts.next() {
-                                            let button: u32 = strings::parse_int(button_str, 10).unwrap_or(0);
+                                            let button: u32 =
+                                                strings::parse_int(button_str, 10).unwrap_or(0);
                                             // Mouse wheel events
                                             if button == 64 {
                                                 // Scroll up
@@ -2382,7 +2426,10 @@ fn update_default_catalog(
                     // Re-seat the arena slot mutated above; `StoreRef` is a
                     // non-owning `Copy` handle so the previous `Data::EObject`
                     // pointing at it remains valid.
-                    Some(o) => Expr { loc: Loc::EMPTY, data: js_expr::Data::EObject(o) },
+                    Some(o) => Expr {
+                        loc: Loc::EMPTY,
+                        data: js_expr::Data::EObject(o),
+                    },
                     None => Expr::init(fresh_obj, Loc::EMPTY),
                 };
                 ws_obj
@@ -2462,7 +2509,11 @@ fn update_named_catalog(
         // Update the catalog in catalogs object
         if existing_catalog.is_none() {
             catalogs_obj
-                .put(bump, leak_dup(catalog_name), Expr::init(fresh_catalog, Loc::EMPTY))
+                .put(
+                    bump,
+                    leak_dup(catalog_name),
+                    Expr::init(fresh_catalog, Loc::EMPTY),
+                )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
         }
     }
@@ -2477,7 +2528,10 @@ fn update_named_catalog(
                     return Ok(());
                 }
                 let expr = match existing_catalogs {
-                    Some(o) => Expr { loc: Loc::EMPTY, data: js_expr::Data::EObject(o) },
+                    Some(o) => Expr {
+                        loc: Loc::EMPTY,
+                        data: js_expr::Data::EObject(o),
+                    },
                     None => Expr::init(fresh_catalogs, Loc::EMPTY),
                 };
                 ws_obj
@@ -2510,7 +2564,9 @@ fn preserve_version_prefix(
         let mut alias: Option<&[u8]> = None;
 
         // Preserve npm: prefix
-        if let Some(after_npm) = strings::without_prefix_if_possible_comptime(original_version, b"npm:") {
+        if let Some(after_npm) =
+            strings::without_prefix_if_possible_comptime(original_version, b"npm:")
+        {
             if let Some(i) = strings::last_index_of_char(after_npm, b'@') {
                 alias = Some(&after_npm[0..i]);
                 if i + 2 < after_npm.len() {
@@ -2544,7 +2600,8 @@ fn preserve_version_prefix(
                     return Ok(v.into_boxed_slice());
                 }
                 let mut v = Vec::new();
-                write!(&mut v, "{}={}", first_char as char, BStr::new(new_version)).expect("infallible: in-memory write");
+                write!(&mut v, "{}={}", first_char as char, BStr::new(new_version))
+                    .expect("infallible: in-memory write");
                 return Ok(v.into_boxed_slice());
             }
             if let Some(a) = alias {
@@ -2560,12 +2617,14 @@ fn preserve_version_prefix(
                 return Ok(v.into_boxed_slice());
             }
             let mut v = Vec::new();
-            write!(&mut v, "{}{}", first_char as char, BStr::new(new_version)).expect("infallible: in-memory write");
+            write!(&mut v, "{}{}", first_char as char, BStr::new(new_version))
+                .expect("infallible: in-memory write");
             return Ok(v.into_boxed_slice());
         }
         if let Some(a) = alias {
             let mut v = Vec::new();
-            write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version)).expect("infallible: in-memory write");
+            write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version))
+                .expect("infallible: in-memory write");
             return Ok(v.into_boxed_slice());
         }
     }

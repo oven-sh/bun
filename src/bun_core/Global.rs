@@ -10,8 +10,8 @@ use crate::env; // @import("./env.zig")
 use crate::env::version_string;
 use crate::output as Output; // @import("./output.zig")
 
-use bun_alloc as alloc;
-use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungate in B-2)
+use crate::{USE_MIMALLOC, debug_allocator_data};
+use bun_alloc as alloc; // B-1 stubs (real consts ungate in B-2)
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
@@ -76,15 +76,24 @@ pub struct StoredTrace {
 }
 impl StoredTrace {
     pub const fn empty() -> Self {
-        Self { data: [0; 31], index: 0 }
+        Self {
+            data: [0; 31],
+            index: 0,
+        }
     }
 }
 impl StoredTrace {
-    pub const EMPTY: StoredTrace = StoredTrace { data: [0; 31], index: 0 };
+    pub const EMPTY: StoredTrace = StoredTrace {
+        data: [0; 31],
+        index: 0,
+    };
 
     #[inline]
     pub fn trace(&self) -> StackTrace<'_> {
-        StackTrace { index: self.index, instruction_addresses: &self.data }
+        StackTrace {
+            index: self.index,
+            instruction_addresses: &self.data,
+        }
     }
 
     /// Capture the current call stack starting at `begin` (or the caller's return addr).
@@ -97,7 +106,10 @@ impl StoredTrace {
         stored.index = n;
         // Trim trailing nulls (matches Zig loop).
         for (i, &addr) in stored.data[..n].iter().enumerate() {
-            if addr == 0 { stored.index = i; break; }
+            if addr == 0 {
+                stored.index = i;
+                break;
+            }
         }
         stored
     }
@@ -109,7 +121,10 @@ impl StoredTrace {
                 let mut data = [0usize; 31];
                 let items = core::cmp::min(stack.instruction_addresses.len(), 31);
                 data[..items].copy_from_slice(&stack.instruction_addresses[..items]);
-                StoredTrace { data, index: core::cmp::min(items, stack.index) }
+                StoredTrace {
+                    data,
+                    index: core::cmp::min(items, stack.index),
+                }
             }
         }
     }
@@ -153,9 +168,14 @@ pub type WriteStackTraceLimits = DumpStackTraceOptions;
 /// match against). Only `frame_count` is honoured.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
-    let n = trace.index.min(trace.instruction_addresses.len()).min(limits.frame_count);
+    let n = trace
+        .index
+        .min(trace.instruction_addresses.len())
+        .min(limits.frame_count);
     for &addr in &trace.instruction_addresses[..n] {
-        if addr == 0 { break; }
+        if addr == 0 {
+            break;
+        }
         eprintln!("    at 0x{addr:x}");
     }
 }
@@ -289,26 +309,56 @@ pub mod features {
         VALKEY,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
-    #[inline] pub fn dotenv_inc() { DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn dotenv_inc() {
+        DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install crate calls `bun_core::analytics::Features::binlinks_inc()`.
-    #[inline] pub fn binlinks_inc() { BINLINKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn binlinks_inc() {
+        BINLINKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install crate calls `bun_core::analytics::Features::extracted_packages_inc()`.
-    #[inline] pub fn extracted_packages_inc() { EXTRACTED_PACKAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn extracted_packages_inc() {
+        EXTRACTED_PACKAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// yaml crate calls `bun_core::analytics::Features::yaml_parse_inc()`.
-    #[inline] pub fn yaml_parse_inc() { YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn yaml_parse_inc() {
+        YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install crate calls `bun_core::analytics::Features::lifecycle_scripts_inc(1)`.
-    #[inline] pub fn lifecycle_scripts_inc(n: usize) { LIFECYCLE_SCRIPTS.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn lifecycle_scripts_inc(n: usize) {
+        LIFECYCLE_SCRIPTS.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
-    #[inline] pub fn yarn_migration_inc(n: usize) { YARN_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn yarn_migration_inc(n: usize) {
+        YARN_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install/pnpm crate calls `bun_core::analytics::Features::pnpm_migration_inc(1)`.
-    #[inline] pub fn pnpm_migration_inc(n: usize) { PNPM_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn pnpm_migration_inc(n: usize) {
+        PNPM_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install crate calls `bun_core::analytics::Features::text_lockfile_inc()`.
-    #[inline] pub fn text_lockfile_inc() { TEXT_LOCKFILE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn text_lockfile_inc() {
+        TEXT_LOCKFILE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// install/migration crate calls `bun_core::analytics::Features::lockfile_migration_from_package_lock_inc()`.
-    #[inline] pub fn lockfile_migration_from_package_lock_inc() { LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn lockfile_migration_from_package_lock_inc() {
+        LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     /// jsc crate calls `bun_core::analytics::Features::jsc_inc()` from
     /// `initialize()` (spec jsc.zig:251 `bun.analytics.Features.jsc += 1`).
-    #[inline] pub fn jsc_inc() { JSC.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    #[inline]
+    pub fn jsc_inc() {
+        JSC.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
 }
 /// Re-export under the `analytics` name so `bun_core::analytics::Features::*` resolves
 /// (per movein-skipped [dotenv] entry).
@@ -333,9 +383,12 @@ macro_rules! mark_binding {
         // feature, since `cfg!(feature = ..)` is resolved against the *calling*
         // crate and would warn (or silently no-op) in crates without it.
         if cfg!(debug_assertions) && $crate::Global::JSC_SCOPE.is_visible() {
-            $crate::Global::JSC_SCOPE.log(
-                ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
-            );
+            $crate::Global::JSC_SCOPE.log(::core::format_args!(
+                "[JSC] {} ({}:{})\n",
+                $fn_name,
+                ::core::file!(),
+                ::core::line!()
+            ));
         }
     };
 }
@@ -355,7 +408,9 @@ pub mod debug_flags {
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(str_, bp) { return true; }
+            if crate::strings_impl::includes(str_, bp) {
+                return true;
+            }
         }
         let _ = str_;
         false
@@ -364,7 +419,8 @@ pub mod debug_flags {
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp) {
+            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp)
+            {
                 return true;
             }
         }

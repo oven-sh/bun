@@ -1,18 +1,20 @@
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_void, CStr};
+use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::{allocators, AllocError};
-use bun_core::{env_var, fmt as bun_fmt, FeatureFlags, Generation, Output, ZStr};
-use bun_paths::{resolve_path as path_handler, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-use bun_paths::resolve_path::{is_sep_any, last_index_of_sep, platform};
+use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_core::{FeatureFlags, Generation, Output, ZStr, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, PathString};
+use bun_paths::resolve_path::{is_sep_any, last_index_of_sep, platform};
 use bun_paths::strings;
+use bun_paths::{
+    MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer, resolve_path as path_handler,
+};
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -162,8 +164,7 @@ pub(crate) type DirnameStoreBacking =
 pub(crate) type FilenameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
 // PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
-pub type EntryStoreBacking =
-    allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage — Zig kept `var instance` inside the
 // generic; Rust emits it at the declare site via `bss_*!` macros (returns `*mut`).
@@ -193,7 +194,9 @@ macro_rules! string_store_impl {
     ($t:ty, $zst:ident, $backing:ident, $bty:ty) => {
         impl $t {
             #[inline]
-            pub fn instance() -> &'static Self { &$zst }
+            pub fn instance() -> &'static Self {
+                &$zst
+            }
             #[inline]
             fn backing() -> *mut $bty {
                 // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`).
@@ -245,8 +248,18 @@ macro_rules! string_store_impl {
         }
     };
 }
-string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking);
-string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking);
+string_store_impl!(
+    DirnameStore,
+    DIRNAME_STORE_ZST,
+    dirname_store_backing,
+    DirnameStoreBacking
+);
+string_store_impl!(
+    FilenameStore,
+    FILENAME_STORE_ZST,
+    filename_store_backing,
+    FilenameStoreBacking
+);
 
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
@@ -263,7 +276,9 @@ impl FilenameStoreAppender {
     #[inline]
     pub fn new() -> Self {
         // One `Once` check, hoisted out of the per-entry loop.
-        Self { backing: filename_store_backing() }
+        Self {
+            backing: filename_store_backing(),
+        }
     }
 }
 impl strings::Appender for FilenameStoreAppender {
@@ -362,8 +377,7 @@ impl FileSystem {
         hash: u64,
     ) -> Result<&'b mut ZStr, bun_core::Error> {
         // TODO(port): narrow error set (was std.fmt.BufPrintError)
-        let hex_value: u64 =
-            (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+        let hex_value: u64 = (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
         // TODO(port): bufPrintZ equivalent — write into buf and NUL-terminate
         let len = buf.len();
@@ -516,7 +530,11 @@ pub struct EntryCache {
 
 impl Default for EntryCache {
     fn default() -> Self {
-        Self { symlink: PathString::EMPTY, fd: Fd::INVALID, kind: EntryKind::File }
+        Self {
+            symlink: PathString::EMPTY,
+            fd: Fd::INVALID,
+            kind: EntryKind::File,
+        }
     }
 }
 
@@ -593,13 +611,22 @@ impl Entry {
     }
 
     /// Zig: `entry.dir` field (fs.zig:333) — interned in DirnameStore.
-    #[inline] pub fn dir(&self) -> &'static [u8] { self.dir }
+    #[inline]
+    pub fn dir(&self) -> &'static [u8] {
+        self.dir
+    }
 
     /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
-    #[inline] pub fn abs_path(&self) -> PathString { self.abs_path }
+    #[inline]
+    pub fn abs_path(&self) -> PathString {
+        self.abs_path
+    }
 
     /// Zig: `entry.abs_path = PathString.init(...)`.
-    #[inline] pub fn set_abs_path(&mut self, p: PathString) { self.abs_path = p; }
+    #[inline]
+    pub fn set_abs_path(&mut self, p: PathString) {
+        self.abs_path = p;
+    }
 
     /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
     // PORT NOTE: `Entry` lives in the EntryStore BSSMap singleton; all access is
@@ -616,7 +643,8 @@ impl Entry {
             // This is technically incorrect, but we are choosing not to handle errors here
             // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
             // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
+            {
                 Ok(c) => self.cache.set(c),
                 Err(_) => return self.cache().kind,
             }
@@ -631,7 +659,8 @@ impl Entry {
             // This error can happen if the file was deleted between the time the directory
             // was scanned and the time it was read
             // SAFETY: see `Entry::kind` PORT NOTE.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
+            {
                 Ok(c) => self.cache.set(c),
                 Err(_) => return b"",
             }
@@ -756,8 +785,7 @@ pub mod dir_entry {
         /// result-location semantics).
         #[inline(always)]
         pub fn append_uninit()
-            -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError>
-        {
+        -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError> {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
             // `BSSList::append_uninit` takes `*mut Self` and serializes on its
             // own inner mutex.
@@ -788,7 +816,9 @@ impl DirEntryIterator for () {
 impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     const IS_VOID: bool = T::IS_VOID;
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) { (**self).next(entry, fd) }
+    fn next(&self, entry: &mut Entry, fd: Fd) {
+        (**self).next(entry, fd)
+    }
 }
 
 /// Port of `FileSystem.DirEntry` in `fs.zig`.
@@ -806,7 +836,12 @@ impl DirEntry {
         if FeatureFlags::VERBOSE_FS {
             bun_core::prettyln!("\n  {}", BStr::new(dir));
         }
-        DirEntry { dir, data: dir_entry::EntryMap::default(), generation, fd: Fd::INVALID }
+        DirEntry {
+            dir,
+            data: dir_entry::EntryMap::default(),
+            generation,
+            fd: Fd::INVALID,
+        }
     }
 
     /// Port of `DirEntry.addEntry` in `fs.zig`.
@@ -862,7 +897,9 @@ impl DirEntry {
             if let Some(map) = prev_map {
                 // PERF(port): was stack-fallback alloc — profile in Phase B
                 let prehashed =
-                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(name_slice);
+                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                        name_slice,
+                    );
                 // PORT NOTE: `StringHashMap::get_adapted` ignores the adapter and looks up by the
                 // raw key; pass the already-lowercased `prehashed.input` so the case-insensitive
                 // lookup matches the lowercased keys stored in `data` (Zig: `getAdapted` lowercases
@@ -878,9 +915,11 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    existing.need_stat.set(existing.need_stat.get()
-                        || found_kind.is_none()
-                        || Some(existing.cache().kind) != found_kind);
+                    existing.need_stat.set(
+                        existing.need_stat.get()
+                            || found_kind.is_none()
+                            || Some(existing.cache().kind) != found_kind,
+                    );
                     // TODO: is this right?
                     if Some(existing.cache().kind) != found_kind {
                         // if found_kind is null, we have set need_stat above, so we
@@ -907,12 +946,10 @@ impl DirEntry {
                 // `init*_append_if_needed` are `#[inline(always)]` so the
                 // 32-byte `StringOrTinyString` is built directly into `*p`
                 // with no intermediate stack copy.
-                addr_of_mut!((*p).base_).write(
-                    strings::StringOrTinyString::init_append_if_needed(
-                        name_slice,
-                        filename_store,
-                    )?,
-                );
+                addr_of_mut!((*p).base_).write(strings::StringOrTinyString::init_append_if_needed(
+                    name_slice,
+                    filename_store,
+                )?);
                 addr_of_mut!((*p).base_lowercase_).write(
                     strings::StringOrTinyString::init_lower_case_append_if_needed(
                         name_slice,
@@ -1002,7 +1039,11 @@ impl DirEntry {
             });
         }
 
-        Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
+        Some(EntryLookup {
+            entry: result_ptr,
+            diff_case: None,
+            _marker: core::marker::PhantomData,
+        })
     }
 
     /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
@@ -1027,7 +1068,11 @@ impl DirEntry {
             });
         }
 
-        Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
+        Some(EntryLookup {
+            entry: result_ptr,
+            diff_case: None,
+            _marker: core::marker::PhantomData,
+        })
     }
 
     /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
@@ -1038,7 +1083,10 @@ impl DirEntry {
 
     /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
     /// `bun.invalid_fd` when the resolver did not retain it.
-    #[inline] pub fn fd(&self) -> Fd { self.fd }
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        self.fd
+    }
 
     /// Zig: `dir_entry.data.iterator()` (fs.zig:117). Yields the raw
     /// `*mut Entry` value for each cached file (Zig's `EntryMap` value
@@ -1144,7 +1192,11 @@ impl FileSystem {
     /// Like `abs_buf`, but returns null when the joined path (after `..`/`.`
     /// normalization) would overflow `buf`. Use when `parts` may contain
     /// user-controlled input of arbitrary length.
-    pub(crate) fn abs_buf_checked<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    pub(crate) fn abs_buf_checked<'a>(
+        &self,
+        parts: &[&[u8]],
+        buf: &'a mut [u8],
+    ) -> Option<&'a [u8]> {
         path_handler::join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
@@ -1164,10 +1216,16 @@ impl FileSystem {
             Output::print(format_args!("{{\n"));
 
             if let Ok(stack) = bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::STACK) {
-                Output::print(format_args!("  \"stack\": [{}, {}],\n", stack.cur, stack.max));
+                Output::print(format_args!(
+                    "  \"stack\": [{}, {}],\n",
+                    stack.cur, stack.max
+                ));
             }
             if let Ok(files) = bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE) {
-                Output::print(format_args!("  \"files\": [{}, {}]\n", files.cur, files.max));
+                Output::print(format_args!(
+                    "  \"files\": [{}, {}]\n",
+                    files.cur, files.max
+                ));
             }
 
             Output::print(format_args!("}}\n"));
@@ -1199,7 +1257,9 @@ bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate:
 pub struct EntriesMap(());
 impl EntriesMap {
     #[inline]
-    pub const fn new() -> Self { Self(()) }
+    pub const fn new() -> Self {
+        Self(())
+    }
 }
 
 /// RAII guard over the `entries_option_map()` singleton: holds
@@ -1313,8 +1373,12 @@ impl RealFS {
             // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
             if let Some(windir) = env_var::SYSTEMROOT::get().or_else(env_var::WINDIR::get) {
                 let mut v = Vec::new();
-                write!(&mut v, "{}\\Temp", BStr::new(strings::without_trailing_slash(windir)))
-                    .expect("oom");
+                write!(
+                    &mut v,
+                    "{}\\Temp",
+                    BStr::new(strings::without_trailing_slash(windir))
+                )
+                .expect("oom");
                 return DirnameStore::instance().append(&v).expect("oom");
             }
 
@@ -1331,12 +1395,17 @@ impl RealFS {
 
             let mut tmp_buf = PathBuffer::uninit();
             // TODO(port): std.posix.getcwd — bun_sys::getcwd
-            let n = bun_sys::getcwd(&mut tmp_buf[..]).expect("Failed to get cwd for platformTempDir");
+            let n =
+                bun_sys::getcwd(&mut tmp_buf[..]).expect("Failed to get cwd for platformTempDir");
             let cwd = &tmp_buf[..n];
             let root = path_handler::windows_filesystem_root(cwd);
             let mut v = Vec::new();
-            write!(&mut v, "{}\\Windows\\Temp", BStr::new(strings::without_trailing_slash(root)))
-                .expect("oom");
+            write!(
+                &mut v,
+                "{}\\Windows\\Temp",
+                BStr::new(strings::without_trailing_slash(root))
+            )
+            .expect("oom");
             return DirnameStore::instance().append(&v).expect("oom");
         }
         #[cfg(target_os = "macos")]
@@ -1402,7 +1471,9 @@ impl RealFS {
     /// pattern — the guard *is* the proof the SAFETY precondition holds.
     #[inline]
     pub fn entries_locked(&self) -> EntriesGuard {
-        EntriesGuard { _lock: self.entries_mutex.lock_guard() }
+        EntriesGuard {
+            _lock: self.entries_mutex.lock_guard(),
+        }
     }
 
     pub fn entries_at(
@@ -1468,7 +1539,8 @@ impl RealFS {
                         unsafe { (*prev_map_ptr).clear() };
                         handle_dir.close();
                         return Some(
-                            self.read_directory_error(Some(&map), dir_path, err).expect("unreachable"),
+                            self.read_directory_error(Some(&map), dir_path, err)
+                                .expect("unreachable"),
                         );
                     }
                 };
@@ -1646,7 +1718,11 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 
-    pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> Result<ModKey, bun_core::Error> {
+    pub fn generate(
+        _: &mut RealFS,
+        _: &[u8],
+        file: &bun_sys::File,
+    ) -> Result<ModKey, bun_core::Error> {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;
@@ -1656,8 +1732,7 @@ impl ModKey {
         #[cfg(target_os = "linux")]
         let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
         #[cfg(target_os = "macos")]
-        let mtime: i128 =
-            (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
+        let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
         #[cfg(windows)]
         let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -1745,7 +1820,10 @@ pub(crate) struct TmpfilePosix {
 
 impl Default for TmpfilePosix {
     fn default() -> Self {
-        Self { fd: Fd::INVALID, dir_fd: Fd::INVALID }
+        Self {
+            fd: Fd::INVALID,
+            dir_fd: Fd::INVALID,
+        }
     }
 }
 
@@ -1814,7 +1892,10 @@ pub(crate) struct TmpfileWindows {
 
 impl Default for TmpfileWindows {
     fn default() -> Self {
-        Self { fd: Fd::INVALID, existing_path: Box::default() }
+        Self {
+            fd: Fd::INVALID,
+            existing_path: Box::default(),
+        }
     }
 }
 
@@ -1868,14 +1949,19 @@ impl TmpfileWindows {
         let mut existing_buf = WPathBuffer::uninit();
         let mut new_buf = WPathBuffer::uninit();
         self.close();
-        let existing = strings::paths::to_extended_path_normalized(&mut new_buf, &self.existing_path);
+        let existing =
+            strings::paths::to_extended_path_normalized(&mut new_buf, &self.existing_path);
         let new = if bun_paths::is_absolute_windows(name.as_bytes()) {
             strings::paths::to_extended_path_normalized(&mut existing_buf, name.as_bytes())
         } else {
             strings::paths::to_w_path_normalized(&mut existing_buf, name.as_bytes())
         };
         if cfg!(debug_assertions) {
-            debug!("moveFileExW({}, {})", bun_fmt::utf16(existing), bun_fmt::utf16(new));
+            debug!(
+                "moveFileExW({}, {})",
+                bun_fmt::utf16(existing),
+                bun_fmt::utf16(new)
+            );
         }
 
         // SAFETY: `existing`/`new` are NUL-terminated WTF-16 paths backed by
@@ -1961,9 +2047,8 @@ impl RealFS {
         // the count, and forces every `Name` allocation to outlive the loop.
         // Stream `getdents64` straight into `add_entry` like Zig's
         // `while (try iter.next()) |*e| dir.addEntry(e)`.
-        dir.data.ensure_unused_capacity(
-            prev_map.as_deref().map(|m| m.count()).unwrap_or(64),
-        )?;
+        dir.data
+            .ensure_unused_capacity(prev_map.as_deref().map(|m| m.count()).unwrap_or(64))?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.
@@ -2121,7 +2206,9 @@ impl RealFS {
             Some(h) => h,
             None => match self.open_dir(dir) {
                 Ok(h) => h,
-                Err(err) => return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?),
+                Err(err) => {
+                    return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
+                }
             },
         };
 
@@ -2222,14 +2309,24 @@ impl RealFS {
     }
 
     /// Thin forward — kept for spec-shape fidelity (fs.zig:1160).
-    pub fn read_file_with_handle_and_allocator<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
+    pub fn read_file_with_handle_and_allocator<
+        'p,
+        'buf,
+        const USE_SHARED_BUFFER: bool,
+        const STREAM: bool,
+    >(
         &mut self,
         path: &'p [u8],
         size_hint: Option<usize>,
         file: bun_sys::File,
         shared_buffer: &'buf mut MutableString,
     ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
-        read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(path, size_hint, &file, shared_buffer)
+        read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(
+            path,
+            size_hint,
+            &file,
+            shared_buffer,
+        )
     }
 }
 
@@ -2309,9 +2406,15 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         if size == 0 {
             if USE_SHARED_BUFFER {
                 shared_buffer.reset();
-                return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+                return Ok(PathContentsPair {
+                    path: Path::init(path),
+                    contents: Cow::Borrowed(b""),
+                });
             } else {
-                return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+                return Ok(PathContentsPair {
+                    path: Path::init(path),
+                    contents: Cow::Borrowed(b""),
+                });
             }
         }
 
@@ -2330,7 +2433,9 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 Ok(n) => n,
                 Err(err) => return Err(err.into()),
             };
-            shared_buffer.list.truncate(read_count + bytes_read as usize);
+            shared_buffer
+                .list
+                .truncate(read_count + bytes_read as usize);
             file_contents_ptr = shared_buffer.list.as_ptr();
             file_contents_len = shared_buffer.list.len();
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
@@ -2432,7 +2537,10 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         buf[..initial_read.len()].copy_from_slice(initial_read);
 
         if size == 0 {
-            return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+            return Ok(PathContentsPair {
+                path: Path::init(path),
+                contents: Cow::Borrowed(b""),
+            });
         }
 
         // stick a zero at the end
@@ -2451,17 +2559,26 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
             buf = bom.remove_and_convert_to_utf8_and_free(buf);
         }
 
-        return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
+        return Ok(PathContentsPair {
+            path: Path::init(path),
+            contents: Cow::Owned(buf),
+        });
     }
 
     // PORT NOTE: `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
     // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
     // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
     // instead of fabricating `'static` via `from_raw_parts`.
-    debug_assert!(core::ptr::eq(file_contents_ptr, shared_buffer.list.as_ptr()));
+    debug_assert!(core::ptr::eq(
+        file_contents_ptr,
+        shared_buffer.list.as_ptr()
+    ));
     let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
-    Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(file_contents) })
+    Ok(PathContentsPair {
+        path: Path::init(path),
+        contents: Cow::Borrowed(file_contents),
+    })
 }
 
 impl RealFS {
@@ -2488,7 +2605,8 @@ impl RealFS {
             let file: Fd = if existing_fd.is_valid() {
                 existing_fd
             } else if store_fd {
-                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?.handle()
+                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
+                    .handle()
             } else {
                 // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                 // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2551,11 +2669,8 @@ impl RealFS {
         let dir = dir_;
         let combo: [&[u8]; 2] = [dir, base];
         let mut outpath = PathBuffer::uninit();
-        let entry_path = path_handler::join_abs_string_buf::<platform::Auto>(
-            self.cwd,
-            &mut outpath[..],
-            &combo,
-        );
+        let entry_path =
+            path_handler::join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo);
         let entry_path_len = entry_path.len();
 
         outpath[entry_path_len + 1] = 0;
@@ -2572,7 +2687,11 @@ impl RealFS {
             // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
             // links and file symlinks don't), so this is already the
             // correct `Entry.Kind` without following the chain.
-            cache.kind = if file.is_directory { EntryKind::Dir } else { EntryKind::File };
+            cache.kind = if file.is_directory {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
             if !file.is_reparse_point {
                 return Ok(cache);
             }
@@ -2757,8 +2876,11 @@ pub(crate) struct NodeJSPathName<'a> {
 
 impl<'a> NodeJSPathName<'a> {
     pub(crate) fn init<const IS_WINDOWS: bool>(path_: &'a [u8]) -> NodeJSPathName<'a> {
-        let platform: path_handler::Platform =
-            if IS_WINDOWS { path_handler::Platform::Windows } else { path_handler::Platform::Posix };
+        let platform: path_handler::Platform = if IS_WINDOWS {
+            path_handler::Platform::Windows
+        } else {
+            path_handler::Platform::Posix
+        };
         let get_last_sep = platform.get_last_separator_func();
 
         let mut path = path_;
@@ -2816,7 +2938,12 @@ impl<'a> NodeJSPathName<'a> {
             dir = b"";
         }
 
-        NodeJSPathName { dir, base, ext, filename }
+        NodeJSPathName {
+            dir,
+            base,
+            ext,
+            filename,
+        }
     }
 }
 
@@ -2868,8 +2995,6 @@ impl core::fmt::Display for PrintHandle<Fd> {
     }
 }
 // TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
-
-
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;

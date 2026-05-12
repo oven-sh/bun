@@ -1,5 +1,5 @@
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStringJsc as _};
 use bun_core::ZigString;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStringJsc as _};
 
 use super::nodejs_error_code::Code as ErrorCode;
 

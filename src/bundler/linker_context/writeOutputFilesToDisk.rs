@@ -4,28 +4,28 @@ use core::mem::offset_of;
 use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;
-use bun_core::fmt::quote;
-use bun_core::{err, Error};
 use bun_ast::Loc;
+use bun_core::fmt::quote;
+use bun_core::{Error, err};
+use bun_core::{PathString, String as BunString, immutable as strings};
 use bun_paths::{self as paths, PathBuffer};
-use bun_core::{immutable as strings, PathString, String as BunString};
 use bun_wyhash::hash;
 
+use crate::LinkerContext;
+use crate::chunk::{Content, Flags as ChunkFlags};
+use crate::linker_context::output_file_list_builder::OutputFileList;
+use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
 use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::chunk::{Content, Flags as ChunkFlags};
-use crate::{cheap_prefix_normalizer, BundleV2, Chunk};
-use crate::LinkerContext;
-use crate::linker_context_mod::debug;
-use crate::linker_context::output_file_list_builder::OutputFileList;
+use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
 // TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
-    write_file_with_path_buffer, FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData,
-    WriteFileEncoding,
+    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
+    write_file_with_path_buffer,
 };
 
 /// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
@@ -57,16 +57,15 @@ pub fn write_output_files_to_disk(
                         ),
                     );
             } else {
-                c.log_mut()
-                    .add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "Failed to create output directory {} {}",
-                            e.name(),
-                            quote(root_path),
-                        ),
-                    );
+                c.log_mut().add_error_fmt(
+                    None,
+                    Loc::EMPTY,
+                    format_args!(
+                        "Failed to create output directory {} {}",
+                        e.name(),
+                        quote(root_path),
+                    ),
+                );
             }
             return Err(e);
         }
@@ -85,9 +84,8 @@ pub fn write_output_files_to_disk(
 
     let mut pathbuf = PathBuffer::uninit();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bv2: &mut BundleV2 = unsafe {
-        &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
-    };
+    let bv2: &mut BundleV2 =
+        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
     // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
     // together into `code()`/`code_standalone()`. The callee now takes
@@ -135,28 +133,31 @@ pub fn write_output_files_to_disk(
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
-                c.log_mut()
-                    .add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "{} creating outdir {} while saving chunk {}",
-                            e.name(),
-                            quote(rel_parent),
-                            quote(&chunk.final_rel_path),
-                        ),
-                    );
+                c.log_mut().add_error_fmt(
+                    None,
+                    Loc::EMPTY,
+                    format_args!(
+                        "{} creating outdir {} while saving chunk {}",
+                        e.name(),
+                        quote(rel_parent),
+                        quote(&chunk.final_rel_path),
+                    ),
+                );
                 return Err(e);
             }
         }
         let mut display_size: usize = 0;
         let resolver_opts = &c.resolver().opts;
-        let public_path: &[u8] =
-            if chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
-                &bv2.transpiler_for_target(options::Target::Browser).options.public_path
-            } else {
-                &resolver_opts.public_path
-            };
+        let public_path: &[u8] = if chunk
+            .flags
+            .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            &bv2.transpiler_for_target(options::Target::Browser)
+                .options
+                .public_path
+        } else {
+            &resolver_opts.public_path
+        };
 
         // PORT NOTE: take `intermediate_output` by value so its `&mut self` is
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
@@ -193,7 +194,9 @@ pub fn write_output_files_to_disk(
                 chunks,
                 Some(&mut display_size),
                 resolver_opts.compile
-                    && !chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
+                    && !chunk
+                        .flags
+                        .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
                 chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
             ) {
                 Ok(r) => r,
@@ -210,9 +213,7 @@ pub fn write_output_files_to_disk(
         let mut source_map_output_file: Option<OutputFile> = None;
 
         let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
-            parse_graph
-                .input_files
-                .items_source()[chunk.entry_point.source_index() as usize]
+            parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize]
                 .path
                 .text
         } else {
@@ -224,11 +225,10 @@ pub fn write_output_files_to_disk(
                 let output_source_map = chunk
                     .output_source_map
                     .finalize(&code_result.shifts)
-                    .unwrap_or_else(|_| panic!("Failed to allocate memory for external source map"));
-                let source_map_final_rel_path = strings::concat(&[
-                    &chunk.final_rel_path,
-                    b".map",
-                ]);
+                    .unwrap_or_else(|_| {
+                        panic!("Failed to allocate memory for external source map")
+                    });
+                let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
 
                 if tag == SourceMapOption::Linked {
                     let [a, b] = if !public_path.is_empty() {
@@ -299,7 +299,9 @@ pub fn write_output_files_to_disk(
                 let output_source_map = chunk
                     .output_source_map
                     .finalize(&code_result.shifts)
-                    .unwrap_or_else(|_| panic!("Failed to allocate memory for external source map"));
+                    .unwrap_or_else(|_| {
+                        panic!("Failed to allocate memory for external source map")
+                    });
                 let encode_len = bun_base64::encode_len(&output_source_map);
 
                 let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
@@ -381,16 +383,15 @@ pub fn write_output_files_to_disk(
                         ) {
                             Ok(_) => {}
                             Err(e) => {
-                                c.log_mut()
-                                    .add_error_fmt(
-                                        None,
-                                        Loc::EMPTY,
-                                        format_args!(
-                                            "{} writing bytecode for chunk {}",
-                                            e,
-                                            quote(&chunk.final_rel_path),
-                                        ),
-                                    );
+                                c.log_mut().add_error_fmt(
+                                    None,
+                                    Loc::EMPTY,
+                                    format_args!(
+                                        "{} writing bytecode for chunk {}",
+                                        e,
+                                        quote(&chunk.final_rel_path),
+                                    ),
+                                );
                                 return Err(err!("WriteFailed"));
                             }
                         }
@@ -438,9 +439,15 @@ pub fn write_output_files_to_disk(
         match write_file_with_path_buffer(
             &mut pathbuf,
             WriteFileArgs {
-                data: WriteFileData::Buffer { buffer: &code_result.buffer },
+                data: WriteFileData::Buffer {
+                    buffer: &code_result.buffer,
+                },
                 encoding: WriteFileEncoding::Buffer,
-                mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) { 0o755 } else { 0o644 },
+                mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
+                    0o755
+                } else {
+                    0o644
+                },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
                 file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
             },
@@ -480,8 +487,7 @@ pub fn write_output_files_to_disk(
             output_path: chunk.final_rel_path.clone(),
             input_path,
             input_loader: if chunk.entry_point.is_entry_point() {
-                parse_graph.input_files.items_loader()
-                    [chunk.entry_point.source_index() as usize]
+                parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
             } else {
                 Loader::Js
             },
@@ -516,7 +522,10 @@ pub fn write_output_files_to_disk(
                 Content::Javascript(js) => {
                     // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `Index` is
                     // `#[repr(transparent)]` over u32.
-                    js.css_chunks.iter().map(|&i| OutputFileIndex::init(i)).collect()
+                    js.css_chunks
+                        .iter()
+                        .map(|&i| OutputFileIndex::init(i))
+                        .collect()
                 }
                 Content::Css(_) => Box::default(),
                 Content::Html => Box::default(),
@@ -548,8 +557,7 @@ pub fn write_output_files_to_disk(
         let additional_start = output_files.additional_output_files_start as usize;
         let additional_len = output_files.output_files.len() - additional_start;
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
-        let additional_output_files =
-            &mut output_files.output_files[additional_start..];
+        let additional_output_files = &mut output_files.output_files[additional_start..];
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `c.log_mut()` below (split borrow).
         let parse_graph = unsafe { &mut *c.parse_graph };
@@ -570,21 +578,19 @@ pub fn write_output_files_to_disk(
             // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
             // owned Box that drops at end of scope.
 
-            let rel_parent =
-                paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
+            let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
-                    c.log_mut()
-                        .add_error_fmt(
-                            None,
-                            Loc::EMPTY,
-                            format_args!(
-                                "{} creating outdir {} while saving file {}",
-                                e.name(),
-                                quote(rel_parent),
-                                quote(&*src.dest_path),
-                            ),
-                        );
+                    c.log_mut().add_error_fmt(
+                        None,
+                        Loc::EMPTY,
+                        format_args!(
+                            "{} creating outdir {} while saving file {}",
+                            e.name(),
+                            quote(rel_parent),
+                            quote(&*src.dest_path),
+                        ),
+                    );
                     return Err(e);
                 }
             }
@@ -595,11 +601,10 @@ pub fn write_output_files_to_disk(
                 &bytes,
             ) {
                 Err(e) => {
-                    c.log_mut()
-                        .add_sys_error(
-                            &e,
-                            format_args!("writing file {}", quote(src.src_path.text)),
-                        );
+                    c.log_mut().add_sys_error(
+                        &e,
+                        format_args!("writing file {}", quote(src.src_path.text)),
+                    );
                     return Err(err!("WriteFailed"));
                 }
                 Ok(_) => {}

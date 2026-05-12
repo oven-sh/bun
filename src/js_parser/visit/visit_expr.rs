@@ -1,4 +1,10 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unreachable_code
+)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use core::ptr::NonNull;
@@ -7,23 +13,22 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_core::strings;
 
-use bun_ast as js_ast;
-use bun_alloc::ArenaVecExt as _;
+use crate::lexer as js_lexer;
+use crate::p::P;
+use crate::parser::{
+    ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT, PrependTempRefsOpts, ReactRefresh, Ref,
+    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol, B};
 use bun_alloc::ArenaVecExt as _;
+use bun_alloc::ArenaVecExt as _;
+use bun_alloc::ArenaVecExt as _;
+use bun_alloc::ArenaVecExt as _;
+use bun_ast as js_ast;
 use bun_ast::G::Property;
-use bun_alloc::ArenaVecExt as _;
-use crate::p::P;
-use bun_alloc::ArenaVecExt as _;
 use bun_ast::flags as Flags;
-use crate::lexer as js_lexer;
-use crate::parser::{
-    float_to_int32, prefill, ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT,
-    PrependTempRefsOpts, ReactRefresh, Ref, StrictModeFeature, ThenCatchChain, TransposeState,
-    VisitArgsOpts,
-};
+use bun_ast::{B, E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol};
 
 // Local short-hands so the visitor bodies read close to the Zig
 // (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
@@ -164,12 +169,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     continue;
                 }
                 // Substitute user-specified defines
-                *e = p.value_for_define(
-                    expr.loc,
-                    in_.assign_target,
-                    is_delete_target,
-                    &define.data,
-                );
+                *e =
+                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
                 return;
             }
         }
@@ -177,9 +178,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
-        let mut e_ = expr.data.e_identifier().expect("infallible: variant checked");
+        let mut e_ = expr
+            .data
+            .e_identifier()
+            .expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target.tag(), Tag::EIdentifier)
-            && e_.ref_.eql(p.delete_target.e_identifier().expect("infallible: variant checked").ref_);
+            && e_.ref_.eql(
+                p.delete_target
+                    .e_identifier()
+                    .expect("infallible: variant checked")
+                    .ref_,
+            );
 
         let name = p.load_name_from_ref(e_.ref_);
         if p.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
@@ -201,7 +210,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
-            if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant {
+            if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
+            {
                 // TODO: silence this for runtime transpiler
                 let r = js_lexer::range_of_identifier(p.source, expr.loc);
                 let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
@@ -224,29 +234,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
                 match is_error {
-                    true => p
-                        .log()
-                        .add_range_error_fmt_with_notes(
-                            Some(p.source),
-                            r,
-                            notes,
-                            format_args!(
-                                "Cannot assign to \"{}\" because it is a constant",
-                                BStr::new(name)
-                            ),
+                    true => p.log().add_range_error_fmt_with_notes(
+                        Some(p.source),
+                        r,
+                        notes,
+                        format_args!(
+                            "Cannot assign to \"{}\" because it is a constant",
+                            BStr::new(name)
                         ),
+                    ),
 
-                    false => p
-                        .log()
-                        .add_range_error_fmt_with_notes(
-                            Some(p.source),
-                            r,
-                            notes,
-                            format_args!(
-                                "This assignment will throw because \"{}\" is a constant",
-                                BStr::new(name)
-                            ),
+                    false => p.log().add_range_error_fmt_with_notes(
+                        Some(p.source),
+                        r,
+                        notes,
+                        format_args!(
+                            "This assignment will throw because \"{}\" is a constant",
+                            BStr::new(name)
                         ),
+                    ),
                 }
             } else if p.exports_ref.eql(e_.ref_) {
                 // Assigning to `exports` in a CommonJS module must be tracked to undo the
@@ -270,12 +276,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
-                    let newvalue: Expr = p.value_for_define(
-                        expr.loc,
-                        in_.assign_target,
-                        is_delete_target,
-                        def,
-                    );
+                    let newvalue: Expr =
+                        p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
                     // Don't substitute an identifier for a non-identifier if this is an
                     // assignment target, since it'll cause a syntax error
@@ -313,12 +315,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
                 // mark a reference to __require only if this is not about to be used for a call target
                 if !(matches!(p.call_target.tag(), Tag::EIdentifier)
-                    && expr
-                        .data
-                        .e_identifier()
-                        .unwrap()
-                        .ref_
-                        .eql(p.call_target.e_identifier().expect("infallible: variant checked").ref_))
+                    && expr.data.e_identifier().unwrap().ref_.eql(
+                        p.call_target
+                            .e_identifier()
+                            .expect("infallible: variant checked")
+                            .ref_,
+                    ))
                     && p.options.features.allow_runtime
                 {
                     p.record_usage_of_runtime_require();
@@ -338,21 +340,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .with_is_delete_target(is_delete_target)
                 .with_is_call_target(
                     matches!(p.call_target.tag(), Tag::EIdentifier)
-                        && expr
-                            .data
-                            .e_identifier()
-                            .unwrap()
-                            .ref_
-                            .eql(p.call_target.e_identifier().expect("infallible: variant checked").ref_),
+                        && expr.data.e_identifier().unwrap().ref_.eql(
+                            p.call_target
+                                .e_identifier()
+                                .expect("infallible: variant checked")
+                                .ref_,
+                        ),
                 )
                 .with_was_originally_identifier(true),
         );
     }
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
-        use crate::parser::{options, JSXImport, JSXTransformType};
+        use crate::parser::{JSXImport, JSXTransformType, options};
         let _ = in_;
-        let mut e_ = expr.data.e_jsx_element().expect("infallible: variant checked");
+        let mut e_ = expr
+            .data
+            .e_jsx_element()
+            .expect("infallible: variant checked");
         // Zig: `switch (comptime jsx_transform_type)` — const-generic enum dispatch.
         match J::KIND {
             JSXTransformType::React => {
@@ -403,16 +408,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else {
                     options::JSX::Runtime::Classic
                 };
-                let is_key_after_spread =
-                    e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
+                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
-                    let mut args =
-                        ExprNodeList::init_capacity(2 + children_count as usize);
+                    let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     // PERF(port): was assume_capacity
                     VecExt::append(&mut args, tag);
 
@@ -422,13 +425,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // before wrapping in E.Object. PropertyList = Vec<Property> here is
                         // already arena-backed and the JSX node is consumed; reuse in place.
                         // PERF(port): was arena alloc + bun.copy — profile in Phase B
-                        VecExt::append(&mut args, p.new_expr(
-                            E::Object {
-                                properties: bun_alloc::AstAlloc::take(&mut e_.properties),
-                                ..Default::default()
-                            },
-                            expr.loc,
-                        ));
+                        VecExt::append(
+                            &mut args,
+                            p.new_expr(
+                                E::Object {
+                                    properties: bun_alloc::AstAlloc::take(&mut e_.properties),
+                                    ..Default::default()
+                                },
+                                expr.loc,
+                            ),
+                        );
                     } else {
                         VecExt::append(&mut args, p.new_expr(E::Null {}, expr.loc));
                     }
@@ -616,35 +622,52 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut args = ExprNodeList::init_capacity(args_len);
                     VecExt::append(&mut args, tag);
 
-                    VecExt::append(&mut args, p.new_expr(
-                        E::Object {
-                            properties: bun_alloc::AstAlloc::take(props),
-                            ..Default::default()
-                        },
-                        expr.loc,
-                    ));
+                    VecExt::append(
+                        &mut args,
+                        p.new_expr(
+                            E::Object {
+                                properties: bun_alloc::AstAlloc::take(props),
+                                ..Default::default()
+                            },
+                            expr.loc,
+                        ),
+                    );
 
                     if let Some(key) = maybe_key_value {
                         VecExt::append(&mut args, key);
                     } else if p.options.jsx.development {
                         // if (maybeKey !== undefined)
-                        VecExt::append(&mut args, Expr {
-                            loc: expr.loc,
-                            data: Data::EUndefined(E::Undefined {}),
-                        });
+                        VecExt::append(
+                            &mut args,
+                            Expr {
+                                loc: expr.loc,
+                                data: Data::EUndefined(E::Undefined {}),
+                            },
+                        );
                     }
 
                     if p.options.jsx.development {
                         // is the return type of the first child an array?
                         // It's dynamic
                         // Else, it's static
-                        VecExt::append(&mut args, Expr {
-                            loc: expr.loc,
-                            data: Data::EBoolean(E::Boolean { value: is_static_jsx }),
-                        });
+                        VecExt::append(
+                            &mut args,
+                            Expr {
+                                loc: expr.loc,
+                                data: Data::EBoolean(E::Boolean {
+                                    value: is_static_jsx,
+                                }),
+                            },
+                        );
 
                         VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc));
-                        VecExt::append(&mut args, Expr { data: prefill::data::THIS, loc: expr.loc });
+                        VecExt::append(
+                            &mut args,
+                            Expr {
+                                data: prefill::data::THIS,
+                                loc: expr.loc,
+                            },
+                        );
                     }
 
                     let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);
@@ -708,23 +731,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         if p.source.path.is_node_module() {
-                            p.log()
-                                .add_error(
-                                    Some(p.source),
-                                    expr.loc,
-                                    b"For security reasons, macros cannot be run from node_modules.",
-                                );
+                            p.log().add_error(
+                                Some(p.source),
+                                expr.loc,
+                                b"For security reasons, macros cannot be run from node_modules.",
+                            );
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
                         }
 
                         p.macro_call_count += 1;
-                        let name: &[u8] = macro_ref_data
-                            .name
-                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().expect("infallible: variant checked").name.slice());
+                        let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
+                            e_.tag
+                                .unwrap()
+                                .data
+                                .e_dot()
+                                .expect("infallible: variant checked")
+                                .name
+                                .slice()
+                        });
                         let (record_path_text, record_range) = {
-                            let record = &p.import_records.items()
-                                [macro_ref_data.import_record_id as usize];
+                            let record =
+                                &p.import_records.items()[macro_ref_data.import_record_id as usize];
                             (record.path.text, record.range)
                         };
                         // We must visit it to convert inline_identifiers and record usage
@@ -894,7 +922,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
-            ExprIn { has_chain_parent, ..Default::default() },
+            ExprIn {
+                has_chain_parent,
+                ..Default::default()
+            },
         );
 
         match e_.index.data {
@@ -911,15 +942,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         loc: e_.index.loc,
                         len: i32::try_from(name.len()).expect("int cast"),
                     };
-                    p.log()
-                        .add_range_error_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!(
-                                "Private name \"{}\" must be declared in an enclosing class",
-                                BStr::new(name)
-                            ),
-                        );
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        r,
+                        format_args!(
+                            "Private name \"{}\" must be declared in an enclosing class",
+                            BStr::new(name)
+                        ),
+                    );
                 } else {
                     if in_.assign_target != js_ast::AssignTarget::None
                         && (kind == js_ast::symbol::Kind::PrivateMethod
@@ -929,15 +959,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).expect("int cast"),
                         };
-                        p.log()
-                            .add_range_warning_fmt(
-                                Some(p.source),
-                                r,
-                                format_args!(
-                                    "Writing to read-only method \"{}\" will throw",
-                                    BStr::new(name)
-                                ),
-                            );
+                        p.log().add_range_warning_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!(
+                                "Writing to read-only method \"{}\" will throw",
+                                BStr::new(name)
+                            ),
+                        );
                     } else if in_.assign_target != js_ast::AssignTarget::None
                         && (kind == js_ast::symbol::Kind::PrivateGet
                             || kind == js_ast::symbol::Kind::PrivateStaticGet)
@@ -946,15 +975,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).expect("int cast"),
                         };
-                        p.log()
-                            .add_range_warning_fmt(
-                                Some(p.source),
-                                r,
-                                format_args!(
-                                    "Writing to getter-only property \"{}\" will throw",
-                                    BStr::new(name)
-                                ),
-                            );
+                        p.log().add_range_warning_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!(
+                                "Writing to getter-only property \"{}\" will throw",
+                                BStr::new(name)
+                            ),
+                        );
                     } else if in_.assign_target != js_ast::AssignTarget::Replace
                         && (kind == js_ast::symbol::Kind::PrivateSet
                             || kind == js_ast::symbol::Kind::PrivateStaticSet)
@@ -963,19 +991,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).expect("int cast"),
                         };
-                        p.log()
-                            .add_range_warning_fmt(
-                                Some(p.source),
-                                r,
-                                format_args!(
-                                    "Reading from setter-only property \"{}\" will throw",
-                                    BStr::new(name)
-                                ),
-                            );
+                        p.log().add_range_warning_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!(
+                                "Reading from setter-only property \"{}\" will throw",
+                                BStr::new(name)
+                            ),
+                        );
                     }
                 }
 
-                e_.index = Expr { data: Data::EPrivateIdentifier(private), loc: e_.index.loc };
+                e_.index = Expr {
+                    data: Data::EPrivateIdentifier(private),
+                    loc: e_.index.loc,
+                };
             }
             _ => {
                 p.visit_expr(&mut e_.index);
@@ -1045,7 +1075,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(mut str_) = target.data.as_e_string() {
                         if !str_.is_utf16 {
                             let literal = str_.data;
-                            let num: usize = index.data.e_number().expect("infallible: variant checked").to_usize();
+                            let num: usize = index
+                                .data
+                                .e_number()
+                                .expect("infallible: variant checked")
+                                .to_usize();
                             if cfg!(debug_assertions) {
                                 debug_assert!(strings::is_all_ascii(&literal));
                             }
@@ -1072,7 +1106,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // ['a', 'b', 'c'][1] -> 'b'
                         let int: usize = number.value as usize;
-                        if int < array.items.len_u32() as usize && p.expr_can_be_removed_if_unused(&target)
+                        if int < array.items.len_u32() as usize
+                            && p.expr_can_be_removed_if_unused(&target)
                         {
                             let inlined = *array.items.at(int);
                             // ['a', , 'c'][1] -> undefined
@@ -1097,24 +1132,35 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // errors.
         if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
-            && p.symbols[e_.target.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize].kind
+            && p.symbols[e_
+                .target
+                .data
+                .e_identifier()
+                .expect("infallible: variant checked")
+                .ref_
+                .inner_index() as usize]
+                .kind
                 == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
-            p.log()
-                .add_range_error_fmt(
-                    Some(p.source),
-                    r,
-                    format_args!(
-                        "Cannot assign to property on import \"{}\"",
-                        // `original_name: StoreStr` has a safe `Deref<Target=[u8]>`.
-                        BStr::new(
-                            &*p.symbols
-                                [e_.target.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
-                                .original_name,
-                        )
-                    ),
-                );
+            p.log().add_range_error_fmt(
+                Some(p.source),
+                r,
+                format_args!(
+                    "Cannot assign to property on import \"{}\"",
+                    // `original_name: StoreStr` has a safe `Deref<Target=[u8]>`.
+                    BStr::new(
+                        &*p.symbols[e_
+                            .target
+                            .data
+                            .e_identifier()
+                            .expect("infallible: variant checked")
+                            .ref_
+                            .inner_index() as usize]
+                            .original_name,
+                    )
+                ),
+            );
         }
 
         // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
@@ -1131,7 +1177,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let assign_target = Op::unary_assign_target(e_.op);
                 p.visit_expr_in_out(
                     &mut e_.value,
-                    ExprIn { assign_target, ..Default::default() },
+                    ExprIn {
+                        assign_target,
+                        ..Default::default()
+                    },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
 
@@ -1139,39 +1188,63 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // is unbound because that could suppress a ReferenceError from "x"
                 if !id_before
                     && id_after
-                    && p.symbols[e_.value.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
+                    && p.symbols[e_
+                        .value
+                        .data
+                        .e_identifier()
+                        .expect("infallible: variant checked")
+                        .ref_
+                        .inner_index() as usize]
                         .kind
                         == js_ast::symbol::Kind::Unbound
                 {
-                    e_.value = Expr { loc: e_.value.loc, data: prefill::data::ZERO }
-                        .join_with_comma(e_.value);
+                    e_.value = Expr {
+                        loc: e_.value.loc,
+                        data: prefill::data::ZERO,
+                    }
+                    .join_with_comma(e_.value);
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
                     p.ignore_usage_of_runtime_require();
                     *e = p.new_expr(
-                        E::String { data: b"function".into(), ..Default::default() },
+                        E::String {
+                            data: b"function".into(),
+                            ..Default::default()
+                        },
                         expr.loc,
                     );
                     return;
                 }
 
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
-                    *e = p.new_expr(E::String { data: typeof_.into(), ..Default::default() }, expr.loc);
+                    *e = p.new_expr(
+                        E::String {
+                            data: typeof_.into(),
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
                     return;
                 }
             }
             Op::UnDelete => {
                 p.visit_expr_in_out(
                     &mut e_.value,
-                    ExprIn { has_chain_parent: true, ..Default::default() },
+                    ExprIn {
+                        has_chain_parent: true,
+                        ..Default::default()
+                    },
                 );
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
                 p.visit_expr_in_out(
                     &mut e_.value,
-                    ExprIn { assign_target, ..Default::default() },
+                    ExprIn {
+                        assign_target,
+                        ..Default::default()
+                    },
                 );
 
                 // Post-process the unary expression
@@ -1183,7 +1256,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let side_effects = SideEffects::to_boolean(p, &e_.value.data);
                         if side_effects.ok {
-                            *e = p.new_expr(E::Boolean { value: !side_effects.value }, expr.loc);
+                            *e = p.new_expr(
+                                E::Boolean {
+                                    value: !side_effects.value,
+                                },
+                                expr.loc,
+                            );
                             return;
                         }
 
@@ -1203,7 +1281,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if p.should_fold_typescript_constant_expressions {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
                                 *e = p.new_expr(
-                                    E::Number { value: f64::from(!float_to_int32(value)) },
+                                    E::Number {
+                                        value: f64::from(!float_to_int32(value)),
+                                    },
                                     expr.loc,
                                 );
                                 return;
@@ -1329,8 +1409,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else if e_.name == b"then" {
                 p.then_catch_chain = ThenCatchChain {
                     next_target: e_.target.data,
-                    has_catch: p.then_catch_chain.has_catch
-                        || p.then_catch_chain.has_multiple_args,
+                    has_catch: p.then_catch_chain.has_catch || p.then_catch_chain.has_multiple_args,
                     has_multiple_args: false,
                 };
             }
@@ -1349,7 +1428,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {
             // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`
             // was not a call target. even if the call target is `require.resolve`, it should be set.
-            *e = Expr { data: Data::ERequireResolveCallTarget, loc: expr.loc };
+            *e = Expr {
+                data: Data::ERequireResolveCallTarget,
+                loc: expr.loc,
+            };
             return;
         }
 
@@ -1373,7 +1455,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if !p.options.features.is_macro_runtime {
                     if p.macro_call_count > 0
                         && matches!(e_.target.data, Data::EObject(..))
-                        && e_.target.data.e_object().expect("infallible: variant checked").was_originally_macro
+                        && e_
+                            .target
+                            .data
+                            .e_object()
+                            .expect("infallible: variant checked")
+                            .was_originally_macro
                     {
                         if let Some(obj) = e_.target.get(&e_.name) {
                             *e = obj;
@@ -1387,7 +1474,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
-        let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_call_target =
+            matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1474,7 +1562,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Data::ESpread(spread) => {
                     p.visit_expr_in_out(
                         &mut spread.value,
-                        ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                        ExprIn {
+                            assign_target: in_.assign_target,
+                            ..Default::default()
+                        },
                     );
 
                     spread_item_count += if let Data::EArray(arr) = &spread.value.data {
@@ -1484,18 +1575,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
                 }
                 Data::EBinary(e2) => {
-                    if in_.assign_target != js_ast::AssignTarget::None
-                        && e2.op == Op::BinAssign
-                    {
+                    if in_.assign_target != js_ast::AssignTarget::None && e2.op == Op::BinAssign {
                         let was_anonymous_named_expr = e2.right.is_anonymous_named();
                         // Propagate name for anonymous decorated class expressions
                         if was_anonymous_named_expr
                             && matches!(e2.right.data, Data::EClass(..))
-                            && e2.right.data.e_class().expect("infallible: variant checked").should_lower_standard_decorators
+                            && e2
+                                .right
+                                .data
+                                .e_class()
+                                .expect("infallible: variant checked")
+                                .should_lower_standard_decorators
                             && matches!(e2.left.data.tag(), Tag::EIdentifier)
                         {
-                            p.decorator_class_name =
-                                Some(p.load_name_from_ref(e2.left.data.e_identifier().expect("infallible: variant checked").ref_));
+                            p.decorator_class_name = Some(
+                                p.load_name_from_ref(
+                                    e2.left
+                                        .data
+                                        .e_identifier()
+                                        .expect("infallible: variant checked")
+                                        .ref_,
+                                ),
+                            );
                         }
                         p.visit_expr_in_out(
                             &mut e2.left,
@@ -1508,9 +1609,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.decorator_class_name = None;
 
                         if matches!(e2.left.data.tag(), Tag::EIdentifier) {
-                            let name = p.symbols
-                                [e2.left.data.e_identifier().expect("infallible: variant checked").ref_.inner_index()
-                                    as usize]
+                            let name = p.symbols[e2
+                                .left
+                                .data
+                                .e_identifier()
+                                .expect("infallible: variant checked")
+                                .ref_
+                                .inner_index()
+                                as usize]
                                 .original_name;
                             e2.right = p.maybe_keep_expr_symbol_name(
                                 e2.right,
@@ -1521,14 +1627,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     } else {
                         p.visit_expr_in_out(
                             item,
-                            ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                            ExprIn {
+                                assign_target: in_.assign_target,
+                                ..Default::default()
+                            },
                         );
                     }
                 }
                 _ => {
                     p.visit_expr_in_out(
                         item,
-                        ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                        ExprIn {
+                            assign_target: in_.assign_target,
+                            ..Default::default()
+                        },
                     );
                 }
             }
@@ -1568,17 +1680,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     && !property.flags.contains(Flags::Property::IsMethod)
                     && in_.assign_target == js_ast::AssignTarget::None
                     && key.data.is_string_value()
-                    && key.data.e_string().expect("infallible: variant checked").data == b"__proto__"
+                    && key
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .data
+                        == b"__proto__"
                 // __proto__ is utf8, assume it lives in refs
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
-                        p.log()
-                            .add_range_error(
-                                Some(p.source),
-                                r,
-                                b"Cannot specify the \"__proto__\" property more than once per object",
-                            );
+                        p.log().add_range_error(
+                            Some(p.source),
+                            r,
+                            b"Cannot specify the \"__proto__\" property more than once per object",
+                        );
                     }
                     has_proto = true;
                 }
@@ -1591,7 +1707,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 && property.initializer.is_none()
                 && property.value.is_some()
             {
-                if let Data::EBinary(bin) = &property.value.expect("infallible: prop has value").data {
+                if let Data::EBinary(bin) =
+                    &property.value.expect("infallible: prop has value").data
+                {
                     if bin.op == Op::BinAssign {
                         property.initializer = Some(bin.right);
                         property.value = Some(bin.left);
@@ -1603,7 +1721,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
                 if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(property.value.expect("infallible: prop has value").data, Data::EClass(..))
+                    && matches!(
+                        property.value.expect("infallible: prop has value").data,
+                        Data::EClass(..)
+                    )
                     && property
                         .value
                         .unwrap()
@@ -1611,19 +1732,41 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .e_class()
                         .unwrap()
                         .should_lower_standard_decorators
-                    && property.value.expect("infallible: prop has value").data.e_class().expect("infallible: variant checked").class_name.is_none()
+                    && property
+                        .value
+                        .expect("infallible: prop has value")
+                        .data
+                        .e_class()
+                        .expect("infallible: variant checked")
+                        .class_name
+                        .is_none()
                     && property.key.is_some()
-                    && matches!(property.key.expect("infallible: prop has key").data, Data::EString(..))
+                    && matches!(
+                        property.key.expect("infallible: prop has key").data,
+                        Data::EString(..)
+                    )
                 {
-                    let key_str = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked");
+                    let key_str = property
+                        .key
+                        .expect("infallible: prop has key")
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked");
                     // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data.slice()) } else { None };
+                    p.decorator_class_name = if !key_str.is_utf16 {
+                        Some(key_str.data.slice())
+                    } else {
+                        None
+                    };
                 }
                 p.visit_expr_in_out(
                     property.value.as_mut().expect("infallible: prop has value"),
-                    ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                    ExprIn {
+                        assign_target: in_.assign_target,
+                        ..Default::default()
+                    },
                 );
                 p.decorator_class_name = None;
             }
@@ -1642,8 +1785,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     if let Some(val) = property.value {
                         if matches!(val.data.tag(), Tag::EIdentifier) {
-                            p.decorator_class_name =
-                                Some(p.load_name_from_ref(val.data.e_identifier().expect("infallible: variant checked").ref_));
+                            p.decorator_class_name = Some(
+                                p.load_name_from_ref(
+                                    val.data
+                                        .e_identifier()
+                                        .expect("infallible: variant checked")
+                                        .ref_,
+                                ),
+                            );
                         }
                     }
                 }
@@ -1652,8 +1801,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if let Some(val) = property.value {
                     if matches!(val.data.tag(), Tag::EIdentifier) {
-                        let name = p.symbols
-                            [val.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
+                        let name = p.symbols[val
+                            .data
+                            .e_identifier()
+                            .expect("infallible: variant checked")
+                            .ref_
+                            .inner_index() as usize]
                             .original_name;
                         property.initializer = Some(p.maybe_keep_expr_symbol_name(
                             property.initializer.expect("unreachable"),
@@ -1760,7 +1913,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
                     && target_was_identifier_before_visit
-                    && p.symbols[ident.ref_.inner_index() as usize].original_name.slice()
+                    && p.symbols[ident.ref_.inner_index() as usize]
+                        .original_name
+                        .slice()
                         == b"eval"
                 {
                     e_.is_direct_eval = true;
@@ -1808,8 +1963,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 _ => None,
             };
 
-            possible_macro_ref.is_some()
-                && p.macro_.refs.contains_key(&possible_macro_ref.unwrap())
+            possible_macro_ref.is_some() && p.macro_.refs.contains_key(&possible_macro_ref.unwrap())
         } else {
             false
         };
@@ -1868,7 +2022,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;
-                *e = Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                *e = Expr {
+                    data: Data::EUndefined(E::Undefined {}),
+                    loc: expr.loc,
+                };
                 return;
             }
         }
@@ -1984,7 +2141,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // code is correct, discard the entire
                     // expression in production.
                     if !p.options.features.hot_module_reloading {
-                        *e = Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                        *e = Expr {
+                            data: Data::EUndefined(E::Undefined {}),
+                            loc: expr.loc,
+                        };
                         return;
                     }
                 }
@@ -1996,7 +2156,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if is_macro_ref && !p.options.features.is_macro_runtime {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
-                    Data::EDot(dot) => dot.target.data.e_identifier().expect("infallible: variant checked").ref_,
+                    Data::EDot(dot) => {
+                        dot.target
+                            .data
+                            .e_identifier()
+                            .expect("infallible: variant checked")
+                            .ref_
+                    }
                     _ => unreachable!(),
                 };
 
@@ -2015,25 +2181,32 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 if p.source.path.is_node_module() {
-                    p.log()
-                        .add_error(
-                            Some(p.source),
-                            expr.loc,
-                            b"For security reasons, macros cannot be run from node_modules.",
-                        );
+                    p.log().add_error(
+                        Some(p.source),
+                        expr.loc,
+                        b"For security reasons, macros cannot be run from node_modules.",
+                    );
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }
 
-                let name: &[u8] = macro_ref_data
-                    .name
-                    .unwrap_or_else(|| e_.target.data.e_dot().expect("infallible: variant checked").name.slice());
+                let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
+                    e_.target
+                        .data
+                        .e_dot()
+                        .expect("infallible: variant checked")
+                        .name
+                        .slice()
+                });
                 let (record_path_text, record_range) = {
                     let record =
                         &p.import_records.items()[macro_ref_data.import_record_id as usize];
                     (record.path.text, record.range)
                 };
-                let copied = Expr { loc: expr.loc, data: expr.data };
+                let copied = Expr {
+                    loc: expr.loc,
+                    data: expr.data,
+                };
                 let start_error_count = p.log().msgs.len();
                 p.macro_call_count += 1;
                 // Reborrow via the field-disjoint `Lexer::log()` accessor
@@ -2059,16 +2232,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Err(err) => {
                         if err == bun_core::err!("MacroFailed") {
                             if p.log().msgs.len() == start_error_count {
-                                p.log()
-                                    .add_error(Some(p.source), expr.loc, b"macro threw exception");
-                            }
-                        } else {
-                            p.log()
-                                .add_error_fmt(
+                                p.log().add_error(
                                     Some(p.source),
                                     expr.loc,
-                                    format_args!("\"{}\" error in macro", err.name()),
+                                    b"macro threw exception",
                                 );
+                            }
+                        } else {
+                            p.log().add_error_fmt(
+                                Some(p.source),
+                                expr.loc,
+                                format_args!("\"{}\" error in macro", err.name()),
+                            );
                         }
                         return;
                     }
@@ -2093,12 +2268,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: round-C `Runtime::Features.server_components` is a `bool` stub; the
         // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
         // `true` as server-side until the enum lands.
-        if p.options.features.react_fast_refresh || p.options.features.server_components.is_server_side() {
+        if p.options.features.react_fast_refresh
+            || p.options.features.server_components.is_server_side()
+        {
             'try_record_hook: {
                 let original_name: &[u8] = match &e_.target.data {
-                    Data::EIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
-                    Data::EImportIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
-                    Data::ECommonjsExportIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
+                    Data::EIdentifier(id) => p.symbols[id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice(),
+                    Data::EImportIdentifier(id) => p.symbols[id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice(),
+                    Data::ECommonjsExportIdentifier(id) => p.symbols
+                        [id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice(),
                     Data::EDot(dot) => dot.name.slice(),
                     _ => break 'try_record_hook,
                 };
@@ -2125,7 +2309,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Also check for `React.useState(...)`
                     if let Data::EDot(dot) = &e_.target.data {
                         if let Data::EImportIdentifier(id) = &dot.target.data {
-                            let name = p.symbols[id.ref_.inner_index() as usize].original_name.slice();
+                            let name = p.symbols[id.ref_.inner_index() as usize]
+                                .original_name
+                                .slice();
                             break 'check_for_usestate name == b"React";
                         }
                     }
@@ -2159,7 +2345,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 let char_ = str_[float as usize];
                                 if char_ < 0x80 {
                                     *e = p.new_expr(
-                                        E::Number { value: f64::from(char_) },
+                                        E::Number {
+                                            value: f64::from(char_),
+                                        },
                                         expr.loc,
                                     );
                                     return;
@@ -2220,12 +2408,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Validate: exactly one argument required
         if e_.args.len_u32() != 1 {
-            p.log()
-                .add_error(
-                    Some(p.source),
-                    loc,
-                    b"feature() requires exactly one string argument",
-                );
+            p.log().add_error(
+                Some(p.source),
+                loc,
+                b"feature() requires exactly one string argument",
+            );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2233,12 +2420,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Validate: argument must be a string literal
         if !matches!(arg.data, Data::EString(..)) {
-            p.log()
-                .add_error(
-                    Some(p.source),
-                    arg.loc,
-                    b"feature() argument must be a string literal",
-                );
+            p.log().add_error(
+                Some(p.source),
+                arg.loc,
+                b"feature() argument must be a string literal",
+            );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2247,12 +2433,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
         let flag_string = arg.data.e_string().expect("infallible: variant checked");
         if flag_string.is_utf16 {
-            p.log()
-                .add_error(
-                    Some(p.source),
-                    arg.loc,
-                    b"feature() flag name must be an ASCII string",
-                );
+            p.log().add_error(
+                Some(p.source),
+                arg.loc,
+                b"feature() flag name must be an ASCII string",
+            );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2326,15 +2511,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // on every exit path below (Zig used `defer`).
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage =
-            Some(core::ptr::NonNull::from(&mut react_hook_data));
+        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` takes ownership of
         // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may
         // want a custom arena Vec that can. Left as a copy with PERF note.
         // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
-        let mut stmts_list =
-            bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
+        let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
@@ -2380,8 +2563,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage =
-            Some(core::ptr::NonNull::from(&mut react_hook_data));
+        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         // Spec (visitExpr.zig e_function): visitFunc(e_.func, expr.loc) — for function
         // *expressions* the .function_args scope is pushed at the `function` keyword loc
@@ -2427,7 +2609,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name.slice(),
+                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                    .original_name
+                    .slice(),
             );
             replaced = true;
         }

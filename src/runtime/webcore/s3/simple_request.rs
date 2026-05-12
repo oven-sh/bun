@@ -1,18 +1,21 @@
 use core::ffi::c_void;
 
-use bun_io::KeepAlive;
+use bun_core::MutableString;
+use bun_core::strings;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{task_tag, TaskTag, Taskable};
+use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
-use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers, HeadersExt, Method};
+use bun_http::{
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers,
+    HeadersExt, Method,
+};
+use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
-use bun_s3_signing::error::{get_sign_error_code_and_message, S3Error};
+use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
-use bun_core::strings;
-use bun_core::MutableString;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
@@ -180,27 +183,41 @@ pub enum Callback {
 }
 
 impl Callback {
-    pub fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> JsTerminatedResult<()> {
+    pub fn fail(
+        &self,
+        code: &[u8],
+        message: &[u8],
+        context: *mut c_void,
+    ) -> JsTerminatedResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
             Callback::Download(callback) => callback(S3DownloadResult::Failure(err), context)?,
             Callback::Stat(callback) => callback(S3StatResult::Failure(err), context)?,
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err), context)?,
-            Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err), context)?,
+            Callback::ListObjects(callback) => {
+                callback(S3ListObjectsResult::Failure(err), context)?
+            }
             Callback::Commit(callback) => callback(S3CommitResult::Failure(err), context)?,
             Callback::Part(callback) => callback(S3PartResult::Failure(err), context)?,
         }
         Ok(())
     }
 
-    pub fn not_found(&self, code: &[u8], message: &[u8], context: *mut c_void) -> JsTerminatedResult<()> {
+    pub fn not_found(
+        &self,
+        code: &[u8],
+        message: &[u8],
+        context: *mut c_void,
+    ) -> JsTerminatedResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err), context)?,
             Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err), context)?,
-            Callback::ListObjects(callback) => callback(S3ListObjectsResult::NotFound(err), context)?,
+            Callback::ListObjects(callback) => {
+                callback(S3ListObjectsResult::NotFound(err), context)?
+            }
             _ => self.fail(code, message, context)?,
         }
         Ok(())
@@ -253,7 +270,8 @@ impl S3HttpSimpleTask {
                 code = b"NoSuchKey";
                 message = b"The specified key does not exist.";
             }
-            self.callback.not_found(code, message, self.callback_context)?;
+            self.callback
+                .not_found(code, message, self.callback_context)?;
         } else {
             self.callback.fail(code, message, self.callback_context)?;
         }
@@ -341,7 +359,8 @@ impl S3HttpSimpleTask {
                     if let Some(body) = &this.result.body {
                         // PORT NOTE: parse_s3_list_objects_result is now infallible (alloc-only
                         // failure modes abort in Rust), so the Zig `catch` arm is unreachable.
-                        let success = list_objects::parse_s3_list_objects_result(body.list.as_slice());
+                        let success =
+                            list_objects::parse_s3_list_objects_result(body.list.as_slice());
                         callback(S3ListObjectsResult::Success(success), this.callback_context)?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
@@ -396,7 +415,11 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(this: *mut Self, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult<'_>) {
+    pub fn http_callback(
+        this: *mut Self,
+        async_http: *mut AsyncHTTP<'static>,
+        result: HTTPClientResult<'_>,
+    ) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
         let this = unsafe { &mut *this };
@@ -424,10 +447,16 @@ impl S3HttpSimpleTask {
             // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
             let this_ptr = std::ptr::from_mut::<Self>(this);
-            let task = std::ptr::from_mut::<ConcurrentTask>(this.concurrent_task.from(this_ptr, AutoDeinit::ManualDeinit));
+            let task = std::ptr::from_mut::<ConcurrentTask>(
+                this.concurrent_task
+                    .from(this_ptr, AutoDeinit::ManualDeinit),
+            );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            this.vm.expect("vm set at task creation").event_loop_shared().enqueue_task_concurrent(task);
+            this.vm
+                .expect("vm set at task creation")
+                .event_loop_shared()
+                .enqueue_task_concurrent(task);
         }
     }
 }
@@ -443,7 +472,9 @@ impl Drop for S3HttpSimpleTask {
         // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
+        ));
         // SAFETY: `http` is always initialised before the task pointer escapes (see
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
         // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
@@ -524,7 +555,11 @@ pub fn execute_simple_s3_request(
             // options.range drops here automatically (Zig: bun.default_allocator.free(range_))
             drop(options.range);
             let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
-            callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context)?;
+            callback.fail(
+                error_code_and_message.code,
+                error_code_and_message.message,
+                callback_context,
+            )?;
             return Ok(());
         }
     };
@@ -532,7 +567,8 @@ pub fn execute_simple_s3_request(
     let headers = 'brk: {
         let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
         if let Some(range_) = &options.range {
-            let _headers = result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
+            let _headers =
+                result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
             break 'brk Headers::from_pico_http_headers(_headers);
         } else {
             if let Some(content_type) = options.content_type {
@@ -565,17 +601,24 @@ pub fn execute_simple_s3_request(
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
+        bun_io::AllocatorType::Js,
+    ));
 
     let proxy = options.proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() { Box::<[u8]>::from(proxy) } else { Box::default() };
+    task.proxy_url = if !proxy.is_empty() {
+        Box::<[u8]>::from(proxy)
+    } else {
+        Box::default()
+    };
     // SAFETY (lifetime extension): `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
     let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    let headers_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+    let headers_buf: &'static [u8] =
+        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
@@ -585,7 +628,9 @@ pub fn execute_simple_s3_request(
     // task) to drop the `'static` pretence.
     let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.proxy_url) }))
+        Some(URL::parse(unsafe {
+            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
+        }))
     } else {
         None
     };
@@ -599,7 +644,10 @@ pub fn execute_simple_s3_request(
         headers_buf,
         &raw mut task.response_buffer,
         body,
-        HTTPClientResultCallback::new::<S3HttpSimpleTask>(task_ptr, S3HttpSimpleTask::http_callback),
+        HTTPClientResultCallback::new::<S3HttpSimpleTask>(
+            task_ptr,
+            S3HttpSimpleTask::http_callback,
+        ),
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,

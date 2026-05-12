@@ -313,9 +313,15 @@ pub fn case_fold(codepoint: u32) -> FoldInfo {
     // Fast path for ASCII characters.
     if codepoint <= 0x7f {
         if codepoint >= b'A' as u32 && codepoint <= b'Z' as u32 {
-            return FoldInfo { codepoints: [codepoint + (b'a' - b'A') as u32, 0, 0], n_codepoints: 1 };
+            return FoldInfo {
+                codepoints: [codepoint + (b'a' - b'A') as u32, 0, 0],
+                n_codepoints: 1,
+            };
         }
-        return FoldInfo { codepoints: [codepoint, 0, 0], n_codepoints: 1 };
+        return FoldInfo {
+            codepoints: [codepoint, 0, 0],
+            n_codepoints: 1,
+        };
     }
 
     // Try each fold map in order: 1-codepoint, 2-codepoint, 3-codepoint.
@@ -324,7 +330,10 @@ pub fn case_fold(codepoint: u32) -> FoldInfo {
         .or_else(|| case_fold_from_map::<2>(FOLD_MAP_2, FOLD_MAP_2_DATA, codepoint))
         .or_else(|| case_fold_from_map::<3>(FOLD_MAP_3, FOLD_MAP_3_DATA, codepoint))
         // No mapping found -- map the codepoint to itself.
-        .unwrap_or(FoldInfo { codepoints: [codepoint, 0, 0], n_codepoints: 1 })
+        .unwrap_or(FoldInfo {
+            codepoints: [codepoint, 0, 0],
+            n_codepoints: 1,
+        })
 }
 
 fn case_fold_from_map<const N: u8>(
@@ -335,7 +344,10 @@ fn case_fold_from_map<const N: u8>(
     let index = unicode_bsearch(codepoint, map)?;
     let data_offset = index * N as usize;
 
-    let mut result = FoldInfo { codepoints: [0, 0, 0], n_codepoints: N };
+    let mut result = FoldInfo {
+        codepoints: [0, 0, 0],
+        n_codepoints: N,
+    };
 
     // Copy the base codepoints from the data table.
     // PERF(port): was `inline for` (compile-time unrolled) — profile in Phase B
@@ -350,7 +362,12 @@ fn case_fold_from_map<const N: u8>(
         if map_cp + 1 == result.codepoints[0] {
             // Alternating type of the range.
             // e.g. 0x0100->0x0101, 0x0101->0x0101, 0x0102->0x0103, ...
-            result.codepoints[0] = codepoint + (if (codepoint & 0x1) == (map_cp & 0x1) { 1u32 } else { 0u32 });
+            result.codepoints[0] = codepoint
+                + (if (codepoint & 0x1) == (map_cp & 0x1) {
+                    1u32
+                } else {
+                    0u32
+                });
         } else {
             // Range-to-range mapping: offset from range start.
             result.codepoints[0] += codepoint - map_cp;

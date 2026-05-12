@@ -1,21 +1,19 @@
 // @link "../deps/libarchive.a"
 #![allow(unused, dead_code, clippy::all)]
 #![warn(unused_must_use)]
-
 // ──────────────────────────────────────────────────────────────────────────
 // Phase D: libarchive FFI surface is fully wired. Thin `extern "C"` wrappers
 // over the C library live in `mod lib` below; higher-level extraction logic
 // (`Archiver`, `BufferReadStream`) sits on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-
 #![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{slice_as_bytes, Output, ZStr};
+use bun_core::{self as bun_str, MutableString, slice_to_nul, strings};
+use bun_core::{Output, ZStr, slice_as_bytes};
 use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
-use bun_core::{self as bun_str, slice_to_nul, strings, MutableString};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -186,13 +184,13 @@ pub mod lib {
         pub fn read_open_memory(&self, buf: &[u8]) -> Result {
             // SAFETY: self valid; buf outlives the archive (caller contract,
             // see `BufferReadStream::buf` field comment).
-            unsafe {
-                archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len())
-            }
+            unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
             // SAFETY: self valid; entry is a valid out-ptr.
-            unsafe { archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry)) }
+            unsafe {
+                archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
+            }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
             // SAFETY: self valid; buf writable for buf.len().
@@ -211,12 +209,20 @@ pub mod lib {
                 return None;
             }
             if r != Result::Ok {
-                return Some(Block { bytes: &[], offset: *offset, result: r });
+                return Some(Block {
+                    bytes: &[],
+                    offset: *offset,
+                    result: r,
+                });
             }
             // SAFETY: on ARCHIVE_OK, libarchive guarantees buff[0..size] is
             // readable until the next read call on this archive.
             let bytes = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
-            Some(Block { bytes, offset: *offset, result: r })
+            Some(Block {
+                bytes,
+                offset: *offset,
+                result: r,
+            })
         }
 
         pub fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
@@ -269,13 +275,14 @@ pub mod lib {
                         match file.pwrite_all(data, block.offset) {
                             Err(_) => {
                                 *can_use_pwrite = false;
-                                bun_core::output::debug_warn("libarchive: falling back to write() after pwrite() failure");
+                                bun_core::output::debug_warn(
+                                    "libarchive: falling back to write() after pwrite() failure",
+                                );
                                 // Fall through to lseek+write path
                             }
                             Ok(()) => {
                                 // pwrite doesn't update file position, but track logical position for fallback
-                                actual_offset =
-                                    actual_offset.max(block.offset + data.len() as i64);
+                                actual_offset = actual_offset.max(block.offset + data.len() as i64);
                                 continue;
                             }
                         }
@@ -497,10 +504,15 @@ pub mod lib {
     impl ReadArchive {
         #[inline]
         pub fn new() -> Self {
-            Self(core::ptr::NonNull::new(Archive::read_new()).expect("archive_read_new returned null"))
+            Self(
+                core::ptr::NonNull::new(Archive::read_new())
+                    .expect("archive_read_new returned null"),
+            )
         }
         #[inline]
-        pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
+        pub fn as_ptr(&self) -> *mut Archive {
+            self.0.as_ptr()
+        }
     }
     impl core::ops::Deref for ReadArchive {
         type Target = Archive;
@@ -524,10 +536,15 @@ pub mod lib {
     impl WriteArchive {
         #[inline]
         pub fn new() -> Self {
-            Self(core::ptr::NonNull::new(Archive::write_new()).expect("archive_write_new returned null"))
+            Self(
+                core::ptr::NonNull::new(Archive::write_new())
+                    .expect("archive_write_new returned null"),
+            )
         }
         #[inline]
-        pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
+        pub fn as_ptr(&self) -> *mut Archive {
+            self.0.as_ptr()
+        }
     }
     impl core::ops::Deref for WriteArchive {
         type Target = Archive;
@@ -555,10 +572,15 @@ pub mod lib {
         }
         #[inline]
         pub fn new2(archive: *mut Archive) -> Self {
-            Self(core::ptr::NonNull::new(Entry::new2(archive)).expect("archive_entry_new2 returned null"))
+            Self(
+                core::ptr::NonNull::new(Entry::new2(archive))
+                    .expect("archive_entry_new2 returned null"),
+            )
         }
         #[inline]
-        pub fn as_ptr(&self) -> *mut Entry { self.0.as_ptr() }
+        pub fn as_ptr(&self) -> *mut Entry {
+            self.0.as_ptr()
+        }
     }
     impl core::ops::Deref for OwnedEntry {
         type Target = Entry;
@@ -596,7 +618,10 @@ pub mod lib {
     impl<T> IteratorResult<T> {
         #[inline]
         pub fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
-            Self::Err { message: msg, archive: arch }
+            Self::Err {
+                message: msg,
+                archive: arch,
+            }
         }
         #[inline]
         pub fn init_res(value: T) -> Self {
@@ -638,13 +663,19 @@ pub mod lib {
 
             match a.read_support_format_tar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(archive, b"failed to enable tar format support");
+                    return IteratorResult::init_err(
+                        archive,
+                        b"failed to enable tar format support",
+                    );
                 }
                 _ => {}
             }
             match a.read_support_format_gnutar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(archive, b"failed to enable gnutar format support");
+                    return IteratorResult::init_err(
+                        archive,
+                        b"failed to enable gnutar format support",
+                    );
                 }
                 _ => {}
             }
@@ -684,7 +715,9 @@ pub mod lib {
                     Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
                     Result::Ok => {
-                        let kind = bun_sys::kind_from_mode(Entry::opaque_ref(entry).filetype() as bun_sys::Mode);
+                        let kind = bun_sys::kind_from_mode(
+                            Entry::opaque_ref(entry).filetype() as bun_sys::Mode
+                        );
                         if (self.filter & (1u16 << (kind as u8))) != 0 {
                             continue;
                         }
@@ -724,13 +757,19 @@ pub mod lib {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
             if size < 0 {
-                return Ok(IteratorResult::init_err(archive, b"invalid archive entry size"));
+                return Ok(IteratorResult::init_err(
+                    archive,
+                    b"invalid archive entry size",
+                ));
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: archive is valid for the lifetime of the iterator.
             let read = unsafe { &*archive }.read_data(&mut buf);
             if read < 0 {
-                return Ok(IteratorResult::init_err(archive, b"failed to read archive data"));
+                return Ok(IteratorResult::init_err(
+                    archive,
+                    b"failed to read archive data",
+                ));
             }
             buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
@@ -767,7 +806,10 @@ pub mod lib {
 
     impl GrowingBuffer {
         pub fn init() -> GrowingBuffer {
-            GrowingBuffer { list: Vec::new(), had_error: false }
+            GrowingBuffer {
+                list: Vec::new(),
+                had_error: false,
+            }
         }
 
         pub fn to_owned_slice(&mut self) -> core::result::Result<Vec<u8>, bun_core::OOM> {
@@ -777,7 +819,10 @@ pub mod lib {
             Ok(core::mem::take(&mut self.list))
         }
 
-        pub unsafe extern "C" fn open_callback(_a: *mut Archive, client_data: *mut c_void) -> c_int {
+        pub unsafe extern "C" fn open_callback(
+            _a: *mut Archive,
+            client_data: *mut c_void,
+        ) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
             let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
             this.list.clear();
@@ -806,7 +851,10 @@ pub mod lib {
             la_ssize_t::try_from(length).expect("int cast")
         }
 
-        pub unsafe extern "C" fn close_callback(_a: *mut Archive, _client_data: *mut c_void) -> c_int {
+        pub unsafe extern "C" fn close_callback(
+            _a: *mut Archive,
+            _client_data: *mut c_void,
+        ) -> c_int {
             0
         }
     }
@@ -853,13 +901,19 @@ pub mod lib {
         ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
             let size = self.entry().size();
             if size < 0 {
-                return Ok(Err(IteratorError { archive, message: b"invalid archive entry size" }));
+                return Ok(Err(IteratorError {
+                    archive,
+                    message: b"invalid archive entry size",
+                }));
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: `archive` came from `Archive::read_new()`.
             let read = unsafe { &*archive }.read_data(&mut buf);
             if read < 0 {
-                return Ok(Err(IteratorError { archive, message: b"failed to read archive data" }));
+                return Ok(Err(IteratorError {
+                    archive,
+                    message: b"failed to read archive data",
+                }));
             }
             buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(Ok(buf))
@@ -896,31 +950,46 @@ pub mod lib {
 
             match a.read_support_format_tar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive, message: b"failed to enable tar format support" });
+                    return Err(IteratorError {
+                        archive,
+                        message: b"failed to enable tar format support",
+                    });
                 }
                 _ => {}
             }
             match a.read_support_format_gnutar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive, message: b"failed to enable gnutar format support" });
+                    return Err(IteratorError {
+                        archive,
+                        message: b"failed to enable gnutar format support",
+                    });
                 }
                 _ => {}
             }
             match a.read_support_filter_gzip() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive, message: b"failed to enable support for gzip compression" });
+                    return Err(IteratorError {
+                        archive,
+                        message: b"failed to enable support for gzip compression",
+                    });
                 }
                 _ => {}
             }
             match a.read_set_options(c"read_concatenated_archives") {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive, message: b"failed to set option `read_concatenated_archives`" });
+                    return Err(IteratorError {
+                        archive,
+                        message: b"failed to set option `read_concatenated_archives`",
+                    });
                 }
                 _ => {}
             }
             match a.read_open_memory(tarball_bytes) {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive, message: b"failed to read tarball" });
+                    return Err(IteratorError {
+                        archive,
+                        message: b"failed to read tarball",
+                    });
                 }
                 _ => {}
             }
@@ -937,7 +1006,9 @@ pub mod lib {
                     Result::Retry => continue,
                     Result::Eof => return Ok(None),
                     Result::Ok => {
-                        let kind = bun_sys::kind_from_mode(Entry::opaque_ref(entry).filetype() as bun_sys::Mode);
+                        let kind = bun_sys::kind_from_mode(
+                            Entry::opaque_ref(entry).filetype() as bun_sys::Mode
+                        );
                         return Ok(Some(IteratorEntry { entry, kind }));
                     }
                     _ => {
@@ -957,13 +1028,19 @@ pub mod lib {
             let a = self.archive();
             match a.read_close() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive: self.archive, message: b"failed to close archive read" });
+                    return Err(IteratorError {
+                        archive: self.archive,
+                        message: b"failed to close archive read",
+                    });
                 }
                 _ => {}
             }
             match a.read_free() {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return Err(IteratorError { archive: self.archive, message: b"failed to free archive read" });
+                    return Err(IteratorError {
+                        archive: self.archive,
+                        message: b"failed to free archive read",
+                    });
                 }
                 _ => {}
             }
@@ -1248,7 +1325,7 @@ fn is_symlink_target_safe(
 /// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
 fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
-    use bun_sys::{open_dir_at_windows, WindowsOpenDirOp, WindowsOpenDirOptions, E};
+    use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
     // Match Zig's access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) by setting `read_only`,
     // and `FILE_OPEN_IF` via `OpenOrCreate`.
@@ -1260,13 +1337,15 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
     // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never
     // returns BadPathName here.
     let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
-    bun_paths::make_path_with(it, |prefix| match open_dir_at_windows(dir_fd, prefix, opts) {
-        Ok(fd) => {
-            fd.close();
-            Ok(bun_paths::MakePathStep::Created)
+    bun_paths::make_path_with(it, |prefix| {
+        match open_dir_at_windows(dir_fd, prefix, opts) {
+            Ok(fd) => {
+                fd.close();
+                Ok(bun_paths::MakePathStep::Created)
+            }
+            Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
+            Err(e) => Err(e.into()),
         }
-        Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
-        Err(e) => Err(e.into()),
     })
 }
 
@@ -1329,7 +1408,12 @@ pub mod archiver {
 
     impl Default for ExtractOptions {
         fn default() -> Self {
-            Self { depth_to_skip: 0, close_handles: true, log: false, npm: false }
+            Self {
+                depth_to_skip: 0,
+                close_handles: true,
+                log: false,
+                npm: false,
+            }
         }
     }
 }
@@ -1387,10 +1471,14 @@ impl Archiver {
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
             if bun_paths::is_absolute(root) {
-                let Ok(d) = bun_sys::open_dir_absolute(root) else { return Ok(()) };
+                let Ok(d) = bun_sys::open_dir_absolute(root) else {
+                    return Ok(());
+                };
                 break 'brk d;
             } else {
-                let Ok(d) = bun_sys::open_dir_at(cwd, root) else { return Ok(()) };
+                let Ok(d) = bun_sys::open_dir_at(cwd, root) else {
+                    return Ok(());
+                };
                 break 'brk d;
             }
         };
@@ -1425,7 +1513,11 @@ impl Archiver {
                     while depth_i < DEPTH_TO_SKIP {
                         // skip leading separators
                         while let [first, rest @ ..] = remaining {
-                            if *first == SEP { remaining = rest; } else { break; }
+                            if *first == SEP {
+                                remaining = rest;
+                            } else {
+                                break;
+                            }
                         }
                         if remaining.is_empty() {
                             continue 'loop_;
@@ -1438,7 +1530,11 @@ impl Archiver {
                     }
                     // skip leading separators (tokenizer.rest() does this)
                     while let [first, rest @ ..] = remaining {
-                        if *first == SEP { remaining = rest; } else { break; }
+                        if *first == SEP {
+                            remaining = rest;
+                        } else {
+                            break;
+                        }
                     }
 
                     // pathname = sliceTo(remaining[..len :0], 0)
@@ -1451,8 +1547,7 @@ impl Archiver {
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
                         // PORT NOTE: Zig used `dir.openFile(pathname, .{ .mode = .write_only })`.
-                        let Ok(opened) =
-                            bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
+                        let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
                         else {
                             continue 'loop_;
                         };
@@ -1470,8 +1565,7 @@ impl Archiver {
                                     break 'brk __pathname;
                                 }
 
-                                let index =
-                                    __pathname.iter().position(|&b| b == SEP).unwrap();
+                                let index = __pathname.iter().position(|&b| b == SEP).unwrap();
                                 break 'brk &__pathname[..index];
                             };
                             let mut temp_buf = [0u8; 1024];
@@ -1562,15 +1656,15 @@ impl Archiver {
                                     pathname_z.as_slice(),
                                 )?;
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                appender.on_first_directory_name(
-                                    strings::without_trailing_slash(&result),
-                                );
+                                appender.on_first_directory_name(strings::without_trailing_slash(
+                                    &result,
+                                ));
                             }
                             #[cfg(not(windows))]
                             {
-                                appender.on_first_directory_name(
-                                    strings::without_trailing_slash(pathname_z.as_bytes()),
-                                );
+                                appender.on_first_directory_name(strings::without_trailing_slash(
+                                    pathname_z.as_bytes(),
+                                ));
                             }
                         }
                     }
@@ -1601,7 +1695,11 @@ impl Archiver {
                         let mut i = 0usize;
                         while i < options.depth_to_skip {
                             while let [first, rest @ ..] = remaining {
-                                if *first == sep { remaining = rest; } else { break; }
+                                if *first == sep {
+                                    remaining = rest;
+                                } else {
+                                    break;
+                                }
                             }
                             if remaining.is_empty() {
                                 continue 'loop_;
@@ -1613,7 +1711,11 @@ impl Archiver {
                             i += 1;
                         }
                         while let [first, rest @ ..] = remaining {
-                            if *first == sep { remaining = rest; } else { break; }
+                            if *first == sep {
+                                remaining = rest;
+                            } else {
+                                break;
+                            }
                         }
                     }
                     // pathname = rest.ptr[0..rest.len :0]  (NUL is at original buffer end)
@@ -1688,7 +1790,8 @@ impl Archiver {
                     match kind {
                         bun_sys::FileKind::Directory => {
                             // SAFETY: entry valid
-                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm()).expect("int cast");
+                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm())
+                                .expect("int cast");
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -1808,32 +1911,30 @@ impl Archiver {
                             )
                             .unwrap();
 
-                            let flags =
-                                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                            let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]
-                            let file_handle_native: Fd = match bun_sys::openat_windows(
-                                dir_fd, path_slice, flags, 0,
-                            ) {
-                                Ok(fd) => fd,
-                                Err(e) => match e.get_errno() {
-                                    bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                        // Zig: `bun.Dirname.dirname(u16, path_slice) orelse
-                                        //        return bun.errnoToZigErr(e.errno)` —
-                                        // `std.fs.path.dirnameWindows` semantics (strips
-                                        // trailing separators), NOT `bun.path.dirnameW`.
-                                        let Some(dirname) =
-                                            bun_paths::Dirname::dirname(path_slice)
-                                        else {
-                                            return Err(e.into());
-                                        };
-                                        // Zig: `bun.MakePath.makePath(u16, dir, …) catch {};`
-                                        let _ = make_path_u16(dir, dirname);
-                                        bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
-                                    }
-                                    _ => return Err(e.into()),
-                                },
-                            };
+                            let file_handle_native: Fd =
+                                match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
+                                    Ok(fd) => fd,
+                                    Err(e) => match e.get_errno() {
+                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
+                                            // Zig: `bun.Dirname.dirname(u16, path_slice) orelse
+                                            //        return bun.errnoToZigErr(e.errno)` —
+                                            // `std.fs.path.dirnameWindows` semantics (strips
+                                            // trailing separators), NOT `bun.path.dirnameW`.
+                                            let Some(dirname) =
+                                                bun_paths::Dirname::dirname(path_slice)
+                                            else {
+                                                return Err(e.into());
+                                            };
+                                            // Zig: `bun.MakePath.makePath(u16, dir, …) catch {};`
+                                            let _ = make_path_u16(dir, dirname);
+                                            bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
+                                        }
+                                        _ => return Err(e.into()),
+                                    },
+                                };
 
                             #[cfg(not(windows))]
                             let file_handle_native: Fd = {
@@ -1873,9 +1974,8 @@ impl Archiver {
 
                             // PORT NOTE: reshaped for borrowck — `plucked_file` is captured by
                             // the guard tuple; mutate via close_guard.1.
-                            let mut close_guard = scopeguard::guard(
-                                (file_handle, false),
-                                |(fh, plucked)| {
+                            let mut close_guard =
+                                scopeguard::guard((file_handle, false), |(fh, plucked)| {
                                     if options.close_handles && !plucked {
                                         // On windows, AV hangs these closes really badly.
                                         // 'bun i @mui/icons-material' takes like 20 seconds to extract
@@ -1892,13 +1992,13 @@ impl Archiver {
                                         // on a worker thread, that doesn't help us.
                                         fh.close();
                                     }
-                                },
-                            );
+                                });
                             let (file_handle, plucked_file) = &mut *close_guard;
 
                             // SAFETY: entry valid
                             let size: usize =
-                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
+                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0))
+                                    .unwrap();
 
                             if size > 0 {
                                 if let Some(ctx_) = ctx.as_deref_mut() {
@@ -1933,9 +2033,9 @@ impl Archiver {
                                                     plucker_.contents.list.as_mut_slice(),
                                                 )
                                             };
-                                            plucker_
-                                                .contents
-                                                .inflate(usize::try_from(read).expect("int cast"))?;
+                                            plucker_.contents.inflate(
+                                                usize::try_from(read).expect("int cast"),
+                                            )?;
                                             plucker_.found = read > 0;
                                             plucker_.fd = *file_handle;
                                             *plucked_file = true;
@@ -1987,9 +2087,8 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                let archive_error = slice_to_nul(
-                                                    Archive::error_string(archive),
-                                                );
+                                                let archive_error =
+                                                    slice_to_nul(Archive::error_string(archive));
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

@@ -31,13 +31,19 @@ pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
         // https://infra.spec.whatwg.org/#forgiving-base64-decode
         // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/string_bytes.cc#L359
         let mut wrote: usize = 0;
-        if MIXED_DECODER.decode(destination, source, &mut wrote).is_err() {
+        if MIXED_DECODER
+            .decode(destination, source, &mut wrote)
+            .is_err()
+        {
             return SIMDUTFResult {
                 count: wrote,
                 status: simdutf::Status::INVALID_BASE64_CHARACTER,
             };
         }
-        return SIMDUTFResult { count: wrote, status: simdutf::Status::SUCCESS };
+        return SIMDUTFResult {
+            count: wrote,
+            status: simdutf::Status::SUCCESS,
+        };
     }
 
     result
@@ -63,7 +69,8 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
 
 pub use bun_core::base64::encode;
 
-pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was Vec<u8>
+pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
+    // B-1: was Vec<u8>
     // TODO(port): narrow error set (Zig was `!bun.Vec<u8>`; OOM now aborts)
     let len = encode_len(source);
     let mut destination = vec![0u8; len];
@@ -179,7 +186,10 @@ pub mod vlq {
 
     impl Default for VLQ {
         fn default() -> Self {
-            Self { bytes: [0; VLQ_MAX_IN_BYTES], len: 0 }
+            Self {
+                bytes: [0; VLQ_MAX_IN_BYTES],
+                len: 0,
+            }
         }
     }
 
@@ -218,7 +228,10 @@ pub mod vlq {
 
     // PERF(port): was comptime-evaluated table in Zig — Rust const-eval matches.
     const VLQ_LOOKUP_TABLE: [VLQ; 256] = {
-        let mut entries = [VLQ { bytes: [0; VLQ_MAX_IN_BYTES], len: 0 }; 256];
+        let mut entries = [VLQ {
+            bytes: [0; VLQ_MAX_IN_BYTES],
+            len: 0,
+        }; 256];
         let mut i: usize = 0;
         let mut j: i32 = 0;
         while i < 256 {
@@ -339,7 +352,10 @@ pub mod vlq {
             }
         }
 
-        VLQResult { start: start + encoded_.len(), value: 0 }
+        VLQResult {
+            start: start + encoded_.len(),
+            value: 0,
+        }
     }
 
     #[inline]
@@ -444,11 +460,17 @@ pub mod zig_base64 {
             while i < 64 {
                 let c = alphabet_chars[i];
                 debug_assert!(!char_in_alphabet[c as usize]);
-                debug_assert!(match pad_char { None => true, Some(p) => c != p });
+                debug_assert!(match pad_char {
+                    None => true,
+                    Some(p) => c != p,
+                });
                 char_in_alphabet[c as usize] = true;
                 i += 1;
             }
-            Base64Encoder { alphabet_chars, pad_char }
+            Base64Encoder {
+                alphabet_chars,
+                pad_char,
+            }
         }
 
         /// Compute the encoded length
@@ -520,7 +542,10 @@ pub mod zig_base64 {
             while i < 64 {
                 let c = alphabet_chars[i];
                 debug_assert!(!char_in_alphabet[c as usize]);
-                debug_assert!(match pad_char { None => true, Some(p) => c != p });
+                debug_assert!(match pad_char {
+                    None => true,
+                    Some(p) => c != p,
+                });
 
                 result.char_to_index[c as usize] = i as u8;
                 char_in_alphabet[c as usize] = true;
@@ -639,9 +664,14 @@ pub mod zig_base64 {
             let mut i = 0;
             while i < ignore_chars.len() {
                 let c = ignore_chars[i];
-                debug_assert!(result.decoder.char_to_index[c as usize] == Base64Decoder::INVALID_CHAR);
+                debug_assert!(
+                    result.decoder.char_to_index[c as usize] == Base64Decoder::INVALID_CHAR
+                );
                 debug_assert!(!result.char_is_ignored[c as usize]);
-                debug_assert!(match result.decoder.pad_char { None => true, Some(p) => c != p });
+                debug_assert!(match result.decoder.pad_char {
+                    None => true,
+                    Some(p) => c != p,
+                });
                 result.char_is_ignored[c as usize] = true;
                 i += 1;
             }
@@ -828,7 +858,10 @@ pub mod zig_base64 {
             // Base64Decoder
             {
                 let mut buffer = [0u8; 0x100];
-                let len = codecs.decoder.calc_size_for_slice(expected_encoded).unwrap();
+                let len = codecs
+                    .decoder
+                    .calc_size_for_slice(expected_encoded)
+                    .unwrap();
                 let decoded = &mut buffer[0..len];
                 codecs.decoder.decode(decoded, expected_encoded).unwrap();
                 assert_eq!(expected_decoded, decoded);
@@ -855,7 +888,9 @@ pub mod zig_base64 {
             let upper = decoder_ignore_space.calc_size_upper_bound(encoded.len());
             let decoded = &mut buffer[0..upper];
             let mut written: usize = 0;
-            decoder_ignore_space.decode(decoded, encoded, &mut written).unwrap();
+            decoder_ignore_space
+                .decode(decoded, encoded, &mut written)
+                .unwrap();
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
 

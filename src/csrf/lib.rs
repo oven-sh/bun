@@ -4,14 +4,13 @@
 
 #![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
-use bun_sha_hmac::hmac;
 use bun_core::strings;
+use bun_sha_hmac::hmac;
 
-use bun_sha_hmac::evp::Algorithm;
 use bun_core::NodeEncoding;
+use bun_sha_hmac::evp::Algorithm;
 
 /// Default expiration time for tokens (24 hours)
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
@@ -110,7 +109,12 @@ pub fn generate<'a>(
 
     // Sign the payload
     let mut digest_buf = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let digest = match hmac::generate(options.secret, &payload_buf, options.algorithm, &mut digest_buf) {
+    let digest = match hmac::generate(
+        options.secret,
+        &payload_buf,
+        options.algorithm,
+        &mut digest_buf,
+    ) {
         Some(d) => d,
         None => return Err(Error::TokenCreationFailed),
     };
@@ -195,7 +199,11 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
     // Check if token has expired
     let current_time: u64 = bun_core::time::milli_timestamp() as u64; // @bitCast i64 -> u64
     // Extract expires_in (last 8 bytes)
-    let expires_in = u64::from_be_bytes(decoded[24..32].try_into().expect("infallible: size matches"));
+    let expires_in = u64::from_be_bytes(
+        decoded[24..32]
+            .try_into()
+            .expect("infallible: size matches"),
+    );
     {
         // respect the token's expiration time
         if expires_in > 0 {
@@ -227,7 +235,12 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
 
     // Verify the signature
     let mut expected_signature = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let signature = match hmac::generate(options.secret, payload, options.algorithm, &mut expected_signature) {
+    let signature = match hmac::generate(
+        options.secret,
+        payload,
+        options.algorithm,
+        &mut expected_signature,
+    ) {
         Some(s) => s,
         None => return false,
     };

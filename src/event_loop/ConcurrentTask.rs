@@ -364,10 +364,19 @@ unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
         unsafe { (*item).next.get_ptr().unwrap_or(core::ptr::null_mut()) }
     }
     unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next.set_ptr(if ptr.is_null() { None } else { Some(ptr) }) };
+        unsafe {
+            (*item)
+                .next
+                .set_ptr(if ptr.is_null() { None } else { Some(ptr) })
+        };
     }
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe { (*item).next.atomic_load_ptr(ordering).unwrap_or(core::ptr::null_mut()) }
+        unsafe {
+            (*item)
+                .next
+                .atomic_load_ptr(ordering)
+                .unwrap_or(core::ptr::null_mut())
+        }
     }
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
         unsafe {
@@ -442,7 +451,11 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
-    pub fn from<T: Taskable>(&mut self, of: *mut T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
+    pub fn from<T: Taskable>(
+        &mut self,
+        of: *mut T,
+        auto_deinit: AutoDeinit,
+    ) -> &mut ConcurrentTask {
         // TODO(port): re-enable once `mark_binding!` macro arity matches
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();

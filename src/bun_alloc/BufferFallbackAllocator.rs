@@ -40,39 +40,42 @@ static VTABLE: AllocatorVTable = AllocatorVTable {
 
 unsafe fn alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ra: usize) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
-    let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
+    let self_: &mut BufferFallbackAllocator =
+        unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     FixedBufferAllocator::alloc(&mut self_.fixed, len, alignment, ra)
         .or_else(|| self_.fallback.raw_alloc(len, alignment, ra))
         .unwrap_or(core::ptr::null_mut())
 }
 
-unsafe fn resize(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
+unsafe fn resize(
+    ctx: *mut c_void,
+    buf: &mut [u8],
+    alignment: Alignment,
+    new_len: usize,
+    ra: usize,
+) -> bool {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
-    let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
+    let self_: &mut BufferFallbackAllocator =
+        unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed.owns_ptr(buf.as_ptr()) {
-        return FixedBufferAllocator::resize(
-            &mut self_.fixed,
-            buf,
-            alignment,
-            new_len,
-            ra,
-        );
+        return FixedBufferAllocator::resize(&mut self_.fixed, buf, alignment, new_len, ra);
     }
     self_.fallback.raw_resize(buf, alignment, new_len, ra)
 }
 
-unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> *mut u8 {
+unsafe fn remap(
+    ctx: *mut c_void,
+    memory: &mut [u8],
+    alignment: Alignment,
+    new_len: usize,
+    ra: usize,
+) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
-    let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
+    let self_: &mut BufferFallbackAllocator =
+        unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed.owns_ptr(memory.as_ptr()) {
-        return FixedBufferAllocator::remap(
-            &mut self_.fixed,
-            memory,
-            alignment,
-            new_len,
-            ra,
-        )
-        .unwrap_or(core::ptr::null_mut());
+        return FixedBufferAllocator::remap(&mut self_.fixed, memory, alignment, new_len, ra)
+            .unwrap_or(core::ptr::null_mut());
     }
     self_
         .fallback
@@ -82,14 +85,10 @@ unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_l
 
 unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize) {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
-    let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
+    let self_: &mut BufferFallbackAllocator =
+        unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed.owns_ptr(buf.as_ptr()) {
-        return FixedBufferAllocator::free(
-            &mut self_.fixed,
-            buf,
-            alignment,
-            ra,
-        );
+        return FixedBufferAllocator::free(&mut self_.fixed, buf, alignment, ra);
     }
     self_.fallback.raw_free(buf, alignment, ra)
 }

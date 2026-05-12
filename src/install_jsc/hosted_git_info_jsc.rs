@@ -48,10 +48,8 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"default",
-            BunString::from_bytes(
-                <&'static str>::from(self.default_representation).as_bytes(),
-            )
-            .to_js(go)?,
+            BunString::from_bytes(<&'static str>::from(self.default_representation).as_bytes())
+                .to_js(go)?,
         );
 
         Ok(obj)

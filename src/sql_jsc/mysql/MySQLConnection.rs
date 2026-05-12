@@ -1,15 +1,21 @@
 use core::mem::offset_of;
 
-use bun_collections::{VecExt, HashMap, OffsetByteList};
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use bun_collections::{HashMap, OffsetByteList, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
+use bun_sql::mysql::Capabilities;
+use bun_sql::mysql::MySQLQueryResult;
+use bun_sql::mysql::auth_method::AuthMethod;
+use bun_sql::mysql::connection_state::ConnectionState;
+use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
 use bun_sql::mysql::protocol::auth as Auth;
 use bun_sql::mysql::protocol::auth_switch_request::AuthSwitchRequest;
 use bun_sql::mysql::protocol::auth_switch_response::AuthSwitchResponse;
 use bun_sql::mysql::protocol::character_set::CharacterSet;
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
+use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::eof_packet::EOFPacket;
 use bun_sql::mysql::protocol::handshake_response41::HandshakeResponse41;
 use bun_sql::mysql::protocol::handshake_v10::HandshakeV10;
@@ -23,15 +29,9 @@ use bun_sql::mysql::protocol::result_set_header::ResultSetHeader;
 use bun_sql::mysql::protocol::ssl_request::SSLRequest;
 use bun_sql::mysql::protocol::stack_reader::StackReader;
 use bun_sql::mysql::protocol::stmt_prepare_ok_packet::StmtPrepareOKPacket;
-use bun_sql::mysql::auth_method::AuthMethod;
-use bun_sql::mysql::connection_state::ConnectionState;
-use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_sql::mysql::status_flags::{StatusFlag, StatusFlags};
 use bun_sql::mysql::tls_status::TLSStatus;
-use bun_sql::mysql::Capabilities;
-use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::postgres::socket_monitor as SocketMonitor;
 use bun_sql::shared::connection_flags::ConnectionFlags;
 use bun_sql::shared::data::Data;
@@ -157,7 +157,11 @@ impl MySQLConnection {
             tls_config,
             secure,
             ssl_mode,
-            tls_status: if ssl_mode != SSLMode::Disable { TLSStatus::Pending } else { TLSStatus::None },
+            tls_status: if ssl_mode != SSLMode::Disable {
+                TLSStatus::Pending
+            } else {
+                TLSStatus::None
+            },
             character_set: CharacterSet::default(),
             ..Default::default()
         }
@@ -266,7 +270,8 @@ impl MySQLConnection {
         if wrote > 0 {
             let wrote_usize = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[0..wrote_usize]);
-            self.write_buffer.consume(u32::try_from(wrote_usize).expect("int cast"));
+            self.write_buffer
+                .consume(u32::try_from(wrote_usize).expect("int cast"));
         }
     }
 
@@ -279,7 +284,11 @@ impl MySQLConnection {
         // cleanup requests
         self.queue.clean(
             js_reason,
-            if !js_queries_array.is_empty() { js_queries_array } else { JSValue::UNDEFINED },
+            if !js_queries_array.is_empty() {
+                js_queries_array
+            } else {
+                JSValue::UNDEFINED
+            },
         );
 
         self.close();
@@ -315,17 +324,26 @@ impl MySQLConnection {
 
     pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
-        let Socket::SocketTcp(tcp) = &self.socket else { return Ok(()) };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else { return Ok(()) };
+        let Socket::SocketTcp(tcp) = &self.socket else {
+            return Ok(());
+        };
+        let uws::InternalSocket::Connected(raw) = tcp.socket else {
+            return Ok(());
+        };
 
         // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup =
-            crate::jsc::VirtualMachine::get().as_mut().mysql_socket_group::<true>();
+        let tls_group: &mut bun_uws::SocketGroup = crate::jsc::VirtualMachine::get()
+            .as_mut()
+            .mysql_socket_group::<true>();
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested (Zig: `this.#secure.?`).
-        let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before upgradeToTLS") };
+        let ssl_ctx = unsafe {
+            &mut *self
+                .secure
+                .expect("secure SSL_CTX must be set before upgradeToTLS")
+        };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
             None
@@ -424,13 +442,17 @@ impl MySQLConnection {
                             .map(|h| h.cast())
                             .unwrap_or(core::ptr::null_mut());
                         // SAFETY: `ssl_ptr` is a live SSL* (handshake just succeeded).
-                        let servername = unsafe { bun_boringssl_sys::SSL_get_servername(ssl_ptr, 0) };
+                        let servername =
+                            unsafe { bun_boringssl_sys::SSL_get_servername(ssl_ptr, 0) };
                         if !servername.is_null() {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string
                             // borrowed for the SSL session lifetime.
                             let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                             // SAFETY: `ssl_ptr` is non-null and live (see above).
-                            if !bun_boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
+                            if !bun_boringssl::check_server_identity(
+                                unsafe { &mut *ssl_ptr },
+                                hostname,
+                            ) {
                                 self.tls_status = TLSStatus::SslFailed;
                                 return Ok(false);
                             }
@@ -467,7 +489,10 @@ impl MySQLConnection {
             match self.process_packets(reader) {
                 Ok(()) => {}
                 Err(err) => {
-                    debug!("processPackets without buffer: {}", <&'static str>::from(err));
+                    debug!(
+                        "processPackets without buffer: {}",
+                        <&'static str>::from(err)
+                    );
                     if err == any_mysql_error::Error::ShortRead {
                         #[cfg(debug_assertions)]
                         debug!(
@@ -551,7 +576,10 @@ impl MySQLConnection {
             let header = PacketHeader::decode(reader.peek()).ok_or(AnyMySQLError::ShortRead)?;
             let header_length = header.length;
             let packet_length: usize = header_length as usize + PacketHeader::SIZE;
-            debug!("sequence_id: {} header: {}", self.sequence_id, header_length);
+            debug!(
+                "sequence_id: {} header: {}",
+                self.sequence_id, header_length
+            );
             // Ensure we have the full packet
             reader
                 .ensure_capacity(packet_length)
@@ -602,9 +630,11 @@ impl MySQLConnection {
         // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
         // are only used when the server actually supports them (critical for MySQL-compatible
         // databases like StarRocks, TiDB, SingleStore, etc.).
-        self.capabilities =
-            Capabilities::get_default_capabilities(self.ssl_mode != SSLMode::Disable, !self.database.is_empty())
-                .intersect(handshake.capability_flags);
+        self.capabilities = Capabilities::get_default_capabilities(
+            self.ssl_mode != SSLMode::Disable,
+            !self.database.is_empty(),
+        )
+        .intersect(handshake.capability_flags);
 
         // Override with utf8mb4 instead of using server's default
         self.character_set = CharacterSet::default();
@@ -628,10 +658,13 @@ impl MySQLConnection {
         self.auth_data.shrink_to_fit();
 
         // Store auth data
+        self.auth_data.reserve(
+            handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len(),
+        );
         self.auth_data
-            .reserve(handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len());
-        self.auth_data.extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
-        self.auth_data.extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+            .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
+        self.auth_data
+            .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
@@ -681,7 +714,6 @@ impl MySQLConnection {
         self.send_handshake_response()
     }
 
-    
     fn handle_handshake_decode_public_key<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -788,11 +820,13 @@ impl MySQLConnection {
                                     if self.ssl_mode == SSLMode::Disable {
                                         // we are in plain TCP so we need to request the public key
                                         self.set_status(ConnectionState::AuthenticationAwaitingPk);
-                                        bun_core::scoped_log!(MySQLConnection, "awaiting public key");
+                                        bun_core::scoped_log!(
+                                            MySQLConnection,
+                                            "awaiting public key"
+                                        );
                                         let mut packet = self.writer().start(self.sequence_id)?;
 
-                                        let request =
-                                            Auth::caching_sha2_password::PublicKeyRequest;
+                                        let request = Auth::caching_sha2_password::PublicKeyRequest;
                                         request.write(self.writer())?;
                                         packet.end()?;
                                         self.flush_data();
@@ -833,7 +867,10 @@ impl MySQLConnection {
                     // We don't support LOCAL INFILE for security reasons
                     return Err(AnyMySQLError::LocalInfileNotSupported);
                 } else {
-                    bun_core::scoped_log!(MySQLConnection, "Received auth continuation without plugin");
+                    bun_core::scoped_log!(
+                        MySQLConnection,
+                        "Received auth continuation without plugin"
+                    );
                     return Err(AnyMySQLError::UnexpectedPacket);
                 }
             }
@@ -858,7 +895,11 @@ impl MySQLConnection {
             }
 
             _ => {
-                bun_core::scoped_log!(MySQLConnection, "Unexpected auth packet: 0x{:02x}", first_byte);
+                bun_core::scoped_log!(
+                    MySQLConnection,
+                    "Unexpected auth packet: 0x{:02x}",
+                    first_byte
+                );
                 return Err(AnyMySQLError::UnexpectedPacket);
             }
         }
@@ -955,15 +996,17 @@ impl MySQLConnection {
             character_set: CharacterSet::default(),
             username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
             database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
-            auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(if let Some(plugin) = self.auth_plugin {
-                match plugin {
-                    AuthMethod::MysqlNativePassword => &b"mysql_native_password"[..],
-                    AuthMethod::CachingSha2Password => &b"caching_sha2_password"[..],
-                    AuthMethod::Sha256Password => &b"sha256_password"[..],
-                }
-            } else {
-                &b""[..]
-            })),
+            auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(
+                if let Some(plugin) = self.auth_plugin {
+                    match plugin {
+                        AuthMethod::MysqlNativePassword => &b"mysql_native_password"[..],
+                        AuthMethod::CachingSha2Password => &b"caching_sha2_password"[..],
+                        AuthMethod::Sha256Password => &b"sha256_password"[..],
+                    }
+                } else {
+                    &b""[..]
+                },
+            )),
             auth_response: Data::Empty,
             sequence_id: self.sequence_id,
             connect_attrs: Default::default(),
@@ -985,8 +1028,11 @@ impl MySQLConnection {
                 return Err(AnyMySQLError::MissingAuthData);
             }
 
-            response.auth_response =
-                Data::Temporary(bun_ptr::RawSlice::new(plugin.scramble(&self.password, &self.auth_data, &mut scrambled_buf)?));
+            response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(plugin.scramble(
+                &self.password,
+                &self.auth_data,
+                &mut scrambled_buf,
+            )?));
         }
         response.capability_flags.reject();
         response.write(self.writer())?;
@@ -1004,8 +1050,11 @@ impl MySQLConnection {
 
         let mut scrambled_buf = [0u8; 32];
 
-        response.auth_response =
-            Data::Temporary(bun_ptr::RawSlice::new(auth_method.scramble(&self.password, plugin_data, &mut scrambled_buf)?));
+        response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(auth_method.scramble(
+            &self.password,
+            plugin_data,
+            &mut scrambled_buf,
+        )?));
 
         let response_writer = self.writer();
         let mut packet = response_writer.start(self.sequence_id)?;
@@ -1017,17 +1066,20 @@ impl MySQLConnection {
 
     pub fn writer(&mut self) -> NewWriter<Writer> {
         NewWriter {
-            wrapped: Writer { connection: std::ptr::from_mut::<Self>(self) },
+            wrapped: Writer {
+                connection: std::ptr::from_mut::<Self>(self),
+            },
         }
     }
 
     pub fn buffered_reader(&mut self) -> NewReader<Reader> {
         NewReader {
-            wrapped: Reader { connection: std::ptr::from_mut::<Self>(self) },
+            wrapped: Reader {
+                connection: std::ptr::from_mut::<Self>(self),
+            },
         }
     }
 
-    
     fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {
         bun_core::scoped_log!(
             MySQLConnection,
@@ -1050,7 +1102,6 @@ impl MySQLConnection {
         }
     }
 
-    
     pub fn handle_prepared_statement<C: ReaderContext>(
         &mut self,
         mut reader: NewReader<C>,
@@ -1219,9 +1270,14 @@ impl MySQLConnection {
     ) {
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
-        debug!("handleResultSetOK: {} {}", status_flags.to_int(), is_last_result);
+        debug!(
+            "handleResultSetOK: {} {}",
+            status_flags.to_int(),
+            is_last_result
+        );
         // PORT NOTE: Zig `defer this.flushQueue()` moved to explicit tail call.
-        self.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
+        self.flags
+            .set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
         if is_last_result {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_current_request_as_finished(request);
@@ -1238,7 +1294,12 @@ impl MySQLConnection {
         // independent of this outer shared borrow.
         self.js_connection_ref().on_query_result(
             request,
-            MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
+            MySQLQueryResult {
+                result_count,
+                last_insert_id,
+                affected_rows,
+                is_last_result,
+            },
         );
 
         // Re-fetch (fresh `&mut`) so no borrow spanned the JS callback above.
@@ -1430,7 +1491,8 @@ impl MySQLConnection {
                     // footprint to the prior `(*ptr).on_result_row()` temporary);
                     // `*self` sits inside the parent's `JsCell`, so re-entrant
                     // `connection_mut()` does not alias this shared borrow.
-                    self.js_connection_ref().on_result_row(request, statement, reader)?;
+                    self.js_connection_ref()
+                        .on_result_row(request, statement, reader)?;
                 }
             }
         }
@@ -1493,7 +1555,9 @@ impl Writer {
 
 impl WriterContext for Writer {
     fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        self.write_buffer().write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
+        self.write_buffer()
+            .write(data)
+            .map_err(|_| AnyMySQLError::OutOfMemory)?;
         Ok(())
     }
 

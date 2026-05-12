@@ -3,10 +3,10 @@
 
 use core::mem::ManuallyDrop;
 
-use bun_core::Output;
 use bun_ast::{Loc, Log};
-use bun_semver as semver;
+use bun_core::Output;
 use bun_core::StringOrTinyString;
+use bun_semver as semver;
 use bun_sys::{Fd, FdDirExt as _, File};
 use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
@@ -224,9 +224,7 @@ impl<'a> Task<'a> {
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe {
-            bun_core::from_field_ptr!(Task, threadpool_task, task)
-        };
+        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
@@ -263,20 +261,16 @@ impl<'a> Task<'a> {
 
                     let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                        let err = network
-                            .response
-                            .fail
-                            .unwrap_or(bun_core::err!("HTTPError"));
-                        this.log
-                            .add_error_fmt(
-                                None,
-                                Loc::EMPTY,
-                                format_args!(
-                                    "{} downloading package manifest {}",
-                                    err.name(),
-                                    bstr::BStr::new(manifest.name.slice()),
-                                ),
-                            );
+                        let err = network.response.fail.unwrap_or(bun_core::err!("HTTPError"));
+                        this.log.add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!(
+                                "{} downloading package manifest {}",
+                                err.name(),
+                                bstr::BStr::new(manifest.name.slice()),
+                            ),
+                        );
                         this.err = Some(err);
                         this.status = Status::Fail;
                         this.data = Data {
@@ -329,9 +323,7 @@ impl<'a> Task<'a> {
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
-                                package_manifest: ManuallyDrop::new(
-                                    npm::PackageManifest::default(),
-                                ),
+                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
                             };
                             break 'body;
                         }
@@ -347,23 +339,20 @@ impl<'a> Task<'a> {
                             break 'body;
                         }
                         npm::registry::PackageVersionResponse::NotFound => {
-                            this.log
-                                .add_error_fmt(
-                                    None,
-                                    Loc::EMPTY,
-                                    format_args!(
-                                        "404 - GET {}",
-                                        // `manifest` (split-borrow of
-                                        // `this.request`) is still live; reuse
-                                        // it instead of a fresh union deref.
-                                        bstr::BStr::new(manifest.name.slice()),
-                                    ),
-                                );
+                            this.log.add_error_fmt(
+                                None,
+                                Loc::EMPTY,
+                                format_args!(
+                                    "404 - GET {}",
+                                    // `manifest` (split-borrow of
+                                    // `this.request`) is still live; reuse
+                                    // it instead of a fresh union deref.
+                                    bstr::BStr::new(manifest.name.slice()),
+                                ),
+                            );
                             this.status = Status::Fail;
                             this.data = Data {
-                                package_manifest: ManuallyDrop::new(
-                                    npm::PackageManifest::default(),
-                                ),
+                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
                             };
                             break 'body;
                         }
@@ -455,7 +444,7 @@ impl<'a> Task<'a> {
                                     req.env,
                                     &mut this.log,
                                     // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                unsafe { &mut *manager }.get_cache_directory(),
+                                    unsafe { &mut *manager }.get_cache_directory(),
                                     this.id,
                                     name,
                                     ssh,
@@ -564,7 +553,9 @@ impl<'a> Task<'a> {
                 if apply.logger.errors > 0 {
                     // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                    let _ = apply.logger.print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = apply
+                        .logger
+                        .print(std::ptr::from_mut(Output::error_writer()));
                 }
             }
         }

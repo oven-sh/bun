@@ -20,13 +20,11 @@ use bun_collections::VecExt;
 // `properties::animation` un-gate; `get_fallback` chain).
 
 use crate as css;
-use crate::css_parser::{
-    self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState,
-};
-use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
-use crate::printer::Printer;
 use crate::PrintResult;
 use crate::Token;
+use crate::css_parser::{self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState};
+use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
+use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
@@ -89,7 +87,9 @@ mod ext {
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
             let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
             let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(arena, this, filename, records))
+            Some(dependencies::UrlDependency::new(
+                arena, this, filename, records,
+            ))
         } else {
             None
         };
@@ -242,8 +242,16 @@ impl CssEql for Token {
             (Number(a), Number(b)) => a.eql(b),
             (Dimension(a), Dimension(b)) => a.eql(b),
             (
-                Percentage { has_sign: a0, unit_value: a1, int_value: a2 },
-                Percentage { has_sign: b0, unit_value: b1, int_value: b2 },
+                Percentage {
+                    has_sign: a0,
+                    unit_value: a1,
+                    int_value: a2,
+                },
+                Percentage {
+                    has_sign: b0,
+                    unit_value: b1,
+                    int_value: b2,
+                },
             ) => a0 == b0 && a1 == b1 && a2 == b2,
             (Cdo, Cdo)
             | (Cdc, Cdc)
@@ -278,7 +286,11 @@ impl CssHash for Token {
             Delim(d) => hasher.update(&d.to_ne_bytes()),
             Number(n) => n.hash(hasher),
             Dimension(d) => d.hash(hasher),
-            Percentage { has_sign, unit_value, int_value } => {
+            Percentage {
+                has_sign,
+                unit_value,
+                int_value,
+            } => {
                 hasher.update(&[*has_sign as u8]);
                 hasher.update(&unit_value.to_ne_bytes());
                 if let Some(iv) = int_value {
@@ -337,11 +349,12 @@ impl TokenList {
                         && is_custom_property
                         && !url.is_absolute(dest.get_import_records()?)
                     {
-                        let pretty = std::ptr::from_ref::<[u8]>(dest
-                            .get_import_records()?
-                            .at(url.import_record_idx as usize)
-                            .path
-                            .pretty);
+                        let pretty = std::ptr::from_ref::<[u8]>(
+                            dest.get_import_records()?
+                                .at(url.import_record_idx as usize)
+                                .path
+                                .pretty,
+                        );
                         return dest.new_error(
                             css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
                             Some(url.loc),
@@ -598,17 +611,21 @@ impl TokenList {
                         last_is_whitespace = false;
                     } else if strings::eql(*f, b"env") {
                         let env = input.parse_nested_block(|input2| {
-                            let env = EnvironmentVariable::parse_nested(input2, options, depth + 1)?;
+                            let env =
+                                EnvironmentVariable::parse_nested(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Env(env))
                         })?;
                         tokens.push(env);
                         last_is_delim = true;
                         last_is_whitespace = false;
                     } else {
-                        let arguments = input
-                            .parse_nested_block(|input2| TokenListFns::parse(input2, options, depth + 1))?;
+                        let arguments = input.parse_nested_block(|input2| {
+                            TokenListFns::parse(input2, options, depth + 1)
+                        })?;
                         tokens.push(TokenOrValue::Function(Function {
-                            name: Ident { v: std::ptr::from_ref::<[u8]>(*f) },
+                            name: Ident {
+                                v: std::ptr::from_ref::<[u8]>(*f),
+                            },
                             arguments,
                         }));
                         last_is_delim = true; // Whitespace is not required after any of these chars.
@@ -727,7 +744,11 @@ impl TokenList {
         tokens
     }
 
-    pub fn get_fallbacks(&mut self, bump: &Arena, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
+    pub fn get_fallbacks(
+        &mut self,
+        bump: &Arena,
+        targets: css::targets::Targets,
+    ) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         let mut fallbacks = self.get_necessary_fallbacks(targets);
@@ -937,7 +958,7 @@ impl UnresolvedColor {
 
     pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
         use css_values::color::{
-            parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB,
+            ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
         };
         // css.todo_stuff.match_ignore_ascii_case
         let mut parser = ComponentParser::new(false);
@@ -1041,7 +1062,10 @@ impl Variable {
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
-            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(bump, kind)),
+            fallback: self
+                .fallback
+                .as_ref()
+                .map(|fallback| fallback.get_fallback(bump, kind)),
         }
     }
 
@@ -1063,7 +1087,11 @@ pub struct EnvironmentVariable {
 impl EnvironmentVariable {
     // deinit(): body only freed owned `Vec`/`TokenList` fields — handled by `Drop`.
 
-    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<EnvironmentVariable> {
+    pub fn parse(
+        input: &mut Parser,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<EnvironmentVariable> {
         input.expect_function_matching(b"env")?;
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
@@ -1085,7 +1113,11 @@ impl EnvironmentVariable {
             None
         };
 
-        Ok(EnvironmentVariable { name, indices, fallback })
+        Ok(EnvironmentVariable {
+            name,
+            indices,
+            fallback,
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
@@ -1109,7 +1141,10 @@ impl EnvironmentVariable {
         EnvironmentVariable {
             name: self.name.clone(),
             indices: self.indices.clone(),
-            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(bump, kind)),
+            fallback: self
+                .fallback
+                .as_ref()
+                .map(|fallback| fallback.get_fallback(bump, kind)),
         }
     }
 
@@ -1199,13 +1234,17 @@ pub enum UAEnvironmentVariable {
 // different shapes that would otherwise collide.
 impl UAEnvironmentVariable {
     #[inline]
-    pub fn eql(&self, other: &Self) -> bool { *self == *other }
+    pub fn eql(&self, other: &Self) -> bool {
+        *self == *other
+    }
     #[inline]
     pub fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&(*self as u32).to_ne_bytes());
     }
     #[inline]
-    pub fn deep_clone(&self, _bump: &Arena) -> Self { *self }
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+        *self
+    }
 }
 
 impl EnumProperty for UAEnvironmentVariable {
@@ -1345,22 +1384,32 @@ impl Clone for TokenOrValue {
 impl Clone for UnresolvedColor {
     fn clone(&self) -> Self {
         match self {
-            UnresolvedColor::RGB { r, g, b, alpha } => {
-                UnresolvedColor::RGB { r: *r, g: *g, b: *b, alpha: alpha.clone() }
-            }
-            UnresolvedColor::HSL { h, s, l, alpha } => {
-                UnresolvedColor::HSL { h: *h, s: *s, l: *l, alpha: alpha.clone() }
-            }
-            UnresolvedColor::LightDark { light, dark } => {
-                UnresolvedColor::LightDark { light: light.clone(), dark: dark.clone() }
-            }
+            UnresolvedColor::RGB { r, g, b, alpha } => UnresolvedColor::RGB {
+                r: *r,
+                g: *g,
+                b: *b,
+                alpha: alpha.clone(),
+            },
+            UnresolvedColor::HSL { h, s, l, alpha } => UnresolvedColor::HSL {
+                h: *h,
+                s: *s,
+                l: *l,
+                alpha: alpha.clone(),
+            },
+            UnresolvedColor::LightDark { light, dark } => UnresolvedColor::LightDark {
+                light: light.clone(),
+                dark: dark.clone(),
+            },
         }
     }
 }
 
 impl Clone for Variable {
     fn clone(&self) -> Self {
-        Variable { name: self.name, fallback: self.fallback.clone() }
+        Variable {
+            name: self.name,
+            fallback: self.fallback.clone(),
+        }
     }
 }
 
@@ -1376,7 +1425,10 @@ impl Clone for EnvironmentVariable {
 
 impl Clone for Function {
     fn clone(&self) -> Self {
-        Function { name: self.name, arguments: self.arguments.clone() }
+        Function {
+            name: self.name,
+            arguments: self.arguments.clone(),
+        }
     }
 }
 
@@ -1423,14 +1475,19 @@ impl UnparsedProperty {
     ) -> UnparsedProperty {
         let mut clone = self.deep_clone(bump);
         let prefix = self.property_id.prefix();
-        clone.property_id =
-            clone.property_id.with_prefix(targets.prefixes(prefix.or_none(), feature));
+        clone.property_id = clone
+            .property_id
+            .with_prefix(targets.prefixes(prefix.or_none(), feature));
         clone
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
     // un-gated B-2 round 10: TokenList::deep_clone is real (arena-threaded).
-    pub fn with_property_id(&self, bump: &Arena, property_id: css::properties::PropertyId) -> UnparsedProperty {
+    pub fn with_property_id(
+        &self,
+        bump: &Arena,
+        property_id: css::properties::PropertyId,
+    ) -> UnparsedProperty {
         UnparsedProperty {
             property_id,
             value: self.value.deep_clone(bump),
@@ -1465,9 +1522,10 @@ impl CustomProperty {
         input: &mut Parser,
         options: &ParserOptions,
     ) -> Result<CustomProperty> {
-        let value = input.parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |input2| {
-            TokenListFns::parse(input2, options, 0)
-        })?;
+        let value = input
+            .parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |input2| {
+                TokenListFns::parse(input2, options, 0)
+            })?;
 
         Ok(CustomProperty { name, value })
     }
@@ -1521,9 +1579,13 @@ impl CustomPropertyName {
 
     pub fn from_str(name: &[u8]) -> CustomPropertyName {
         if name.starts_with(b"--") {
-            return CustomPropertyName::Custom(DashedIdent { v: std::ptr::from_ref::<[u8]>(name) });
+            return CustomPropertyName::Custom(DashedIdent {
+                v: std::ptr::from_ref::<[u8]>(name),
+            });
         }
-        CustomPropertyName::Unknown(Ident { v: std::ptr::from_ref::<[u8]>(name) })
+        CustomPropertyName::Unknown(Ident {
+            v: std::ptr::from_ref::<[u8]>(name),
+        })
     }
 
     #[inline]
@@ -1551,10 +1613,23 @@ pub fn try_parse_color_token(
     state: &ParserState,
     input: &mut Parser,
 ) -> Option<CssColor> {
-    if strings::eql_any_case_insensitive_ascii(f, &[
-        b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab",
-        b"lch", b"oklab", b"oklch", b"color", b"color-mix", b"light-dark",
-    ]) {
+    if strings::eql_any_case_insensitive_ascii(
+        f,
+        &[
+            b"rgb",
+            b"rgba",
+            b"hsl",
+            b"hsla",
+            b"hwb",
+            b"lab",
+            b"lch",
+            b"oklab",
+            b"oklch",
+            b"color",
+            b"color-mix",
+            b"light-dark",
+        ],
+    ) {
         let s = input.state();
         input.reset(state);
         if let Ok(color) = CssColor::parse(input) {

@@ -71,10 +71,7 @@ struct WyhashStateless {
 impl WyhashStateless {
     #[inline(always)]
     pub(crate) fn init(seed: u64) -> WyhashStateless {
-        WyhashStateless {
-            seed,
-            msg_len: 0,
-        }
+        WyhashStateless { seed, msg_len: 0 }
     }
 
     #[inline(always)] // Zig: `@call(bun.callmod_inline, self.round, ...)`
@@ -123,35 +120,225 @@ impl WyhashStateless {
             0 => seed,
             1 => mix0(read_bytes::<1>(rem_key), PRIMES[4], seed),
             2 => mix0(read_bytes::<2>(rem_key), PRIMES[4], seed),
-            3 => mix0((read_bytes::<2>(rem_key) << 8) | read_bytes::<1>(&rem_key[2..]), PRIMES[4], seed),
+            3 => mix0(
+                (read_bytes::<2>(rem_key) << 8) | read_bytes::<1>(&rem_key[2..]),
+                PRIMES[4],
+                seed,
+            ),
             4 => mix0(read_bytes::<4>(rem_key), PRIMES[4], seed),
-            5 => mix0((read_bytes::<4>(rem_key) << 8) | read_bytes::<1>(&rem_key[4..]), PRIMES[4], seed),
-            6 => mix0((read_bytes::<4>(rem_key) << 16) | read_bytes::<2>(&rem_key[4..]), PRIMES[4], seed),
-            7 => mix0((read_bytes::<4>(rem_key) << 24) | (read_bytes::<2>(&rem_key[4..]) << 8) | read_bytes::<1>(&rem_key[6..]), PRIMES[4], seed),
+            5 => mix0(
+                (read_bytes::<4>(rem_key) << 8) | read_bytes::<1>(&rem_key[4..]),
+                PRIMES[4],
+                seed,
+            ),
+            6 => mix0(
+                (read_bytes::<4>(rem_key) << 16) | read_bytes::<2>(&rem_key[4..]),
+                PRIMES[4],
+                seed,
+            ),
+            7 => mix0(
+                (read_bytes::<4>(rem_key) << 24)
+                    | (read_bytes::<2>(&rem_key[4..]) << 8)
+                    | read_bytes::<1>(&rem_key[6..]),
+                PRIMES[4],
+                seed,
+            ),
             8 => mix0(read_8bytes_swapped(rem_key), PRIMES[4], seed),
-            9 => mix0(read_8bytes_swapped(rem_key), read_bytes::<1>(&rem_key[8..]), seed),
-            10 => mix0(read_8bytes_swapped(rem_key), read_bytes::<2>(&rem_key[8..]), seed),
-            11 => mix0(read_8bytes_swapped(rem_key), (read_bytes::<2>(&rem_key[8..]) << 8) | read_bytes::<1>(&rem_key[10..]), seed),
-            12 => mix0(read_8bytes_swapped(rem_key), read_bytes::<4>(&rem_key[8..]), seed),
-            13 => mix0(read_8bytes_swapped(rem_key), (read_bytes::<4>(&rem_key[8..]) << 8) | read_bytes::<1>(&rem_key[12..]), seed),
-            14 => mix0(read_8bytes_swapped(rem_key), (read_bytes::<4>(&rem_key[8..]) << 16) | read_bytes::<2>(&rem_key[12..]), seed),
-            15 => mix0(read_8bytes_swapped(rem_key), (read_bytes::<4>(&rem_key[8..]) << 24) | (read_bytes::<2>(&rem_key[12..]) << 8) | read_bytes::<1>(&rem_key[14..]), seed),
-            16 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed),
-            17 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_bytes::<1>(&rem_key[16..]), PRIMES[4], seed),
-            18 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_bytes::<2>(&rem_key[16..]), PRIMES[4], seed),
-            19 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1((read_bytes::<2>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[18..]), PRIMES[4], seed),
-            20 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_bytes::<4>(&rem_key[16..]), PRIMES[4], seed),
-            21 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1((read_bytes::<4>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[20..]), PRIMES[4], seed),
-            22 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1((read_bytes::<4>(&rem_key[16..]) << 16) | read_bytes::<2>(&rem_key[20..]), PRIMES[4], seed),
-            23 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1((read_bytes::<4>(&rem_key[16..]) << 24) | (read_bytes::<2>(&rem_key[20..]) << 8) | read_bytes::<1>(&rem_key[22..]), PRIMES[4], seed),
-            24 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), PRIMES[4], seed),
-            25 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), read_bytes::<1>(&rem_key[24..]), seed),
-            26 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), read_bytes::<2>(&rem_key[24..]), seed),
-            27 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), (read_bytes::<2>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[26..]), seed),
-            28 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), read_bytes::<4>(&rem_key[24..]), seed),
-            29 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), (read_bytes::<4>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[28..]), seed),
-            30 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), (read_bytes::<4>(&rem_key[24..]) << 16) | read_bytes::<2>(&rem_key[28..]), seed),
-            31 => mix0(read_8bytes_swapped(rem_key), read_8bytes_swapped(&rem_key[8..]), seed) ^ mix1(read_8bytes_swapped(&rem_key[16..]), (read_bytes::<4>(&rem_key[24..]) << 24) | (read_bytes::<2>(&rem_key[28..]) << 8) | read_bytes::<1>(&rem_key[30..]), seed),
+            9 => mix0(
+                read_8bytes_swapped(rem_key),
+                read_bytes::<1>(&rem_key[8..]),
+                seed,
+            ),
+            10 => mix0(
+                read_8bytes_swapped(rem_key),
+                read_bytes::<2>(&rem_key[8..]),
+                seed,
+            ),
+            11 => mix0(
+                read_8bytes_swapped(rem_key),
+                (read_bytes::<2>(&rem_key[8..]) << 8) | read_bytes::<1>(&rem_key[10..]),
+                seed,
+            ),
+            12 => mix0(
+                read_8bytes_swapped(rem_key),
+                read_bytes::<4>(&rem_key[8..]),
+                seed,
+            ),
+            13 => mix0(
+                read_8bytes_swapped(rem_key),
+                (read_bytes::<4>(&rem_key[8..]) << 8) | read_bytes::<1>(&rem_key[12..]),
+                seed,
+            ),
+            14 => mix0(
+                read_8bytes_swapped(rem_key),
+                (read_bytes::<4>(&rem_key[8..]) << 16) | read_bytes::<2>(&rem_key[12..]),
+                seed,
+            ),
+            15 => mix0(
+                read_8bytes_swapped(rem_key),
+                (read_bytes::<4>(&rem_key[8..]) << 24)
+                    | (read_bytes::<2>(&rem_key[12..]) << 8)
+                    | read_bytes::<1>(&rem_key[14..]),
+                seed,
+            ),
+            16 => mix0(
+                read_8bytes_swapped(rem_key),
+                read_8bytes_swapped(&rem_key[8..]),
+                seed,
+            ),
+            17 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(read_bytes::<1>(&rem_key[16..]), PRIMES[4], seed)
+            }
+            18 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(read_bytes::<2>(&rem_key[16..]), PRIMES[4], seed)
+            }
+            19 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    (read_bytes::<2>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[18..]),
+                    PRIMES[4],
+                    seed,
+                )
+            }
+            20 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(read_bytes::<4>(&rem_key[16..]), PRIMES[4], seed)
+            }
+            21 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    (read_bytes::<4>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[20..]),
+                    PRIMES[4],
+                    seed,
+                )
+            }
+            22 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    (read_bytes::<4>(&rem_key[16..]) << 16) | read_bytes::<2>(&rem_key[20..]),
+                    PRIMES[4],
+                    seed,
+                )
+            }
+            23 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    (read_bytes::<4>(&rem_key[16..]) << 24)
+                        | (read_bytes::<2>(&rem_key[20..]) << 8)
+                        | read_bytes::<1>(&rem_key[22..]),
+                    PRIMES[4],
+                    seed,
+                )
+            }
+            24 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(read_8bytes_swapped(&rem_key[16..]), PRIMES[4], seed)
+            }
+            25 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    read_bytes::<1>(&rem_key[24..]),
+                    seed,
+                )
+            }
+            26 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    read_bytes::<2>(&rem_key[24..]),
+                    seed,
+                )
+            }
+            27 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    (read_bytes::<2>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[26..]),
+                    seed,
+                )
+            }
+            28 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    read_bytes::<4>(&rem_key[24..]),
+                    seed,
+                )
+            }
+            29 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    (read_bytes::<4>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[28..]),
+                    seed,
+                )
+            }
+            30 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    (read_bytes::<4>(&rem_key[24..]) << 16) | read_bytes::<2>(&rem_key[28..]),
+                    seed,
+                )
+            }
+            31 => {
+                mix0(
+                    read_8bytes_swapped(rem_key),
+                    read_8bytes_swapped(&rem_key[8..]),
+                    seed,
+                ) ^ mix1(
+                    read_8bytes_swapped(&rem_key[16..]),
+                    (read_bytes::<4>(&rem_key[24..]) << 24)
+                        | (read_bytes::<2>(&rem_key[28..]) << 8)
+                        | read_bytes::<1>(&rem_key[30..]),
+                    seed,
+                )
+            }
             _ => unreachable!(),
         };
 
@@ -310,7 +497,11 @@ impl Wyhash {
         }
 
         while i + 48 < input.len() {
-            self.round(input[i..i + 48].try_into().expect("infallible: size matches"));
+            self.round(
+                input[i..i + 48]
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
             i += 48;
         }
 
@@ -421,9 +612,7 @@ impl Wyhash {
         debug_assert!(data.len() >= 8);
         // SAFETY: every caller passes a slice with ≥8 bytes (see comment above);
         // `read_unaligned` imposes no alignment requirement.
-        u64::from_le(unsafe {
-            core::ptr::read_unaligned(data.as_ptr() as *const u64)
-        })
+        u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) })
     }
 
     #[inline]
@@ -531,14 +720,11 @@ impl Wyhash {
                     }
                     // u64×u64 → u128 cannot overflow; `wrapping_mul` skips
                     // the debug-mode overflow check that plain `*` emits.
-                    let m0 = ((r8!(0) ^ k1) as u128)
-                        .wrapping_mul((r8!(8) ^ s0) as u128);
+                    let m0 = ((r8!(0) ^ k1) as u128).wrapping_mul((r8!(8) ^ s0) as u128);
                     s0 = (m0 as u64) ^ ((m0 >> 64) as u64);
-                    let m1 = ((r8!(16) ^ k2) as u128)
-                        .wrapping_mul((r8!(24) ^ s1) as u128);
+                    let m1 = ((r8!(16) ^ k2) as u128).wrapping_mul((r8!(24) ^ s1) as u128);
                     s1 = (m1 as u64) ^ ((m1 >> 64) as u64);
-                    let m2 = ((r8!(32) ^ k3) as u128)
-                        .wrapping_mul((r8!(40) ^ s2) as u128);
+                    let m2 = ((r8!(32) ^ k3) as u128).wrapping_mul((r8!(40) ^ s2) as u128);
                     s2 = (m2 as u64) ^ ((m2 >> 64) as u64);
                     i += 48;
                 }
@@ -605,11 +791,17 @@ impl core::hash::Hasher for OneShotHasher {
         self.hash = Wyhash11::hash(self.hash, bytes);
     }
     #[inline(always)]
-    fn write_u8(&mut self, n: u8) { self.write_u64(u64::from(n)); }
+    fn write_u8(&mut self, n: u8) {
+        self.write_u64(u64::from(n));
+    }
     #[inline(always)]
-    fn write_u16(&mut self, n: u16) { self.write_u64(u64::from(n)); }
+    fn write_u16(&mut self, n: u16) {
+        self.write_u64(u64::from(n));
+    }
     #[inline(always)]
-    fn write_u32(&mut self, n: u32) { self.write_u64(u64::from(n)); }
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(u64::from(n));
+    }
     #[inline(always)]
     fn write_u64(&mut self, n: u64) {
         // Cheap diffusion for integer keys — one 128-bit multiply, same
@@ -625,7 +817,9 @@ impl core::hash::Hasher for OneShotHasher {
     #[inline(always)]
     fn write_length_prefix(&mut self, _len: usize) {}
     #[inline(always)]
-    fn write_usize(&mut self, n: usize) { self.write_u64(n as u64); }
+    fn write_usize(&mut self, n: usize) {
+        self.write_u64(n as u64);
+    }
     #[inline(always)]
     fn finish(&self) -> u64 {
         self.hash
@@ -727,7 +921,14 @@ pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
     #[inline]
     const fn read8(d: &[u8], o: usize) -> u64 {
         u64::from_le_bytes([
-            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+            d[o],
+            d[o + 1],
+            d[o + 2],
+            d[o + 3],
+            d[o + 4],
+            d[o + 5],
+            d[o + 6],
+            d[o + 7],
         ])
     }
 
@@ -759,8 +960,14 @@ pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
             while i + 48 < len {
                 // round
                 state[0] = mix(read8(input, i) ^ SECRET[1], read8(input, i + 8) ^ state[0]);
-                state[1] = mix(read8(input, i + 16) ^ SECRET[2], read8(input, i + 24) ^ state[1]);
-                state[2] = mix(read8(input, i + 32) ^ SECRET[3], read8(input, i + 40) ^ state[2]);
+                state[1] = mix(
+                    read8(input, i + 16) ^ SECRET[2],
+                    read8(input, i + 24) ^ state[1],
+                );
+                state[2] = mix(
+                    read8(input, i + 32) ^ SECRET[3],
+                    read8(input, i + 40) ^ state[2],
+                );
                 i += 48;
             }
             // final0
@@ -778,7 +985,10 @@ pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
 
     // final2 (mum_ inlined)
     let x = ((a ^ SECRET[1]) as u128).wrapping_mul((b ^ state[0]) as u128);
-    mix((x as u64) ^ SECRET[0] ^ (len as u64), ((x >> 64) as u64) ^ SECRET[1])
+    mix(
+        (x as u64) ^ SECRET[0] ^ (len as u64),
+        ((x >> 64) as u64) ^ SECRET[1],
+    )
 }
 
 /// `std.hash.int` — integer-to-integer hashing (same width in, same width out).
@@ -846,13 +1056,42 @@ mod tests {
     }
 
     const VECTORS: &[TestVector] = &[
-        TestVector { seed: 0, expected: 0x0409638ee2bde459, input: b"" },
-        TestVector { seed: 1, expected: 0xa8412d091b5fe0a9, input: b"a" },
-        TestVector { seed: 2, expected: 0x32dd92e4b2915153, input: b"abc" },
-        TestVector { seed: 3, expected: 0x8619124089a3a16b, input: b"message digest" },
-        TestVector { seed: 4, expected: 0x7a43afb61d7f5f40, input: b"abcdefghijklmnopqrstuvwxyz" },
-        TestVector { seed: 5, expected: 0xff42329b90e50d58, input: b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" },
-        TestVector { seed: 6, expected: 0xc39cab13b115aad3, input: b"12345678901234567890123456789012345678901234567890123456789012345678901234567890" },
+        TestVector {
+            seed: 0,
+            expected: 0x0409638ee2bde459,
+            input: b"",
+        },
+        TestVector {
+            seed: 1,
+            expected: 0xa8412d091b5fe0a9,
+            input: b"a",
+        },
+        TestVector {
+            seed: 2,
+            expected: 0x32dd92e4b2915153,
+            input: b"abc",
+        },
+        TestVector {
+            seed: 3,
+            expected: 0x8619124089a3a16b,
+            input: b"message digest",
+        },
+        TestVector {
+            seed: 4,
+            expected: 0x7a43afb61d7f5f40,
+            input: b"abcdefghijklmnopqrstuvwxyz",
+        },
+        TestVector {
+            seed: 5,
+            expected: 0xff42329b90e50d58,
+            input: b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+        },
+        TestVector {
+            seed: 6,
+            expected: 0xc39cab13b115aad3,
+            input:
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+        },
     ];
 
     #[test]

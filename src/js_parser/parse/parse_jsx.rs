@@ -1,12 +1,12 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
-use bun_ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
-use bun_ast::expr::Data as ExprData;
-use crate::p::P;
-use bun_ast::flags;
 use crate::lexer::{self as js_lexer, T};
-use crate::parser::{options, JSXTag, JSXTagData, JsxT};
+use crate::p::P;
+use crate::parser::{JSXTag, JSXTagData, JsxT, options};
+use bun_ast::expr::Data as ExprData;
+use bun_ast::flags;
 use bun_ast::op::Level;
+use bun_ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 use bun_core::err;
 use bun_core::strings;
@@ -83,7 +83,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // <button selected>
                             p.new_expr(
                                 E::Boolean { value: true },
-                                bun_ast::Loc { start: key_range.loc.start + key_range.len },
+                                bun_ast::Loc {
+                                    start: key_range.loc.start + key_range.len,
+                                },
                             )
                         } else {
                             can_be_inlined = false;

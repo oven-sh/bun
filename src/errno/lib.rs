@@ -1,6 +1,11 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 
 // Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
@@ -84,17 +89,25 @@ macro_rules! __decl_uv_e {
     };
 }
 
-#[cfg(target_os = "macos")] pub mod darwin_errno;
-#[cfg(target_os = "macos")] pub use darwin_errno::*;
-#[cfg(target_os = "freebsd")] pub mod freebsd_errno;
-#[cfg(target_os = "freebsd")] pub use freebsd_errno::*;
+#[cfg(target_os = "macos")]
+pub mod darwin_errno;
+#[cfg(target_os = "macos")]
+pub use darwin_errno::*;
+#[cfg(target_os = "freebsd")]
+pub mod freebsd_errno;
+#[cfg(target_os = "freebsd")]
+pub use freebsd_errno::*;
 // Android shares the Linux kernel errno space (bionic copies <asm/errno.h>),
 // so it uses the same per-errno enum. Rust splits `target_os` into
 // `linux`/`android` (Zig keeps both as `os.tag == .linux`), so list both.
-#[cfg(any(target_os = "linux", target_os = "android"))] pub mod linux_errno;
-#[cfg(any(target_os = "linux", target_os = "android"))] pub use linux_errno::*;
-#[cfg(windows)] pub mod windows_errno;
-#[cfg(windows)] pub use windows_errno::{*, posix};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod linux_errno;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub use linux_errno::*;
+#[cfg(windows)]
+pub mod windows_errno;
+#[cfg(windows)]
+pub use windows_errno::{posix, *};
 
 // ──────────────────────────────────────────────────────────────────────────
 // posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
@@ -170,7 +183,10 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
     #[cfg(windows)]
     {
-        u16::try_from(n).ok().and_then(E::try_from_raw).unwrap_or(E::SUCCESS)
+        u16::try_from(n)
+            .ok()
+            .and_then(E::try_from_raw)
+            .unwrap_or(E::SUCCESS)
     }
     #[cfg(not(windows))]
     {
@@ -244,7 +260,9 @@ impl bun_core::output::ErrName for SystemErrno {
 pub fn system_errno_name(errno: i32) -> Option<&'static str> {
     #[cfg(not(windows))]
     {
-        if errno <= 0 { return None; }
+        if errno <= 0 {
+            return None;
+        }
         SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
     }
     #[cfg(windows)]
@@ -253,8 +271,11 @@ pub fn system_errno_name(errno: i32) -> Option<&'static str> {
         // `errno_map[@abs(uv_code)]` lookup. `from_repr` (strum::FromRepr)
         // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
         let n = errno.unsigned_abs();
-        if n == 0 { return None; }
-        u16::try_from(n).ok()
+        if n == 0 {
+            return None;
+        }
+        u16::try_from(n)
+            .ok()
             .and_then(SystemErrno::from_repr)
             .map(<&'static str>::from)
     }
@@ -342,11 +363,20 @@ mod errno_name_tests {
 
     #[test]
     fn coreutils_map() {
-        assert_eq!(coreutils_error_map::get(2), Some("No such file or directory"));
+        assert_eq!(
+            coreutils_error_map::get(2),
+            Some("No such file or directory")
+        );
         #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
-        assert_eq!(coreutils_error_map::get(11), Some("Resource temporarily unavailable"));
+        assert_eq!(
+            coreutils_error_map::get(11),
+            Some("Resource temporarily unavailable")
+        );
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        assert_eq!(coreutils_error_map::get(11), Some("Resource deadlock avoided"));
+        assert_eq!(
+            coreutils_error_map::get(11),
+            Some("Resource deadlock avoided")
+        );
         assert_eq!(coreutils_error_map::get(0), None);
     }
 }

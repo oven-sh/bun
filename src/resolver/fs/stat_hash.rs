@@ -1,4 +1,4 @@
-use bun_sys::{Stat, Timespec, S};
+use bun_sys::{S, Stat, Timespec};
 // Zig: `std.hash.XxHash64` (streaming init/update/digest).
 use bun_hash::XxHash64Streaming as XxHash64;
 use bun_http_types::ETag::wtf;
@@ -30,9 +30,19 @@ fn stat_mtime(s: &Stat) -> Timespec {
     // The `libc` crate flattens BSD/Darwin `st_mtimespec` into
     // `st_mtime`/`st_mtime_nsec` so the access is uniform on all `unix`.
     #[cfg(unix)]
-    { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
+    {
+        Timespec {
+            sec: s.st_mtime as i64,
+            nsec: s.st_mtime_nsec as i64,
+        }
+    }
     #[cfg(windows)]
-    { Timespec { sec: s.mtim.sec as i64, nsec: s.mtim.nsec as i64 } }
+    {
+        Timespec {
+            sec: s.mtim.sec as i64,
+            nsec: s.mtim.nsec as i64,
+        }
+    }
 }
 
 impl StatHash {

@@ -1,13 +1,13 @@
 //! State node for a shell script. Used for the top-level script as well as
 //! command-substitution and subshell bodies.
 
+use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 pub struct Script {
     pub base: Base,

@@ -1,13 +1,15 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
-use bun_jsc::{ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
-
-use bun_dns::{addr_info_count, address_to_string};
-use bun_dns::{
-    Backend, Family, GetAddrInfo, GetAddrInfoResult as GaiResult, Options, Protocol, ResultAny,
-    SocketType, BACKEND_LABEL, FAMILY_MAP, PROTOCOL_MAP, SOCKET_TYPE_MAP,
+use bun_jsc::{
+    ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
+
+use bun_dns::{
+    BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfo, GetAddrInfoResult as GaiResult,
+    Options, PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
+};
+use bun_dns::{addr_info_count, address_to_string};
 // PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
 // per-field `Invalid*` variants plus `JSError`. The Rust enum lives in
 // `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
@@ -58,7 +60,8 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
             options.flags = flags_int;
 
             // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
-            let filter: u32 = !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
+            let filter: u32 =
+                !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
             let int: u32 = flags_int as u32;
             if int & filter != 0 {
                 return Err(FromJSError::InvalidFlags);
@@ -103,7 +106,10 @@ pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family,
     Err(FromJSError::InvalidFamily)
 }
 
-pub fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<SocketType, FromJSError> {
+pub fn socket_type_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Result<SocketType, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         // Default to .stream
         return Ok(SocketType::Stream);
@@ -241,7 +247,10 @@ pub fn address_to_js(
     str.transfer_to_js(global)
 }
 
-pub fn addr_info_to_js_array(addr_info: &super::netc::addrinfo, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn addr_info_to_js_array(
+    addr_info: &super::netc::addrinfo,
+    global: &JSGlobalObject,
+) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global, addr_info_count(addr_info) as usize)?;
 
     {

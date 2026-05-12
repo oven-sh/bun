@@ -14,10 +14,26 @@ pub const MAX_WBITS: c_int = 15;
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn compress(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong) -> c_int;
-    pub fn compress2(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong, level: c_int) -> c_int;
+    pub fn compress(
+        dest: *mut Bytef,
+        dest_len: *mut uLongf,
+        source: *const Bytef,
+        source_len: uLong,
+    ) -> c_int;
+    pub fn compress2(
+        dest: *mut Bytef,
+        dest_len: *mut uLongf,
+        source: *const Bytef,
+        source_len: uLong,
+        level: c_int,
+    ) -> c_int;
     pub safe fn compressBound(source_len: uLong) -> uLong;
-    pub fn uncompress(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong) -> c_int;
+    pub fn uncompress(
+        dest: *mut Bytef,
+        dest_len: *mut uLongf,
+        source: *const Bytef,
+        source_len: uLong,
+    ) -> c_int;
 }
 
 #[repr(C)]
@@ -79,7 +95,7 @@ pub use crate::internal::z_streamp;
 pub use crate::internal::FlushValue;
 pub use crate::internal::ReturnCode;
 
-use crate::internal::{zStream_struct, DataType};
+use crate::internal::{DataType, zStream_struct};
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -88,7 +104,12 @@ unsafe extern "C" {
     ///
     /// inflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough memory, Z_VERSION_ERROR if the zlib library version is incompatible with the version assumed by the caller, or Z_STREAM_ERROR if the parameters are invalid, such as a null pointer to the structure. msg is set to null if there is no error message. inflateInit does not perform any decompression. Actual decompression will be done by inflate(). So next_in, and avail_in, next_out, and avail_out are unused and unchanged. The current implementation of inflateInit() does not process any header information—that is deferred until inflate() is called.
     pub fn inflateInit_(strm: z_streamp, version: *const u8, stream_size: c_int) -> ReturnCode;
-    pub fn inflateInit2_(strm: z_streamp, window_size: c_int, version: *const u8, stream_size: c_int) -> ReturnCode;
+    pub fn inflateInit2_(
+        strm: z_streamp,
+        window_size: c_int,
+        version: *const u8,
+        stream_size: c_int,
+    ) -> ReturnCode;
 
     /// Initializes the compression dictionary from the given byte sequence without producing any compressed output. This function must be called immediately after deflateInit, deflateInit2 or deflateReset, before any call of deflate. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary). without producing any compressed output. When using the zlib format, this function must be called immediately after deflateInit, deflateInit2 or deflateReset, and before any call of deflate. When doing raw deflate, this function must be called either before any call of deflate, or immediately after the completion of a deflate block, i.e. after all input has been consumed and all output has been delivered when using any of the flush options Z_BLOCK, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, or Z_FULL_FLUSH. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary).
     /// The dictionary should consist of strings (byte sequences) that are likely to be encountered later in the data to be compressed, with the most commonly used strings preferably put towards the end of the dictionary. Using a dictionary is most useful when the data to be compressed is short and can be predicted with good accuracy; the data can then be compressed better than with the default empty dictionary.
@@ -98,7 +119,11 @@ unsafe extern "C" {
     /// Upon return of this function, strm->adler is set to the Adler-32 value of the dictionary; the decompressor may later use this value to determine which dictionary has been used by the compressor. (The Adler-32 value applies to the whole dictionary even if only a subset of the dictionary is actually used by the compressor.) If a raw deflate was requested, then the Adler-32 value is not computed and strm->adler is not set.
     ///
     /// deflateSetDictionary returns Z_OK if success, or Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent (for example if deflate has already been called for this stream or if not at a block boundary for raw deflate). deflateSetDictionary does not perform any compression: this will be done by deflate().
-    pub fn deflateSetDictionary(strm: z_streamp, dictionary: *const u8, length: c_uint) -> ReturnCode;
+    pub fn deflateSetDictionary(
+        strm: z_streamp,
+        dictionary: *const u8,
+        length: c_uint,
+    ) -> ReturnCode;
 
     /// Dynamically update the compression level and compression strategy. The interpretation of level and strategy is as in deflateInit2(). This can be used to switch between compression and straight copy of the input data, or to switch to a different kind of input data requiring a different strategy. If the compression approach (which is a function of the level) or the strategy is changed, and if there have been any deflate() calls since the state was initialized or reset, then the input available so far is compressed with the old level and strategy using deflate(strm, Z_BLOCK). There are three approaches for the compression levels 0, 1..3, and 4..9 respectively. The new level and strategy will take effect at the next call of deflate().
     /// If a deflate(strm, Z_BLOCK) is performed by deflateParams(), and it does not have enough output space to complete, then the parameter change will not take effect. In this case, deflateParams() can be called again with the same parameters and more output space to try again.
@@ -226,7 +251,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
-            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(
+                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+            );
         }
         None
     }
@@ -236,7 +263,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     where
         W: bun_io::Write,
     {
-        while self.state == ZlibReaderState::Uninitialized || self.state == ZlibReaderState::Inflating {
+        while self.state == ZlibReaderState::Uninitialized
+            || self.state == ZlibReaderState::Inflating
+        {
             // Before the call of inflate(), the application should ensure
             // that at least one of the actions is possible, by providing
             // more input and/or consuming more output, and updating the
@@ -343,7 +372,9 @@ bun_core::named_error_set!(ZlibError);
 // `ZlibCompressorArrayList`. Mirrors zlib.zig:138 / :779 — intentionally
 // `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
 // heap-breakdown variant used by `ZlibReaderArrayList`).
-pub(crate) use bun_alloc::c_thunks::{mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc};
+pub(crate) use bun_alloc::c_thunks::{
+    mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
+};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
@@ -461,7 +492,9 @@ impl<'a> ZlibReaderArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(
+                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+            );
         }
         None
     }
@@ -605,7 +638,12 @@ unsafe extern "C" {
     ///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
     ///   if there is no error message.  deflateInit does not perform any compression:
     ///   this will be done by deflate().
-    pub fn deflateInit_(strm: z_streamp, level: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit_(
+        strm: z_streamp,
+        level: c_int,
+        version: *const c_char,
+        stream_size: c_int,
+    ) -> ReturnCode;
 
     ///
     ///    deflate compresses as much data as possible, and stops when the input
@@ -791,12 +829,25 @@ unsafe extern "C" {
     ///   incompatible with the version assumed by the caller (ZLIB_VERSION).  msg is
     ///   set to null if there is no error message.  deflateInit2 does not perform any
     ///   compression: this will be done by deflate().
-    pub fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, window_bits: c_int, mem_level: c_int, strategy: c_int, version: *const u8, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit2_(
+        strm: z_streamp,
+        level: c_int,
+        method: c_int,
+        window_bits: c_int,
+        mem_level: c_int,
+        strategy: c_int,
+        version: *const u8,
+        stream_size: c_int,
+    ) -> ReturnCode;
 
     /// Initializes the decompression dictionary from the given uncompressed byte sequence. This function must be called immediately after a call of inflate, if that call returned Z_NEED_DICT. The dictionary chosen by the compressor can be determined from the Adler-32 value returned by that call of inflate. The compressor and decompressor must use exactly the same dictionary (see deflateSetDictionary). For raw inflate, this function can be called at any time to set the dictionary. If the provided dictionary is smaller than the window and there is already data in the window, then the provided dictionary will amend what's there. The application must insure that the dictionary that was used for compression is provided.
     ///
     /// inflateSetDictionary returns Z_OK if success, Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent, Z_DATA_ERROR if the given dictionary doesn't match the expected one (incorrect Adler-32 value). inflateSetDictionary does not perform any decompression: this will be done by subsequent calls of inflate().
-    pub fn inflateSetDictionary(strm: z_streamp, dictionary: *const u8, length: c_uint) -> ReturnCode;
+    pub fn inflateSetDictionary(
+        strm: z_streamp,
+        dictionary: *const u8,
+        length: c_uint,
+    ) -> ReturnCode;
 }
 
 #[repr(u8)]
@@ -862,7 +913,11 @@ impl<'a> ZlibCompressorArrayList<'a> {
         }
     }
 
-    pub fn init(input: &'a [u8], list: &'a mut Vec<u8>, options: Options) -> Result<Box<Self>, ZlibError> {
+    pub fn init(
+        input: &'a [u8],
+        list: &'a mut Vec<u8>,
+        options: Options,
+    ) -> Result<Box<Self>, ZlibError> {
         Self::init_with_list_allocator(input, list, options)
     }
 
@@ -907,7 +962,11 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 &raw mut zlib_reader.zlib,
                 options.level,
                 options.method,
-                if !options.gzip { -options.window_bits } else { options.window_bits + 16 },
+                if !options.gzip {
+                    -options.window_bits
+                } else {
+                    options.window_bits + 16
+                },
                 options.mem_level,
                 options.strategy,
                 zlibVersion().cast::<u8>(),
@@ -917,7 +976,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
             ReturnCode::Ok => {
                 // SAFETY: zlib initialized; deflateBound returns upper bound on output.
                 let bound = unsafe {
-                    deflateBound(&raw mut zlib_reader.zlib, uLong::try_from(input.len()).expect("int cast"))
+                    deflateBound(
+                        &raw mut zlib_reader.zlib,
+                        uLong::try_from(input.len()).expect("int cast"),
+                    )
                 };
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
@@ -947,7 +1009,9 @@ impl<'a> ZlibCompressorArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(
+                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+            );
         }
         None
     }
@@ -1046,13 +1110,13 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 // B-2: re-export from bun_zlib_sys, platform-selected to match build.zig.
 mod internal {
     #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{z_stream, z_streamp, FlushValue, ReturnCode};
+    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
     #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{zStream_struct, DataType};
+    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
     #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{z_stream, z_streamp, FlushValue, ReturnCode};
+    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
     #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{zStream_struct, DataType};
+    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }
 
 // ported from: src/zlib/zlib.zig

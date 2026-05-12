@@ -2,20 +2,22 @@ use std::io::Write as _;
 
 use bstr::{BStr, ByteSlice};
 
-use bun_alloc::{AllocError, Arena};
+use crate::api::bun::process::Status as ProcStatus;
+use crate::api::bun::process::sync::{
+    Options as SpawnSyncOptions, SyncStdio as Stdio, spawn as spawn_sync,
+};
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
-use bun_core::{env_var, Global, Output};
-use bun_install::PackageManager;
+use bun_alloc::{AllocError, Arena};
+use bun_ast::ExprData;
+use bun_core::strings;
+use bun_core::{Global, Output, env_var};
 use bun_install::LogLevel;
+use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_ast::ExprData;
-use bun_paths::{resolve_path as path, resolve_path::platform as path_platform, PathBuffer};
-use crate::api::bun::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
-use crate::api::bun::process::Status as ProcStatus;
+use bun_paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
 use bun_semver as Semver;
-use bun_core::strings;
 use bun_sys::{self, Fd};
 use bun_which::which;
 
@@ -90,21 +92,19 @@ impl PmVersionCommand {
             &[b"package.json"],
         );
 
-        let package_json_contents =
-            match bun_sys::File::read_from(Fd::cwd(), package_json_path) {
-                Ok(c) => c,
-                Err(err) => {
-                    Output::err_generic(
-                        "Failed to read package.json: {}",
-                        (BStr::new(err.name()),),
-                    );
-                    Global::exit(1);
-                }
-            };
+        let package_json_contents = match bun_sys::File::read_from(Fd::cwd(), package_json_path) {
+            Ok(c) => c,
+            Err(err) => {
+                Output::err_generic("Failed to read package.json: {}", (BStr::new(err.name()),));
+                Global::exit(1);
+            }
+        };
         // `defer ctx.allocator.free(package_json_contents)` — handled by Drop.
 
-        let package_json_source =
-            bun_ast::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
+        let package_json_source = bun_ast::Source::init_path_string(
+            package_json_path.as_bytes(),
+            &*package_json_contents,
+        );
         // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
         // so we hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
@@ -117,17 +117,11 @@ impl PmVersionCommand {
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(
-            &package_json_source,
-            unsafe { ctx.log_mut() },
-            &json_bump,
-        ) {
+        >(&package_json_source, unsafe { ctx.log_mut() }, &json_bump)
+        {
             Ok(r) => r,
             Err(err) => {
-                Output::err_generic(
-                    "Failed to parse package.json: {}",
-                    (err.name(),),
-                );
+                Output::err_generic("Failed to parse package.json: {}", (err.name(),));
                 Global::exit(1);
             }
         };
@@ -135,10 +129,7 @@ impl PmVersionCommand {
         let mut json = json_result.root;
 
         if !matches!(json.data, ExprData::EObject(_)) {
-            Output::err_generic(
-                "Failed to parse package.json: root must be an object",
-                (),
-            );
+            Output::err_generic("Failed to parse package.json: root must be an object", ());
             Global::exit(1);
         }
 
@@ -226,10 +217,7 @@ impl PmVersionCommand {
                     ..Default::default()
                 },
             ) {
-                Output::err_generic(
-                    "Failed to save package.json: {}",
-                    (err.name(),),
-                );
+                Output::err_generic("Failed to save package.json: {}", (err.name(),));
                 Global::exit(1);
             }
 
@@ -239,10 +227,7 @@ impl PmVersionCommand {
                 package_json_path,
                 package_json_writer.ctx.written_without_trailing_zero(),
             ) {
-                Output::err_generic(
-                    "Failed to write package.json: {}",
-                    (BStr::new(err.name()),),
-                );
+                Output::err_generic("Failed to write package.json: {}", (BStr::new(err.name()),));
                 Global::exit(1);
             }
         }
@@ -265,11 +250,7 @@ impl PmVersionCommand {
         }
 
         if pm.options.git_tag_version {
-            Self::git_commit_and_tag(
-                &new_version_str,
-                pm.options.message,
-                &package_json_dir,
-            )?;
+            Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir)?;
         }
 
         if let Some(s) = &scripts_obj {
@@ -324,12 +305,12 @@ impl PmVersionCommand {
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let git_dir_path = path::join_abs_string_buf_z::<path_platform::Auto>(
-            cwd,
-            &mut path_buf.0,
-            &[b".git"],
-        );
-        if !matches!(bun_sys::directory_exists_at(Fd::cwd(), git_dir_path), Ok(true)) {
+        let git_dir_path =
+            path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
+        if !matches!(
+            bun_sys::directory_exists_at(Fd::cwd(), git_dir_path),
+            Ok(true)
+        ) {
             pm.options.git_tag_version = false;
             return Ok(());
         }
@@ -351,10 +332,7 @@ impl PmVersionCommand {
             return (VersionType::Specific, Some(arg));
         }
 
-        Output::err_generic(
-            "Invalid version argument: \"{}\"",
-            (BStr::new(arg),),
-        );
+        Output::err_generic("Invalid version argument: \"{}\"", (BStr::new(arg),));
         Output::note(
             "Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version",
         );
@@ -371,14 +349,15 @@ impl PmVersionCommand {
             &[b"package.json"],
         );
 
-        let Ok(package_json_contents) =
-            bun_sys::File::read_from(Fd::cwd(), package_json_path)
+        let Ok(package_json_contents) = bun_sys::File::read_from(Fd::cwd(), package_json_path)
         else {
             return None;
         };
 
-        let package_json_source =
-            bun_ast::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
+        let package_json_source = bun_ast::Source::init_path_string(
+            package_json_path.as_bytes(),
+            &*package_json_contents,
+        );
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
@@ -418,27 +397,12 @@ impl PmVersionCommand {
 
         let preid = pm.options.preid;
 
-        let patch_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Patch,
-            None,
-            preid,
-            cwd,
-        )?;
-        let minor_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Minor,
-            None,
-            preid,
-            cwd,
-        )?;
-        let major_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Major,
-            None,
-            preid,
-            cwd,
-        )?;
+        let patch_version =
+            Self::calculate_new_version(current_version, VersionType::Patch, None, preid, cwd)?;
+        let minor_version =
+            Self::calculate_new_version(current_version, VersionType::Minor, None, preid, cwd)?;
+        let major_version =
+            Self::calculate_new_version(current_version, VersionType::Major, None, preid, cwd)?;
         let prerelease_version = Self::calculate_new_version(
             current_version,
             VersionType::Prerelease,
@@ -649,9 +613,7 @@ impl PmVersionCommand {
                         current_prerelease
                     };
 
-                    if let Some(dot_index) =
-                        strings::last_index_of_char(current_prerelease, b'.')
-                    {
+                    if let Some(dot_index) = strings::last_index_of_char(current_prerelease, b'.') {
                         let number_str = &current_prerelease[(dot_index as usize) + 1..];
                         let next_num = bun_core::fmt::parse_decimal::<u32>(number_str).unwrap_or(0);
                         return Ok(fmt_bytes(format_args!(
@@ -757,9 +719,7 @@ impl PmVersionCommand {
                 Output::err(err, "Failed to spawn git process", ());
                 Global::exit(1);
             }
-            Ok(result) => {
-                Ok(result.is_ok() && result.stdout.is_empty())
-            }
+            Ok(result) => Ok(result.is_ok() && result.stdout.is_empty()),
         }
     }
 
@@ -771,10 +731,7 @@ impl PmVersionCommand {
             cwd,
             b"git",
         ) else {
-            Output::err_generic(
-                "git must be installed to use `bun pm version from-git`",
-                (),
-            );
+            Output::err_generic("git must be installed to use `bun pm version from-git`", ());
             Global::exit(1);
         };
 
@@ -872,10 +829,7 @@ impl PmVersionCommand {
                         ProcStatus::Exited(e) => i32::from(e.code),
                         _ => -1,
                     };
-                    Output::err_generic(
-                        "Git add failed with exit code {}",
-                        (exit_code,),
-                    );
+                    Output::err_generic("Git add failed with exit code {}", (exit_code,));
                     Global::exit(1);
                 }
             }

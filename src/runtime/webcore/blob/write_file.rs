@@ -2,19 +2,19 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Error;
-use bun_io as io;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError, SysErrorJsc,
-};
-use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::ZigStringJsc as _;
 use bun_core::ZigString;
+use bun_io as io;
+use bun_jsc::ZigStringJsc as _;
+use bun_jsc::node_path::PathOrFileDescriptor;
+use bun_jsc::{
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SysErrorJsc, SystemError,
+};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 use crate::webcore::blob::{
-    self, mkdir_if_not_exists, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry,
-    SizeType,
+    self, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType,
+    mkdir_if_not_exists,
 };
 use crate::webcore::body;
 
@@ -76,12 +76,28 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn set_errno(&mut self, e: Error) { self.errno = Some(e); }
-    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn set_errno(&mut self, e: Error) {
+        self.errno = Some(e);
+    }
+    fn set_system_error(&mut self, e: SystemError) {
+        self.system_error = Some(e);
+    }
     fn pathlike(&self) -> &PathOrFileDescriptor {
-        &self.file_blob.store.get().as_ref().unwrap().data.as_file().pathlike
+        &self
+            .file_blob
+            .store
+            .get()
+            .as_ref()
+            .unwrap()
+            .data
+            .as_file()
+            .pathlike
     }
     fn try_mkdirp(
         &mut self,
@@ -93,41 +109,83 @@ impl FileOpener for WriteFile {
         mkdir_if_not_exists(self, err, path, display_path)
     }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        unreachable!("WriteFile is POSIX-only; see WriteFileWindows")
+    }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { unreachable!("WriteFile is POSIX-only") }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
+        unreachable!("WriteFile is POSIX-only")
+    }
     #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
+    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
+        unreachable!()
+    }
     #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) { unreachable!() }
+    fn open_callback(&self) -> fn(&mut Self, Fd) {
+        unreachable!()
+    }
 }
 
 impl MkdirpTarget for WriteFile {
-    fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
-    fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
-    fn set_system_error(&mut self, e: bun_sys::SystemError) { self.system_error = Some(e.into()); }
-    fn set_errno_if_present(&mut self, e: Error) { self.errno = Some(e); }
-    fn set_opened_fd_if_present(&mut self, fd: Fd) { self.opened_fd = fd; }
+    fn mkdirp_if_not_exists(&self) -> bool {
+        self.mkdirp_if_not_exists
+    }
+    fn set_mkdirp_if_not_exists(&mut self, v: bool) {
+        self.mkdirp_if_not_exists = v;
+    }
+    fn set_system_error(&mut self, e: bun_sys::SystemError) {
+        self.system_error = Some(e.into());
+    }
+    fn set_errno_if_present(&mut self, e: Error) {
+        self.errno = Some(e);
+    }
+    fn set_opened_fd_if_present(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
 }
 
 impl FileCloser for WriteFile {
     const IO_TAG: io::Tag = io::Tag::WriteFile;
-    fn opened_fd(&self) -> Fd { self.opened_fd }
-    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn close_after_io(&self) -> bool { self.close_after_io }
-    fn set_close_after_io(&mut self, v: bool) { self.close_after_io = v; }
-    fn state(&self) -> &AtomicU8 { &self.state }
-    fn io_request(&mut self) -> Option<&mut io::Request> { Some(&mut self.io_request) }
-    fn io_poll(&mut self) -> &mut io::Poll { &mut self.io_poll }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
-    fn update(&mut self) { WriteFile::update(self) }
+    fn opened_fd(&self) -> Fd {
+        self.opened_fd
+    }
+    fn set_opened_fd(&mut self, fd: Fd) {
+        self.opened_fd = fd;
+    }
+    fn close_after_io(&self) -> bool {
+        self.close_after_io
+    }
+    fn set_close_after_io(&mut self, v: bool) {
+        self.close_after_io = v;
+    }
+    fn state(&self) -> &AtomicU8 {
+        &self.state
+    }
+    fn io_request(&mut self) -> Option<&mut io::Request> {
+        Some(&mut self.io_request)
+    }
+    fn io_poll(&mut self) -> &mut io::Poll {
+        &mut self.io_poll
+    }
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+        &mut self.task
+    }
+    fn update(&mut self) {
+        WriteFile::update(self)
+    }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!() }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+        unreachable!()
+    }
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request)))
+            &mut *(bun_core::from_field_ptr!(
+                WriteFile,
+                io_request,
+                std::ptr::from_mut::<io::Request>(request)
+            ))
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
@@ -166,14 +224,21 @@ impl WriteFile {
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
         let this: &mut WriteFile = unsafe {
-            &mut *bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request))
+            &mut *bun_core::from_field_ptr!(
+                WriteFile,
+                io_request,
+                std::ptr::from_mut::<io::Request>(request)
+            )
         };
         this.on_ready();
     }
 
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
-        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
+        self.task = WorkPoolTask {
+            node: Default::default(),
+            callback: Self::do_write_loop_task,
+        };
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -183,7 +248,10 @@ impl WriteFile {
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
         this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         this.system_error = Some(err.to_system_error().into());
-        this.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
+        this.task = WorkPoolTask {
+            node: Default::default(),
+            callback: Self::do_write_loop_task,
+        };
         WorkPool::schedule(&raw mut this.task);
     }
 
@@ -192,7 +260,11 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request))
+            &mut *bun_core::from_field_ptr!(
+                WriteFile,
+                io_request,
+                std::ptr::from_mut::<io::Request>(request)
+            )
         };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
@@ -206,7 +278,8 @@ impl WriteFile {
     pub fn wait_for_writable(&mut self) {
         self.close_after_io = true;
         // Zig: `@atomicStore(?*const fn, &self.io_request.callback, &onRequestWritable, .seq_cst)`.
-        self.io_request.store_callback_seq_cst(Self::on_request_writable);
+        self.io_request
+            .store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
             io::IoRequestLoop::schedule(&mut self.io_request);
         }
@@ -225,7 +298,10 @@ impl WriteFile {
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
-            task: WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task },
+            task: WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            },
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
@@ -337,7 +413,10 @@ impl WriteFile {
             return Ok(());
         }
 
-        cb(cb_ctx, WriteFileResultType::Result(total_written as SizeType))?;
+        cb(
+            cb_ctx,
+            WriteFileResultType::Result(total_written as SizeType),
+        )?;
         Ok(())
     }
 
@@ -537,9 +616,9 @@ mod windows_impl {
     use bun_io::{self as aio, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (Zig-style namespace
     // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, event_loop::EventLoop, ManagedTask::ManagedTask};
-    use bun_sys::windows::libuv as uv;
+    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
+    use bun_sys::windows::libuv as uv;
 
     pub struct WriteFileWindows {
         pub io_request: uv::fs_t,
@@ -589,7 +668,15 @@ mod windows_impl {
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
-                && file_blob.store.get().as_ref().unwrap().data.as_file().pathlike.is_path();
+                && file_blob
+                    .store
+                    .get()
+                    .as_ref()
+                    .unwrap()
+                    .data
+                    .as_file()
+                    .pathlike
+                    .is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -597,7 +684,10 @@ mod windows_impl {
                 on_complete_callback,
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
-                uv_bufs: [uv::uv_buf_t { base: null_mut(), len: 0 }],
+                uv_bufs: [uv::uv_buf_t {
+                    base: null_mut(),
+                    len: 0,
+                }],
                 event_loop,
                 fd: -1,
                 err: None,
@@ -619,7 +709,16 @@ mod windows_impl {
                 (*write_file).io_request.loop_ = (*event_loop).uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();
 
-                match &(*write_file).file_blob.store.get().as_ref().unwrap().data.as_file().pathlike {
+                match &(*write_file)
+                    .file_blob
+                    .store
+                    .get()
+                    .as_ref()
+                    .unwrap()
+                    .data
+                    .as_file()
+                    .pathlike
+                {
                     PathOrFileDescriptor::Path(_) => {
                         Self::open(write_file)?;
                     }
@@ -640,9 +739,13 @@ mod windows_impl {
                                         .cast::<c_void>();
                                     if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
                                         break 'brk 1;
-                                    } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                    } else if rare.stderr_store.map(|p| p.as_ptr())
+                                        == Some(store_ptr)
+                                    {
                                         break 'brk 2;
-                                    } else if rare.stdin_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                    } else if rare.stdin_store.map(|p| p.as_ptr())
+                                        == Some(store_ptr)
+                                    {
                                         break 'brk 0;
                                     }
                                 }
@@ -656,9 +759,14 @@ mod windows_impl {
                     }
                 }
 
-                (*write_file).poll_ref.ref_(jsc::VirtualMachineRef::event_loop_ctx(
-                    (*(*write_file).event_loop).virtual_machine.unwrap().as_ptr(),
-                ));
+                (*write_file)
+                    .poll_ref
+                    .ref_(jsc::VirtualMachineRef::event_loop_ctx(
+                        (*(*write_file).event_loop)
+                            .virtual_machine
+                            .unwrap()
+                            .as_ptr(),
+                    ));
             }
             Ok(write_file)
         }
@@ -693,11 +801,14 @@ mod windows_impl {
                 Err(_) => {
                     // SAFETY: caller contract — `this` is live; `throw` consumes it.
                     return Err(unsafe {
-                        Self::throw(this, sys::Error {
-                            errno: sys::E::NAMETOOLONG as _,
-                            syscall: sys::Tag::open,
-                            ..Default::default()
-                        })
+                        Self::throw(
+                            this,
+                            sys::Error {
+                                errno: sys::E::NAMETOOLONG as _,
+                                syscall: sys::Tag::open,
+                                ..Default::default()
+                            },
+                        )
                     });
                 }
             };
@@ -726,12 +837,15 @@ mod windows_impl {
                 let path = path.into();
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 return Err(unsafe {
-                    Self::throw(this, sys::Error {
-                        errno: err as _,
-                        path,
-                        syscall: sys::Tag::open,
-                        ..Default::default()
-                    })
+                    Self::throw(
+                        this,
+                        sys::Error {
+                            errno: err as _,
+                            path,
+                            syscall: sys::Tag::open,
+                            ..Default::default()
+                        },
+                    )
                 });
             } else {
                 // SAFETY: caller contract — `this` is live on the Ok path.
@@ -802,12 +916,15 @@ mod windows_impl {
                     .into();
                 // SAFETY: `this` is live; `throw` consumes it.
                 match unsafe {
-                    Self::throw(this, sys::Error {
-                        errno: err as _,
-                        path,
-                        syscall: sys::Tag::open,
-                        ..Default::default()
-                    })
+                    Self::throw(
+                        this,
+                        sys::Error {
+                            errno: err as _,
+                            path,
+                            syscall: sys::Tag::open,
+                            ..Default::default()
+                        },
+                    )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -855,17 +972,19 @@ mod windows_impl {
             // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
             // so the worker thread would dereference freed memory. `Box::leak` hands
             // ownership to the work-pool/completion path, matching the Zig lifetime.
-            Box::leak(crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
-                completion: Self::on_mkdirp_complete_concurrent,
-                completion_ctx: ctx,
-                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
-                // points into `self.file_blob.store`, which outlives the mkdirp
-                // task (it's released only in `deinit()`).
-                path: bun_core::dirname(path)
-                    // this shouldn't happen
-                    .unwrap_or(path) as *const [u8],
-                ..Default::default()
-            }))
+            Box::leak(crate::node::fs::async_::AsyncMkdirp::new(
+                crate::node::fs::async_::AsyncMkdirp {
+                    completion: Self::on_mkdirp_complete_concurrent,
+                    completion_ctx: ctx,
+                    // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                    // points into `self.file_blob.store`, which outlives the mkdirp
+                    // task (it's released only in `deinit()`).
+                    path: bun_core::dirname(path)
+                        // this shouldn't happen
+                        .unwrap_or(path) as *const [u8],
+                    ..Default::default()
+                },
+            ))
             .schedule();
         }
 
@@ -942,11 +1061,14 @@ mod windows_impl {
             if let Some(err) = rc.errno() {
                 // SAFETY: `this` is live; `throw` consumes it.
                 match unsafe {
-                    Self::throw(this, sys::Error {
-                        errno: err,
-                        syscall: sys::Tag::write,
-                        ..Default::default()
-                    })
+                    Self::throw(
+                        this,
+                        sys::Error {
+                            errno: err,
+                            syscall: sys::Tag::write,
+                            ..Default::default()
+                        },
+                    )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -1022,7 +1144,16 @@ mod windows_impl {
         pub fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self.file_blob.store.get().as_ref().unwrap().data.as_file().pathlike {
+                sys_err = match &self
+                    .file_blob
+                    .store
+                    .get()
+                    .as_ref()
+                    .unwrap()
+                    .data
+                    .as_file()
+                    .pathlike
+                {
                     PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };
@@ -1084,11 +1215,14 @@ mod windows_impl {
             if let Some(err) = rc.errno() {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 return Err(unsafe {
-                    Self::throw(this, sys::Error {
-                        errno: err as _,
-                        syscall: sys::Tag::write,
-                        ..Default::default()
-                    })
+                    Self::throw(
+                        this,
+                        sys::Error {
+                            errno: err as _,
+                            syscall: sys::Tag::write,
+                            ..Default::default()
+                        },
+                    )
                 });
             }
 
@@ -1295,9 +1429,7 @@ impl WriteFileWaitFromLockedValueTask {
                 if let Some(p) = new_promise.as_any_promise() {
                     match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                         // Fulfill the new promise using the pending promise
-                        jsc::PromiseResult::Pending => {
-                            promise.resolve(global_this, new_promise)?
-                        }
+                        jsc::PromiseResult::Pending => promise.resolve(global_this, new_promise)?,
                         jsc::PromiseResult::Rejected(err) => {
                             promise.reject(global_this, Ok(err))?
                         }

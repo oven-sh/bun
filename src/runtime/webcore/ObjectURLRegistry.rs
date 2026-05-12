@@ -1,9 +1,9 @@
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
@@ -34,7 +34,10 @@ pub struct Entry {
 
 // `Entry` is auto-`Send`: its sole field is `Blob`, which already asserts
 // `Send + Sync` (see `webcore_types::Blob`). No `unsafe impl` needed.
-const _: fn() = || { fn assert_send<T: Send>() {} assert_send::<Entry>(); };
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<Entry>();
+};
 
 impl Entry {
     pub fn init(blob: &Blob) -> Box<Entry> {
@@ -76,7 +79,8 @@ impl ObjectURLRegistry {
 
     fn get_duped_blob(&self, uuid: &UUID) -> Option<Blob> {
         let map = self.map.lock();
-        map.get(&uuid.bytes).map(|e| e.blob.dupe_with_content_type(true))
+        map.get(&uuid.bytes)
+            .map(|e| e.blob.dupe_with_content_type(true))
     }
 
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
@@ -145,8 +149,9 @@ pub fn bun_revoke_object_url(
         return Err(global_object.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len));
     }
     if !arguments.ptr[0].is_string() {
-        return Err(global_object
-            .throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
+        );
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()` — Zig's `defer str.deref()`.

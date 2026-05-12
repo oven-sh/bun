@@ -1,29 +1,28 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 use core::mem::offset_of;
 use std::ffi::CString;
 use std::sync::Arc;
 
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JSPromise, JSPromiseStrong,
-    JSMap, JSPropertyIterator, JSPropertyIteratorOptions,
-    WorkPool, WorkPoolTask,
-};
-use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
-use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_io::KeepAlive;
-use bun_core::{self, Output, ZBox};
-use bun_core::{strings, ZigString};
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_sys::{self, Fd, Mode, FdExt as _, FdDirExt as _};
+use bun_core::{self, Output, ZBox};
+use bun_core::{ZigString, strings};
+use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
+use bun_io::KeepAlive;
+use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSPropertyIterator,
+    JSPropertyIteratorOptions, JSValue, JsResult, WorkPool, WorkPoolTask,
+};
+use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
+use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
 /// does not yet expose `FileType`, so mirror the constant locally.
@@ -67,7 +66,9 @@ pub struct Archive {
 impl Archive {
     /// Borrow the backing `StoreRef` (Zig: `archive.store`).
     #[inline]
-    pub fn store_ref(&self) -> &StoreRef { &self.store }
+    pub fn store_ref(&self) -> &StoreRef {
+        &self.store
+    }
 }
 
 // `jsc.Codegen.JSArchive` — codegen already emits `js_Archive`
@@ -187,7 +188,9 @@ impl Archive {
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
-            return Err(global.throw_invalid_arguments(format_args!("new Archive() requires an argument")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("new Archive() requires an argument"))
+            );
         }
 
         // Parse compression options
@@ -197,7 +200,10 @@ impl Archive {
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
                 // StoreRef::clone == store.ref()
-                return Ok(Box::new(Archive { store: store.clone(), compress }));
+                return Ok(Box::new(Archive {
+                    store: store.clone(),
+                    compress,
+                }));
             }
         }
 
@@ -213,45 +219,60 @@ impl Archive {
             return Ok(create_archive(data, compress));
         }
 
-        Err(global.throw_invalid_arguments(format_args!("Expected an object, Blob, TypedArray, or ArrayBuffer")))
+        Err(global.throw_invalid_arguments(format_args!(
+            "Expected an object, Blob, TypedArray, or ArrayBuffer"
+        )))
     }
 }
 
 /// Parse compression options from JS value
 /// Returns .none if no compression specified, caller must handle defaults
-fn parse_compression_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Compression> {
+fn parse_compression_options(
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+) -> JsResult<Compression> {
     // No options provided means no compression (caller handles defaults)
     if options_arg.is_undefined_or_null() {
         return Ok(Compression::None);
     }
 
     if !options_arg.is_object() {
-        return Err(global.throw_invalid_arguments(format_args!("Archive: options must be an object")));
+        return Err(
+            global.throw_invalid_arguments(format_args!("Archive: options must be an object"))
+        );
     }
 
     // Check for compress option
     if let Some(compress_val) = options_arg.get_truthy(global, "compress")? {
         // compress must be "gzip"
         if !compress_val.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!("Archive: compress option must be a string")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive: compress option must be a string"
+            )));
         }
 
         let compress_str = compress_val.to_slice(global)?;
         // Drop handles compress_str.deinit()
 
         if compress_str.slice() != b"gzip" {
-            return Err(global.throw_invalid_arguments(format_args!("Archive: compress option must be \"gzip\"")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive: compress option must be \"gzip\""
+            )));
         }
 
         // Parse level option (1-12, default 6)
         let mut level: u8 = 6;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
-                return Err(global.throw_invalid_arguments(format_args!("Archive: level must be a number")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
+                );
             }
             let level_num = level_val.to_int64();
             if level_num < 1 || level_num > 12 {
-                return Err(global.throw_invalid_arguments(format_args!("Archive: level must be between 1 and 12")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive: level must be between 1 and 12"
+                )));
             }
             level = u8::try_from(level_num).expect("int cast");
         }
@@ -293,7 +314,9 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let archive_ref: &lib::Archive = &archive;
 
     if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveFormatError")));
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Failed to create tarball: ArchiveFormatError"
+        )));
     }
 
     if lib::archive_write_open2(
@@ -305,7 +328,8 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         None,
     ) != 0
     {
-        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
+        return Err(global
+            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
     }
 
     let entry = lib::OwnedEntry::new();
@@ -317,7 +341,10 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let mut iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
-        jsc::PropertyIteratorOptions { skip_empty_name: true, include_value: true },
+        jsc::PropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+        },
     )?;
     // defer iter.deinit() — handled by Drop
 
@@ -346,23 +373,33 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         entry_ref.set_mtime(now_secs, 0);
 
         if archive_ref.write_header(entry_ref) != lib::Result::Ok {
-            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveHeaderError")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Failed to create tarball: ArchiveHeaderError"
+            )));
         }
         if archive_ref.write_data(data) < 0 {
-            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveWriteError")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Failed to create tarball: ArchiveWriteError"
+            )));
         }
         if archive_ref.write_finish_entry() != lib::Result::Ok {
-            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveFinishEntryError")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Failed to create tarball: ArchiveFinishEntryError"
+            )));
         }
     }
 
     if archive_ref.write_close() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
+        return Err(global
+            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
     }
 
     match growing_buffer.to_owned_slice() {
         Ok(v) => Ok(v),
-        Err(_) => Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory"))),
+        Err(_) => {
+            Err(global
+                .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))
+        }
     }
 }
 
@@ -392,12 +429,16 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!("Archive.write requires 2 arguments (path, data)")));
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Archive.write requires 2 arguments (path, data)"
+        )));
     }
 
     // Get the path
     if !path_arg.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("Archive.write: first argument must be a string path")));
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Archive.write: first argument must be a string path"
+        )));
     }
 
     let path_slice = path_arg.to_slice(global)?;
@@ -412,29 +453,51 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         } else {
             archive.compress
         };
-        return start_write_task(global, WriteData::Store(archive.store.clone()), path_slice.slice(), compress);
+        return start_write_task(
+            global,
+            WriteData::Store(archive.store.clone()),
+            path_slice.slice(),
+            compress,
+        );
     }
 
     // For Blobs, use store reference with options compression
     if let Some(blob) = blob_from_js(data_arg) {
         if let Some(store) = blob.store.get().as_ref() {
-            return start_write_task(global, WriteData::Store(store.clone()), path_slice.slice(), options_compress);
+            return start_write_task(
+                global,
+                WriteData::Store(store.clone()),
+                path_slice.slice(),
+                options_compress,
+            );
         }
     }
 
     // For ArrayBuffer/TypedArray, copy the data with options compression
     if let Some(array_buffer) = data_arg.as_array_buffer(global) {
         let data = array_buffer.slice().to_vec();
-        return start_write_task(global, WriteData::Owned(data), path_slice.slice(), options_compress);
+        return start_write_task(
+            global,
+            WriteData::Owned(data),
+            path_slice.slice(),
+            options_compress,
+        );
     }
 
     // For plain objects, build a tarball with options compression
     if data_arg.is_object() {
         let data = build_tarball_from_object(global, data_arg)?;
-        return start_write_task(global, WriteData::Owned(data), path_slice.slice(), options_compress);
+        return start_write_task(
+            global,
+            WriteData::Owned(data),
+            path_slice.slice(),
+            options_compress,
+        );
     }
 
-    Err(global.throw_invalid_arguments(format_args!("Expected an object, Blob, TypedArray, ArrayBuffer, or Archive")))
+    Err(global.throw_invalid_arguments(format_args!(
+        "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
+    )))
 }
 
 impl Archive {
@@ -447,7 +510,9 @@ impl Archive {
     pub fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!("Archive.extract requires a path argument")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive.extract requires a path argument"
+            )));
         }
 
         let path_slice = path_arg.to_slice(global)?;
@@ -501,7 +566,8 @@ fn parse_pattern_arg(
             return Ok(None);
         }
 
-        let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(usize::try_from(len).expect("int cast"));
+        let mut patterns: Vec<Box<[u8]>> =
+            Vec::with_capacity(usize::try_from(len).expect("int cast"));
         // errdefer { for p free; deinit } — handled by Drop on Vec<Box<[u8]>>
 
         // Use index-based iteration for safety (avoids issues if array mutates)
@@ -586,7 +652,11 @@ pub enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
+    fn fulfill(
+        self,
+        global: &JSGlobalObject,
+        promise: &mut JSPromise,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
@@ -635,7 +705,10 @@ impl<C: TaskContext> AsyncTask<C> {
             ctx,
             promise: JSPromiseStrong::init(global),
             vm,
-            task: WorkPoolTask { callback: Self::run_callback, node: Default::default() },
+            task: WorkPoolTask {
+                callback: Self::run_callback,
+                node: Default::default(),
+            },
             concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
@@ -672,9 +745,7 @@ impl<C: TaskContext> AsyncTask<C> {
         // SAFETY: `work_task` points to the `task` field of an `AsyncTask<C>`
         // allocated by `create` — only ever invoked by the thread pool against
         // a task it scheduled, so provenance covers the full allocation.
-        let this: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, work_task)
-        };
+        let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
         // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
@@ -742,7 +813,9 @@ impl TaskContext for ExtractContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
-            ExtractResult::Success(count) => PromiseResult::Resolve(JSValue::js_number(*count as f64)),
+            ExtractResult::Success(count) => {
+                PromiseResult::Resolve(JSValue::js_number(*count as f64))
+            }
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
@@ -1081,11 +1154,13 @@ impl FilesContext {
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Ok(if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
-                FilesResult::LibarchiveErr(err)
-            } else {
-                FilesResult::Err(FilesError::ReadError)
-            });
+            return Ok(
+                if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
+                    FilesResult::LibarchiveErr(err)
+                } else {
+                    FilesResult::Err(FilesError::ReadError)
+                },
+            );
         }
 
         let mut entries: FileEntryList = Vec::new();
@@ -1121,11 +1196,13 @@ impl FilesContext {
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
-                        return Ok(if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
-                            FilesResult::LibarchiveErr(err)
-                        } else {
-                            FilesResult::Err(FilesError::ReadError)
-                        });
+                        return Ok(
+                            if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
+                                FilesResult::LibarchiveErr(err)
+                            } else {
+                                FilesResult::Err(FilesError::ReadError)
+                            },
+                        );
                     }
                     if read == 0 {
                         break;
@@ -1138,7 +1215,11 @@ impl FilesContext {
             let path_copy: Box<[u8]> = Box::from(pathname);
             // errdefer free(path_copy) — handled by Drop
 
-            entries.push(FileEntry { path: path_copy, data, mtime });
+            entries.push(FileEntry {
+                path: path_copy,
+                data,
+                mtime,
+            });
         }
 
         Ok(FilesResult::Success(entries))
@@ -1167,7 +1248,8 @@ impl TaskContext for FilesContext {
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr = Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
+                    let blob_ptr =
+                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
@@ -1183,7 +1265,8 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
+                global
+                    .create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
@@ -1369,7 +1452,12 @@ fn extract_to_disk_filtered(
                 Err(_) => return Err(bun_core::err!("OpenError")),
             };
         } else {
-            break 'brk match bun_sys::openat_a(cwd, root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
+            break 'brk match bun_sys::openat_a(
+                cwd,
+                root,
+                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
+                0,
+            ) {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("OpenError")),
             };

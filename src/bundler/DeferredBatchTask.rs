@@ -12,8 +12,8 @@ use crate::BundleV2;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 
-use bun_ast::Ref;
 use bun_ast::Index;
+use bun_ast::Ref;
 
 /// Re-export for callers that previously named
 /// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
@@ -43,7 +43,11 @@ impl DeferredBatchTask {
         // this struct is never instantiated standalone. Lifetime erased to 'static
         // (mirrors Zig raw `*BundleV2`); callers must not outlive the owning bundle.
         unsafe {
-            &mut *bun_core::from_field_ptr!(BundleV2<'static>, drain_defer_task, std::ptr::from_mut::<Self>(self))
+            &mut *bun_core::from_field_ptr!(
+                BundleV2<'static>,
+                drain_defer_task,
+                std::ptr::from_mut::<Self>(self)
+            )
         }
     }
 
@@ -71,10 +75,7 @@ impl DeferredBatchTask {
         {
             let bv2 = self.get_bundle_v2();
             // Zig: `if (bv2.completion) |c| c.result == .err else false`
-            let rejected = bv2
-                .completion
-                .map(|c| c.result_is_err())
-                .unwrap_or(false);
+            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
             // Zig: `bv2.plugins.?.drainDeferred(rejected) catch return;`
             // `catch return` collapses to discarding the void result — see
             // `Plugin::drain_deferred` for the exception-scope note.

@@ -31,12 +31,12 @@ impl bun_io::Write for StructuredCloneWriter {
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_core::{String as BunString, ZStr};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_threading::Mutex;
 
-use crate::socket::socket_address::{sockaddr, SocketAddress};
 use crate::node::util::validators;
+use crate::socket::socket_address::{SocketAddress, sockaddr};
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
@@ -107,8 +107,7 @@ impl BlockList {
 
     /// May be called from any thread.
     pub fn estimated_size(&self) -> usize {
-        (core::mem::size_of::<Self>()
-            + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
+        (core::mem::size_of::<Self>() + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
             / (self.ref_count.get().max(1) as usize)
     }
 
@@ -153,11 +152,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_range(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn add_range(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
@@ -186,7 +181,8 @@ impl BlockList {
             }
         }
         let _guard = this.mutex.lock_guard();
-        this.da_rules.with_mut(|r| r.insert(0, Rule::Range { start, end }));
+        this.da_rules
+            .with_mut(|r| r.insert(0, Rule::Range { start, end }));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -215,17 +211,26 @@ impl BlockList {
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
-                global, prefix_js, format_args!("prefix"), Some(0), Some(32),
+                global,
+                prefix_js,
+                format_args!("prefix"),
+                Some(0),
+                Some(32),
             )?)
             .unwrap();
         } else if fam == AF_INET6 as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
-                global, prefix_js, format_args!("prefix"), Some(0), Some(128),
+                global,
+                prefix_js,
+                format_args!("prefix"),
+                Some(0),
+                Some(128),
             )?)
             .unwrap();
         }
         let _guard = this.mutex.lock_guard();
-        this.da_rules.with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
+        this.da_rules
+            .with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -234,11 +239,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn check(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn check(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
@@ -265,14 +266,20 @@ impl BlockList {
         for item in this.da_rules.get().iter() {
             match item {
                 Rule::Addr(a) => {
-                    let Some(order) = _compare(address, a) else { continue };
+                    let Some(order) = _compare(address, a) else {
+                        continue;
+                    };
                     if order.is_eq() {
                         return Ok(JSValue::TRUE);
                     }
                 }
                 Rule::Range { start, end } => {
-                    let Some(os) = _compare(address, start) else { continue };
-                    let Some(oe) = _compare(address, end) else { continue };
+                    let Some(os) = _compare(address, start) else {
+                        continue;
+                    };
+                    let Some(oe) = _compare(address, end) else {
+                        continue;
+                    };
                     if os.is_ge() && oe.is_le() {
                         return Ok(JSValue::TRUE);
                     }
@@ -308,8 +315,7 @@ impl BlockList {
                             }
                         }
                         let one: u128 = 1;
-                        let mask_addr =
-                            ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
+                        let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
                         let ip_net: u128 = ip_addr.swap_bytes() & mask_addr;
                         let subnet_net: u128 = subnet_addr.swap_bytes() & mask_addr;
                         if ip_net == subnet_net {
@@ -374,7 +380,10 @@ impl BlockList {
         use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
-        let mut writer = StructuredCloneWriter { ctx, impl_: write_bytes };
+        let mut writer = StructuredCloneWriter {
+            ctx,
+            impl_: write_bytes,
+        };
         // Error = `!` (Zig: `error{}`), so no `?` needed.
         // Only the address is serialized; deserialize re-derives `*mut Self`
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
@@ -392,7 +401,8 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
-        let mut r = bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+        let mut r =
+            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
         let int = match r.read_int_le::<usize>() {
             Ok(v) => v,

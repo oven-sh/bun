@@ -85,24 +85,42 @@ pub enum JSTypedArrayType {
     kJSTypedArrayTypeBigInt64Array,
     kJSTypedArrayTypeBigUint64Array,
 }
-pub const kJSTypedArrayTypeInt8Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeInt8Array as c_uint;
-pub const kJSTypedArrayTypeInt16Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeInt16Array as c_uint;
-pub const kJSTypedArrayTypeInt32Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeInt32Array as c_uint;
-pub const kJSTypedArrayTypeUint8Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeUint8Array as c_uint;
-pub const kJSTypedArrayTypeUint8ClampedArray: c_uint = JSTypedArrayType::kJSTypedArrayTypeUint8ClampedArray as c_uint;
-pub const kJSTypedArrayTypeUint16Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeUint16Array as c_uint;
-pub const kJSTypedArrayTypeUint32Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeUint32Array as c_uint;
-pub const kJSTypedArrayTypeFloat32Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeFloat32Array as c_uint;
-pub const kJSTypedArrayTypeFloat64Array: c_uint = JSTypedArrayType::kJSTypedArrayTypeFloat64Array as c_uint;
-pub const kJSTypedArrayTypeArrayBuffer: c_uint = JSTypedArrayType::kJSTypedArrayTypeArrayBuffer as c_uint;
+pub const kJSTypedArrayTypeInt8Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeInt8Array as c_uint;
+pub const kJSTypedArrayTypeInt16Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeInt16Array as c_uint;
+pub const kJSTypedArrayTypeInt32Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeInt32Array as c_uint;
+pub const kJSTypedArrayTypeUint8Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeUint8Array as c_uint;
+pub const kJSTypedArrayTypeUint8ClampedArray: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeUint8ClampedArray as c_uint;
+pub const kJSTypedArrayTypeUint16Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeUint16Array as c_uint;
+pub const kJSTypedArrayTypeUint32Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeUint32Array as c_uint;
+pub const kJSTypedArrayTypeFloat32Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeFloat32Array as c_uint;
+pub const kJSTypedArrayTypeFloat64Array: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeFloat64Array as c_uint;
+pub const kJSTypedArrayTypeArrayBuffer: c_uint =
+    JSTypedArrayType::kJSTypedArrayTypeArrayBuffer as c_uint;
 pub const kJSTypedArrayTypeNone: c_uint = JSTypedArrayType::kJSTypedArrayTypeNone as c_uint;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSValueGetType(ctx: *mut JSGlobalObject, value: JSValueRef) -> JSType;
     pub fn JSValueMakeNull(ctx: *mut JSGlobalObject) -> JSValueRef;
-    pub fn JSValueToNumber(ctx: *mut JSGlobalObject, value: JSValueRef, exception: ExceptionRef) -> f64;
-    pub fn JSValueToObject(ctx: *mut JSGlobalObject, value: JSValueRef, exception: ExceptionRef) -> JSObjectRef;
+    pub fn JSValueToNumber(
+        ctx: *mut JSGlobalObject,
+        value: JSValueRef,
+        exception: ExceptionRef,
+    ) -> f64;
+    pub fn JSValueToObject(
+        ctx: *mut JSGlobalObject,
+        value: JSValueRef,
+        exception: ExceptionRef,
+    ) -> JSObjectRef;
 }
 
 // TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
@@ -114,10 +132,14 @@ pub enum JSPropertyAttributes {
     kJSPropertyAttributeDontEnum = 4,
     kJSPropertyAttributeDontDelete = 8,
 }
-pub const kJSPropertyAttributeNone: c_uint = JSPropertyAttributes::kJSPropertyAttributeNone as c_uint;
-pub const kJSPropertyAttributeReadOnly: c_uint = JSPropertyAttributes::kJSPropertyAttributeReadOnly as c_uint;
-pub const kJSPropertyAttributeDontEnum: c_uint = JSPropertyAttributes::kJSPropertyAttributeDontEnum as c_uint;
-pub const kJSPropertyAttributeDontDelete: c_uint = JSPropertyAttributes::kJSPropertyAttributeDontDelete as c_uint;
+pub const kJSPropertyAttributeNone: c_uint =
+    JSPropertyAttributes::kJSPropertyAttributeNone as c_uint;
+pub const kJSPropertyAttributeReadOnly: c_uint =
+    JSPropertyAttributes::kJSPropertyAttributeReadOnly as c_uint;
+pub const kJSPropertyAttributeDontEnum: c_uint =
+    JSPropertyAttributes::kJSPropertyAttributeDontEnum as c_uint;
+pub const kJSPropertyAttributeDontDelete: c_uint =
+    JSPropertyAttributes::kJSPropertyAttributeDontDelete as c_uint;
 
 // TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
 #[repr(u32)] // c_uint
@@ -128,7 +150,8 @@ pub enum JSClassAttributes {
 }
 
 pub const kJSClassAttributeNone: c_uint = JSClassAttributes::kJSClassAttributeNone as c_uint;
-pub const kJSClassAttributeNoAutomaticPrototype: c_uint = JSClassAttributes::kJSClassAttributeNoAutomaticPrototype as c_uint;
+pub const kJSClassAttributeNoAutomaticPrototype: c_uint =
+    JSClassAttributes::kJSClassAttributeNoAutomaticPrototype as c_uint;
 
 pub type JSObjectInitializeCallback = unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef);
 pub type JSObjectFinalizeCallback = unsafe extern "C" fn(JSObjectRef);
@@ -143,8 +166,13 @@ pub type JSObjectCallAsFunctionCallback = unsafe extern "C" fn(
     arguments: *const JSValueRef,
     exception: ExceptionRef,
 ) -> JSValueRef;
-pub type JSObjectCallAsConstructorCallback =
-    unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef, usize, *const JSValueRef, ExceptionRef) -> JSObjectRef;
+pub type JSObjectCallAsConstructorCallback = unsafe extern "C" fn(
+    *mut JSGlobalObject,
+    JSObjectRef,
+    usize,
+    *const JSValueRef,
+    ExceptionRef,
+) -> JSObjectRef;
 pub type JSObjectHasInstanceCallback =
     unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef, JSValueRef, ExceptionRef) -> bool;
 pub type JSObjectConvertToTypeCallback =

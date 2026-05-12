@@ -1,5 +1,7 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult as Result, Maybe, Parser, ParserError, PrintErr, Printer, Token};
+use crate::css_parser::{
+    CssResult as Result, Maybe, Parser, ParserError, PrintErr, Printer, Token,
+};
 use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
@@ -103,7 +105,10 @@ impl Angle {
         css::serializer::serialize_dimension(value, unit.as_bytes(), dest)
     }
 
-    pub fn to_css_with_unitless_zero(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css_with_unitless_zero(
+        &self,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         if self.is_zero() {
             let v: f32 = 0.0;
             CSSNumberFns::to_css(&v, dest)
@@ -215,30 +220,15 @@ impl Angle {
         crate::generic::partial_cmp_f32(&self.to_degrees(), &other.to_degrees())
     }
 
-    pub fn try_op<C>(
-        &self,
-        other: &Angle,
-        ctx: C,
-        op_fn: fn(C, f32, f32) -> f32,
-    ) -> Option<Angle> {
+    pub fn try_op<C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Option<Angle> {
         Some(Angle::op(self, other, ctx, op_fn))
     }
 
-    pub fn try_op_to<R, C>(
-        &self,
-        other: &Angle,
-        ctx: C,
-        op_fn: fn(C, f32, f32) -> R,
-    ) -> Option<R> {
+    pub fn try_op_to<R, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> R) -> Option<R> {
         Some(Angle::op_to(self, other, ctx, op_fn))
     }
 
-    pub fn op<C>(
-        &self,
-        other: &Angle,
-        ctx: C,
-        op_fn: fn(C, f32, f32) -> f32,
-    ) -> Angle {
+    pub fn op<C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
         // PERF: not sure if this is faster
         // PORT NOTE: reshaped for borrowck — Zig used packed-tag bit-twiddling switch; Rust match on (tag, tag) is equivalent.
         match (self, other) {
@@ -251,12 +241,7 @@ impl Angle {
         // PERF(port): was comptime monomorphization (fn-ptr arg) — profile in Phase B
     }
 
-    pub fn op_to<T, C>(
-        &self,
-        other: &Angle,
-        ctx: C,
-        op_fn: fn(C, f32, f32) -> T,
-    ) -> T {
+    pub fn op_to<T, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> T) -> T {
         // PERF: not sure if this is faster
         // TODO(port): upstream bug — Zig `opTo` computes `other_tag` from `this.*`, so mixed-variant
         // inputs read `other`'s raw f32 payload via the wrong arm. This port INTENTIONALLY DIVERGES:

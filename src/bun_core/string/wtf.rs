@@ -154,6 +154,6 @@ impl WTFStringImplExt for WTFStringImplStruct {
 // `WTF.parseDouble` canonical now lives in bun_core::fmt (tier-0) so
 // `bun_interchange` (yaml/toml) and `bun_js_parser::lexer` can call it without
 // any string/jsc dep. Re-exported here to keep the Zig namespace shape.
-pub use crate::fmt::{parse_double, InvalidCharacter};
+pub use crate::fmt::{InvalidCharacter, parse_double};
 
 // ported from: src/string/wtf.zig

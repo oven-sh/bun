@@ -3,9 +3,9 @@
 //! ** you must also increment the `expected_version` in RuntimeTranspilerCache **
 //! ** IMPORTANT **
 
+use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 use bun_core::Output;
-use bun_ast::ImportRecord;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -15,9 +15,13 @@ use bun_wyhash::Wyhash;
 // Round-C: stub the still-gated submodules so the helper *types* in this file
 // compile; the real bodies arrive in rounds D/E.
 #[allow(non_snake_case)]
-pub mod ConvertESMExportsForHmr { pub type Ctx = (); }
+pub mod ConvertESMExportsForHmr {
+    pub type Ctx = ();
+}
 #[allow(non_snake_case)]
-pub mod ImportScanner { pub type State = (); }
+pub mod ImportScanner {
+    pub type State = ();
+}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
@@ -25,8 +29,8 @@ pub use bun_paths::fs;
 /// edit other crates; provide a local `options` mod that re-exports the real
 /// crate plus stand-ins. Tracked in `blocked_on`.
 pub mod options {
-    use std::borrow::Cow;
     pub use bun_options_types::*;
+    use std::borrow::Cow;
     // `Loader`/`Target`/`ImportKind`/`SideEffects` are now canonical in `bun_ast`;
     // re-exported here so the `options::Loader`/`options::Target` spelling used
     // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
@@ -37,25 +41,44 @@ pub mod options {
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
     // lives in `bun_options_types::jsx`. The glob above already brings in
     // `jsx`/`JSX`; explicit re-export keeps the path stable for callers.
-    #[allow(non_snake_case)]
-    pub use bun_options_types::jsx as JSX;
-    pub use JSX::Runtime as JSXRuntime;
     /// Zig: `bundler/options.zig` `ServerComponents` — same enum surface as
     /// `Runtime.Features.ServerComponentsMode`. Aliased so call sites that
     /// spell it as either `options::ServerComponents` (P.rs) or
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
+    pub use JSX::Runtime as JSXRuntime;
+    #[allow(non_snake_case)]
+    pub use bun_options_types::jsx as JSX;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[allow(non_camel_case_types)]
-    pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
+    pub enum OutputFormat {
+        #[default]
+        Preserve,
+        Cjs,
+        Esm,
+        Iife,
+        Internal_BakeDev,
+    }
     /// Port of `options_types/BundleEnums.zig` `Format` (spec for
     /// `Parser.Options.output_format`). Variants and order match spec exactly;
     /// Zig's first variant `.esm` is the `#[default]`.
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub enum Format { #[default] Esm, Iife, Cjs, InternalBakeDev }
+    pub enum Format {
+        #[default]
+        Esm,
+        Iife,
+        Cjs,
+        InternalBakeDev,
+    }
     impl Format {
-        #[inline] pub const fn is_esm(self) -> bool { matches!(self, Format::Esm) }
-        #[inline] pub const fn is_cjs(self) -> bool { matches!(self, Format::Cjs) }
+        #[inline]
+        pub const fn is_esm(self) -> bool {
+            matches!(self, Format::Esm)
+        }
+        #[inline]
+        pub const fn is_cjs(self) -> bool {
+            matches!(self, Format::Cjs)
+        }
     }
     /// Port of `bundler/options.zig` `AllowUnresolved`.
     ///
@@ -82,7 +105,9 @@ pub mod options {
         Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
     }
     impl Default for AllowUnresolved {
-        fn default() -> Self { AllowUnresolved::All }
+        fn default() -> Self {
+            AllowUnresolved::All
+        }
     }
     impl AllowUnresolved {
         // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
@@ -166,17 +191,20 @@ pub mod options {
         pub import_source: Cow<'static, [u8]>,
     }
     impl Default for ReactFastRefresh {
-        fn default() -> Self { Self { import_source: Cow::Borrowed(b"react-refresh/runtime") } }
+        fn default() -> Self {
+            Self {
+                import_source: Cow::Borrowed(b"react-refresh/runtime"),
+            }
+        }
     }
     pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }
+pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
-pub use crate::parse::parse_entry::{Parser, Options as ParserOptions};
 pub use crate::scan::scan_side_effects::SideEffects;
 pub use bun_paths::is_package_path;
 
 pub(crate) use bun_ast::base::Ref;
-
 
 // `runtime.rs` (full port) is path-gated in lib.rs as `runtime_full`. Until
 // its bun_core/bun_schema deps are wired, the *real* type surface — the parts
@@ -188,8 +216,6 @@ pub mod Runtime {
     use bun_core::strings;
     use bun_wyhash::Wyhash;
 
-    
-    
     use bun_ast::RuntimeTranspilerCache;
 
     // ─────────────────────────── Runtime.Features ───────────────────────────
@@ -436,25 +462,24 @@ pub mod Runtime {
     // here so `parser::Runtime::{Imports, ReplaceableExport, ...}` and
     // `bun_ast::runtime::{...}` are the same nominal types.
     pub(crate) use bun_ast::runtime::{
-        Imports, Names, ReplaceableExport,
-        ReplaceableExportMap, ServerComponentsMode,
+        Imports, Names, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
 
-    pub fn is_runtime_module(_: &[u8]) -> bool { false }
+    pub fn is_runtime_module(_: &[u8]) -> bool {
+        false
+    }
 
     // ───────────────────────────── Runtime / Fallback ─────────────────────
-
-    
 
     // ───────────────────────────── Fallback ───────────────────────────────
     // REFACTOR_BUN_AST: moved here from `bun_ast::runtime` — needs
     // `bun_options_types::schema`, `bun_io`, `bun_base64`, all of which would
     // form a cycle inside `bun_ast`.
 
-    use core::fmt;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use bun_options_types::schema;
     use bun_options_types::schema::api;
+    use core::fmt;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     pub struct Fallback;
 
@@ -486,8 +511,7 @@ pub mod Runtime {
             if v != 0 {
                 return v;
             }
-            let parsed =
-                u64::from_str_radix(Self::version(), 16).expect("unreachable") as u32; // @truncate
+            let parsed = u64::from_str_radix(Self::version(), 16).expect("unreachable") as u32; // @truncate
             CACHED.store(parsed, Ordering::Relaxed);
             parsed
         }
@@ -525,14 +549,18 @@ pub mod Runtime {
             let bun_error = Self::error_js();
             let bun_error_page_css: &[u8] = b"";
             let fallback = Self::fallback_decoder_js();
-            render_named_template(writer, Self::HTML_BACKEND_TEMPLATE, &mut |w, name| match name {
-                b"blob" => w.write_fmt(format_args!("{}", blob)),
-                b"bun_error_css" => w.write_all(bun_error_css),
-                b"bun_error" => w.write_all(bun_error),
-                b"bun_error_page_css" => w.write_all(bun_error_page_css),
-                b"fallback" => w.write_all(fallback),
-                _ => Ok(()),
-            })
+            render_named_template(
+                writer,
+                Self::HTML_BACKEND_TEMPLATE,
+                &mut |w, name| match name {
+                    b"blob" => w.write_fmt(format_args!("{}", blob)),
+                    b"bun_error_css" => w.write_all(bun_error_css),
+                    b"bun_error" => w.write_all(bun_error),
+                    b"bun_error_page_css" => w.write_all(bun_error_page_css),
+                    b"fallback" => w.write_all(fallback),
+                    _ => Ok(()),
+                },
+            )
         }
     }
 
@@ -596,11 +624,11 @@ pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name c
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
 pub use bun_ast as js_ast;
-pub use js_ast::{
-    B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef,
-    S, Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
-};
 use js_ast::G;
+pub use js_ast::{
+    B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S,
+    Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
+};
 
 pub use js_ast::Op;
 pub use js_ast::Op::Level;
@@ -682,16 +710,24 @@ impl JSXImportSymbols {
             return self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
         }
         if name == b"jsxDEV" {
-            return self.jsx_dev.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
+            return self
+                .jsx_dev
+                .map(|jsx| jsx.ref_.expect("infallible: ref bound"));
         }
         if name == b"jsxs" {
-            return self.jsxs.map(|jsxs| jsxs.ref_.expect("infallible: ref bound"));
+            return self
+                .jsxs
+                .map(|jsxs| jsxs.ref_.expect("infallible: ref bound"));
         }
         if name == b"Fragment" {
-            return self.fragment.map(|f| f.ref_.expect("infallible: ref bound"));
+            return self
+                .fragment
+                .map(|f| f.ref_.expect("infallible: ref bound"));
         }
         if name == b"createElement" {
-            return self.create_element.map(|c| c.ref_.expect("infallible: ref bound"));
+            return self
+                .create_element
+                .map(|c| c.ref_.expect("infallible: ref bound"));
         }
         None
     }
@@ -699,10 +735,18 @@ impl JSXImportSymbols {
     pub fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
             JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
-            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
-            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_.expect("infallible: ref bound")),
-            JSXImport::Fragment => self.fragment.map(|f| f.ref_.expect("infallible: ref bound")),
-            JSXImport::CreateElement => self.create_element.map(|c| c.ref_.expect("infallible: ref bound")),
+            JSXImport::JsxDEV => self
+                .jsx_dev
+                .map(|jsx| jsx.ref_.expect("infallible: ref bound")),
+            JSXImport::Jsxs => self
+                .jsxs
+                .map(|jsxs| jsxs.ref_.expect("infallible: ref bound")),
+            JSXImport::Fragment => self
+                .fragment
+                .map(|f| f.ref_.expect("infallible: ref bound")),
+            JSXImport::CreateElement => self
+                .create_element
+                .map(|c| c.ref_.expect("infallible: ref bound")),
         }
     }
 
@@ -867,11 +911,11 @@ pub struct ExpressionTransposer<'a, Context, State: Copy> {
 }
 
 impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
-    pub fn init(
-        c: &'a mut Context,
-        visitor: fn(&mut Context, Expr, State) -> Expr,
-    ) -> Self {
-        Self { context: c, visitor }
+    pub fn init(c: &'a mut Context, visitor: fn(&mut Context, Expr, State) -> Expr) -> Self {
+        Self {
+            context: c,
+            visitor,
+        }
     }
 
     pub fn maybe_transpose_if(&mut self, arg: Expr, state: State) -> Expr {
@@ -890,7 +934,9 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
 
     pub fn transpose_known_to_be_if(&mut self, arg: Expr, state: State) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else { unreachable!() };
+        let js_ast::ExprData::EIf(ex) = arg.data else {
+            unreachable!()
+        };
         Expr::init(
             E::If {
                 yes: self.maybe_transpose_if(ex.yes, state),
@@ -1004,7 +1050,13 @@ impl<'a> JSXTag<'a> {
         // Otherwise, this is an identifier
         // <Button>
         let ref_ = p.store_name_in_ref(name)?;
-        let mut tag = p.new_expr(E::Identifier { ref_, ..Default::default() }, loc);
+        let mut tag = p.new_expr(
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
+            loc,
+        );
 
         // Parse a member expression chain
         // <Button.Red>
@@ -1027,8 +1079,9 @@ impl<'a> JSXTag<'a> {
             }
 
             // Zig: p.arena.alloc(u8, name.len + 1 + member.len)
-            let new_name: &'a mut [u8] =
-                p.bump().alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
+            let new_name: &'a mut [u8] = p
+                .bump()
+                .alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
             new_name[..name.len()].copy_from_slice(name);
             new_name[name.len()] = b'.';
             new_name[name.len() + 1..].copy_from_slice(member);
@@ -1206,19 +1259,25 @@ impl IdentifierOpts {
         self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
     }
     #[inline]
-    pub const fn is_delete_target(self) -> bool { self.0 & Self::IS_DELETE_TARGET != 0 }
+    pub const fn is_delete_target(self) -> bool {
+        self.0 & Self::IS_DELETE_TARGET != 0
+    }
     #[inline]
     pub fn set_is_delete_target(&mut self, v: bool) {
         self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
     }
     #[inline]
-    pub const fn was_originally_identifier(self) -> bool { self.0 & Self::WAS_ORIGINALLY_IDENTIFIER != 0 }
+    pub const fn was_originally_identifier(self) -> bool {
+        self.0 & Self::WAS_ORIGINALLY_IDENTIFIER != 0
+    }
     #[inline]
     pub fn set_was_originally_identifier(&mut self, v: bool) {
         self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
     }
     #[inline]
-    pub const fn is_call_target(self) -> bool { self.0 & Self::IS_CALL_TARGET != 0 }
+    pub const fn is_call_target(self) -> bool {
+        self.0 & Self::IS_CALL_TARGET != 0
+    }
     #[inline]
     pub fn set_is_call_target(&mut self, v: bool) {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
@@ -1228,7 +1287,9 @@ impl IdentifierOpts {
     // initialization without paying for a named-field struct (this stays a
     // packed u8 to match the Zig ABI).
     #[inline]
-    pub const fn new() -> Self { Self(0) }
+    pub const fn new() -> Self {
+        Self(0)
+    }
     #[inline]
     pub const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
         self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
@@ -1254,25 +1315,9 @@ impl IdentifierOpts {
 pub fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     use js_ast::StmtData::*;
     match stmt.data {
-        SBlock(_)
-        | SEmpty(_)
-        | SDebugger(_)
-        | SExpr(_)
-        | SIf(_)
-        | SFor(_)
-        | SForIn(_)
-        | SForOf(_)
-        | SDoWhile(_)
-        | SWhile(_)
-        | SWith(_)
-        | STry(_)
-        | SSwitch(_)
-        | SReturn(_)
-        | SThrow(_)
-        | SBreak(_)
-        | SContinue(_)
-        | SDirective(_)
-        | SLabel(_) => false,
+        SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
+        | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
+        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
 
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
         _ => true,
@@ -1388,7 +1433,10 @@ pub struct TempRef {
 
 impl Default for TempRef {
     fn default() -> Self {
-        Self { r#ref: Ref::default(), value: None }
+        Self {
+            r#ref: Ref::default(),
+            value: None,
+        }
     }
 }
 
@@ -1535,7 +1583,11 @@ pub struct ScopeOrder<'arena> {
 impl<'arena> ScopeOrder<'arena> {
     #[inline]
     pub fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
-        Self { loc, scope, _phantom: core::marker::PhantomData }
+        Self {
+            loc,
+            scope,
+            _phantom: core::marker::PhantomData,
+        }
     }
     /// Arena-backed handle to the scope. `StoreRef` has safe `Deref`/`DerefMut`,
     /// so callers read `order.scope_ref().kind` instead of open-coding
@@ -1544,7 +1596,9 @@ impl<'arena> ScopeOrder<'arena> {
     pub fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
         // `scope` is always set from a live arena allocation in
         // `push_scope_for_parse_pass`; never null in practice.
-        js_ast::StoreRef::from(core::ptr::NonNull::new(self.scope).expect("ScopeOrder.scope non-null"))
+        js_ast::StoreRef::from(
+            core::ptr::NonNull::new(self.scope).expect("ScopeOrder.scope non-null"),
+        )
     }
 }
 
@@ -1998,17 +2052,25 @@ pub enum JSXTransformType {
 /// adt_const_params lowering: `<const JSX: JSXTransformType>` → `<J: JsxT>`.
 /// Same sealed-trait+ZST pattern as `paths::PlatformT`. Monomorphizes
 /// identically to the Zig `comptime jsx: JSXTransformType` param.
-mod jsx_seal { pub trait Sealed {} }
+mod jsx_seal {
+    pub trait Sealed {}
+}
 pub trait JsxT: jsx_seal::Sealed + Copy + Default + 'static {
     const KIND: JSXTransformType;
     const ENABLED: bool = matches!(Self::KIND, JSXTransformType::React);
 }
-#[derive(Copy, Clone, Default)] pub struct JsxNone;
+#[derive(Copy, Clone, Default)]
+pub struct JsxNone;
 impl jsx_seal::Sealed for JsxNone {}
-impl JsxT for JsxNone { const KIND: JSXTransformType = JSXTransformType::None; }
-#[derive(Copy, Clone, Default)] pub struct JsxReact;
+impl JsxT for JsxNone {
+    const KIND: JSXTransformType = JSXTransformType::None;
+}
+#[derive(Copy, Clone, Default)]
+pub struct JsxReact;
 impl jsx_seal::Sealed for JsxReact {}
-impl JsxT for JsxReact { const KIND: JSXTransformType = JSXTransformType::React; }
+impl JsxT for JsxReact {
+    const KIND: JSXTransformType = JSXTransformType::React;
+}
 
 pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
@@ -2185,7 +2247,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
     symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
-    
     let mut temp_log = bun_ast::Log::init();
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
@@ -2206,8 +2267,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
             let range = parser.lexer.range();
             drop(parser);
             if temp_log.errors == 0 {
-                log_to_copy_into
-                    .add_range_error(Some(source), range, err.name().as_bytes());
+                log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
             let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
             return Ok(None);
@@ -2382,9 +2442,7 @@ impl ReactRefresh<'_> {
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
     pub fn is_hook_name(id: &[u8]) -> bool {
-        id.len() >= 4
-            && id.starts_with(b"use")
-            && matches!(id[3], b'A'..=b'Z')
+        id.len() >= 4 && id.starts_with(b"use") && matches!(id[3], b'A'..=b'Z')
     }
 }
 
@@ -2464,11 +2522,7 @@ pub fn float_to_int32(f: f64) -> i32 {
     // but `@mod` ensures the value is in [0, u32::MAX] so behavior matches.
     let uint: u32 = (f.abs() % (u32::MAX as f64 + 1.0)) as u32;
     let int: i32 = uint as i32; // bitcast (same-width int cast reinterprets bits)
-    if f < 0.0 {
-        0i32.wrapping_sub(int)
-    } else {
-        int
-    }
+    if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
 }
 
 #[derive(Clone, Copy, Default)]

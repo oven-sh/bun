@@ -16,8 +16,8 @@
 #![allow(dead_code, unused_imports)]
 
 use super::color::{
-    A98, HSL, HWB, LAB, LCH, OKLAB, OKLCH, P3, ProPhoto, RGBA, Rec2020, SRGB, SRGBLinear,
-    XYZd50, XYZd65,
+    A98, HSL, HWB, LAB, LCH, OKLAB, OKLCH, P3, ProPhoto, RGBA, Rec2020, SRGB, SRGBLinear, XYZd50,
+    XYZd65,
 };
 
 /// Marker module so `use super::color_generated::generated_color_conversions;`

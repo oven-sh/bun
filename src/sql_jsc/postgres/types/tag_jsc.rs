@@ -3,8 +3,8 @@
 //! conversion paths live here.
 
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
-use bun_sql::postgres::types::tag::Tag;
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::postgres::types::tag::Tag;
 use bun_sql::shared::Data;
 
 // `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a

@@ -2,29 +2,30 @@ use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
-use bun_core::{env_var, fmt as bun_fmt, Global, Output};
+use bun_core::strings;
+use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
 use bun_install::lockfile::{
-    package::{PackageColumns as _, PackageColumns as _},
-    tree, LoadResult, Lockfile,
+    LoadResult, Lockfile,
+    package::{PackageColumns as _},
+    tree,
 };
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    get_cache_directory, package_manager_options::LogLevel, setup_global_dir,
-    CommandLineArguments, Subcommand,
+    CommandLineArguments, Subcommand, get_cache_directory, package_manager_options::LogLevel,
+    setup_global_dir,
 };
-use bun_install::{migration, DependencyID, PackageID, PackageManager};
+use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_core::strings;
 use bun_sys::{self, Dir, Fd, FdExt as _, File};
 
+use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
-use crate::cli::Command;
 
 pub use crate::cli::pack_command::PackCommand;
 pub use crate::cli::scan_command::ScanCommand;
@@ -133,7 +134,11 @@ impl PackageManagerCommand {
         // PORT NOTE: reshaped for borrowck — Zig copied `*args_ptr` to a local,
         // mutated it, and `defer`-wrote it back. We mutate through `args_ptr`
         // directly so the reslice persists into `pm.options.positionals`.
-        let mut subcommand: &[u8] = if !args_ptr.is_empty() { args_ptr[0] } else { b"" };
+        let mut subcommand: &[u8] = if !args_ptr.is_empty() {
+            args_ptr[0]
+        } else {
+            b""
+        };
 
         if strings::eql_comptime(subcommand, b"pm") {
             subcommand = b"";
@@ -459,11 +464,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         let name = entry.name.slice_u8();
                         if name.starts_with(prefix.as_slice()) {
                             if let Err(err) = tmp_dir.delete_tree(name) {
-                                Output::err(
-                                    err,
-                                    "Could not delete {s}",
-                                    (bstr::BStr::new(name),),
-                                );
+                                Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
                                 had_err = true;
                                 continue;
                             }
@@ -587,7 +588,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     if package_id as usize >= lockfile.packages.len() {
                         continue;
                     }
-                    let name = dependencies[dependency_id as usize].name.slice(string_bytes);
+                    let name = dependencies[dependency_id as usize]
+                        .name
+                        .slice(string_bytes);
                     let resolution =
                         resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
 
@@ -740,7 +743,10 @@ fn print_node_modules_folder_structure(
             }
             let directory_version = buf_print(
                 &mut resolution_buf,
-                format_args!("{}", resolutions[id as usize].fmt(string_bytes, PathSep::Auto)),
+                format_args!(
+                    "{}",
+                    resolutions[id as usize].fmt(string_bytes, PathSep::Auto)
+                ),
             );
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 Output::prettyln(format_args!(
@@ -783,7 +789,9 @@ fn print_node_modules_folder_structure(
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
-        let package_name = dependencies[dependency_id as usize].name.slice(string_bytes);
+        let package_name = dependencies[dependency_id as usize]
+            .name
+            .slice(string_bytes);
         let mut possible_path: Vec<u8> = Vec::new();
         write!(
             &mut possible_path,

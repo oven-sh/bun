@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 use std::rc::Rc;
 
-use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
+use bun_collections::{ByteVecExt, LinearFifo, VecExt};
 use bun_core::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
-    StrongOptional, SystemError, StringJsc as _, bun_string_jsc,
+    StringJsc as _, StrongOptional, SystemError, bun_string_jsc,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -22,20 +22,20 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
+use bun_jsc::zig_string::ZigString;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
 // referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
 // opaque handles); they resolve to the same module, so alias both names.
+use crate::webcore::response::HeadersRef;
+use crate::webcore::streams::{self, Signal, StreamResult, Writable};
+use crate::webcore::{self, Blob, Body, Response};
+use bun_core::String as BunString;
+use bun_jsc::call_frame::ArgumentsSlice;
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use bun_lolhtml_sys::lol_html::Opaque as _;
-use crate::webcore::{self, Blob, Body, Response};
-use crate::webcore::response::HeadersRef;
-use crate::webcore::streams::{self, Signal, StreamResult, Writable};
-use bun_jsc::call_frame::ArgumentsSlice;
-use bun_core::String as BunString;
 use bun_sys;
 
 // ───────────────────── local helpers ─────────────────────────────────────
@@ -98,9 +98,13 @@ fn eat_content_options(
     iter: &mut ArgumentsSlice<'_>,
     global: &JSGlobalObject,
 ) -> JsResult<Option<ContentOptions>> {
-    let Some(arg) = iter.next_eat() else { return Ok(None) };
+    let Some(arg) = iter.next_eat() else {
+        return Ok(None);
+    };
     match arg.get(global, "html")? {
-        Some(html_val) => Ok(Some(ContentOptions { html: html_val.to_boolean() })),
+        Some(html_val) => Ok(Some(ContentOptions {
+            html: html_val.to_boolean(),
+        })),
         None => Ok(None),
     }
 }
@@ -237,7 +241,10 @@ impl HTMLRewriter {
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
     // struct already emits the C-ABI constructor shim that calls
     // `<HTMLRewriter>::constructor(__g, __f)`.
-    pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut HTMLRewriter> {
+    pub fn constructor(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<*mut HTMLRewriter> {
         let rewriter = bun_core::heap::into_raw(Box::new(HTMLRewriter {
             builder: lolhtml::HTMLRewriterBuilder::init(),
             context: Rc::new(RefCell::new(LOLHTMLContext::default())),
@@ -347,20 +354,32 @@ impl HTMLRewriter {
         // fresh Rc. Phase B: verify call sites.
     }
 
-    pub fn begin_transform(&self, global: &JSGlobalObject, response: *mut Response) -> JsResult<JSValue> {
+    pub fn begin_transform(
+        &self,
+        global: &JSGlobalObject,
+        response: *mut Response,
+    ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
         BufferOutputSink::init(new_context, global, response, self.builder)
     }
 
-    pub fn transform_(&self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
+    pub fn transform_(
+        &self,
+        global: &JSGlobalObject,
+        response_value: JSValue,
+    ) -> JsResult<JSValue> {
         // PORT NOTE: `Response` doesn't yet impl `JsClass`, so use the
         // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
-        if let Some(response) = webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>()) {
+        if let Some(response) =
+            webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>())
+        {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
             if matches!(*body_value, webcore::body::Value::Used) {
-                return Err(global.throw_invalid_arguments(format_args!("Response body already used")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Response body already used"))
+                );
             }
             let out = self.begin_transform(global, response)?;
             // Check if the returned value is an error and throw it properly
@@ -387,7 +406,10 @@ impl HTMLRewriter {
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
             let resp = bun_core::heap::into_raw(Box::new(Response::init(
-                webcore::response::Init { status_code: 200, ..Default::default() },
+                webcore::response::Init {
+                    status_code: 200,
+                    ..Default::default()
+                },
                 body_value,
                 BunString::empty(),
                 false,
@@ -405,12 +427,18 @@ impl HTMLRewriter {
                 return Err(global.throw_value(err));
             }
             out_response_value.ensure_still_alive();
-            let Some(out_response) = webcore::response::js::from_js(out_response_value).map(|p| p.cast::<Response>()) else {
+            let Some(out_response) =
+                webcore::response::js::from_js(out_response_value).map(|p| p.cast::<Response>())
+            else {
                 return Ok(out_response_value);
             };
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive
             // on the stack via ensure_still_alive above).
-            let mut blob = unsafe { (*out_response).get_body_value().use_as_any_blob_allow_non_utf8_string() };
+            let mut blob = unsafe {
+                (*out_response)
+                    .get_body_value()
+                    .use_as_any_blob_allow_non_utf8_string()
+            };
 
             let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
                 // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
@@ -420,7 +448,10 @@ impl HTMLRewriter {
                 // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
                 // and finalized exactly once.
                 unsafe {
-                    let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(v, core::ptr::null_mut());
+                    let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(
+                        v,
+                        core::ptr::null_mut(),
+                    );
                     // Manually invoke the finalizer to ensure it does what we want.
                     // SAFETY: `r` is the detached `m_ctx` pointer, sole owner here.
                     Response::finalize(Box::from_raw(r));
@@ -429,7 +460,9 @@ impl HTMLRewriter {
 
             return match kind {
                 ResponseKind::String => blob.to_string(global, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(global, webcore::Lifetime::Transfer),
+                ResponseKind::ArrayBuffer => {
+                    blob.to_array_buffer(global, webcore::Lifetime::Transfer)
+                }
                 ResponseKind::Other => unreachable!(),
             };
         }
@@ -449,7 +482,11 @@ impl HTMLRewriter {
         self.on_(global, selector_name, call_frame, listener)
     }
 
-    pub fn on_document(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn on_document(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let listener = eat_js_value(&mut iter, global)?;
@@ -516,7 +553,9 @@ impl HTMLRewriterLoader {
         let borrowed = bun_ptr::RawSlice::new(bytes);
         let write_result = self
             .output
-            .write(webcore::sink::Data::Bytes(StreamResult::Temporary(borrowed)));
+            .write(webcore::sink::Data::Bytes(StreamResult::Temporary(
+                borrowed,
+            )));
 
         match write_result {
             Writable::Err(err) => {
@@ -538,11 +577,13 @@ impl HTMLRewriterLoader {
                 // the destination sink; valid for the duration of this call.
                 unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
             }
-            Writable::IntoArray(_)
-            | Writable::Owned(_)
-            | Writable::Temporary(_) => {
+            Writable::IntoArray(_) | Writable::Owned(_) | Writable::Temporary(_) => {
                 self.signal.ready(
-                    if self.chunk_size > 0 { Some(self.chunk_size as u64) } else { None },
+                    if self.chunk_size > 0 {
+                        Some(self.chunk_size as u64)
+                    } else {
+                        None
+                    },
                     None,
                 );
             }
@@ -760,7 +801,10 @@ impl BufferOutputSink {
         // below. Access fields via raw-pointer place expressions instead.
 
         let result = bun_core::heap::into_raw(Box::new(Response::init(
-            webcore::response::Init { status_code: 200, ..Default::default() },
+            webcore::response::Init {
+                status_code: 200,
+                ..Default::default()
+            },
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(sink.cast::<core::ffi::c_void>());
@@ -796,7 +840,8 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
         // is non-null (addr of stack local).
         unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        vm.on_unhandled_rejection =
+            VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         // Zig `defer sink_error.ensureStillAlive()` — read the *live* slot at
         // scope exit (Cell shares provenance with the raw-pointer writers).
         scopeguard::defer! {
@@ -816,7 +861,9 @@ impl BufferOutputSink {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size as u64 == webcore::blob::MAX_SIZE {
+                    preallocated_parsing_buffer_size: if input_size as u64
+                        == webcore::blob::MAX_SIZE
+                    {
                         1024
                     } else {
                         input_size.max(1024) as usize
@@ -873,7 +920,8 @@ impl BufferOutputSink {
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };
         // SAFETY: original is a live *Response kept alive by caller; sink live.
-        let owned_readable_stream = unsafe { (*original).get_body_readable_stream(&(*sink).global) };
+        let owned_readable_stream =
+            unsafe { (*original).get_body_readable_stream(&(*sink).global) };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe {
             (*sink).ref_();
@@ -1023,8 +1071,10 @@ impl BufferOutputSink {
         if unsafe { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), &global);
+                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                    webcore::body::ValueError::Message(create_lolhtml_string_error()),
+                    &global,
+                );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -1036,8 +1086,10 @@ impl BufferOutputSink {
         if unsafe { lolhtml::HTMLRewriter::end(rewriter) }.is_err() {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), &global);
+                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                    webcore::body::ValueError::Message(create_lolhtml_string_error()),
+                    &global,
+                );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -1165,14 +1217,18 @@ impl DocumentHandler {
 
         if let Some(val) = this_object.get(global, "doctype")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments(format_args!("doctype must be a function")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("doctype must be a function"))
+                );
             }
             handler.on_doc_type_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("comments must be a function"))
+                );
             }
             handler.on_comment_callback = Some(val.protected());
         }
@@ -1229,15 +1285,25 @@ pub trait HandlerLike {
 }
 
 impl HandlerLike for DocumentHandler {
-    fn global(&self) -> &JSGlobalObject { &self.global }
-    fn this_object(&self) -> JSValue { self.this_object.value() }
+    fn global(&self) -> &JSGlobalObject {
+        &self.global
+    }
+    fn this_object(&self) -> JSValue {
+        self.this_object.value()
+    }
 }
 impl HandlerLike for ElementHandler {
-    fn global(&self) -> &JSGlobalObject { &self.global }
-    fn this_object(&self) -> JSValue { self.this_object.value() }
+    fn global(&self) -> &JSGlobalObject {
+        &self.global
+    }
+    fn this_object(&self) -> JSValue {
+        self.this_object.value()
+    }
 }
 impl HandlerLike for EndTagHandler {
-    fn global(&self) -> &JSGlobalObject { &self.global }
+    fn global(&self) -> &JSGlobalObject {
+        &self.global
+    }
 }
 
 /// Trait abstracting the wrapper-type bits `HandlerCallback` needs.
@@ -1444,14 +1510,18 @@ impl ElementHandler {
 
         if let Some(val) = this_object.get(global, "element")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments(format_args!("element must be a function")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("element must be a function"))
+                );
             }
             handler.on_element_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("comments must be a function"))
+                );
             }
             handler.on_comment_callback = Some(val.protected());
         }
@@ -1541,7 +1611,11 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
 
     let err = create_lolhtml_string_error();
     let value = bun_string_jsc::to_error_instance(&err, global);
-    value.put(global, b"name", ZigString::init(b"HTMLRewriterError").to_js(global));
+    value.put(
+        global,
+        b"name",
+        ZigString::init(b"HTMLRewriterError").to_js(global),
+    );
     value
 }
 
@@ -1553,7 +1627,10 @@ fn create_lolhtml_string_error() -> BunString {
     s
 }
 
-fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+fn html_string_value(
+    input: lolhtml::HTMLString,
+    global_object: &JSGlobalObject,
+) -> JsResult<JSValue> {
     html_string_to_js(input, global_object)
 }
 
@@ -1617,7 +1694,9 @@ impl TextChunk {
         }
     }
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 }
 
 impl_wrapper_like!(TextChunk, lolhtml::TextChunk);
@@ -1636,7 +1715,9 @@ pub struct DocType {
 impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
         bun_core::heap::into_raw(Box::new(DocType {
@@ -1730,7 +1811,9 @@ impl DocEnd {
         append / append_,
     }
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 }
 
 impl_wrapper_like!(DocEnd, lolhtml::DocEnd);
@@ -1802,7 +1885,9 @@ impl Comment {
         }
     }
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 }
 
 impl_wrapper_like!(Comment, lolhtml::Comment);
@@ -1858,7 +1943,9 @@ impl EndTag {
         }))
     }
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 
     lol_content_ops! { EndTag, end_tag, JSValue::NULL;
         before / before_,
@@ -1987,7 +2074,10 @@ impl AttributeIterator {
             JSValue::FALSE,
             bun_string_jsc::to_js_array(
                 global_object,
-                &[html_string_to_bun_string(name), html_string_to_bun_string(value)],
+                &[
+                    html_string_to_bun_string(name),
+                    html_string_to_bun_string(value),
+                ],
             )?,
         )
     }
@@ -2041,7 +2131,9 @@ impl Element {
         }))
     }
 
-    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
+    pub fn finalize(self: Box<Self>) {
+        bun_ptr::finalize_js_box_noop(self);
+    }
 
     /// Detach every `AttributeIterator` we handed to JS. Called when the
     /// underlying attribute buffer is about to become invalid — either because
@@ -2108,7 +2200,11 @@ impl Element {
     }
 
     /// Returns the value for a given attribute name on the element, or null if it is not found.
-    pub fn get_attribute_(&self, global_object: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
+    pub fn get_attribute_(
+        &self,
+        global_object: &JSGlobalObject,
+        name: ZigString,
+    ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::NULL);
         };
@@ -2152,7 +2248,10 @@ impl Element {
 
         let name_slice = name_.to_slice();
         let value_slice = value_.to_slice();
-        if el.set_attribute(name_slice.slice(), value_slice.slice()).is_err() {
+        if el
+            .set_attribute(name_slice.slice(), value_slice.slice())
+            .is_err()
+        {
             return create_lolhtml_error(global_object);
         }
         call_frame.this()
@@ -2189,21 +2288,33 @@ impl Element {
         self.on_end_tag_(global, function, call_frame)
     }
 
-    pub fn get_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_attribute(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         self.get_attribute_(global, name)
     }
 
-    pub fn has_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn has_attribute(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         Ok(self.has_attribute_(global, name))
     }
 
-    pub fn set_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_attribute(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
@@ -2211,7 +2322,11 @@ impl Element {
         Ok(self.set_attribute_(call_frame, global, name, value))
     }
 
-    pub fn remove_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn remove_attribute(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
@@ -2245,7 +2360,11 @@ impl Element {
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
     #[bun_jsc::host_fn(method)]
-    pub fn remove_and_keep_content(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn remove_and_keep_content(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::UNDEFINED);
         };

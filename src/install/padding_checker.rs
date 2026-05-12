@@ -129,7 +129,10 @@ unsafe impl AssertNoUninitializedPadding for bool {}
 // SAFETY: `[T; N]` has no inter-element padding when `T` itself has none
 // (array stride == size_of::<T>() always; any tail padding would be inside T and
 // already rejected by T's own impl).
-unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializedPadding for [T; N] {}
+unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializedPadding
+    for [T; N]
+{
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-runtime layout pins
@@ -157,43 +160,49 @@ pub mod layout_asserts {
             const _: () = assert!(
                 size_of::<$ty>() == $sz,
                 concat!(
-                    "on-disk layout drift: size_of::<", stringify!($ty),
-                    ">() != ", stringify!($sz), " (Zig extern-struct spec)",
+                    "on-disk layout drift: size_of::<",
+                    stringify!($ty),
+                    ">() != ",
+                    stringify!($sz),
+                    " (Zig extern-struct spec)",
                 ),
             );
             const _: () = assert!(
                 align_of::<$ty>() == $al,
                 concat!(
-                    "on-disk layout drift: align_of::<", stringify!($ty),
-                    ">() != ", stringify!($al), " (Zig extern-struct spec)",
+                    "on-disk layout drift: align_of::<",
+                    stringify!($ty),
+                    ">() != ",
+                    stringify!($al),
+                    " (Zig extern-struct spec)",
                 ),
             );
         };
     }
 
     // ── leaf POD shared by both formats ──────────────────────────────────
-    pin!(bun_semver::String,             size = 8,  align = 1); // [8]u8
-    pin!(bun_semver::ExternalString,     size = 16, align = 8); // String + u64
-    pin!(crate::ExternalSlice<u8>,       size = 8,  align = 4); // u32 off + u32 len
-    pin!(crate::ExternalStringMap,       size = 16, align = 4);
-    pin!(crate::integrity::Integrity,    size = 65, align = 1); // u8 tag + [64]u8
-    pin!(crate::repository::Repository,  size = 40, align = 1); // 5 × String
-    pin!(crate::bin::Value,              size = 16, align = 4); // union: [String;2] | ExternalSlice
-    pin!(crate::bin::Bin,                size = 20, align = 4);
-    pin!(bun_semver::Version,            size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
+    pin!(bun_semver::String, size = 8, align = 1); // [8]u8
+    pin!(bun_semver::ExternalString, size = 16, align = 8); // String + u64
+    pin!(crate::ExternalSlice<u8>, size = 8, align = 4); // u32 off + u32 len
+    pin!(crate::ExternalStringMap, size = 16, align = 4);
+    pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8
+    pin!(crate::repository::Repository, size = 40, align = 1); // 5 × String
+    pin!(crate::bin::Value, size = 16, align = 4); // union: [String;2] | ExternalSlice
+    pin!(crate::bin::Bin, size = 20, align = 4);
+    pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
 
     // ── bun.lockb package-table columns (Package.Serializer) ─────────────
     // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;
     // each column is written as a raw byte slab, so per-column `size_of` is the
     // load-bearing contract — see `lockfile/Package.rs::serializer::sizes()`.
-    pin!(crate::resolution::Value<u64>,  size = 64, align = 8); // union: VersionedURL | Repository | String
-    pin!(crate::resolution::Resolution,  size = 72, align = 8); // u8 tag + [7]u8 + Value
+    pin!(crate::resolution::Value<u64>, size = 64, align = 8); // union: VersionedURL | Repository | String
+    pin!(crate::resolution::Resolution, size = 72, align = 8); // u8 tag + [7]u8 + Value
     pin!(crate::lockfile::package::Meta, size = 88, align = 4);
     pin!(crate::lockfile::package::Scripts, size = 49, align = 1);
 
     // ── .npm manifest cache (PackageManifest.Serializer) ─────────────────
-    pin!(crate::npm::PackageVersion,     size = 240, align = 8);
-    pin!(crate::npm::NpmPackage,         size = 120, align = 8);
+    pin!(crate::npm::PackageVersion, size = 240, align = 8);
+    pin!(crate::npm::NpmPackage, size = 120, align = 8);
 }
 
 // ported from: src/install/padding_checker.zig

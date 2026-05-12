@@ -28,7 +28,6 @@ impl Runtime {
     }
 }
 
-
 /// Zig: `Runtime.Features.ReplaceableExport`
 #[derive(Clone)]
 pub enum ReplaceableExport {
@@ -448,7 +447,11 @@ mod tests {
         // const all_sorted = brk: { var list = all; std.sort.pdq(...); break :brk list; };
         let mut list = Imports::ALL;
         list.sort_unstable();
-        assert_eq!(list, Imports::ALL_SORTED, "ALL_SORTED drifted from sorted(ALL)");
+        assert_eq!(
+            list,
+            Imports::ALL_SORTED,
+            "ALL_SORTED drifted from sorted(ALL)"
+        );
 
         // pub const all_sorted_index = brk: { for (all) |name, i| for (all_sorted) |cmp, j| ... };
         let mut out = [0usize; Imports::ALL.len()];
@@ -460,7 +463,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(out, Imports::ALL_SORTED_INDEX, "ALL_SORTED_INDEX drifted from derivation");
+        assert_eq!(
+            out,
+            Imports::ALL_SORTED_INDEX,
+            "ALL_SORTED_INDEX drifted from derivation"
+        );
     }
 }
 

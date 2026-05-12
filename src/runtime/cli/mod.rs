@@ -11,9 +11,9 @@
 
 use core::cell::Cell;
 
+use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
-use bun_core::strings;
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
 
@@ -62,75 +62,179 @@ pub(crate) mod ci_info_generated {
     }
 
     pub fn detect_uncached_generated() -> Option<&'static [u8]> {
-        if env_set!("AGOLA_GIT_REF") { return Some(b"agola-ci"); }
-        if env_set!("AC_APPCIRCLE") { return Some(b"appcircle"); }
-        if env_set!("APPVEYOR") { return Some(b"appveyor"); }
-        if env_set!("CODEBUILD_BUILD_ARN") { return Some(b"aws-codebuild"); }
-        if env_set!("TF_BUILD") { return Some(b"azure-pipelines"); }
-        if env_set!("bamboo_planKey") { return Some(b"bamboo"); }
-        if env_set!("BITBUCKET_COMMIT") { return Some(b"bitbucket-pipelines"); }
-        if env_set!("BITRISE_IO") { return Some(b"bitrise"); }
-        if env_set!("BUDDY_WORKSPACE_ID") { return Some(b"buddy"); }
-        if env_set!("BUILDKITE") { return Some(b"buildkite"); }
-        if env_set!("CIRCLECI") { return Some(b"circleci"); }
-        if env_set!("CIRRUS_CI") { return Some(b"cirrus-ci"); }
-        if env_set!("CF_PAGES") { return Some(b"cloudflare-pages"); }
-        if env_set!("WORKERS_CI") { return Some(b"cloudflare-workers"); }
-        if env_set!("CF_BUILD_ID") { return Some(b"codefresh"); }
-        if env_set!("CM_BUILD_ID") { return Some(b"codemagic"); }
-        if env_eq!("CI_NAME", "codeship") { return Some(b"codeship"); }
-        if env_set!("DRONE") { return Some(b"drone"); }
-        if env_set!("DSARI") { return Some(b"dsari"); }
-        if env_set!("EARTHLY_CI") { return Some(b"earthly"); }
-        if env_set!("EAS_BUILD") { return Some(b"expo-application-services"); }
-        if env_set!("GERRIT_PROJECT") { return Some(b"gerrit"); }
-        if env_set!("GITEA_ACTIONS") { return Some(b"gitea-actions"); }
-        if env_set!("GITHUB_ACTIONS") { return Some(b"github-actions"); }
-        if env_set!("GITLAB_CI") { return Some(b"gitlab-ci"); }
-        if env_set!("GO_PIPELINE_LABEL") { return Some(b"gocd"); }
-        if env_set!("BUILDER_OUTPUT") { return Some(b"google-cloud-build"); }
-        if env_set!("HARNESS_BUILD_ID") { return Some(b"harness-ci"); }
-        if env_contains!("NODE", "/app/.heroku/node/bin/node") { return Some(b"heroku"); }
-        if env_set!("HUDSON_URL") { return Some(b"hudson"); }
-        if env_set!("JENKINS_URL") && env_set!("BUILD_ID") { return Some(b"jenkins"); }
-        if env_set!("LAYERCI") { return Some(b"layerci"); }
-        if env_set!("MAGNUM") { return Some(b"magnum-ci"); }
-        if env_set!("NETLIFY") { return Some(b"netlify-ci"); }
-        if env_set!("NEVERCODE") { return Some(b"nevercode"); }
-        if env_set!("PROW_JOB_ID") { return Some(b"prow"); }
-        if env_set!("RELEASE_BUILD_ID") { return Some(b"releasehub"); }
-        if env_set!("RENDER") { return Some(b"render"); }
-        if env_set!("SAILCI") { return Some(b"sail-ci"); }
-        if env_set!("SCREWDRIVER") { return Some(b"screwdriver"); }
-        if env_set!("SEMAPHORE") { return Some(b"semaphore"); }
-        if env_eq!("CI_NAME", "sourcehut") { return Some(b"sourcehut"); }
-        if env_set!("STRIDER") { return Some(b"strider-cd"); }
-        if env_set!("TASK_ID") && env_set!("RUN_ID") { return Some(b"taskcluster"); }
-        if env_set!("TEAMCITY_VERSION") { return Some(b"teamcity"); }
-        if env_set!("TRAVIS") { return Some(b"travis-ci"); }
-        if env_set!("VELA") { return Some(b"vela"); }
-        if env_set!("NOW_BUILDER") || env_set!("VERCEL") { return Some(b"vercel"); }
-        if env_set!("APPCENTER_BUILD_ID") { return Some(b"visual-studio-app-center"); }
-        if env_eq!("CI", "woodpecker") { return Some(b"woodpecker"); }
-        if env_set!("CI_XCODE_PROJECT") { return Some(b"xcode-cloud"); }
-        if env_set!("XCS") { return Some(b"xcode-server"); }
+        if env_set!("AGOLA_GIT_REF") {
+            return Some(b"agola-ci");
+        }
+        if env_set!("AC_APPCIRCLE") {
+            return Some(b"appcircle");
+        }
+        if env_set!("APPVEYOR") {
+            return Some(b"appveyor");
+        }
+        if env_set!("CODEBUILD_BUILD_ARN") {
+            return Some(b"aws-codebuild");
+        }
+        if env_set!("TF_BUILD") {
+            return Some(b"azure-pipelines");
+        }
+        if env_set!("bamboo_planKey") {
+            return Some(b"bamboo");
+        }
+        if env_set!("BITBUCKET_COMMIT") {
+            return Some(b"bitbucket-pipelines");
+        }
+        if env_set!("BITRISE_IO") {
+            return Some(b"bitrise");
+        }
+        if env_set!("BUDDY_WORKSPACE_ID") {
+            return Some(b"buddy");
+        }
+        if env_set!("BUILDKITE") {
+            return Some(b"buildkite");
+        }
+        if env_set!("CIRCLECI") {
+            return Some(b"circleci");
+        }
+        if env_set!("CIRRUS_CI") {
+            return Some(b"cirrus-ci");
+        }
+        if env_set!("CF_PAGES") {
+            return Some(b"cloudflare-pages");
+        }
+        if env_set!("WORKERS_CI") {
+            return Some(b"cloudflare-workers");
+        }
+        if env_set!("CF_BUILD_ID") {
+            return Some(b"codefresh");
+        }
+        if env_set!("CM_BUILD_ID") {
+            return Some(b"codemagic");
+        }
+        if env_eq!("CI_NAME", "codeship") {
+            return Some(b"codeship");
+        }
+        if env_set!("DRONE") {
+            return Some(b"drone");
+        }
+        if env_set!("DSARI") {
+            return Some(b"dsari");
+        }
+        if env_set!("EARTHLY_CI") {
+            return Some(b"earthly");
+        }
+        if env_set!("EAS_BUILD") {
+            return Some(b"expo-application-services");
+        }
+        if env_set!("GERRIT_PROJECT") {
+            return Some(b"gerrit");
+        }
+        if env_set!("GITEA_ACTIONS") {
+            return Some(b"gitea-actions");
+        }
+        if env_set!("GITHUB_ACTIONS") {
+            return Some(b"github-actions");
+        }
+        if env_set!("GITLAB_CI") {
+            return Some(b"gitlab-ci");
+        }
+        if env_set!("GO_PIPELINE_LABEL") {
+            return Some(b"gocd");
+        }
+        if env_set!("BUILDER_OUTPUT") {
+            return Some(b"google-cloud-build");
+        }
+        if env_set!("HARNESS_BUILD_ID") {
+            return Some(b"harness-ci");
+        }
+        if env_contains!("NODE", "/app/.heroku/node/bin/node") {
+            return Some(b"heroku");
+        }
+        if env_set!("HUDSON_URL") {
+            return Some(b"hudson");
+        }
+        if env_set!("JENKINS_URL") && env_set!("BUILD_ID") {
+            return Some(b"jenkins");
+        }
+        if env_set!("LAYERCI") {
+            return Some(b"layerci");
+        }
+        if env_set!("MAGNUM") {
+            return Some(b"magnum-ci");
+        }
+        if env_set!("NETLIFY") {
+            return Some(b"netlify-ci");
+        }
+        if env_set!("NEVERCODE") {
+            return Some(b"nevercode");
+        }
+        if env_set!("PROW_JOB_ID") {
+            return Some(b"prow");
+        }
+        if env_set!("RELEASE_BUILD_ID") {
+            return Some(b"releasehub");
+        }
+        if env_set!("RENDER") {
+            return Some(b"render");
+        }
+        if env_set!("SAILCI") {
+            return Some(b"sail-ci");
+        }
+        if env_set!("SCREWDRIVER") {
+            return Some(b"screwdriver");
+        }
+        if env_set!("SEMAPHORE") {
+            return Some(b"semaphore");
+        }
+        if env_eq!("CI_NAME", "sourcehut") {
+            return Some(b"sourcehut");
+        }
+        if env_set!("STRIDER") {
+            return Some(b"strider-cd");
+        }
+        if env_set!("TASK_ID") && env_set!("RUN_ID") {
+            return Some(b"taskcluster");
+        }
+        if env_set!("TEAMCITY_VERSION") {
+            return Some(b"teamcity");
+        }
+        if env_set!("TRAVIS") {
+            return Some(b"travis-ci");
+        }
+        if env_set!("VELA") {
+            return Some(b"vela");
+        }
+        if env_set!("NOW_BUILDER") || env_set!("VERCEL") {
+            return Some(b"vercel");
+        }
+        if env_set!("APPCENTER_BUILD_ID") {
+            return Some(b"visual-studio-app-center");
+        }
+        if env_eq!("CI", "woodpecker") {
+            return Some(b"woodpecker");
+        }
+        if env_set!("CI_XCODE_PROJECT") {
+            return Some(b"xcode-cloud");
+        }
+        if env_set!("XCS") {
+            return Some(b"xcode-server");
+        }
         None
     }
 }
 
-#[path = "which_npm_client.rs"]
-pub mod which_npm_client;
 #[path = "add_completions.rs"]
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
+#[path = "which_npm_client.rs"]
+pub mod which_npm_client;
 // TODO(b2-blocked): list-of-yarn-commands.rs has duplicate phf_set! keys.
- #[path = "list-of-yarn-commands.rs"]
-pub mod list_of_yarn_commands;
 #[path = "discord_command.rs"]
 pub mod discord_command;
+#[path = "list-of-yarn-commands.rs"]
+pub mod list_of_yarn_commands;
 
 // ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
 // TODO(b2-blocked): full `open.rs` (Editor detection/spawn) needs
@@ -138,7 +242,7 @@ pub mod discord_command;
 // `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
 // `bun discord` only needs `open_url`, so provide a thin print-fallback impl
 // here until the heavy half compiles.
- #[path = "open.rs"]
+#[path = "open.rs"]
 mod open_full;
 pub mod open {
     pub use super::open_full::{Editor, EditorContext};
@@ -174,11 +278,11 @@ pub mod open {
 // and `package_manager_command.rs` need bun_install::PackageManager + a real
 // `Command::Context` (blocked on `create_context_data`). Help/print-only paths
 // are handled inline in `Command::start()` below; full bodies stay gated.
- #[path = "init_command.rs"]
+#[path = "init_command.rs"]
 pub mod init_command;
- #[path = "install_completions_command.rs"]
+#[path = "install_completions_command.rs"]
 pub mod install_completions_command;
- #[path = "package_manager_command.rs"]
+#[path = "package_manager_command.rs"]
 pub mod package_manager_command;
 
 // ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
@@ -211,20 +315,20 @@ pub mod test {
     /// re-exports the public entry points from `runner`; the rest are
     /// implementation detail of the coordinator/worker split.
     pub mod parallel {
-        #[path = "runner.rs"]
-        pub mod runner;
-        #[path = "Coordinator.rs"]
-        pub mod coordinator;
-        #[path = "Worker.rs"]
-        pub mod worker;
-        #[path = "Channel.rs"]
-        pub mod channel;
-        #[path = "Frame.rs"]
-        pub mod frame;
-        #[path = "FileRange.rs"]
-        pub mod file_range;
         #[path = "aggregate.rs"]
         pub mod aggregate;
+        #[path = "Channel.rs"]
+        pub mod channel;
+        #[path = "Coordinator.rs"]
+        pub mod coordinator;
+        #[path = "FileRange.rs"]
+        pub mod file_range;
+        #[path = "Frame.rs"]
+        pub mod frame;
+        #[path = "runner.rs"]
+        pub mod runner;
+        #[path = "Worker.rs"]
+        pub mod worker;
     }
 }
 #[path = "Arguments.rs"]
@@ -232,8 +336,8 @@ pub mod arguments;
 pub use arguments as Arguments;
 // bunfig.toml without a tier-6 dependency. Re-export under the original path so
 // existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
-pub use bun_bunfig::bunfig;
 pub use bun_bunfig::Bunfig;
+pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
@@ -249,59 +353,59 @@ pub mod bunx_command;
 pub mod create_command;
 #[path = "exec_command.rs"]
 pub mod exec_command;
-#[path = "repl_command.rs"]
-pub mod repl_command;
-#[path = "upgrade_command.rs"]
-pub mod upgrade_command;
 #[path = "fuzzilli_command.rs"]
 pub mod fuzzilli_command;
 #[path = "install_command.rs"]
 pub mod install_command;
+#[path = "repl_command.rs"]
+pub mod repl_command;
+#[path = "upgrade_command.rs"]
+pub mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
 // `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
-pub mod pm_update_package_json;
 #[path = "add_command.rs"]
 pub mod add_command;
-#[path = "remove_command.rs"]
-pub mod remove_command;
-#[path = "update_command.rs"]
-pub mod update_command;
-#[path = "update_interactive_command.rs"]
-pub mod update_interactive_command;
-#[path = "link_command.rs"]
-pub mod link_command;
-#[path = "unlink_command.rs"]
-pub mod unlink_command;
-#[path = "patch_command.rs"]
-pub mod patch_command;
-#[path = "patch_commit_command.rs"]
-pub mod patch_commit_command;
-#[path = "outdated_command.rs"]
-pub mod outdated_command;
-#[path = "publish_command.rs"]
-pub mod publish_command;
 #[path = "audit_command.rs"]
 pub mod audit_command;
-#[path = "why_command.rs"]
-pub mod why_command;
-#[path = "pm_view_command.rs"]
-pub mod pm_view_command;
-#[path = "pm_pkg_command.rs"]
-pub mod pm_pkg_command;
-#[path = "pm_trusted_command.rs"]
-pub mod pm_trusted_command;
-#[path = "pm_version_command.rs"]
-pub mod pm_version_command;
-#[path = "pm_why_command.rs"]
-pub mod pm_why_command;
-#[path = "pack_command.rs"]
-pub mod pack_command;
-#[path = "scan_command.rs"]
-pub mod scan_command;
 #[path = "filter_arg.rs"]
 pub mod filter_arg;
 #[path = "filter_run.rs"]
 pub mod filter_run;
+#[path = "link_command.rs"]
+pub mod link_command;
+#[path = "outdated_command.rs"]
+pub mod outdated_command;
+#[path = "pack_command.rs"]
+pub mod pack_command;
+#[path = "patch_command.rs"]
+pub mod patch_command;
+#[path = "patch_commit_command.rs"]
+pub mod patch_commit_command;
+#[path = "pm_pkg_command.rs"]
+pub mod pm_pkg_command;
+#[path = "pm_trusted_command.rs"]
+pub mod pm_trusted_command;
+pub mod pm_update_package_json;
+#[path = "pm_version_command.rs"]
+pub mod pm_version_command;
+#[path = "pm_view_command.rs"]
+pub mod pm_view_command;
+#[path = "pm_why_command.rs"]
+pub mod pm_why_command;
+#[path = "publish_command.rs"]
+pub mod publish_command;
+#[path = "remove_command.rs"]
+pub mod remove_command;
+#[path = "scan_command.rs"]
+pub mod scan_command;
+#[path = "unlink_command.rs"]
+pub mod unlink_command;
+#[path = "update_command.rs"]
+pub mod update_command;
+#[path = "update_interactive_command.rs"]
+pub mod update_interactive_command;
+#[path = "why_command.rs"]
+pub mod why_command;
 pub use filter_run as FilterRun;
 #[path = "multi_run.rs"]
 pub mod multi_run;
@@ -399,8 +503,7 @@ pub static CMD: std::sync::OnceLock<command::Tag> = std::sync::OnceLock::new();
 pub use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
-pub static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+pub static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 bun_core::declare_scope!(CLI, hidden);
 
@@ -495,19 +598,35 @@ pub mod help_command {
 
     // someone will get mad at me for this
     pub const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
-        "moment", "underscore", "jquery", "backbone", "redux", "browserify",
-        "webpack", "left-pad", "is-array", "babel-core", "@parcel/core",
+        "moment",
+        "underscore",
+        "jquery",
+        "backbone",
+        "redux",
+        "browserify",
+        "webpack",
+        "left-pad",
+        "is-array",
+        "babel-core",
+        "@parcel/core",
     ];
     pub const PACKAGES_TO_ADD_FILLER: &[&str] = &[
-        "elysia", "@shumai/shumai", "hono", "react", "lyra",
-        "@remix-run/dev", "@evan/duckdb", "@zarfjs/zarf", "zod", "tailwindcss",
+        "elysia",
+        "@shumai/shumai",
+        "hono",
+        "react",
+        "lyra",
+        "@remix-run/dev",
+        "@evan/duckdb",
+        "@zarfjs/zarf",
+        "zod",
+        "tailwindcss",
     ];
     pub const PACKAGES_TO_X_FILLER: &[&str] = &[
         "bun-repl", "next", "vite", "prisma", "nuxi", "prettier", "eslint",
     ];
-    pub const PACKAGES_TO_CREATE_FILLER: &[&str] = &[
-        "next-app", "vite", "astro", "svelte", "elysia",
-    ];
+    pub const PACKAGES_TO_CREATE_FILLER: &[&str] =
+        &["next-app", "vite", "astro", "svelte", "elysia"];
 
     /// `cli_helptext_fmt` from cli.zig.
     ///
@@ -641,8 +760,12 @@ pub mod reserved_command {
     pub fn exec() -> Result<(), bun_core::Error> {
         let mut command_name: &[u8] = b"";
         for (i, arg) in bun::argv().iter().enumerate() {
-            if i == 0 { continue; }
-            if arg.len() > 1 && arg[0] == b'-' { continue; }
+            if i == 0 {
+                continue;
+            }
+            if arg.len() > 1 && arg[0] == b'-' {
+                continue;
+            }
             command_name = arg;
             break;
         }
@@ -709,33 +832,45 @@ pub mod command {
 
     pub fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
-        { return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx"); }
+        {
+            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+        }
         #[cfg(not(windows))]
-        { strings::ends_with(argv0, b"bunx") }
+        {
+            strings::ends_with(argv0, b"bunx")
+        }
     }
 
     pub fn is_node(argv0: &[u8]) -> bool {
         #[cfg(windows)]
-        { return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node"); }
+        {
+            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
+        }
         #[cfg(not(windows))]
-        { strings::ends_with(argv0, b"node") }
+        {
+            strings::ends_with(argv0, b"node")
+        }
     }
 
     pub fn which() -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
-        let Some(argv0) = iter.next() else { return Tag::HelpCommand };
+        let Some(argv0) = iter.next() else {
+            return Tag::HelpCommand;
+        };
 
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
                 if next_bytes == b"add"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
+                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
+                        == Some(true)
                 {
                     return Tag::AddCommand;
                 }
                 if next_bytes == b"exec"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
+                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
+                        == Some(true)
                 {
                     return Tag::ExecCommand;
                 }
@@ -751,7 +886,9 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        let Some(mut first_arg_name) = iter.next() else { return Tag::AutoCommand };
+        let Some(mut first_arg_name) = iter.next() else {
+            return Tag::AutoCommand;
+        };
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
@@ -767,18 +904,36 @@ pub mod command {
         // PERF(port): Zig's `switch` over RootCommandMatcher cases compiles to a
         // jump table on the packed u96; Rust `if x == const` is a chain of
         // compares — profile in Phase B.
-        if x == RootCommandMatcher::case(b"init") { return Tag::InitCommand; }
+        if x == RootCommandMatcher::case(b"init") {
+            return Tag::InitCommand;
+        }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
             return Tag::BuildCommand;
         }
-        if x == RootCommandMatcher::case(b"discord") { return Tag::DiscordCommand; }
-        if x == RootCommandMatcher::case(b"upgrade") { return Tag::UpgradeCommand; }
-        if x == RootCommandMatcher::case(b"completions") { return Tag::InstallCompletionsCommand; }
-        if x == RootCommandMatcher::case(b"getcompletes") { return Tag::GetCompletionsCommand; }
-        if x == RootCommandMatcher::case(b"link") { return Tag::LinkCommand; }
-        if x == RootCommandMatcher::case(b"unlink") { return Tag::UnlinkCommand; }
-        if x == RootCommandMatcher::case(b"x") { return Tag::BunxCommand; }
-        if x == RootCommandMatcher::case(b"repl") { return Tag::ReplCommand; }
+        if x == RootCommandMatcher::case(b"discord") {
+            return Tag::DiscordCommand;
+        }
+        if x == RootCommandMatcher::case(b"upgrade") {
+            return Tag::UpgradeCommand;
+        }
+        if x == RootCommandMatcher::case(b"completions") {
+            return Tag::InstallCompletionsCommand;
+        }
+        if x == RootCommandMatcher::case(b"getcompletes") {
+            return Tag::GetCompletionsCommand;
+        }
+        if x == RootCommandMatcher::case(b"link") {
+            return Tag::LinkCommand;
+        }
+        if x == RootCommandMatcher::case(b"unlink") {
+            return Tag::UnlinkCommand;
+        }
+        if x == RootCommandMatcher::case(b"x") {
+            return Tag::BunxCommand;
+        }
+        if x == RootCommandMatcher::case(b"repl") {
+            return Tag::ReplCommand;
+        }
         if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
             for arg in argv.iter() {
                 if arg == b"-g" || arg == b"--global" {
@@ -787,18 +942,30 @@ pub mod command {
             }
             return Tag::InstallCommand;
         }
-        if x == RootCommandMatcher::case(b"ci") { return Tag::InstallCommand; }
+        if x == RootCommandMatcher::case(b"ci") {
+            return Tag::InstallCommand;
+        }
         if x == RootCommandMatcher::case(b"c") || x == RootCommandMatcher::case(b"create") {
             return Tag::CreateCommand;
         }
-        if x == RootCommandMatcher::case(b"test") { return Tag::TestCommand; }
-        if x == RootCommandMatcher::case(b"pm") { return Tag::PackageManagerCommand; }
+        if x == RootCommandMatcher::case(b"test") {
+            return Tag::TestCommand;
+        }
+        if x == RootCommandMatcher::case(b"pm") {
+            return Tag::PackageManagerCommand;
+        }
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
             return Tag::AddCommand;
         }
-        if x == RootCommandMatcher::case(b"update") { return Tag::UpdateCommand; }
-        if x == RootCommandMatcher::case(b"patch") { return Tag::PatchCommand; }
-        if x == RootCommandMatcher::case(b"patch-commit") { return Tag::PatchCommitCommand; }
+        if x == RootCommandMatcher::case(b"update") {
+            return Tag::UpdateCommand;
+        }
+        if x == RootCommandMatcher::case(b"patch") {
+            return Tag::PatchCommand;
+        }
+        if x == RootCommandMatcher::case(b"patch-commit") {
+            return Tag::PatchCommitCommand;
+        }
         if x == RootCommandMatcher::case(b"r")
             || x == RootCommandMatcher::case(b"remove")
             || x == RootCommandMatcher::case(b"rm")
@@ -806,13 +973,27 @@ pub mod command {
         {
             return Tag::RemoveCommand;
         }
-        if x == RootCommandMatcher::case(b"run") { return Tag::RunCommand; }
-        if x == RootCommandMatcher::case(b"help") { return Tag::HelpCommand; }
-        if x == RootCommandMatcher::case(b"exec") { return Tag::ExecCommand; }
-        if x == RootCommandMatcher::case(b"outdated") { return Tag::OutdatedCommand; }
-        if x == RootCommandMatcher::case(b"publish") { return Tag::PublishCommand; }
-        if x == RootCommandMatcher::case(b"audit") { return Tag::AuditCommand; }
-        if x == RootCommandMatcher::case(b"info") { return Tag::InfoCommand; }
+        if x == RootCommandMatcher::case(b"run") {
+            return Tag::RunCommand;
+        }
+        if x == RootCommandMatcher::case(b"help") {
+            return Tag::HelpCommand;
+        }
+        if x == RootCommandMatcher::case(b"exec") {
+            return Tag::ExecCommand;
+        }
+        if x == RootCommandMatcher::case(b"outdated") {
+            return Tag::OutdatedCommand;
+        }
+        if x == RootCommandMatcher::case(b"publish") {
+            return Tag::PublishCommand;
+        }
+        if x == RootCommandMatcher::case(b"audit") {
+            return Tag::AuditCommand;
+        }
+        if x == RootCommandMatcher::case(b"info") {
+            return Tag::InfoCommand;
+        }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
             || x == RootCommandMatcher::case(b"cloud")
@@ -828,12 +1009,18 @@ pub mod command {
         if x == RootCommandMatcher::case(b"whoami") || x == RootCommandMatcher::case(b"list") {
             return Tag::PackageManagerCommand;
         }
-        if x == RootCommandMatcher::case(b"why") { return Tag::WhyCommand; }
+        if x == RootCommandMatcher::case(b"why") {
+            return Tag::WhyCommand;
+        }
         if x == RootCommandMatcher::case(b"fuzzilli") {
-            if bun_core::Environment::ENABLE_FUZZILLI { return Tag::FuzzilliCommand; }
+            if bun_core::Environment::ENABLE_FUZZILLI {
+                return Tag::FuzzilliCommand;
+            }
             return Tag::AutoCommand;
         }
-        if x == RootCommandMatcher::case(b"-e") { return Tag::AutoCommand; }
+        if x == RootCommandMatcher::case(b"-e") {
+            return Tag::AutoCommand;
+        }
         Tag::AutoCommand
     }
 
@@ -890,7 +1077,7 @@ pub mod command {
             if ctx.debug.hot_reload == HotReload::Watch {
                 // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
-                
+
                 {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();
@@ -966,11 +1153,13 @@ pub mod command {
                     argv.get(1).map(bun_core::ZStr::as_bytes),
                     Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
                 ),
-                3 => argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                    && matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                    ),
+                3 => {
+                    argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
+                        && matches!(
+                            argv.get(1).map(bun_core::ZStr::as_bytes),
+                            Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                        )
+                }
                 _ => false,
             };
             if empty_eval {
@@ -1155,8 +1344,7 @@ pub mod command {
         if !ctx.positionals.is_empty() {
             let cfg = run_command::ExecCfg {
                 bin_dirs_only: tag == Tag::AutoCommand,
-                log_errors: tag != Tag::AutoCommand
-                    || !ctx.runtime_options.if_present,
+                log_errors: tag != Tag::AutoCommand || !ctx.runtime_options.if_present,
                 allow_fast_run_for_extensions: tag == Tag::AutoCommand,
             };
             if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
@@ -1230,7 +1418,11 @@ pub mod command {
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BunxCommand, log)?;
-        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) { 0 } else { 1 };
+        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
+            0
+        } else {
+            1
+        };
         let argv = argv_zslice();
         super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
     }
@@ -1318,19 +1510,34 @@ pub mod command {
     //     inline blocks) ─────────────────────────────────────────────────────
 
     const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[
-        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink",
-        b"remove", b"create", b"bun", b"upgrade", b"discord", b"test", b"pm",
-        b"x", b"repl", b"info",
+        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink", b"remove", b"create",
+        b"bun", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
     ];
 
     // PORT NOTE: Zig concatenated DEFAULT_COMPLETIONS_LIST ++ extras at
     // comptime; hand-rolled join (small, fixed).
     const REJECT_LIST: &[&[u8]] = &[
-        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink",
-        b"remove", b"create", b"bun", b"upgrade", b"discord", b"test", b"pm",
-        b"x", b"repl", b"info",
+        b"build",
+        b"install",
+        b"add",
+        b"run",
+        b"update",
+        b"link",
+        b"unlink",
+        b"remove",
+        b"create",
+        b"bun",
+        b"upgrade",
+        b"discord",
+        b"test",
+        b"pm",
+        b"x",
+        b"repl",
+        b"info",
         // extras:
-        b"build", b"completions", b"help",
+        b"build",
+        b"completions",
+        b"help",
     ];
 
     #[cold]
@@ -1344,13 +1551,16 @@ pub mod command {
         // PORT NOTE: `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
         // owned vec so `filter` doesn't borrow `ctx` (passed `&mut` below).
         let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
-        let positionals_refs: Vec<&[u8]> =
-            positionals.iter().map(|b| &**b).collect();
+        let positionals_refs: Vec<&[u8]> = positionals.iter().map(|b| &**b).collect();
         let mut filter: &[&[u8]] = &positionals_refs;
 
         for (i, item) in filter.iter().enumerate() {
             if *item == b"getcompletes" {
-                filter = if i + 1 < filter.len() { &filter[i + 1..] } else { &[] };
+                filter = if i + 1 < filter.len() {
+                    &filter[i + 1..]
+                } else {
+                    &[]
+                };
                 break;
             }
         }
@@ -1360,44 +1570,64 @@ pub mod command {
 
         if filter.is_empty() {
             completions = RunCommand::completions::<{ Filter::All }>(
-                ctx, Some(DEFAULT_COMPLETIONS_LIST), REJECT_LIST,
+                ctx,
+                Some(DEFAULT_COMPLETIONS_LIST),
+                REJECT_LIST,
             )?;
         } else if filter[0] == b"s" {
             completions = RunCommand::completions::<{ Filter::Script }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"i" {
             completions = RunCommand::completions::<{ Filter::ScriptExclude }>(
-                ctx, Some(DEFAULT_COMPLETIONS_LIST), REJECT_LIST,
+                ctx,
+                Some(DEFAULT_COMPLETIONS_LIST),
+                REJECT_LIST,
             )?;
         } else if filter[0] == b"b" {
             completions = RunCommand::completions::<{ Filter::Bin }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"r" {
             completions = RunCommand::completions::<{ Filter::All }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"g" {
-            completions = RunCommand::completions::<{ Filter::AllPlusBunJs }>(ctx, None, REJECT_LIST)?;
+            completions =
+                RunCommand::completions::<{ Filter::AllPlusBunJs }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"j" {
             completions = RunCommand::completions::<{ Filter::BunJs }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"z" {
             completions = RunCommand::completions::<{ Filter::ScriptAndDescriptions }>(
-                ctx, None, REJECT_LIST,
+                ctx,
+                None,
+                REJECT_LIST,
             )?;
         } else if filter[0] == b"a" {
             use add_completions::FirstLetter;
             'outer: {
                 if filter.len() > 1 && !filter[1].is_empty() {
                     let first_letter: FirstLetter = match filter[1][0] {
-                        b'a' => FirstLetter::A, b'b' => FirstLetter::B,
-                        b'c' => FirstLetter::C, b'd' => FirstLetter::D,
-                        b'e' => FirstLetter::E, b'f' => FirstLetter::F,
-                        b'g' => FirstLetter::G, b'h' => FirstLetter::H,
-                        b'i' => FirstLetter::I, b'j' => FirstLetter::J,
-                        b'k' => FirstLetter::K, b'l' => FirstLetter::L,
-                        b'm' => FirstLetter::M, b'n' => FirstLetter::N,
-                        b'o' => FirstLetter::O, b'p' => FirstLetter::P,
-                        b'q' => FirstLetter::Q, b'r' => FirstLetter::R,
-                        b's' => FirstLetter::S, b't' => FirstLetter::T,
-                        b'u' => FirstLetter::U, b'v' => FirstLetter::V,
-                        b'w' => FirstLetter::W, b'x' => FirstLetter::X,
-                        b'y' => FirstLetter::Y, b'z' => FirstLetter::Z,
+                        b'a' => FirstLetter::A,
+                        b'b' => FirstLetter::B,
+                        b'c' => FirstLetter::C,
+                        b'd' => FirstLetter::D,
+                        b'e' => FirstLetter::E,
+                        b'f' => FirstLetter::F,
+                        b'g' => FirstLetter::G,
+                        b'h' => FirstLetter::H,
+                        b'i' => FirstLetter::I,
+                        b'j' => FirstLetter::J,
+                        b'k' => FirstLetter::K,
+                        b'l' => FirstLetter::L,
+                        b'm' => FirstLetter::M,
+                        b'n' => FirstLetter::N,
+                        b'o' => FirstLetter::O,
+                        b'p' => FirstLetter::P,
+                        b'q' => FirstLetter::Q,
+                        b'r' => FirstLetter::R,
+                        b's' => FirstLetter::S,
+                        b't' => FirstLetter::T,
+                        b'u' => FirstLetter::U,
+                        b'v' => FirstLetter::V,
+                        b'w' => FirstLetter::W,
+                        b'x' => FirstLetter::X,
+                        b'y' => FirstLetter::Y,
+                        b'z' => FirstLetter::Z,
                         _ => break 'outer,
                     };
                     add_completions::init();
@@ -1414,9 +1644,8 @@ pub mod command {
                             break;
                         }
                     }
-                    completions.commands = std::borrow::Cow::Owned(
-                        prefilled_completions[0..prefilled_i].to_vec(),
-                    );
+                    completions.commands =
+                        std::borrow::Cow::Owned(prefilled_completions[0..prefilled_i].to_vec());
                 }
             }
         }
@@ -1522,9 +1751,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            let mut bunx_args: Vec<&ZStr> = Vec::with_capacity(
-                2 + args.len() - template_name_start + (dash_dash_bun as usize),
-            );
+            let mut bunx_args: Vec<&ZStr> =
+                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
@@ -1534,8 +1762,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             // the prefixed package name is a process singleton — park the owning
             // `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
             // without leaking (PORTING.md §Forbidden patterns).
-            static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
-                std::sync::OnceLock::new();
+            static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
             bunx_args.push(
                 CREATE_PREFIX
@@ -1564,8 +1791,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;
                 // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path =
-                    bun_core::ZStr::from_buf(&path_buf[..], entry.len());
+                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
                 let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(err) => {
@@ -1573,7 +1799,9 @@ To create a project with the official Next.js scaffolding tool, run\n\
                         Global::crash();
                     }
                 };
-                return super::package_manager_command::PackageManagerCommand::print_hash(ctx, file);
+                return super::package_manager_command::PackageManagerCommand::print_hash(
+                    ctx, file,
+                );
             }
         }
 
@@ -1761,9 +1989,17 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
             Tag::UpgradeCommand => {
                 let (latest, switch_desc, switch_flag): (&str, &str, &str) =
                     if bun_core::Environment::IS_CANARY {
-                        ("canary", "Switch from the canary version back to the latest stable release", "stable")
+                        (
+                            "canary",
+                            "Switch from the canary version back to the latest stable release",
+                            "stable",
+                        )
                     } else {
-                        ("stable", "Install the most recent canary version of Bun", "canary")
+                        (
+                            "stable",
+                            "Install the most recent canary version of Bun",
+                            "canary",
+                        )
                     };
 
                 pretty!(

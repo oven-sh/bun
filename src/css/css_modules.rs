@@ -1,7 +1,7 @@
 use core::fmt::Arguments;
 
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_alloc::Arena as Bump;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
@@ -41,7 +41,9 @@ impl<'a> CssModule<'a> {
                         // Zig: `bun.path.Platform.auto.isAbsolute(root)`
                         if bun_paths::is_absolute(root) {
                             alloced = true;
-                            break 'source bump.alloc_slice_copy(bun_paths::resolve_path::relative(root, path.as_ref()));
+                            break 'source bump.alloc_slice_copy(
+                                bun_paths::resolve_path::relative(root, path.as_ref()),
+                            );
                         }
                     }
                     break 'source path.as_ref();
@@ -122,10 +124,13 @@ impl<'a> CssModule<'a> {
         let (reference, key): (CssModuleReference<'a>, &'a [u8]) = match from {
             Some(Specifier::Global) => return Some(&name[2..]),
             Some(Specifier::ImportRecordIndex(_)) => {
-                let path =
-                    specifier_path.expect("specifier_path required for Specifier::ImportRecordIndex");
+                let path = specifier_path
+                    .expect("specifier_path required for Specifier::ImportRecordIndex");
                 (
-                    CssModuleReference::Dependency { name: &name[2..], specifier: path },
+                    CssModuleReference::Dependency {
+                        name: &name[2..],
+                        specifier: path,
+                    },
                     path,
                 )
             }
@@ -190,7 +195,10 @@ impl<'a> CssModule<'a> {
         // let bump = dest.arena;
         for sel in selectors.v.slice() {
             if sel.len() == 1
-                && matches!(sel.components[0], css::selector::parser::Component::Class(_))
+                && matches!(
+                    sel.components[0],
+                    css::selector::parser::Component::Class(_)
+                )
             {
                 continue;
             }
@@ -222,7 +230,13 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    pub fn add_local(&mut self, bump: &'a Bump, exported: &'a [u8], local: &'a [u8], source_index: u32) {
+    pub fn add_local(
+        &mut self,
+        bump: &'a Bump,
+        exported: &'a [u8],
+        local: &'a [u8],
+        source_index: u32,
+    ) {
         use bun_collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =
             self.exports_by_source_index[source_index as usize].entry(exported)
@@ -449,8 +463,14 @@ impl<'a> CssModuleReference<'a> {
             (Self::Global { name: a }, Self::Global { name: b }) => a == b,
             // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
             (
-                Self::Dependency { name: an, specifier: asp },
-                Self::Dependency { name: bn, specifier: bsp },
+                Self::Dependency {
+                    name: an,
+                    specifier: asp,
+                },
+                Self::Dependency {
+                    name: bn,
+                    specifier: bsp,
+                },
             ) => an == bn && asp == bsp,
             _ => false,
         }

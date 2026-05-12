@@ -100,7 +100,13 @@ fn poison<T>(slice: &mut [T], n: usize) {
     debug_assert!(n <= slice.len());
     // SAFETY: writing 0xAA into the byte representation of `n` slots that are
     // about to be logically discarded; never read as `T` again.
-    unsafe { ptr::write_bytes(slice.as_mut_ptr().cast::<u8>(), 0xAA, n * mem::size_of::<T>()) };
+    unsafe {
+        ptr::write_bytes(
+            slice.as_mut_ptr().cast::<u8>(),
+            0xAA,
+            n * mem::size_of::<T>(),
+        )
+    };
 }
 
 // ── .Static ───────────────────────────────────────────────────────────────────

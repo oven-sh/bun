@@ -1,7 +1,7 @@
 use crate::autolinks::is_list_item_mark;
 use crate::helpers;
 use crate::parser::{self, Parser};
-use crate::types::{self, BlockType, Container, Line, VerbatimLine, OFF};
+use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
 use bun_collections::VecExt as _;
 use core::mem::{align_of, size_of};
@@ -10,7 +10,10 @@ type BlockHeader = parser::BlockHeader;
 
 impl Parser<'_> {
     pub fn process_doc(&mut self) -> Result<(), parser::Error> {
-        let dummy_blank = Line { r#type: LineType::Blank, ..Line::default() };
+        let dummy_blank = Line {
+            r#type: LineType::Blank,
+            ..Line::default()
+        };
         let mut pivot_line = dummy_blank;
         let mut line_buf: [Line; 2] = [Line::default(), Line::default()];
         let mut line_idx: usize = 0;
@@ -184,7 +187,8 @@ impl Parser<'_> {
             // Check for blank line
             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                 // Indented code continuation through blank lines
-                if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers {
+                if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers
+                {
                     line.r#type = LineType::Indentedcode;
                     if line.indent > self.code_indent_offset {
                         line.indent -= self.code_indent_offset;
@@ -535,8 +539,7 @@ impl Parser<'_> {
                     && self.current_block_lines.len() >= 1
                 {
                     // GFM: validate that header row column count matches delimiter row column count.
-                    let header_line =
-                        self.current_block_lines[self.current_block_lines.len() - 1];
+                    let header_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     let header_cols =
                         self.count_table_row_columns(header_line.beg, header_line.end);
                     if header_cols == tbl_result.col_count {
@@ -561,9 +564,7 @@ impl Parser<'_> {
                 && is_list_item_mark(self.containers[(self.n_containers - 1) as usize].ch)
             {
                 let mut tmp = off;
-                while tmp < self.size
-                    && tmp < off + 3
-                    && helpers::is_blank(self.text[tmp as usize])
+                while tmp < self.size && tmp < off + 3 && helpers::is_blank(self.text[tmp as usize])
                 {
                     tmp += 1;
                 }
@@ -715,7 +716,10 @@ impl Parser<'_> {
         // Only closing fences and actual block-ending blank lines reach here as .blank.
         if line.r#type == LineType::Blank {
             self.end_current_block()?;
-            *pivot_line = Line { r#type: LineType::Blank, ..Line::default() };
+            *pivot_line = Line {
+                r#type: LineType::Blank,
+                ..Line::default()
+            };
             return Ok(());
         }
 
@@ -751,7 +755,10 @@ impl Parser<'_> {
             self.start_new_block(line)?;
             self.add_line_to_current_block(line)?;
             self.end_current_block()?;
-            *pivot_line = Line { r#type: LineType::Blank, ..Line::default() };
+            *pivot_line = Line {
+                r#type: LineType::Blank,
+                ..Line::default()
+            };
             return Ok(());
         }
 
@@ -768,7 +775,10 @@ impl Parser<'_> {
             self.end_current_block()?;
             if self.current_block.is_none() {
                 // Block was closed normally
-                *pivot_line = Line { r#type: LineType::Blank, ..Line::default() };
+                *pivot_line = Line {
+                    r#type: LineType::Blank,
+                    ..Line::default()
+                };
             } else {
                 // Block stayed open: all body was consumed as link ref defs,
                 // underline downgraded to start of a new paragraph (md4c behavior)
@@ -784,8 +794,7 @@ impl Parser<'_> {
                 if self.current_block_lines.len() > 1 {
                     // GFM: table interrupts paragraph. Split: lines 0..N-2 stay as paragraph,
                     // last line becomes table header.
-                    let last_line =
-                        self.current_block_lines[self.current_block_lines.len() - 1];
+                    let last_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     // Remove the last line from current paragraph block
                     let _ = self.current_block_lines.pop();
                     let hdr = self.get_block_header_at(cb_off);
@@ -1001,9 +1010,7 @@ impl Parser<'_> {
                     newlines += 1;
                 }
             }
-            if end_pos >= merged.len()
-                && (end_pos == pos || merged[end_pos - 1] != b'\n')
-            {
+            if end_pos >= merged.len() && (end_pos == pos || merged[end_pos - 1] != b'\n') {
                 newlines += 1;
             }
             lines_consumed += newlines;

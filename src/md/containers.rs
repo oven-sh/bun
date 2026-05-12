@@ -2,9 +2,9 @@ use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
 
+use crate::autolinks::is_list_bullet;
 use crate::parser::{self, BlockHeader, Parser};
 use crate::types::{self, BlockType, Container, VerbatimLine};
-use crate::autolinks::is_list_bullet;
 
 impl Parser<'_> {
     pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
@@ -73,7 +73,11 @@ impl Parser<'_> {
                 self.push_container_bytes(BlockType::Ul, 0, types::BLOCK_CONTAINER_OPENER)?;
                 self.push_container_bytes(
                     BlockType::Li,
-                    if is_task { u32::from(self.text[task_mark_off as usize]) } else { 0 },
+                    if is_task {
+                        u32::from(self.text[task_mark_off as usize])
+                    } else {
+                        0
+                    },
                     types::BLOCK_CONTAINER_OPENER,
                 )?;
             } else if ch == b'.' || ch == b')' {
@@ -85,7 +89,11 @@ impl Parser<'_> {
                 self.push_container_bytes(BlockType::Ol, start, types::BLOCK_CONTAINER_OPENER)?;
                 self.push_container_bytes(
                     BlockType::Li,
-                    if is_task { u32::from(self.text[task_mark_off as usize]) } else { 0 },
+                    if is_task {
+                        u32::from(self.text[task_mark_off as usize])
+                    } else {
+                        0
+                    },
                     types::BLOCK_CONTAINER_OPENER,
                 )?;
             }
@@ -119,7 +127,11 @@ impl Parser<'_> {
                 }
                 self.push_container_bytes(
                     BlockType::Li,
-                    if is_task { u32::from(self.text[task_mark_off as usize]) } else { 0 },
+                    if is_task {
+                        u32::from(self.text[task_mark_off as usize])
+                    } else {
+                        0
+                    },
                     types::BLOCK_CONTAINER_CLOSER,
                 )?;
                 self.push_container_bytes(
@@ -135,7 +147,11 @@ impl Parser<'_> {
                 }
                 self.push_container_bytes(
                     BlockType::Li,
-                    if is_task { u32::from(self.text[task_mark_off as usize]) } else { 0 },
+                    if is_task {
+                        u32::from(self.text[task_mark_off as usize])
+                    } else {
+                        0
+                    },
                     types::BLOCK_CONTAINER_CLOSER,
                 )?;
                 self.push_container_bytes(

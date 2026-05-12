@@ -7,15 +7,15 @@ use bun_core::strings;
 // PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
 // are both rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067),
 // so the parent-module alias is spelled via its crate path instead.
-use crate::lockfile_real as lockfile;
 use super::{
-    assert_no_uninitialized_padding, tree, DependencyIDList, DependencyList,
-    ExternalStringBuffer, Lockfile, PackageIDList, Stream, StringBuffer, Tree,
+    DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
+    StringBuffer, Tree, assert_no_uninitialized_padding, tree,
 };
-use crate::{
-    dependency, invalid_package_id, Aligner, Dependency, DependencyID, PackageID, PackageManager,
-};
+use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
+use crate::{
+    Aligner, Dependency, DependencyID, PackageID, PackageManager, dependency, invalid_package_id,
+};
 
 #[derive(Default)]
 pub struct Buffers {
@@ -40,14 +40,26 @@ impl Buffers {
         // TODO(port): narrow error set
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
-        self.resolutions
-            .reserve(that.resolutions.len().saturating_sub(self.resolutions.len()));
-        self.dependencies
-            .reserve(that.dependencies.len().saturating_sub(self.dependencies.len()));
-        self.extern_strings
-            .reserve(that.extern_strings.len().saturating_sub(self.extern_strings.len()));
-        self.string_bytes
-            .reserve(that.string_bytes.len().saturating_sub(self.string_bytes.len()));
+        self.resolutions.reserve(
+            that.resolutions
+                .len()
+                .saturating_sub(self.resolutions.len()),
+        );
+        self.dependencies.reserve(
+            that.dependencies
+                .len()
+                .saturating_sub(self.dependencies.len()),
+        );
+        self.extern_strings.reserve(
+            that.extern_strings
+                .len()
+                .saturating_sub(self.extern_strings.len()),
+        );
+        self.string_bytes.reserve(
+            that.string_bytes
+                .len()
+                .saturating_sub(self.string_bytes.len()),
+        );
         Ok(())
     }
 }
@@ -176,9 +188,8 @@ where
 
     // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
     // its bytes is sound. Matches `std.mem.sliceAsBytes`.
-    let bytes: &[u8] = unsafe {
-        bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
-    };
+    let bytes: &[u8] =
+        unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
 
     let start_pos = stream.get_pos()?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
@@ -264,11 +275,7 @@ where
     // -- trees --
     {
         if options.log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
-                "Saving {} {}",
-                buffers.trees.len(),
-                "trees"
-            ));
+            Output::pretty_errorln(format_args!("Saving {} {}", buffers.trees.len(), "trees"));
         }
         // PORT NOTE: Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
         // never fires because `Type` is `[]Tree`, so Zig writes raw `Tree`
@@ -338,22 +345,14 @@ where
                     Tag::Folder => {
                         let folder = lockfile.str(dep.version.folder());
                         if strings::contains_char(folder, SEP_WINDOWS) {
-                            panic!(
-                                "workspace windows separator: {}\n",
-                                bstr::BStr::new(folder)
-                            );
+                            panic!("workspace windows separator: {}\n", bstr::BStr::new(folder));
                         }
                     }
                     Tag::Tarball => {
-                        if let crate::dependency::URI::Local(local) =
-                            dep.version.tarball().uri
-                        {
+                        if let crate::dependency::URI::Local(local) = dep.version.tarball().uri {
                             let tarball = lockfile.str(&local);
                             if strings::contains_char(tarball, SEP_WINDOWS) {
-                                panic!(
-                                    "tarball windows separator: {}",
-                                    bstr::BStr::new(tarball)
-                                );
+                                panic!("tarball windows separator: {}", bstr::BStr::new(tarball));
                             }
                         }
                     }
@@ -369,10 +368,7 @@ where
                     Tag::Symlink => {
                         let symlink = lockfile.str(dep.version.symlink());
                         if strings::contains_char(symlink, SEP_WINDOWS) {
-                            panic!(
-                                "symlink windows separator: {}\n",
-                                bstr::BStr::new(symlink)
-                            );
+                            panic!("symlink windows separator: {}\n", bstr::BStr::new(symlink));
                         }
                     }
                     _ => {}
@@ -520,11 +516,7 @@ pub fn load(
     }
 
     // -- extern_strings --
-    load_generic_field!(
-        extern_strings,
-        "extern_strings",
-        bun_semver::ExternalString
-    );
+    load_generic_field!(extern_strings, "extern_strings", bun_semver::ExternalString);
 
     // -- string_bytes --
     load_generic_field!(string_bytes, "string_bytes", u8);
@@ -566,7 +558,10 @@ pub fn load(
                 this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
         }
         visited.set_range_value(
-            bun_collections::bit_set::Range { start: 0, end: this.dependencies.len() },
+            bun_collections::bit_set::Range {
+                start: 0,
+                end: this.dependencies.len(),
+            },
             false,
         );
         for i in 0..this.hoisted_dependencies.len() {

@@ -76,7 +76,6 @@ impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_
 pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
 
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
-
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.
     pub fn init(len: usize) -> Result<Self, OverflowError> {
@@ -249,7 +248,11 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // SAFETY: ranges are within `[0..len)` after the length bump; overlapping memmove.
         unsafe {
             let base = self.buffer.as_mut_ptr();
-            core::ptr::copy(base.add(i), base.add(i + items.len()), len - items.len() - i);
+            core::ptr::copy(
+                base.add(i),
+                base.add(i + items.len()),
+                len - items.len() - i,
+            );
         }
         self.slice()[i..][..items.len()].copy_from_slice(items);
         Ok(())
@@ -288,7 +291,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
                 let item = self.const_slice()[after_range + i];
                 self.slice()[after_subrange..][i] = item;
             }
-            self.len = Length::try_from((self.len as usize) - (len as usize) - (new_items.len() as usize)).unwrap();
+            self.len =
+                Length::try_from((self.len as usize) - (len as usize) - (new_items.len() as usize))
+                    .unwrap();
             // PORT NOTE: ported verbatim from Zig (`self.len - len - new_items.len`).
         }
         Ok(())
@@ -405,21 +410,45 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 // Rust-idiom aliases (Vec-like surface) so callers don't need to know the
 // Zig-style names. Thin delegations; no behavior change.
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
-    #[inline] pub fn len(&self) -> usize { self.len }
-    #[inline] pub fn is_empty(&self) -> bool { self.len == 0 }
-    #[inline] pub fn as_slice(&self) -> &[T] { self.const_slice() }
-    #[inline] pub fn as_mut_slice(&mut self) -> &mut [T] { self.slice() }
-    #[inline] pub fn push(&mut self, item: T) -> Result<(), OverflowError> { self.append(item) }
-    #[inline] pub fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
-    where T: Copy { self.append_slice(items) }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        self.const_slice()
+    }
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.slice()
+    }
+    #[inline]
+    pub fn push(&mut self, item: T) -> Result<(), OverflowError> {
+        self.append(item)
+    }
+    #[inline]
+    pub fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
+    where
+        T: Copy,
+    {
+        self.append_slice(items)
+    }
 }
 
 impl<T, const N: usize> core::ops::Deref for BoundedArrayAligned<T, N> {
     type Target = [T];
-    fn deref(&self) -> &[T] { self.const_slice() }
+    fn deref(&self) -> &[T] {
+        self.const_slice()
+    }
 }
 impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
-    fn deref_mut(&mut self) -> &mut [T] { self.slice() }
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.slice()
+    }
 }
 
 // `pub const Writer = ... std.io.GenericWriter(*Self, error{Overflow}, appendWrite);`
@@ -427,7 +456,8 @@ impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
 impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
-        self.append_slice(buf).map_err(|_| crate::err!("NoSpaceLeft"))
+        self.append_slice(buf)
+            .map_err(|_| crate::err!("NoSpaceLeft"))
     }
     #[inline]
     fn written_len(&self) -> usize {
@@ -437,7 +467,8 @@ impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, 
 
 impl<const BUFFER_CAPACITY: usize> core::fmt::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.append_slice(s.as_bytes()).map_err(|_| core::fmt::Error)
+        self.append_slice(s.as_bytes())
+            .map_err(|_| core::fmt::Error)
     }
 }
 

@@ -1,13 +1,19 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_range_loop)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    clippy::needless_range_loop
+)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
-use bun_ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
-use crate::p::P;
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
+use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, JsxT, Ref};
-use bun_crash_handler::handle_oom::handle_oom;
-use bun_ast::{import_record, ImportRecord};
+use bun_ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
+use bun_ast::{ImportRecord, import_record};
+use bun_collections::VecExt;
 use bun_core::strings;
+use bun_crash_handler::handle_oom::handle_oom;
 
 // PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.
@@ -77,7 +83,11 @@ impl<'a> ImportScanner<'a> {
                         &raw mut p.import_records.items_mut()[import_record_index as usize];
                     // SAFETY: `record` points into `p.import_records`' backing storage;
                     // nothing in this match arm reallocates that list.
-                    macro_rules! record { () => { unsafe { &mut *record } } }
+                    macro_rules! record {
+                        () => {
+                            unsafe { &mut *record }
+                        };
+                    }
 
                     if record!().path.namespace == crate::Macro::NAMESPACE {
                         // PORT NOTE: `Path::isMacro()` inlined (no Rust method yet).
@@ -153,13 +163,19 @@ impl<'a> ImportScanner<'a> {
 
                         if let Some(default_name) = st.default_name {
                             found_imports = true;
-                            let symbol =
-                                &p.symbols[default_name.ref_.expect("infallible: ref bound").inner_index() as usize];
+                            let symbol = &p.symbols[default_name
+                                .ref_
+                                .expect("infallible: ref bound")
+                                .inner_index()
+                                as usize];
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
-                                && p.ts_use_counts
-                                    [default_name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                && p.ts_use_counts[default_name
+                                    .ref_
+                                    .expect("infallible: ref bound")
+                                    .inner_index()
+                                    as usize]
                                     != 0
                             {
                                 is_unused_in_typescript = false;
@@ -508,7 +524,8 @@ impl<'a> ImportScanner<'a> {
                         }
                     }
 
-                    p.import_records_for_current_part.push(st.import_record_index);
+                    p.import_records_for_current_part
+                        .push(st.import_record_index);
 
                     if st.star_name_loc.is_some() {
                         record!()
@@ -541,13 +558,22 @@ impl<'a> ImportScanner<'a> {
                     if st.func.flags.contains(bun_ast::flags::Function::IsExport) {
                         if let Some(name) = st.func.name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
-                                    .original_name.slice();
-                            p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
+                            let original_name: &'p [u8] = p.symbols
+                                [name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                .original_name
+                                .slice();
+                            p.record_export(
+                                name.loc,
+                                original_name,
+                                name.ref_.expect("infallible: ref bound"),
+                            )?;
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
-                                bun_ast::Range { loc: st.func.open_parens_loc, len: 2 },
+                                bun_ast::Range {
+                                    loc: st.func.open_parens_loc,
+                                    len: 2,
+                                },
                                 b"Exported functions must have a name",
                             );
                         }
@@ -557,13 +583,22 @@ impl<'a> ImportScanner<'a> {
                     if st.is_export {
                         if let Some(name) = st.class.class_name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
-                                    .original_name.slice();
-                            p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
+                            let original_name: &'p [u8] = p.symbols
+                                [name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                .original_name
+                                .slice();
+                            p.record_export(
+                                name.loc,
+                                original_name,
+                                name.ref_.expect("infallible: ref bound"),
+                            )?;
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
-                                bun_ast::Range { loc: st.class.body_loc, len: 0 },
+                                bun_ast::Range {
+                                    loc: st.class.body_loc,
+                                    len: 0,
+                                },
                                 b"Exported classes must have a name",
                             );
                         }
@@ -595,8 +630,7 @@ impl<'a> ImportScanner<'a> {
                                 // Is this import statement unused?
                                 if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
                                     let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize]
-                                        .use_count_estimate
+                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
                                         == 0
                                     {
                                         p.ignore_usage(id.ref_);
@@ -623,18 +657,20 @@ impl<'a> ImportScanner<'a> {
                     // But only if it's anonymous
                     // PORT NOTE: comptime `P != bun.bundle_v2.AstBuilder` check elided —
                     // this monomorphization is the parser `P` only (see fn-level TODO).
-                     // blocked_on: P::module_exports gated (reconciler-6 re-gate in P.rs)
+                    // blocked_on: P::module_exports gated (reconciler-6 re-gate in P.rs)
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.
-                        let export_default_args =
-                            p.arena.alloc_slice_fill_default::<Expr>(2);
+                        let export_default_args = p.arena.alloc_slice_fill_default::<Expr>(2);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
                         let args = js_ast::ExprNodeList::from_arena_slice(export_default_args);
                         let value = p.call_runtime(expr.loc, b"__exportDefault", args);
                         stmt = p.s(
-                            S::SExpr { value, does_not_affect_tree_shaking: false },
+                            S::SExpr {
+                                value,
+                                does_not_affect_tree_shaking: false,
+                            },
                             expr.loc,
                         );
                     }
@@ -650,11 +686,16 @@ impl<'a> ImportScanner<'a> {
                     for item in st.items.slice().iter() {
                         // SAFETY: arena-owned alias slice valid for 'p.
                         let alias: &'p [u8] = item.alias.slice();
-                        p.record_export(item.alias_loc, alias, item.name.ref_.expect("infallible: ref bound"))?;
+                        p.record_export(
+                            item.alias_loc,
+                            alias,
+                            item.name.ref_.expect("infallible: ref bound"),
+                        )?;
                     }
                 }
                 js_ast::StmtData::SExportStar(st) => {
-                    p.import_records_for_current_part.push(st.import_record_index);
+                    p.import_records_for_current_part
+                        .push(st.import_record_index);
 
                     if let Some(alias) = &st.alias {
                         // "export * as ns from 'path'"
@@ -681,7 +722,8 @@ impl<'a> ImportScanner<'a> {
                     }
                 }
                 js_ast::StmtData::SExportFrom(st) => {
-                    p.import_records_for_current_part.push(st.import_record_index);
+                    p.import_records_for_current_part
+                        .push(st.import_record_index);
                     // SAFETY: arena-owned slice valid for 'p.
                     let items = st.items.slice();
                     p.named_imports
@@ -689,10 +731,7 @@ impl<'a> ImportScanner<'a> {
                         .expect("unreachable");
                     for item in items.iter() {
                         let ref_ = item.name.ref_.unwrap_or_else(|| {
-                            p.panic(
-                                "Expected export from item to have a name",
-                                format_args!(""),
-                            )
+                            p.panic("Expected export from item to have a name", format_args!(""))
                         });
                         // Note that the imported alias is not item.Alias, which is the
                         // exported alias. This is somewhat confusing because each
@@ -713,8 +752,8 @@ impl<'a> ImportScanner<'a> {
                         let alias: &'p [u8] = item.alias.slice();
                         p.record_export(item.name.loc, alias, ref_)?;
 
-                        let record = &mut p.import_records.items_mut()
-                            [st.import_record_index as usize];
+                        let record =
+                            &mut p.import_records.items_mut()[st.import_record_index as usize];
                         // SAFETY: arena-owned slice valid for 'p.
                         let original = item.original_name.slice();
                         if strings::eql_comptime(original, b"default") {

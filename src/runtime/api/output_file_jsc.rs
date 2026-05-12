@@ -11,15 +11,15 @@ use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
-use bun_http_types::MimeType::MimeType;
 use bun_core::{PathString, ZigStringSlice};
+use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
-use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::BlobExt as _;
-use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::Blob;
+use crate::webcore::blob::BlobExt as _;
+use crate::webcore::blob::store::StoreExt as _;
+use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
 /// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
 /// outlives the borrowed source. Mirrors Zig's `allocator.dupe(u8, path)`.
@@ -40,7 +40,9 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // by `blob`; no other borrow exists yet.
         let store_ptr = store.as_ptr();
         unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe { (*store_ptr).mime_type.value.as_ref() }));
+        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe {
+            (*store_ptr).mime_type.value.as_ref()
+        }));
     } else {
         // No store (empty bytes). Zig still assigns `blob.content_type` from the
         // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
@@ -85,11 +87,7 @@ pub trait OutputFileJsc {
 }
 
 impl OutputFileJsc for OutputFile {
-    fn to_js(
-        &mut self,
-        owned_pathname: Option<&[u8]>,
-        global_object: &JSGlobalObject,
-    ) -> JSValue {
+    fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue {
         // Early-out arms that neither consume nor replace `self.value`.
         match &self.value {
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
@@ -105,7 +103,9 @@ impl OutputFileJsc for OutputFile {
         // `self.{hash,loader,...}` reads inside the arms.
         let value = core::mem::replace(
             &mut self.value,
-            OutputFileValue::Buffer { bytes: Box::default() },
+            OutputFileValue::Buffer {
+                bytes: Box::default(),
+            },
         );
 
         let mime_hint: &[u8] = owned_pathname.unwrap_or(b"");
@@ -217,7 +217,9 @@ impl OutputFileJsc for OutputFile {
 
         let value = core::mem::replace(
             &mut self.value,
-            OutputFileValue::Buffer { bytes: Box::default() },
+            OutputFileValue::Buffer {
+                bytes: Box::default(),
+            },
         );
 
         let mime = self

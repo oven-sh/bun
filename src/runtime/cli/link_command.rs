@@ -1,19 +1,19 @@
 use bstr::BStr;
 
-use bun_core::{err, Global, Output};
+use bun_core::strings;
+use bun_core::{Global, Output, err};
 use bun_paths::{AbsPath, PathBuffer};
 use bun_resolver::fs::FileSystem;
-use bun_core::strings;
 use bun_sys::{Dir, Fd, FdDirExt};
 
-use bun_install::bin_real as bin;
-use bun_install::lockfile_real::{package::Package, Lockfile};
-use bun_install::package_manager_real::{
-    self as pm, attempt_to_create_package_json, options::LogLevel, package_manager_options,
-    setup_global_dir, update_package_json_and_install_with_manager, CommandLineArguments,
-    PackageManager, Subcommand,
-};
 use bun_install::Features;
+use bun_install::bin_real as bin;
+use bun_install::lockfile_real::{Lockfile, package::Package};
+use bun_install::package_manager_real::{
+    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    options::LogLevel, package_manager_options, setup_global_dir,
+    update_package_json_and_install_with_manager,
+};
 
 use crate::command;
 
@@ -168,21 +168,18 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             #[cfg(windows)]
             {
-                use bun_paths::{platform, resolve_path};
                 use bun_core::ZStr;
+                use bun_paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
                 let mut link_path_buf = PathBuffer::uninit();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
-                let link_path =
-                    ZStr::from_buf(&link_path_buf.0[..], top_level.len());
+                let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
                 let global_path = pm::global_link_dir_path(manager);
-                let dest_path = resolve_path::join_abs_string_z::<platform::Windows>(
-                    global_path,
-                    &[name],
-                );
+                let dest_path =
+                    resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
                 match bun_sys::sys_uv::symlink_uv(
                     link_path,
                     dest_path,

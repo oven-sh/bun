@@ -10,12 +10,12 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::{String as BunString, ZigString};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws_sys::{Socket, SslCtx};
 
-use super::websocket_deflate;
 use super::ErrorCode;
+use super::websocket_deflate;
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `WebCore::WebSocket` object.
@@ -46,8 +46,17 @@ unsafe extern "C" {
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
-    fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, clone: bool, text: *const ZigString);
-    fn WebSocket__didReceiveBytes(websocket_context: &CppWebSocket, bytes: *const u8, byte_len: usize, opcode: u8);
+    fn WebSocket__didReceiveText(
+        websocket_context: &CppWebSocket,
+        clone: bool,
+        text: *const ZigString,
+    );
+    fn WebSocket__didReceiveBytes(
+        websocket_context: &CppWebSocket,
+        bytes: *const u8,
+        byte_len: usize,
+        opcode: u8,
+    );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
     safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);

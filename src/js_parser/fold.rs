@@ -1,15 +1,23 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unreachable_code
+)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 use bun_core::strings;
 
+use crate::lexer as js_lexer;
+use crate::p::P;
+use crate::parser::{
+    self as js_parser, IdentifierOpts, JsxT, RelocateVars, RelocateVarsMode, SideEffects,
+};
+use bun_ast::G::{Decl, Property};
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
-use bun_ast::G::{Decl, Property};
-use crate::p::P;
-use crate::lexer as js_lexer;
-use crate::parser::{self as js_parser, IdentifierOpts, JsxT, RelocateVars, RelocateVarsMode, SideEffects};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -18,7 +26,10 @@ use crate::parser::{self as js_parser, IdentifierOpts, JsxT, RelocateVars, Reloc
 // public fields directly and are removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
-    E::EString { data: data.into(), ..Default::default() }
+    E::EString {
+        data: data.into(),
+        ..Default::default()
+    }
 }
 
 #[inline]
@@ -60,7 +71,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
         if p.current_scope == p.module_scope {
-            return RelocateVars { ok: false, ..Default::default() };
+            return RelocateVars {
+                ok: false,
+                ..Default::default()
+            };
         }
 
         // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain walk
@@ -73,7 +87,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         if scope != p.module_scope {
-            return RelocateVars { ok: false, ..Default::default() };
+            return RelocateVars {
+                ok: false,
+                ..Default::default()
+            };
         }
 
         let mut value: Expr = Expr::EMPTY;
@@ -91,11 +108,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         if matches!(value.data, js_ast::ExprData::EMissing(_)) {
-            return RelocateVars { ok: true, ..Default::default() };
+            return RelocateVars {
+                ok: true,
+                ..Default::default()
+            };
         }
 
         RelocateVars {
-            stmt: Some(p.s(S::SExpr { value, does_not_affect_tree_shaking: false }, value.loc)),
+            stmt: Some(p.s(
+                S::SExpr {
+                    value,
+                    does_not_affect_tree_shaking: false,
+                },
+                value.loc,
+            )),
             ok: true,
         }
     }
@@ -140,7 +166,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     let new_ref = p
                                         .new_symbol(js_ast::symbol::Kind::Import, name)
                                         .expect("unreachable");
-                                    let new_item = LocRef { loc: name_loc, ref_: Some(new_ref) };
+                                    let new_item = LocRef {
+                                        loc: name_loc,
+                                        ref_: Some(new_ref),
+                                    };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
 
@@ -156,7 +185,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     // Mark this as generated in case it's missing. We don't want to
                                     // generate errors for missing import items that are automatically
                                     // generated.
-                                    symbol.import_item_status = bun_ast::ImportItemStatus::Generated;
+                                    symbol.import_item_status =
+                                        bun_ast::ImportItemStatus::Generated;
 
                                     new_ref
                                 }
@@ -175,18 +205,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
 
-                            return Some(p.handle_identifier(
-                                name_loc,
-                                E::Identifier { ref_, ..Default::default() },
-                                Some(name),
-                                IdentifierOpts::new()
-                                    .with_assign_target(identifier_opts.assign_target())
-                                    .with_is_call_target(identifier_opts.is_call_target())
-                                    .with_is_delete_target(identifier_opts.is_delete_target())
-                                    // If this expression is used as the target of a call expression, make
-                                    // sure the value of "this" is preserved.
-                                    .with_was_originally_identifier(false),
-                            ));
+                            return Some(
+                                p.handle_identifier(
+                                    name_loc,
+                                    E::Identifier {
+                                        ref_,
+                                        ..Default::default()
+                                    },
+                                    Some(name),
+                                    IdentifierOpts::new()
+                                        .with_assign_target(identifier_opts.assign_target())
+                                        .with_is_call_target(identifier_opts.is_call_target())
+                                        .with_is_delete_target(identifier_opts.is_delete_target())
+                                        // If this expression is used as the target of a call expression, make
+                                        // sure the value of "this" is preserved.
+                                        .with_was_originally_identifier(false),
+                                ),
+                            );
                         }
                     }
 
@@ -213,12 +248,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             //  module.exports += { };
                             //  delete module.exports = {};
                             //  module.exports()
-                            if !(identifier_opts.is_call_target() || identifier_opts.is_delete_target())
+                            if !(identifier_opts.is_call_target()
+                                || identifier_opts.is_delete_target())
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
                                 && matches!(p.stmt_expr_value, js_ast::ExprData::EBinary(_))
-                                && p.stmt_expr_value.e_binary().expect("infallible: variant checked").op == js_ast::OpCode::BinAssign
+                                && p.stmt_expr_value
+                                    .e_binary()
+                                    .expect("infallible: variant checked")
+                                    .op
+                                    == js_ast::OpCode::BinAssign
                             {
-                                let stmt_bin = p.stmt_expr_value.e_binary().expect("infallible: variant checked");
+                                let stmt_bin = p
+                                    .stmt_expr_value
+                                    .e_binary()
+                                    .expect("infallible: variant checked");
                                 let deopt =
                                     // if it's not top-level, don't do this
                                     p.module_scope != p.current_scope
@@ -253,7 +296,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     return None;
                                 }
 
-                                let right_obj = stmt_bin.right.data.e_object().expect("infallible: variant checked");
+                                let right_obj = stmt_bin
+                                    .right
+                                    .data
+                                    .e_object()
+                                    .expect("infallible: variant checked");
                                 let props: &[G::Property] = right_obj.properties.slice();
                                 for prop in props {
                                     // if it's not a trivial object literal, de-opt
@@ -393,7 +440,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.record_usage(ref_);
 
                                 return Some(p.new_expr(
-                                    E::CommonJSExportIdentifier { ref_, ..Default::default() },
+                                    E::CommonJSExportIdentifier {
+                                        ref_,
+                                        ..Default::default()
+                                    },
                                     name_loc,
                                 ));
                             } else if p.options.features.commonjs_at_runtime
@@ -448,9 +498,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 if prop.value.is_some()
                                     && prop.flags.len() == 0
                                     && prop.key.is_some()
-                                    && matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EString(_))
+                                    && matches!(
+                                        prop.key.expect("infallible: prop has key").data,
+                                        js_ast::ExprData::EString(_)
+                                    )
                                     && e_string_eql_bytes(
-                                        &prop.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked"),
+                                        &prop
+                                            .key
+                                            .expect("infallible: prop has key")
+                                            .data
+                                            .e_string()
+                                            .expect("infallible: variant checked"),
                                         name,
                                     )
                                     && name != b"__proto__"
@@ -522,7 +580,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 js_ast::ExprData::ERequireCallTarget => {
                     if name == b"main" {
-                        return Some(Expr { loc, data: js_ast::ExprData::ERequireMain });
+                        return Some(Expr {
+                            loc,
+                            data: js_ast::ExprData::ERequireMain,
+                        });
                     }
                 }
                 js_ast::ExprData::EImportIdentifier(id) => {
@@ -590,7 +651,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             .new_symbol(js_ast::symbol::Kind::Other, sym_name)
                                             .expect("unreachable");
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
-                                        VecExt::append(&mut p.module_scope_mut().generated, new_ref);
+                                        VecExt::append(
+                                            &mut p.module_scope_mut().generated,
+                                            new_ref,
+                                        );
                                         p.commonjs_named_exports
                                             .put(
                                                 name,
@@ -688,15 +752,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // runtime. When the API is not validated in this
                             // way, the developer may unintentionally read or
                             // write internal fields of HMRModule.
-                            p.log()
-                                .add_error_fmt(
-                                    Some(p.source),
-                                    loc,
-                                    format_args!(
-                                        "import.meta.hot.{} does not exist",
-                                        bstr::BStr::new(name)
-                                    ),
-                                );
+                            p.log().add_error_fmt(
+                                Some(p.source),
+                                loc,
+                                format_args!(
+                                    "import.meta.hot.{} does not exist",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
                             return Some(Expr {
                                 data: js_ast::ExprData::EUndefined(E::Undefined),
                                 loc,
@@ -713,7 +776,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         None
     }
 
-
     fn maybe_rewrite_property_access_for_namespace(
         &mut self,
         name: &'a [u8],
@@ -728,7 +790,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 js_ast::ts::Data::EnumNumber(num) => {
                     p.ignore_usage_of_identifier_in_dot_chain(*target);
                     return Some(p.wrap_inlined_enum(
-                        Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
+                        Expr {
+                            loc,
+                            data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                        },
                         name,
                     ));
                 }
@@ -746,12 +811,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let name_static = E::Str::new(name);
                     let expr = if js_lexer::is_identifier(name) {
                         p.new_expr(
-                            E::Dot { target: *target, name: name_static.into(), name_loc, ..Default::default() },
+                            E::Dot {
+                                target: *target,
+                                name: name_static.into(),
+                                name_loc,
+                                ..Default::default()
+                            },
                             loc,
                         )
                     } else {
                         p.new_expr(
-                            E::Dot { target: *target, name: name_static.into(), name_loc, ..Default::default() },
+                            E::Dot {
+                                target: *target,
+                                name: name_static.into(),
+                                name_loc,
+                                ..Default::default()
+                            },
                             loc,
                         )
                     };
@@ -780,12 +855,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             E::UnaryFlags::empty()
         };
         let left = p.new_expr(
-            E::Unary { op: js_ast::OpCode::UnTypeof, value: expr, flags },
+            E::Unary {
+                op: js_ast::OpCode::UnTypeof,
+                value: expr,
+                flags,
+            },
             bun_ast::Loc::EMPTY,
         );
         let right = p.new_expr(E::EString::from_static(b"undefined"), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
-            E::Binary { op: js_ast::OpCode::BinStrictEq, left, right },
+            E::Binary {
+                op: js_ast::OpCode::BinStrictEq,
+                left,
+                right,
+            },
             bun_ast::Loc::EMPTY,
         ))
     }
@@ -794,27 +877,38 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         // TODO(port): narrow error set
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
-        let object_ref = p.find_symbol(bun_ast::Loc::EMPTY, b"Object").expect("unreachable").r#ref;
+        let object_ref = p
+            .find_symbol(bun_ast::Loc::EMPTY, b"Object")
+            .expect("unreachable")
+            .r#ref;
         let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
-            E::If { test_, yes, no: identifier_expr },
+            E::If {
+                test_,
+                yes,
+                no: identifier_expr,
+            },
             bun_ast::Loc::EMPTY,
         ))
     }
 
     pub fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<bun_ast::Loc>) {
         let p = self;
-        let Some(comma_after_spread) = comma_after_spread else { return };
+        let Some(comma_after_spread) = comma_after_spread else {
+            return;
+        };
         if comma_after_spread.start == -1 {
             return;
         }
 
-        p.log()
-            .add_range_error(
-                Some(p.source),
-                bun_ast::Range { loc: comma_after_spread, len: 1 },
-                b"Unexpected \",\" after rest pattern",
-            );
+        p.log().add_range_error(
+            Some(p.source),
+            bun_ast::Range {
+                loc: comma_after_spread,
+                len: 1,
+            },
+            b"Unexpected \",\" after rest pattern",
+        );
     }
 }
 

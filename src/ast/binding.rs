@@ -4,12 +4,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 
+use crate::StoreRef;
 use crate::b::B;
 use crate::base::Ref;
-use crate::StoreRef;
 use crate::expr::{Data as ExprData, Expr};
+use crate::{ExprNodeList, flags};
 use crate::{e as E, g as G};
-use crate::{flags, ExprNodeList};
 
 /// Zig: `Binding.Data` is the `union(Tag)` payload. In the Rust port that
 /// union lives at `crate::b::B`; re-export it under the Zig-path name
@@ -39,7 +39,10 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn json_stringify<W: crate::JsonWriter>(self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(<&'static str>::from(self))
     }
 }
@@ -117,13 +120,19 @@ impl Binding {
     pub fn init(t: impl BindingInit, loc: crate::Loc) -> Binding {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
-        Binding { loc, data: t.into_b() }
+        Binding {
+            loc,
+            data: t.into_b(),
+        }
     }
     #[inline]
     pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
-        Binding { loc, data: t.alloc_into_b(bump) }
+        Binding {
+            loc,
+            data: t.alloc_into_b(bump),
+        }
     }
 }
 
@@ -170,11 +179,11 @@ impl ToExprWrapper {
     /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
     /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
-    pub fn new(
-        arena: &Arena,
-        wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
-    ) -> Self {
-        Self { arena: Some(bun_ptr::BackRef::new(arena)), wrap }
+    pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
+        Self {
+            arena: Some(bun_ptr::BackRef::new(arena)),
+            wrap,
+        }
     }
 
     #[inline]
@@ -218,13 +227,18 @@ impl Binding {
         Self::to_expr_inner(binding, ctx, *wrapper.borrow())
     }
 
-    fn to_expr_inner(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: ToExprWrapper) -> Expr {
+    fn to_expr_inner(
+        binding: &Binding,
+        ctx: *mut core::ffi::c_void,
+        wrapper: ToExprWrapper,
+    ) -> Expr {
         let loc = binding.loc;
         match binding.data {
-            B::BMissing(_) => Expr { data: ExprData::EMissing(E::Missing {}), loc },
-            B::BIdentifier(b) => {
-                wrapper.wrap_identifier(ctx, loc, b.r#ref)
-            }
+            B::BMissing(_) => Expr {
+                data: ExprData::EMissing(E::Missing {}),
+                loc,
+            },
+            B::BIdentifier(b) => wrapper.wrap_identifier(ctx, loc, b.r#ref),
             B::BArray(b) => {
                 let b = b.get();
                 let bump = wrapper.arena();
@@ -258,8 +272,7 @@ impl Binding {
                 let b = b.get();
                 let bump = wrapper.arena();
                 let props_in = b.properties();
-                let mut properties =
-                    bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
+                let mut properties = bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
                 for item in props_in.iter() {
                     properties.push(G::Property {
                         flags: item.flags,
@@ -276,8 +289,7 @@ impl Binding {
                 }
                 Expr::init(
                     E::Object {
-                        properties:
-                            G::PropertyList::from_bump_vec(properties),
+                        properties: G::PropertyList::from_bump_vec(properties),
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },

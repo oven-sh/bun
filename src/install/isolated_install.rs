@@ -2,60 +2,57 @@
 // Submodules — Zig basenames preserved per PORTING.md, hence #[path] attrs.
 // These are the install-to-disk primitives the Installer state machine drives.
 // ───────────────────────────────────────────────────────────────────────────
-#[path = "isolated_install/Store.rs"]
-pub mod store;
-#[path = "isolated_install/Installer.rs"]
-pub mod installer;
-#[path = "isolated_install/FileCopier.rs"]
-pub mod file_copier;
 #[path = "isolated_install/FileCloner.rs"]
 pub mod file_cloner;
+#[path = "isolated_install/FileCopier.rs"]
+pub mod file_copier;
 #[path = "isolated_install/Hardlinker.rs"]
 pub mod hardlinker;
+#[path = "isolated_install/Installer.rs"]
+pub mod installer;
+#[path = "isolated_install/Store.rs"]
+pub mod store;
 #[path = "isolated_install/Symlinker.rs"]
 pub mod symlinker;
 
+pub use file_copier::FileCopier;
 pub use store::Store;
 /// Alias so `crate::isolated_install::store::EntryId` (used by
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
 pub use store::entry::Id as EntryId;
-pub use file_copier::FileCopier;
 
 use crate::lockfile::package::PackageColumns as _;
 use std::hash::Hasher as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
-use bun_core::{fast_random, fmt as bun_fmt, Environment, Global, Output};
+use bstr::BStr;
+use bun_alloc::AllocError;
+use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
-use bun_collections::linear_fifo::DynamicBuffer;
-use bun_alloc::AllocError;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
+use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
-use bun_semver as semver;
-use bstr::BStr;
 
 use crate::analytics;
-use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_bunfig::Arguments as Command;
+use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::{self, Lockfile};
+use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
+use crate::package_manager_real::ProgressStrings;
+use crate::package_manager_task as Task;
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
 };
-use crate::lockfile::{self, Lockfile};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
-use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_task as Task;
-use store::{
-    Entry as StoreEntry, EntryColumns as _, EntryColumns as _, Node as StoreNode,
-    NodeColumns as _, NodeColumns as _,
-};
+use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
 bun_output::define_scoped_log!(log, IsolatedInstall, visible);
 
@@ -209,9 +206,13 @@ impl<'a, 'b> Wait<'a, 'b> {
 
             // .monotonic is okay because this is just used for progress; we don't rely on
             // any side effects from completed tasks.
-            let pending_lifecycle_scripts = pkg_manager.pending_lifecycle_script_tasks.load(Ordering::Relaxed);
+            let pending_lifecycle_scripts = pkg_manager
+                .pending_lifecycle_script_tasks
+                .load(Ordering::Relaxed);
             // `+ 1` because the root task needs to wait for everything
-            if pending_lifecycle_scripts > 0 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1 {
+            if pending_lifecycle_scripts > 0
+                && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1
+            {
                 node.activate();
                 pkg_manager.progress.refresh();
             }
@@ -283,10 +284,8 @@ pub fn install_isolated_packages(
         }
         let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-        let mut leaking_peers: DynamicBitSetList = DynamicBitSetList::init_empty(
-            lockfile.packages.len(),
-            peer_name_count as usize,
-        )?;
+        let mut leaking_peers: DynamicBitSetList =
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
 
         if peer_name_count != 0 {
             // The runtime child of a peer edge is whichever package an ancestor's
@@ -310,14 +309,10 @@ pub fn install_isolated_packages(
             // Per-package bits computed once: own peer-dep names, and non-peer
             // dependency names that will appear in `node_dependencies` (i.e., not
             // filtered out by bundled/disabled/unresolved).
-            let mut own_peers: DynamicBitSetList = DynamicBitSetList::init_empty(
-                lockfile.packages.len(),
-                peer_name_count as usize,
-            )?;
-            let mut provides: DynamicBitSetList = DynamicBitSetList::init_empty(
-                lockfile.packages.len(),
-                peer_name_count as usize,
-            )?;
+            let mut own_peers: DynamicBitSetList =
+                DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+            let mut provides: DynamicBitSetList =
+                DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
             for pkg_idx in 0..lockfile.packages.len() {
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
@@ -444,13 +439,15 @@ pub fn install_isolated_packages(
                         // 'node_modules/.bun/parent@version/node_modules'.
 
                         let dep_id = node_dep_ids[curr_id.get() as usize];
-                        if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id {
+                        if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id
+                        {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                             continue 'next_node;
                         }
 
-                        if dep_id == invalid_dependency_id || entry.dep_id == invalid_dependency_id {
+                        if dep_id == invalid_dependency_id || entry.dep_id == invalid_dependency_id
+                        {
                             // one is the root package, one is a dependency on the root package (it has a valid dep_id)
                             // create a new node for it.
                             break 'check_cycle;
@@ -475,7 +472,8 @@ pub fn install_isolated_packages(
                 }
             }
 
-            let node_id: store::node::Id = store::node::Id::from(u32::try_from(nodes.len()).expect("int cast"));
+            let node_id: store::node::Id =
+                store::node::Id::from(u32::try_from(nodes.len()).expect("int cast"));
             let pkg_deps = pkg_dependency_slices[entry.pkg_id as usize];
 
             // for skipping dependnecies of workspace packages and the root package. the dependencies
@@ -509,51 +507,55 @@ pub fn install_isolated_packages(
                         ..
                     } = nodes_slice.split_mut();
 
-                    let ctx_hash: u64 = if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
-                        0
-                    } else {
-                        'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
-                            if leaks.count() == 0 {
-                                break 'ctx 0;
-                            }
-
-                            let peer_names = peer_name_idx.keys();
-                            let mut hasher = Wyhash11::init(0);
-                            let mut it = leaks.iterator::<true, true>();
-                            while let Some(bit) = it.next() {
-                                let peer_name_hash = peer_names[bit];
-                                let resolved: PackageID = 'resolved: {
-                                    let mut curr_id = entry.parent_id;
-                                    while curr_id != store::node::Id::INVALID {
-                                        for ids in &node_dependencies[curr_id.get() as usize] {
-                                            if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        for ids in &node_peers[curr_id.get() as usize].list {
-                                            if !ids.auto_installed
-                                                && dependencies[ids.dep_id as usize].name_hash == peer_name_hash
-                                            {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        curr_id = node_parent_ids[curr_id.get() as usize];
-                                    }
-                                    break 'resolved invalid_package_id;
-                                };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
+                    let ctx_hash: u64 =
+                        if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
+                            0
+                        } else {
+                            'ctx: {
+                                let leaks = leaking_peers.at(entry.pkg_id as usize);
+                                if leaks.count() == 0 {
+                                    break 'ctx 0;
                                 }
-                                hasher.update(bun_core::bytes_of(&peer_name_hash));
-                                hasher.update(bun_core::bytes_of(&resolved));
+
+                                let peer_names = peer_name_idx.keys();
+                                let mut hasher = Wyhash11::init(0);
+                                let mut it = leaks.iterator::<true, true>();
+                                while let Some(bit) = it.next() {
+                                    let peer_name_hash = peer_names[bit];
+                                    let resolved: PackageID = 'resolved: {
+                                        let mut curr_id = entry.parent_id;
+                                        while curr_id != store::node::Id::INVALID {
+                                            for ids in &node_dependencies[curr_id.get() as usize] {
+                                                if dependencies[ids.dep_id as usize].name_hash
+                                                    == peer_name_hash
+                                                {
+                                                    break 'resolved ids.pkg_id;
+                                                }
+                                            }
+                                            for ids in &node_peers[curr_id.get() as usize].list {
+                                                if !ids.auto_installed
+                                                    && dependencies[ids.dep_id as usize].name_hash
+                                                        == peer_name_hash
+                                                {
+                                                    break 'resolved ids.pkg_id;
+                                                }
+                                            }
+                                            curr_id = node_parent_ids[curr_id.get() as usize];
+                                        }
+                                        break 'resolved invalid_package_id;
+                                    };
+                                    // Auto-install fallback is declarer-specific; let the
+                                    // second pass handle this position rather than risk an
+                                    // unsound key.
+                                    if resolved == invalid_package_id {
+                                        break 'dont_dedupe;
+                                    }
+                                    hasher.update(bun_core::bytes_of(&peer_name_hash));
+                                    hasher.update(bun_core::bytes_of(&resolved));
+                                }
+                                break 'ctx hasher.final_();
                             }
-                            break 'ctx hasher.final_();
-                        }
-                    };
+                        };
 
                     let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
                         pkg_id: entry.pkg_id,
@@ -581,7 +583,9 @@ pub fn install_isolated_packages(
                         if dedupe_dep.version.tag == VersionTag::Workspace
                             && entry_dep.version.tag == VersionTag::Workspace
                         {
-                            if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
+                            if dedupe_dep.behavior.is_workspace()
+                                != entry_dep.behavior.is_workspace()
+                            {
                                 break 'dont_dedupe;
                             }
                         }
@@ -596,13 +600,18 @@ pub fn install_isolated_packages(
                         };
                         // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
-                        let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get() as usize].list.iter().copied().collect();
+                        let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get() as usize]
+                            .list
+                            .iter()
+                            .copied()
+                            .collect();
                         for peer in dedupe_peers {
                             let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
                             let mut curr_id = entry.parent_id;
                             'walk: while curr_id != store::node::Id::INVALID {
                                 for ids in &node_dependencies[curr_id.get() as usize] {
-                                    if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
+                                    if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
+                                    {
                                         break 'walk;
                                     }
                                 }
@@ -696,10 +705,8 @@ pub fn install_isolated_packages(
 
                             for &package_to_install in packages {
                                 if package_to_install == pkg_id {
-                                    node_dependencies[node_id.get() as usize].push(store::node::DependencyIds {
-                                        dep_id,
-                                        pkg_id,
-                                    });
+                                    node_dependencies[node_id.get() as usize]
+                                        .push(store::node::DependencyIds { dep_id, pkg_id });
                                     // PERF(port): was appendAssumeCapacity — profile in Phase B
                                     node_queue.push(QueuedNode {
                                         parent_id: node_id,
@@ -737,7 +744,8 @@ pub fn install_isolated_packages(
                         // simple case:
                         // - add it as a dependency
                         // - queue it
-                        node_dependencies[node_id.get() as usize].push(store::node::DependencyIds { dep_id, pkg_id });
+                        node_dependencies[node_id.get() as usize]
+                            .push(store::node::DependencyIds { dep_id, pkg_id });
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
                         node_queue.push(QueuedNode {
                             parent_id: node_id,
@@ -776,7 +784,9 @@ pub fn install_isolated_packages(
 
                             let res = &pkg_resolutions[ids.pkg_id as usize];
 
-                            if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm {
+                            if peer_dep.version.tag != VersionTag::Npm
+                                || res.tag != ResolutionTag::Npm
+                            {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.
                                 break 'resolved_pkg_id (ids.pkg_id, false);
@@ -934,19 +944,23 @@ pub fn install_isolated_packages(
                 let curr_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
                 for info in dedupe_entry.value_ptr.iter() {
-                    if info.dep_id == invalid_dependency_id || curr_dep_id == invalid_dependency_id {
+                    if info.dep_id == invalid_dependency_id || curr_dep_id == invalid_dependency_id
+                    {
                         if info.dep_id != curr_dep_id {
                             continue;
                         }
                     }
-                    if info.dep_id != invalid_dependency_id && curr_dep_id != invalid_dependency_id {
+                    if info.dep_id != invalid_dependency_id && curr_dep_id != invalid_dependency_id
+                    {
                         let curr_dep = &dependencies[curr_dep_id as usize];
                         let existing_dep = &dependencies[info.dep_id as usize];
 
                         if existing_dep.version.tag == VersionTag::Workspace
                             && curr_dep.version.tag == VersionTag::Workspace
                         {
-                            if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace() {
+                            if existing_dep.behavior.is_workspace()
+                                != curr_dep.behavior.is_workspace()
+                            {
                                 continue;
                             }
                         }
@@ -1006,8 +1020,12 @@ pub fn install_isolated_packages(
                     hasher.update(pkg_name.slice(string_buf));
                     let pkg_res = &pkg_resolutions[peer_ids.pkg_id as usize];
                     res_fmt_buf.clear();
-                    write!(&mut res_fmt_buf, "{}", pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix))
-                        .expect("Vec<u8> write is infallible");
+                    write!(
+                        &mut res_fmt_buf,
+                        "{}",
+                        pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix)
+                    )
+                    .expect("Vec<u8> write is infallible");
                     hasher.update(&res_fmt_buf);
                 }
                 break 'peer_hash store::entry::PeerHash::from(hasher.final_());
@@ -1016,14 +1034,17 @@ pub fn install_isolated_packages(
             let new_entry_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
             let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-            let new_entry_is_workspace =
-                !new_entry_is_root && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            let new_entry_is_workspace = !new_entry_is_root
+                && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
 
-            let new_entry_dependencies: store::entry::Dependencies = if dedupe_entry.found_existing && new_entry_is_workspace {
-                store::entry::Dependencies::default()
-            } else {
-                store::entry::Dependencies::init_capacity(node_nodes[entry.node_id.get() as usize].len())?
-            };
+            let new_entry_dependencies: store::entry::Dependencies =
+                if dedupe_entry.found_existing && new_entry_is_workspace {
+                    store::entry::Dependencies::default()
+                } else {
+                    store::entry::Dependencies::init_capacity(
+                        node_nodes[entry.node_id.get() as usize].len(),
+                    )?
+                };
 
             let mut new_entry_parents: Vec<store::entry::Id> = Vec::with_capacity(1);
             new_entry_parents.push(entry.entry_parent_id);
@@ -1034,7 +1055,9 @@ pub fn install_isolated_packages(
                     break 'hoisted false;
                 }
 
-                let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
+                let dep_name = dependencies[new_entry_dep_id as usize]
+                    .name
+                    .slice(string_buf);
 
                 let Some(hoist_pattern) = &manager.options.hoist_pattern else {
                     let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
@@ -1060,13 +1083,16 @@ pub fn install_isolated_packages(
                 scripts: core::cell::Cell::new(None),
             };
 
-            let new_entry_id: store::entry::Id = store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
+            let new_entry_id: store::entry::Id =
+                store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
             store_entries.append(new_entry)?;
 
             if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
                 'skip_adding_dependency: {
                     if new_entry_dep_id != invalid_dependency_id
-                        && dependencies[new_entry_dep_id as usize].behavior.is_workspace()
+                        && dependencies[new_entry_dep_id as usize]
+                            .behavior
+                            .is_workspace()
                     {
                         // skip implicit workspace dependencies on the root.
                         break 'skip_adding_dependency;
@@ -1089,12 +1115,18 @@ pub fn install_isolated_packages(
                     if new_entry_dep_id != invalid_dependency_id {
                         if entry.entry_parent_id == store::entry::Id::ROOT {
                             // make sure direct dependencies are not replaced
-                            let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
+                            let dep_name = dependencies[new_entry_dep_id as usize]
+                                .name
+                                .slice(string_buf);
                             public_hoisted.put(dep_name, ())?;
                         } else {
                             // transitive dependencies (also direct dependencies of workspaces!)
-                            let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
-                            if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
+                            let dep_name = dependencies[new_entry_dep_id as usize]
+                                .name
+                                .slice(string_buf);
+                            if let Some(public_hoist_pattern) =
+                                &manager.options.public_hoist_pattern
+                            {
                                 if public_hoist_pattern.is_match(dep_name) {
                                     let hoist_entry = public_hoisted.get_or_put(dep_name)?;
                                     if !hoist_entry.found_existing {
@@ -1219,7 +1251,8 @@ pub fn install_isolated_packages(
                                     let mut name_version_buf = PathBuffer::uninit();
                                     // TODO(port): std.fmt.bufPrint returned the written
                                     // slice; emulate via cursor write into the PathBuffer.
-                                    let mut cursor = std::io::Cursor::new(&mut name_version_buf.0[..]);
+                                    let mut cursor =
+                                        std::io::Cursor::new(&mut name_version_buf.0[..]);
                                     let name_version: &[u8] = match write!(
                                         &mut cursor,
                                         "{}@{}",
@@ -1239,10 +1272,9 @@ pub fn install_isolated_packages(
                                             break 'eligible false;
                                         }
                                     };
-                                    if lockfile
-                                        .patched_dependencies
-                                        .contains(&semver::semver_string::Builder::string_hash(name_version))
-                                    {
+                                    if lockfile.patched_dependencies.contains(
+                                        &semver::semver_string::Builder::string_hash(name_version),
+                                    ) {
                                         break 'eligible false;
                                     }
                                 }
@@ -1277,7 +1309,9 @@ pub fn install_isolated_packages(
                                     )
                                 };
                                 if lockfile.has_trusted_dependency(dep_name, pkg_res)
-                                    || trusted_from_update.contains(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    || trusted_from_update.contains(
+                                        &(dep_name_hash as crate::TruncatedPackageNameHash),
+                                    )
                                 {
                                     break 'eligible false;
                                 }
@@ -1301,7 +1335,9 @@ pub fn install_isolated_packages(
                         // uninitialized stack bytes into the hash.
                         stack[top_idx].hasher = Wyhash::init(0x9E3779B97F4A7C15);
                         {
-                            let mut hw = WyhashWriter { hasher: &mut stack[top_idx].hasher };
+                            let mut hw = WyhashWriter {
+                                hasher: &mut stack[top_idx].hasher,
+                            };
                             write!(hw, "{}", store::entry::fmt_store_path(id, &store, lockfile))
                                 .expect("unreachable");
                         }
@@ -1329,8 +1365,12 @@ pub fn install_isolated_packages(
                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
                         match states[dep_idx] {
                             State::Done => {
-                                stack[top_idx].hasher.update(bun_core::bytes_of(&dep_name_hash));
-                                stack[top_idx].hasher.update(bun_core::bytes_of(&entry_hashes[dep_idx]));
+                                stack[top_idx]
+                                    .hasher
+                                    .update(bun_core::bytes_of(&dep_name_hash));
+                                stack[top_idx]
+                                    .hasher
+                                    .update(bun_core::bytes_of(&entry_hashes[dep_idx]));
                             }
                             State::Ineligible => {
                                 // A dep that can't live in the global store poisons
@@ -1345,7 +1385,9 @@ pub fn install_isolated_packages(
                                 // every cycle member's hash with one that's
                                 // independent of which edge happened to be the
                                 // back-edge in this DFS.
-                                stack[top_idx].hasher.update(bun_core::bytes_of(&dep_name_hash));
+                                stack[top_idx]
+                                    .hasher
+                                    .update(bun_core::bytes_of(&dep_name_hash));
                             }
                             State::Unvisited => {
                                 stack.push(StackFrame {
@@ -1416,7 +1458,10 @@ pub fn install_isolated_packages(
                     if tarjan_index[root] != u32::MAX {
                         continue;
                     }
-                    work.push(WorkFrame { v: u32::try_from(root).expect("int cast"), child: 0 });
+                    work.push(WorkFrame {
+                        v: u32::try_from(root).expect("int cast"),
+                        child: 0,
+                    });
                     while !work.is_empty() {
                         let frame_idx = work.len() - 1;
                         let v = work[frame_idx].v;
@@ -1433,7 +1478,10 @@ pub fn install_isolated_packages(
                             let w = deps[work[frame_idx].child as usize].entry_id.get() as usize;
                             if tarjan_index[w] == u32::MAX {
                                 work[frame_idx].child += 1;
-                                work.push(WorkFrame { v: u32::try_from(w).expect("int cast"), child: 0 });
+                                work.push(WorkFrame {
+                                    v: u32::try_from(w).expect("int cast"),
+                                    child: 0,
+                                });
                                 recursed = true;
                                 break;
                             } else if on_stack[w] {
@@ -1486,7 +1534,10 @@ pub fn install_isolated_packages(
                                         .expect("unreachable");
                                     }
                                     sub.update(bun_core::bytes_of(
-                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize].integrity,
+                                        &pkg_metas[node_pkg_ids
+                                            [entry_node_ids[m as usize].get() as usize]
+                                            as usize]
+                                            .integrity,
                                     ));
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
@@ -1495,7 +1546,8 @@ pub fn install_isolated_packages(
                                             poisoned = true;
                                             break;
                                         }
-                                        let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
+                                        let dep_name_hash =
+                                            dependencies[dep.dep_id as usize].name_hash;
                                         sub.update(bun_core::bytes_of(&dep_name_hash));
                                         sub.update(bun_core::bytes_of(&dh));
                                     }
@@ -1538,7 +1590,9 @@ pub fn install_isolated_packages(
                                         .expect("unreachable");
                                     }
                                     sub.update(bun_core::bytes_of(
-                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize]
+                                        &pkg_metas[node_pkg_ids
+                                            [entry_node_ids[m as usize].get() as usize]
+                                            as usize]
                                             .integrity,
                                     ));
                                     member_sub.push(sub.final_());
@@ -1557,7 +1611,9 @@ pub fn install_isolated_packages(
                                         // that reach the same external entry under
                                         // different aliases must hash differently.
                                         let mut ext = Wyhash::init(0);
-                                        ext.update(bun_core::bytes_of(&dependencies[dep.dep_id as usize].name_hash));
+                                        ext.update(bun_core::bytes_of(
+                                            &dependencies[dep.dep_id as usize].name_hash,
+                                        ));
                                         ext.update(bun_core::bytes_of(&entry_hashes[di]));
                                         scc_ext.put(ext.final_(), ())?;
                                     }
@@ -1626,7 +1682,10 @@ pub fn install_isolated_packages(
             // PORT NOTE: Zig allocated a `[:0]u8` via `joinAbsStringBufZ`; here
             // we own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
-            let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(cache_dir_path, &[b"links"]);
+            let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
+                cache_dir_path,
+                &[b"links"],
+            );
             let mut owned = joined.to_vec();
             owned.push(0);
             break 'global_store_path Some(owned);
@@ -1673,17 +1732,20 @@ pub fn install_isolated_packages(
                     // `AutoRelPath` covers both the mkdir and rename targets.
                     let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
                     let rand = fast_random();
-                    rename_path.append_fmt(format_args!(
-                        ".old_modules-{}",
-                        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                    )).assume_ok();
+                    rename_path
+                        .append_fmt(format_args!(
+                            ".old_modules-{}",
+                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+                        ))
+                        .assume_ok();
 
                     // 1
                     if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), 0o755).is_err() {
                         break 'is_new_bun_modules true;
                     }
 
-                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
+                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules")
+                    else {
                         break 'is_new_bun_modules true;
                     };
                     // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
@@ -1722,7 +1784,12 @@ pub fn install_isolated_packages(
                         let rename_path_save = rename_path.len();
                         rename_path.append(entry.name.slice()).assume_ok();
 
-                        let _ = sys::renameat(Fd::cwd(), entry_path.slice_z(), Fd::cwd(), rename_path.slice_z());
+                        let _ = sys::renameat(
+                            Fd::cwd(),
+                            entry_path.slice_z(),
+                            Fd::cwd(),
+                            rename_path.slice_z(),
+                        );
 
                         rename_path.set_length(rename_path_save);
                         entry_path.set_length(entry_path_save);
@@ -1731,7 +1798,8 @@ pub fn install_isolated_packages(
                     // 3
                     for workspace_path in lockfile.workspace_paths.values() {
                         let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
+                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
+                                .assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
@@ -1743,10 +1811,9 @@ pub fn install_isolated_packages(
                         // PORT NOTE: reshaped for borrowck — capture length instead
                         // of `save()` so `rename_path` stays unborrowed.
                         let rename_path_save = rename_path.len();
-                        rename_path.append_fmt(format_args!(
-                            ".old_{}_modules",
-                            BStr::new(&basename)
-                        )).assume_ok();
+                        rename_path
+                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+                            .assume_ok();
 
                         let _ = sys::renameat(
                             Fd::cwd(),
@@ -1775,7 +1842,14 @@ pub fn install_isolated_packages(
                     .expect("unreachable");
 
                     // 1
-                    if sys::renameat(Fd::cwd(), bun_core::zstr!("node_modules"), Fd::cwd(), temp_node_modules).is_err() {
+                    if sys::renameat(
+                        Fd::cwd(),
+                        bun_core::zstr!("node_modules"),
+                        Fd::cwd(),
+                        temp_node_modules,
+                    )
+                    .is_err()
+                    {
                         break 'is_new_bun_modules true;
                     }
 
@@ -1786,20 +1860,33 @@ pub fn install_isolated_packages(
                     }
 
                     if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-                        Output::err(err, "failed to create './node_modules/.bun'", format_args!(""));
+                        Output::err(
+                            err,
+                            "failed to create './node_modules/.bun'",
+                            format_args!(""),
+                        );
                         Global::exit(1);
                     }
 
                     let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
 
                     let rand = fast_random();
-                    rename_path.append_fmt(format_args!(
-                        ".old_modules-{}",
-                        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                    )).assume_ok();
+                    rename_path
+                        .append_fmt(format_args!(
+                            ".old_modules-{}",
+                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+                        ))
+                        .assume_ok();
 
                     // 3
-                    if sys::renameat(Fd::cwd(), temp_node_modules, Fd::cwd(), rename_path.slice_z()).is_err() {
+                    if sys::renameat(
+                        Fd::cwd(),
+                        temp_node_modules,
+                        Fd::cwd(),
+                        rename_path.slice_z(),
+                    )
+                    .is_err()
+                    {
                         break 'is_new_bun_modules true;
                     }
 
@@ -1809,7 +1896,12 @@ pub fn install_isolated_packages(
                     cache_path.append(b".cache").assume_ok();
 
                     // 4
-                    let _ = sys::renameat(Fd::cwd(), rename_path.slice_z(), Fd::cwd(), cache_path.slice_z());
+                    let _ = sys::renameat(
+                        Fd::cwd(),
+                        rename_path.slice_z(),
+                        Fd::cwd(),
+                        cache_path.slice_z(),
+                    );
 
                     // remove .cache so we can append destination for each workspace
                     rename_path.undo(1);
@@ -1817,7 +1909,8 @@ pub fn install_isolated_packages(
                     // 5
                     for workspace_path in lockfile.workspace_paths.values() {
                         let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
+                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
+                                .assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
@@ -1831,10 +1924,9 @@ pub fn install_isolated_packages(
                         // so `rename_path` stays unborrowed between save/restore.
                         let rename_path_save = rename_path.len();
 
-                        rename_path.append_fmt(format_args!(
-                            ".old_{}_modules",
-                            BStr::new(&basename)
-                        )).assume_ok();
+                        rename_path
+                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+                            .assume_ok();
 
                         let _ = sys::renameat(
                             Fd::cwd(),
@@ -1852,7 +1944,11 @@ pub fn install_isolated_packages(
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-            Output::err(err, "failed to create './node_modules/.bun'", format_args!(""));
+            Output::err(
+                err,
+                "failed to create './node_modules/.bun'",
+                format_args!(""),
+            );
             Global::exit(1);
         }
 
@@ -1971,18 +2067,30 @@ pub fn install_isolated_packages(
             manager: manager_ptr,
             command_ctx,
             installed,
-            install_node: if show_progress { Some(&mut install_node) } else { None },
-            scripts_node: if show_progress { scripts_node_ptr } else { None },
+            install_node: if show_progress {
+                Some(&mut install_node)
+            } else {
+                None
+            },
+            scripts_node: if show_progress {
+                scripts_node_ptr
+            } else {
+                None
+            },
             store: &store,
             tasks,
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
-            supported_backend: std::sync::atomic::AtomicU8::new(PackageInstall::supported_method() as u8),
+            supported_backend: std::sync::atomic::AtomicU8::new(
+                PackageInstall::supported_method() as u8
+            ),
             is_new_bun_modules,
-            global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_core::ZStr {
-                // SAFETY: `global_store_path` was built with a trailing NUL above.
-                bun_core::ZStr::from_slice_with_nul(&b[..])
-            }),
+            global_store_path: global_store_path
+                .as_deref()
+                .map(|b: &[u8]| -> &bun_core::ZStr {
+                    // SAFETY: `global_store_path` was built with a trailing NUL above.
+                    bun_core::ZStr::from_slice_with_nul(&b[..])
+                }),
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
@@ -2035,7 +2143,10 @@ pub fn install_isolated_packages(
                     if dep_id == invalid_dependency_id {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
-                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies as u32, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(
+                            installer::Step::SymlinkDependencies as u32,
+                            Ordering::Relaxed,
+                        );
                     } else {
                         // dep_id is valid meaning this was a dependency that resolved to the root
                         // package. it gets an entry in the store.
@@ -2049,11 +2160,15 @@ pub fn install_isolated_packages(
 
                     // if injected=true this might be false
                     if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
-                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies as u32, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(
+                            installer::Step::SymlinkDependencies as u32,
+                            Ordering::Relaxed,
+                        );
                         installer.start_task(entry_id);
                         continue;
                     }
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize]
+                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2061,7 +2176,8 @@ pub fn install_isolated_packages(
                     // no installation required, will only need to be linked to packages that depend on it.
                     debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize]
+                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2082,7 +2198,8 @@ pub fn install_isolated_packages(
                     // comptime monomorphization — profile in Phase B.
                     let pkg_res_tag = pkg_res.tag;
 
-                    let patch_info = installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                    let patch_info =
+                        installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
@@ -2096,29 +2213,35 @@ pub fn install_isolated_packages(
                     // write the new project-local tree through the link into
                     // the shared cache). Treat the stale link as
                     // needs-install so `link_package` detaches and rebuilds.
-                    let has_stale_gvs_link = !uses_global_store && 'stale: {
-                        if installer.global_store_path.is_none() {
-                            break 'stale false;
-                        }
-                        let mut local: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
-                        installer.append_local_store_entry_path(&mut local, entry_id);
-                        #[cfg(windows)]
-                        {
-                            break 'stale if let Some(a) = sys::get_file_attributes(local.slice_z()) {
-                                a.is_reparse_point
-                            } else {
-                                false
-                            };
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
-                                sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
-                            } else {
-                                false
-                            };
-                        }
-                    };
+                    let has_stale_gvs_link = !uses_global_store
+                        && 'stale: {
+                            if installer.global_store_path.is_none() {
+                                break 'stale false;
+                            }
+                            let mut local: paths::AutoAbsPath =
+                                paths::AutoAbsPath::init_top_level_dir();
+                            installer.append_local_store_entry_path(&mut local, entry_id);
+                            #[cfg(windows)]
+                            {
+                                break 'stale if let Some(a) =
+                                    sys::get_file_attributes(local.slice_z())
+                                {
+                                    a.is_reparse_point
+                                } else {
+                                    false
+                                };
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
+                                    sys::posix::s_islnk(
+                                        u32::try_from(st.st_mode).expect("int cast"),
+                                    )
+                                } else {
+                                    false
+                                };
+                            }
+                        };
 
                     let needs_install = manager.options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
@@ -2175,8 +2298,12 @@ pub fn install_isolated_packages(
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer.on_task_fail(entry_id, installer::TaskError::SymlinkDependencies(err));
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer.on_task_fail(
+                                        entry_id,
+                                        installer::TaskError::SymlinkDependencies(err),
+                                    );
                                     continue;
                                 }
                             }
@@ -2185,7 +2312,8 @@ pub fn install_isolated_packages(
                             installer.link_to_hidden_node_modules(entry_id);
                         }
                         // .monotonic is okay because the task isn't running on another thread.
-                        entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize]
+                            .store(installer::Step::Done as u32, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         continue;
                     }
@@ -2214,11 +2342,13 @@ pub fn install_isolated_packages(
                             *pkg_res.local_tarball(),
                             patch_info.contents_hash(),
                         ),
-                        ResolutionTag::RemoteTarball => package_manager::cached_tarball_folder_name(
-                            manager,
-                            *pkg_res.remote_tarball(),
-                            patch_info.contents_hash(),
-                        ),
+                        ResolutionTag::RemoteTarball => {
+                            package_manager::cached_tarball_folder_name(
+                                manager,
+                                *pkg_res.remote_tarball(),
+                                patch_info.contents_hash(),
+                            )
+                        }
 
                         _ => unreachable!(),
                     };
@@ -2238,15 +2368,24 @@ pub fn install_isolated_packages(
                                         // instead of `save()` so the path stays unborrowed.
                                         let cache_dir_path_save = pkg_cache_dir_subpath.len();
                                         pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
+                                        let exists = sys::exists_at(
+                                            cache_dir,
+                                            pkg_cache_dir_subpath.slice_z(),
+                                        );
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
                                         exists
                                     }
-                                    _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z())
-                                        .unwrap_or(false),
+                                    _ => sys::directory_exists_at(
+                                        cache_dir,
+                                        pkg_cache_dir_subpath.slice_z(),
+                                    )
+                                    .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                                    manager.set_preinstall_state(
+                                        pkg_id,
+                                        install::PreinstallState::Done,
+                                    );
                                 }
                                 break 'missing_from_cache !exists;
                             }
@@ -2263,8 +2402,12 @@ pub fn install_isolated_packages(
                             if patch_log.has_errors() {
                                 // monotonic is okay because we haven't started the task yet (it isn't running
                                 // on another thread)
-                                entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
-                                installer.on_task_fail(entry_id, installer::TaskError::Patching(patch_log));
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer.on_task_fail(
+                                    entry_id,
+                                    installer::TaskError::Patching(patch_log),
+                                );
                                 continue;
                             }
                         }
@@ -2288,7 +2431,9 @@ pub fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => return Err(AllocError),
+                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                    return Err(AllocError);
+                                }
                                 Err(err) => {
                                     // error.InvalidURL
                                     Output::err(
@@ -2305,8 +2450,10 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2335,7 +2482,9 @@ pub fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => bun_core::out_of_memory(),
+                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                    bun_core::out_of_memory()
+                                }
                                 Err(err) => {
                                     Output::err(
                                         err,
@@ -2351,8 +2500,10 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2375,7 +2526,9 @@ pub fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => bun_core::out_of_memory(),
+                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                    bun_core::out_of_memory()
+                                }
                                 Err(err) => {
                                     Output::err(
                                         err,
@@ -2391,8 +2544,10 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2405,7 +2560,8 @@ pub fn install_isolated_packages(
                     // this is `uninitialized` or `single_file_module`.
                     debug_assert!(false);
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize]
+                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2414,7 +2570,10 @@ pub fn install_isolated_packages(
 
         if manager.pending_task_count() > 0 {
             let mgr: *mut PackageManager = manager;
-            let mut wait = Wait { installer: &mut installer, err: None };
+            let mut wait = Wait {
+                installer: &mut installer,
+                err: None,
+            };
             // SAFETY: `mgr` derived from the live exclusive `manager` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Wait::is_done`.
@@ -2437,7 +2596,9 @@ pub fn install_isolated_packages(
 
         if Environment::CI_ASSERT {
             let mut done = true;
-            'next_entry: for (_entry_id, entry_step) in store.entries.items_step().iter().enumerate() {
+            'next_entry: for (_entry_id, entry_step) in
+                store.entries.items_step().iter().enumerate()
+            {
                 let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
                 // .monotonic is okay because `Wait.isDone` should have already synchronized with
                 // the completed task threads, via popping from the `UnboundedQueue` in `runTasks`,
@@ -2462,7 +2623,8 @@ pub fn install_isolated_packages(
                     let dep_step = entry_steps[dep.entry_id.get() as usize].load(Ordering::Relaxed);
                     if dep_step != installer::Step::Done as u32 {
                         log!(", parents:\n - ");
-                        let parent_ids = store::entry::debug_gather_all_parents(entry_id, installer.store);
+                        let parent_ids =
+                            store::entry::debug_gather_all_parents(entry_id, installer.store);
                         for &parent_id in &parent_ids {
                             if parent_id == store::entry::Id::ROOT {
                                 log!("root ");

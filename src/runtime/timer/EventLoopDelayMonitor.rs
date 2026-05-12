@@ -52,7 +52,10 @@ impl EventLoopDelayMonitor {
         let next = now.add_ms(i64::from(resolution_ms));
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
         // (same {sec,nsec} layout) until bun_event_loop switches to bun_core::Timespec.
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
         // `fake_timers`, disjoint from `event_loop_delay` which `self` may alias.
@@ -83,11 +86,14 @@ impl EventLoopDelayMonitor {
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
-            let expected_ns = u64::try_from(self.resolution_ms).expect("int cast").saturating_mul(1_000_000);
+            let expected_ns = u64::try_from(self.resolution_ms)
+                .expect("int cast")
+                .saturating_mul(1_000_000);
             let actual_ns = now_ns - self.last_fire_ns;
 
             if actual_ns > expected_ns {
-                let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
+                let delay_ns =
+                    i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
                 JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
             }
         }
@@ -96,7 +102,10 @@ impl EventLoopDelayMonitor {
 
         // Reschedule
         let next = now.add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*timer_all()).insert(elt) };
@@ -122,7 +131,12 @@ pub extern "C" fn Timer_enableEventLoopDelayMonitoring(
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`; single
     // JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { (*state).timer.event_loop_delay.enable(vm, histogram, resolution_ms) };
+    unsafe {
+        (*state)
+            .timer
+            .event_loop_delay
+            .enable(vm, histogram, resolution_ms)
+    };
 }
 
 #[unsafe(no_mangle)]

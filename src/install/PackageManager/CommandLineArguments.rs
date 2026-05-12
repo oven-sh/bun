@@ -10,13 +10,13 @@
 //! - bun link
 //! - bun audit
 
-use bun_clap as clap;
-use bun_core::{Global, Output};
-use bun_core::strings;
-use bun_paths::{self as Path, PathBuffer};
-use bun_install::npm as Npm;
 use crate::package_install;
 use crate::package_manager_real::Subcommand;
+use bun_clap as clap;
+use bun_core::strings;
+use bun_core::{Global, Output};
+use bun_install::npm as Npm;
+use bun_paths::{self as Path, PathBuffer};
 // TODO(b0): PackageManagerCommand arrives from move-in
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
@@ -62,154 +62,294 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
     clap::param!("-p, --production                      Don't install devDependencies"),
     clap::param!("-P, --prod"),
-    clap::param!("--no-save                             Don't update package.json or save a lockfile"),
+    clap::param!(
+        "--no-save                             Don't update package.json or save a lockfile"
+    ),
     clap::param!("--save                                Save to package.json (true by default)"),
-    clap::param!("--ca <STR>...                         Provide a Certificate Authority signing certificate"),
-    clap::param!("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate"),
+    clap::param!(
+        "--ca <STR>...                         Provide a Certificate Authority signing certificate"
+    ),
+    clap::param!(
+        "--cafile <STR>                        The same as `--ca`, but is a file path to the certificate"
+    ),
     clap::param!("--dry-run                             Perform a dry run without making changes"),
     clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
-    clap::param!("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"),
-    clap::param!("--cache-dir <PATH>                    Store & load cached data from a specific directory path"),
+    clap::param!(
+        "-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"
+    ),
+    clap::param!(
+        "--cache-dir <PATH>                    Store & load cached data from a specific directory path"
+    ),
     clap::param!("--no-cache                            Ignore manifest cache entirely"),
     clap::param!("--silent                              Don't log anything"),
     clap::param!("--quiet                               Only show tarball name when packing"),
     clap::param!("--verbose                             Excessively verbose logging"),
     clap::param!("--no-progress                         Disable the progress bar"),
     clap::param!("--no-summary                          Don't print a summary"),
-    clap::param!("--no-verify                           Skip verifying integrity of newly downloaded packages"),
-    clap::param!("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"),
-    clap::param!("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"),
+    clap::param!(
+        "--no-verify                           Skip verifying integrity of newly downloaded packages"
+    ),
+    clap::param!(
+        "--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"
+    ),
+    clap::param!(
+        "--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"
+    ),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
     BACKEND_PARAM,
-    clap::param!("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"),
-    clap::param!("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"),
-    clap::param!("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"),
+    clap::param!(
+        "--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"
+    ),
+    clap::param!(
+        "--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"
+    ),
+    clap::param!(
+        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"
+    ),
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
-    clap::param!("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"),
-    clap::param!("--lockfile-only                       Generate a lockfile without installing dependencies"),
-    clap::param!("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")"),
-    clap::param!("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"),
-    clap::param!("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"),
-    clap::param!("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"),
+    clap::param!(
+        "--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"
+    ),
+    clap::param!(
+        "--lockfile-only                       Generate a lockfile without installing dependencies"
+    ),
+    clap::param!(
+        "--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")"
+    ),
+    clap::param!(
+        "--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"
+    ),
+    clap::param!(
+        "--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"
+    ),
+    clap::param!(
+        "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
+    ),
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-pub static INSTALL_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
-    clap::param!("-D, --development"),
-    clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
-    clap::param!("--peer                        Add dependency to \"peerDependencies\""),
-    clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
-    clap::param!("--filter <STR>...                 Install packages for the matching workspaces"),
-    clap::param!("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)"),
-    clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
-    clap::param!("<POS> ...                         "),
-]];
+pub static INSTALL_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
+        clap::param!("-D, --development"),
+        clap::param!(
+            "--optional                        Add dependency to \"optionalDependencies\""
+        ),
+        clap::param!("--peer                        Add dependency to \"peerDependencies\""),
+        clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
+        clap::param!(
+            "--filter <STR>...                 Install packages for the matching workspaces"
+        ),
+        clap::param!(
+            "-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)"
+        ),
+        clap::param!(
+            "--only-missing                  Only add dependencies to package.json if they are not already present"
+        ),
+        clap::param!("<POS> ...                         "),
+    ]
+];
 
-pub static UPDATE_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("--latest                              Update packages to their latest versions"),
-    clap::param!("-i, --interactive                     Show an interactive list of outdated packages to select for update"),
-    clap::param!("--filter <STR>...                     Update packages for the matching workspaces"),
-    clap::param!("-r, --recursive                       Update packages in all workspaces"),
-    clap::param!("<POS> ...                             \"name\" of packages to update"),
-]];
+pub static UPDATE_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!(
+            "--latest                              Update packages to their latest versions"
+        ),
+        clap::param!(
+            "-i, --interactive                     Show an interactive list of outdated packages to select for update"
+        ),
+        clap::param!(
+            "--filter <STR>...                     Update packages for the matching workspaces"
+        ),
+        clap::param!("-r, --recursive                       Update packages in all workspaces"),
+        clap::param!("<POS> ...                             \"name\" of packages to update"),
+    ]
+];
 
-pub static PM_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("-a, --all"),
-    clap::param!("--json                              Output in JSON format"),
-    // clap::param!("--filter <STR>...                      Pack each matching workspace"),
-    clap::param!("--destination <STR>                    The directory the tarball will be saved in"),
-    clap::param!("--filename <STR>                       The filename of the tarball"),
-    clap::param!("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."),
-    clap::param!("--git-tag-version <BOOL>               Create a git commit and tag"),
-    clap::param!("--no-git-tag-version"),
-    clap::param!("--allow-same-version                   Allow bumping to the same version"),
-    clap::param!("-m, --message <STR>                    Use the given message for the commit"),
-    clap::param!("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments"),
-    clap::param!("--top                                Show only the first level of dependencies"),
-    clap::param!("--depth <NUM>                          Maximum depth of the dependency tree to display"),
-    clap::param!("<POS> ...                         "),
-]];
+pub static PM_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("-a, --all"),
+        clap::param!("--json                              Output in JSON format"),
+        // clap::param!("--filter <STR>...                      Pack each matching workspace"),
+        clap::param!(
+            "--destination <STR>                    The directory the tarball will be saved in"
+        ),
+        clap::param!("--filename <STR>                       The filename of the tarball"),
+        clap::param!(
+            "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
+        ),
+        clap::param!("--git-tag-version <BOOL>               Create a git commit and tag"),
+        clap::param!("--no-git-tag-version"),
+        clap::param!("--allow-same-version                   Allow bumping to the same version"),
+        clap::param!("-m, --message <STR>                    Use the given message for the commit"),
+        clap::param!(
+            "--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments"
+        ),
+        clap::param!(
+            "--top                                Show only the first level of dependencies"
+        ),
+        clap::param!(
+            "--depth <NUM>                          Maximum depth of the dependency tree to display"
+        ),
+        clap::param!("<POS> ...                         "),
+    ]
+];
 
-pub static ADD_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
-    clap::param!("-D, --development"),
-    clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
-    clap::param!("--peer                        Add dependency to \"peerDependencies\""),
-    clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
-    clap::param!("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)"),
-    clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
-    clap::param!("<POS> ...                         \"name\" or \"name@version\" of package(s) to install"),
-]];
+pub static ADD_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
+        clap::param!("-D, --development"),
+        clap::param!(
+            "--optional                        Add dependency to \"optionalDependencies\""
+        ),
+        clap::param!("--peer                        Add dependency to \"peerDependencies\""),
+        clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
+        clap::param!(
+            "-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)"
+        ),
+        clap::param!(
+            "--only-missing                  Only add dependencies to package.json if they are not already present"
+        ),
+        clap::param!(
+            "<POS> ...                         \"name\" or \"name@version\" of package(s) to install"
+        ),
+    ]
+];
 
-pub static REMOVE_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                         \"name\" of package(s) to remove from package.json"),
-]];
+pub static REMOVE_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[clap::param!(
+        "<POS> ...                         \"name\" of package(s) to remove from package.json"
+    ),]
+];
 
-pub static LINK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                         \"name\" install package as a link"),
-]];
+pub static LINK_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[clap::param!(
+        "<POS> ...                         \"name\" install package as a link"
+    ),]
+];
 
-pub static UNLINK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                         \"name\" uninstall package as a link"),
-]];
+pub static UNLINK_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[clap::param!(
+        "<POS> ...                         \"name\" uninstall package as a link"
+    ),]
+];
 
-static PATCH_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                         \"name\" of the package to patch"),
-    clap::param!("--commit                         Install a package containing modifications in `dir`"),
-    clap::param!("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)"),
-]];
+static PATCH_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("<POS> ...                         \"name\" of the package to patch"),
+        clap::param!(
+            "--commit                         Install a package containing modifications in `dir`"
+        ),
+        clap::param!(
+            "--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)"
+        ),
+    ]
+];
 
-static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                         \"dir\" containing changes to a package"),
-    clap::param!("--patches-dir <dir>                    The directory to put the patch file"),
-]];
+static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("<POS> ...                         \"dir\" containing changes to a package"),
+        clap::param!("--patches-dir <dir>                    The directory to put the patch file"),
+    ]
+];
 
-static OUTDATED_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    // clap::param!("--json                                 Output outdated information in JSON format"),
-    clap::param!("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace"),
-    clap::param!("-r, --recursive                        Check outdated packages in all workspaces"),
-    clap::param!("<POS> ...                              Package patterns to filter by"),
-]];
+static OUTDATED_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        // clap::param!("--json                                 Output outdated information in JSON format"),
+        clap::param!(
+            "-F, --filter <STR>...                  Display outdated dependencies for each matching workspace"
+        ),
+        clap::param!(
+            "-r, --recursive                        Check outdated packages in all workspaces"
+        ),
+        clap::param!("<POS> ...                              Package patterns to filter by"),
+    ]
+];
 
 const AUDIT_PARAMS: &[ParamType] = &[
-    clap::param!("<POS> ...                              Check installed packages for vulnerabilities"),
+    clap::param!(
+        "<POS> ...                              Check installed packages for vulnerabilities"
+    ),
     clap::param!("--json                                 Output in JSON format"),
-    clap::param!("--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)"),
+    clap::param!(
+        "--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)"
+    ),
     clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
 ];
 
 static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
 
-static INFO_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                              Package name or path to package.json"),
-    clap::param!("--json                                 Output in JSON format"),
-]];
+static INFO_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("<POS> ...                              Package name or path to package.json"),
+        clap::param!("--json                                 Output in JSON format"),
+    ]
+];
 
-static PACK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    // clap::param!("--filter <STR>...                      Pack each matching workspace"),
-    clap::param!("--destination <STR>                    The directory the tarball will be saved in"),
-    clap::param!("--filename <STR>                       The filename of the tarball"),
-    clap::param!("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."),
-    clap::param!("<POS> ...                              "),
-]];
+static PACK_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        // clap::param!("--filter <STR>...                      Pack each matching workspace"),
+        clap::param!(
+            "--destination <STR>                    The directory the tarball will be saved in"
+        ),
+        clap::param!("--filename <STR>                       The filename of the tarball"),
+        clap::param!(
+            "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
+        ),
+        clap::param!("<POS> ...                              "),
+    ]
+];
 
-static PUBLISH_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                              Package tarball to publish"),
-    clap::param!("--access <STR>                         Set access level for scoped packages"),
-    clap::param!("--tag <STR>                            Tag the release. Default is \"latest\""),
-    clap::param!("--otp <STR>                            Provide a one-time password for authentication"),
-    clap::param!("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')"),
-    clap::param!("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."),
-    clap::param!("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"),
-]];
+static PUBLISH_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!("<POS> ...                              Package tarball to publish"),
+        clap::param!("--access <STR>                         Set access level for scoped packages"),
+        clap::param!(
+            "--tag <STR>                            Tag the release. Default is \"latest\""
+        ),
+        clap::param!(
+            "--otp <STR>                            Provide a one-time password for authentication"
+        ),
+        clap::param!(
+            "--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')"
+        ),
+        clap::param!(
+            "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
+        ),
+        clap::param!(
+            "--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"
+        ),
+    ]
+];
 
-static WHY_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
-    clap::param!("<POS> ...                              Package name to explain why it's installed"),
-    clap::param!("--top                                  Show only the top dependency tree instead of nested ones"),
-    clap::param!("--depth <NUM>                          Maximum depth of the dependency tree to display"),
-]];
+static WHY_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!(
+            "<POS> ...                              Package name to explain why it's installed"
+        ),
+        clap::param!(
+            "--top                                  Show only the top dependency tree instead of nested ones"
+        ),
+        clap::param!(
+            "--depth <NUM>                          Maximum depth of the dependency tree to display"
+        ),
+    ]
+];
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
@@ -422,7 +562,9 @@ pub enum PatchOpts {
     #[default]
     Nothing,
     Patch,
-    Commit { patches_dir: &'static [u8] },
+    Commit {
+        patches_dir: &'static [u8],
+    },
 }
 
 #[derive(Default, Copy, Clone)]
@@ -867,22 +1009,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         // are parsed exactly once per process, so this is the semantic equivalent
         // of the Zig arena that was never `deinit`'d.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
-        let args: &'static clap::Args<clap::Help> =
-            match clap::parse::<clap::Help>(params, clap::ParseOptions {
+        let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
+            params,
+            clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
-            }) {
-                Ok(a) => {
-                    // `set` only fails on second call; CLI parse runs once.
-                    let _ = PARSED_ARGS.set(a);
-                    PARSED_ARGS.get().unwrap()
-                }
-                Err(err) => {
-                    Self::print_help(subcommand);
-                    let _ = diag.report(Output::error_writer(), err);
-                    Global::exit(1);
-                }
-            };
+            },
+        ) {
+            Ok(a) => {
+                // `set` only fails on second call; CLI parse runs once.
+                let _ = PARSED_ARGS.set(a);
+                PARSED_ARGS.get().unwrap()
+            }
+            Err(err) => {
+                Self::print_help(subcommand);
+                let _ = diag.report(Output::error_writer(), err);
+                Global::exit(1);
+            }
+        };
 
         if args.flag(b"--help") {
             Self::print_help(subcommand);
@@ -914,7 +1058,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {
                 Some(l) => l,
                 None => {
-                    Output::err_generic("Expected --linker to be one of 'isolated' or 'hoisted'", ());
+                    Output::err_generic(
+                        "Expected --linker to be one of 'isolated' or 'hoisted'",
+                        (),
+                    );
                     Global::exit(1);
                 }
             });
@@ -930,16 +1077,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
             // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
-            cli.network_concurrency = Some(match strings::parse_int::<u16>(network_concurrency, 10) {
-                Ok(n) => n,
-                Err(_) => {
-                    Output::err_generic(
-                        "Expected --network-concurrency to be a number between 0 and 65535: {}",
-                        (bstr::BStr::new(network_concurrency),),
-                    );
-                    Global::crash();
-                }
-            });
+            cli.network_concurrency =
+                Some(match strings::parse_int::<u16>(network_concurrency, 10) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        Output::err_generic(
+                            "Expected --network-concurrency to be a number between 0 and 65535: {}",
+                            (bstr::BStr::new(network_concurrency),),
+                        );
+                        Global::crash();
+                    }
+                });
         }
 
         if args.flag(b"--save-text-lockfile") {
@@ -1007,7 +1155,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             // cli.json_output = args.flag(b"--json");
         }
 
-        if matches!(subcommand, Subcommand::Pack | Subcommand::Pm | Subcommand::Publish) {
+        if matches!(
+            subcommand,
+            Subcommand::Pack | Subcommand::Pm | Subcommand::Publish
+        ) {
             if subcommand != Subcommand::Publish {
                 if let Some(dest) = args.option(b"--destination") {
                     cli.pack_destination = dest;
@@ -1225,7 +1376,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(registry) = args.option(b"--registry") {
-            if !strings::has_prefix(registry, b"https://") && !strings::has_prefix(registry, b"http://") {
+            if !strings::has_prefix(registry, b"https://")
+                && !strings::has_prefix(registry, b"http://")
+            {
                 Output::err_generic(
                     "Registry URL must start with 'https://' or 'http://': {}\n",
                     (bun_core::fmt::quote(registry),),
@@ -1246,17 +1399,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if cli.production && cli.trusted {
-            Output::err_generic("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", ());
+            Output::err_generic(
+                "The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n",
+                (),
+            );
             Global::crash();
         }
 
         if cli.frozen_lockfile && cli.trusted {
-            Output::err_generic("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", ());
+            Output::err_generic(
+                "The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n",
+                (),
+            );
             Global::crash();
         }
 
         if cli.analyze && cli.positionals.is_empty() {
-            Output::err_generic("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", ());
+            Output::err_generic(
+                "Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n",
+                (),
+            );
             Global::crash();
         }
 

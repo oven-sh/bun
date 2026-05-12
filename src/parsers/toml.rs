@@ -1,10 +1,10 @@
-use core::cell::RefCell;
 use bun_collections::VecExt;
+use core::cell::RefCell;
 
 use bun_alloc::Arena as Bump;
 
-use bun_core::{self, StackCheck};
 use bun_ast::{self, self as js_ast, E, Expr};
+use bun_core::{self, StackCheck};
 
 #[path = "toml/lexer.rs"]
 pub mod lexer;
@@ -75,11 +75,14 @@ impl ObjectRopeExt for E::Object {
             value_ = obj;
         }
 
-        VecExt::append(&mut self.properties, js_ast::G::Property {
-            key: Some(rope.head),
-            value: Some(value_),
-            ..Default::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            js_ast::G::Property {
+                key: Some(rope.head),
+                value: Some(value_),
+                ..Default::default()
+            },
+        );
         Ok(())
     }
 
@@ -122,20 +125,26 @@ impl ObjectRopeExt for E::Object {
                 .e_object()
                 .unwrap()
                 .get_or_put_array(unsafe { &*rope.next }, bump)?;
-            VecExt::append(&mut self.properties, js_ast::G::Property {
-                key: Some(rope.head),
-                value: Some(obj),
-                ..Default::default()
-            });
+            VecExt::append(
+                &mut self.properties,
+                js_ast::G::Property {
+                    key: Some(rope.head),
+                    value: Some(obj),
+                    ..Default::default()
+                },
+            );
             return Ok(out);
         }
 
         let out = Expr::init(E::Array::default(), rope.head.loc);
-        VecExt::append(&mut self.properties, js_ast::G::Property {
-            key: Some(rope.head),
-            value: Some(out),
-            ..Default::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            js_ast::G::Property {
+                key: Some(rope.head),
+                value: Some(out),
+                ..Default::default()
+            },
+        );
         Ok(out)
     }
 }
@@ -177,7 +186,11 @@ mod hash_map_pool {
                 // SAFETY: `first` was produced by heap::alloc below and is non-null.
                 let node = *first;
                 unsafe {
-                    *list = if (*node).next.is_null() { None } else { Some((*node).next) };
+                    *list = if (*node).next.is_null() {
+                        None
+                    } else {
+                        Some((*node).next)
+                    };
                     (*node).data.clear();
                 }
                 Some(node)
@@ -346,7 +359,9 @@ impl<'a> TOML<'a> {
         while self.lexer.token == T::t_dot {
             self.lexer.next()?;
 
-            let Some(seg) = self.parse_key_segment()? else { break };
+            let Some(seg) = self.parse_key_segment()? else {
+                break;
+            };
             // SAFETY: `rope` points into `bump` and is live for this call; we are
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
             // PORT NOTE: reshaped for borrowck
@@ -361,7 +376,11 @@ impl<'a> TOML<'a> {
 
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
         let root = self.e(E::Object::default(), self.lexer.loc());
-        let mut head: *mut E::Object = root.data.e_object().expect("infallible: variant checked").as_ptr();
+        let mut head: *mut E::Object = root
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .as_ptr();
         // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
         // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
 
@@ -398,7 +417,11 @@ impl<'a> TOML<'a> {
                         }
                         Err(e) => return Err(e.into()),
                     };
-                    head = parent_object.data.e_object().expect("infallible: variant checked").as_ptr();
+                    head = parent_object
+                        .data
+                        .e_object()
+                        .expect("infallible: variant checked")
+                        .as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile
                 }
                 // child table array
@@ -427,8 +450,16 @@ impl<'a> TOML<'a> {
                         Err(e) => return Err(e.into()),
                     };
                     let new_head = self.e(E::Object::default(), loc);
-                    array.data.e_array().expect("infallible: variant checked").push(self.bump, new_head)?;
-                    head = new_head.data.e_object().expect("infallible: variant checked").as_ptr();
+                    array
+                        .data
+                        .e_array()
+                        .expect("infallible: variant checked")
+                        .push(self.bump, new_head)?;
+                    head = new_head
+                        .data
+                        .e_object()
+                        .expect("infallible: variant checked")
+                        .as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile
                 }
                 _ => {
@@ -555,7 +586,11 @@ impl<'a> TOML<'a> {
                 // profile
                 let key_allocator = self.bump;
                 let expr = self.e(E::Object::default(), loc);
-                let obj: *mut E::Object = expr.data.e_object().expect("infallible: variant checked").as_ptr();
+                let obj: *mut E::Object = expr
+                    .data
+                    .e_object()
+                    .expect("infallible: variant checked")
+                    .as_ptr();
                 // TODO(port): `obj` aliases into `expr.data`; raw pointer mirrors Zig.
 
                 while self.lexer.token != T::t_close_brace {
@@ -596,7 +631,11 @@ impl<'a> TOML<'a> {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let array_ = self.e(E::Array::default(), loc);
-                let array: *mut E::Array = array_.data.e_array().expect("infallible: variant checked").as_ptr();
+                let array: *mut E::Array = array_
+                    .data
+                    .e_array()
+                    .expect("infallible: variant checked")
+                    .as_ptr();
                 // TODO(port): `array` aliases into `array_.data`; raw pointer mirrors Zig.
                 let bump = self.bump;
                 self.lexer.allow_double_bracket = false;

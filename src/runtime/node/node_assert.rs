@@ -1,7 +1,7 @@
+use bun_core::String as BunString;
+use bun_core::strings::EncodingNonAscii;
 use bun_jsc::js_object::PojoFields;
 use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
-use bun_core::strings::EncodingNonAscii;
-use bun_core::String as BunString;
 
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
@@ -119,7 +119,10 @@ where
     diff_list_to_js(global, diff)
 }
 
-fn diff_list_to_js<T>(global: &JSGlobalObject, diff_list: MyersDiff::DiffList<T>) -> JsResult<JSValue>
+fn diff_list_to_js<T>(
+    global: &JSGlobalObject,
+    diff_list: MyersDiff::DiffList<T>,
+) -> JsResult<JSValue>
 where
     T: FromAny + Copy,
 {

@@ -126,9 +126,7 @@ pub fn grapheme_break(cp1: u32, cp2: u32, state: &mut BreakState) -> bool {
 /// state x grapheme_break_1 x grapheme_break_2.
 /// 2^13 keys of 4-bit values = 8KB total.
 mod precompute {
-    use super::{
-        compute_grapheme_break_no_control, BreakState, GraphemeBreakNoControl,
-    };
+    use super::{BreakState, GraphemeBreakNoControl, compute_grapheme_break_no_control};
 
     /// Zig: packed struct(u13) { state: u3, gb1: u5, gb2: u5 } (LSB-first field order).
     #[repr(transparent)]

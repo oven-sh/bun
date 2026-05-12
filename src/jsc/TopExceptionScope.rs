@@ -39,7 +39,11 @@ impl SourceLocation {
     #[inline]
     pub fn from_caller() -> Self {
         let loc = core::panic::Location::caller();
-        Self { fn_name: c"<rust>".as_ptr(), file: intern_location_file(loc.file()), line: loc.line() }
+        Self {
+            fn_name: c"<rust>".as_ptr(),
+            file: intern_location_file(loc.file()),
+            line: loc.line(),
+        }
     }
 }
 
@@ -56,14 +60,16 @@ fn intern_location_file(file: &'static str) -> *const c_char {
         static CACHE: RefCell<HashMap<usize, *const c_char>> = RefCell::new(HashMap::new());
     }
     CACHE.with(|c| {
-        *c.borrow_mut().entry(file.as_ptr() as usize).or_insert_with(|| {
-            // `file!()` paths never contain interior NULs; fall back gracefully if one
-            // somehow does.
-            let cs = CString::new(file).unwrap_or_else(|_| CString::new("<rust>").unwrap());
-            // Bounded leak — same lifetime semantics as the `concat!(file!(), "\0")` literals
-            // the [`src!`] macro emits.
-            Box::leak(cs.into_boxed_c_str()).as_ptr()
-        })
+        *c.borrow_mut()
+            .entry(file.as_ptr() as usize)
+            .or_insert_with(|| {
+                // `file!()` paths never contain interior NULs; fall back gracefully if one
+                // somehow does.
+                let cs = CString::new(file).unwrap_or_else(|_| CString::new("<rust>").unwrap());
+                // Bounded leak — same lifetime semantics as the `concat!(file!(), "\0")` literals
+                // the [`src!`] macro emits.
+                Box::leak(cs.into_boxed_c_str()).as_ptr()
+            })
     })
 }
 #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -82,8 +88,12 @@ fn intern_location_file(_file: &'static str) -> *const c_char {
 macro_rules! src {
     () => {
         $crate::top_exception_scope::SourceLocation {
-            fn_name: ::core::concat!(::core::module_path!(), "\0").as_ptr().cast::<::core::ffi::c_char>(),
-            file: ::core::concat!(::core::file!(), "\0").as_ptr().cast::<::core::ffi::c_char>(),
+            fn_name: ::core::concat!(::core::module_path!(), "\0")
+                .as_ptr()
+                .cast::<::core::ffi::c_char>(),
+            file: ::core::concat!(::core::file!(), "\0")
+                .as_ptr()
+                .cast::<::core::ffi::c_char>(),
             line: ::core::line!(),
         }
     };
@@ -127,11 +137,15 @@ pub struct TopExceptionScopeGuard<'a>(&'a mut TopExceptionScope);
 impl<'a> core::ops::Deref for TopExceptionScopeGuard<'a> {
     type Target = TopExceptionScope;
     #[inline]
-    fn deref(&self) -> &TopExceptionScope { self.0 }
+    fn deref(&self) -> &TopExceptionScope {
+        self.0
+    }
 }
 impl<'a> core::ops::DerefMut for TopExceptionScopeGuard<'a> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut TopExceptionScope { self.0 }
+    fn deref_mut(&mut self) -> &mut TopExceptionScope {
+        self.0
+    }
 }
 impl Drop for TopExceptionScopeGuard<'_> {
     #[inline]
@@ -419,11 +433,15 @@ pub struct ExceptionValidationScopeGuard<'a>(&'a mut ExceptionValidationScope);
 impl<'a> core::ops::Deref for ExceptionValidationScopeGuard<'a> {
     type Target = ExceptionValidationScope;
     #[inline]
-    fn deref(&self) -> &ExceptionValidationScope { self.0 }
+    fn deref(&self) -> &ExceptionValidationScope {
+        self.0
+    }
 }
 impl<'a> core::ops::DerefMut for ExceptionValidationScopeGuard<'a> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut ExceptionValidationScope { self.0 }
+    fn deref_mut(&mut self) -> &mut ExceptionValidationScope {
+        self.0
+    }
 }
 impl Drop for ExceptionValidationScopeGuard<'_> {
     #[inline]
@@ -528,7 +546,8 @@ impl ExceptionValidationScope {
     /// this function prints a trace of where it was thrown.
     pub fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
         #[cfg(any(debug_assertions, bun_asan))]
-        self.scope.assert_exception_presence_matches(should_have_exception);
+        self.scope
+            .assert_exception_presence_matches(should_have_exception);
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = should_have_exception;
     }
@@ -556,7 +575,9 @@ impl ExceptionValidationScope {
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        unsafe { TopExceptionScope::destroy(&mut (*this).scope) };
+        unsafe {
+            TopExceptionScope::destroy(&mut (*this).scope)
+        };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;
     }
@@ -592,7 +613,11 @@ pub fn call_zero_is_throw_at(
     let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
     let v = f();
     scope.assert_exception_presence_matches(v == JSValue::ZERO);
-    if v == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(v) }
+    if v == JSValue::ZERO {
+        Err(JsError::Thrown)
+    } else {
+        Ok(v)
+    }
 }
 
 /// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.

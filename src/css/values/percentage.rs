@@ -1,10 +1,10 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
+use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::CSSNumber;
 use crate::values::protocol;
-use crate::targets::Browsers;
 use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
@@ -122,12 +122,7 @@ impl Percentage {
         }
     }
 
-    pub fn op_to<R, C>(
-        &self,
-        other: &Percentage,
-        ctx: C,
-        op_fn: impl Fn(C, f32, f32) -> R,
-    ) -> R {
+    pub fn op_to<R, C>(&self, other: &Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
@@ -413,12 +408,20 @@ where
         }
 
         match (a, b) {
-            (Self::Calc(a_calc), b) if matches!(*a_calc, Calc::Value(_)) && !matches!(b, Self::Calc(_)) => {
-                let Calc::Value(v) = *a_calc else { unreachable!() };
+            (Self::Calc(a_calc), b)
+                if matches!(*a_calc, Calc::Value(_)) && !matches!(b, Self::Calc(_)) =>
+            {
+                let Calc::Value(v) = *a_calc else {
+                    unreachable!()
+                };
                 v.add_impl(b)
             }
-            (a, Self::Calc(b_calc)) if matches!(*b_calc, Calc::Value(_)) && !matches!(a, Self::Calc(_)) => {
-                let Calc::Value(v) = *b_calc else { unreachable!() };
+            (a, Self::Calc(b_calc))
+                if matches!(*b_calc, Calc::Value(_)) && !matches!(a, Self::Calc(_)) =>
+            {
+                let Calc::Value(v) = *b_calc else {
+                    unreachable!()
+                };
                 a.add_impl(*v)
             }
             (a, b) => {
@@ -523,11 +526,9 @@ where
             (Self::Dimension(a), Self::Dimension(b)) => {
                 Some(Self::Dimension(a.try_op(b, ctx, &op_fn)?))
             }
-            (Self::Percentage(a), Self::Percentage(b)) => {
-                Some(Self::Percentage(Percentage {
-                    v: op_fn(ctx, a.v, b.v),
-                }))
-            }
+            (Self::Percentage(a), Self::Percentage(b)) => Some(Self::Percentage(Percentage {
+                v: op_fn(ctx, a.v, b.v),
+            })),
             _ => None,
         }
     }
@@ -580,9 +581,7 @@ impl NumberOrPercentage {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            NumberOrPercentage::Number(n) => {
-                crate::values::number::CSSNumberFns::to_css(n, dest)
-            }
+            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }

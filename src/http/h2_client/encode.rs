@@ -5,18 +5,22 @@
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
+use crate::HTTPClient;
 use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
-use crate::HTTPClient;
-use bun_picohttp as picohttp;
 use bun_core::strings;
+use bun_picohttp as picohttp;
 
 pub fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
 
     let mut settings = [0u8; 3 * wire::SettingsPayloadUnit::BYTE_SIZE];
-    encode_setting(&mut settings[0..6], wire::SettingsType::SETTINGS_ENABLE_PUSH, 0);
+    encode_setting(
+        &mut settings[0..6],
+        wire::SettingsType::SETTINGS_ENABLE_PUSH,
+        0,
+    );
     encode_setting(
         &mut settings[6..12],
         wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE,
@@ -129,7 +133,11 @@ pub fn write_request(
         session,
         &mut encoded,
         b":path",
-        if !request.path.is_empty() { request.path } else { b"/" },
+        if !request.path.is_empty() {
+            request.path
+        } else {
+            b"/"
+        },
         false,
     )?;
 
@@ -172,15 +180,25 @@ pub fn write_request(
 
     // request_body points into original_request_body.bytes (lives in client.state).
     let body = client.state.request_body;
-    let has_inline_body =
-        matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_)) && !body.is_empty();
-    let is_streaming = matches!(client.state.original_request_body, HTTPRequestBody::Stream(_));
+    let has_inline_body = matches!(
+        client.state.original_request_body,
+        HTTPRequestBody::Bytes(_)
+    ) && !body.is_empty();
+    let is_streaming = matches!(
+        client.state.original_request_body,
+        HTTPRequestBody::Stream(_)
+    );
 
     if has_expect_continue && (has_inline_body || is_streaming) {
         stream.awaiting_continue = true;
     }
 
-    write_header_block(session, stream.id, &encoded, !has_inline_body && !is_streaming);
+    write_header_block(
+        session,
+        stream.id,
+        &encoded,
+        !has_inline_body && !is_streaming,
+    );
     if encoded.capacity() > 64 * 1024 {
         encoded = Vec::new();
     }
@@ -245,7 +263,8 @@ pub fn write_data_windowed(
     let mut consumed: usize = 0;
     loop {
         let window: usize =
-            usize::try_from(stream.send_window.min(session.conn_send_window).max(0)).expect("int cast");
+            usize::try_from(stream.send_window.min(session.conn_send_window).max(0))
+                .expect("int cast");
         if !remaining.is_empty() && window == 0 {
             break;
         }

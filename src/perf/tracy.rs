@@ -280,7 +280,13 @@ fn alloc_named(ptr: *mut u8, len: usize, name: &'static core::ffi::CStr) {
     }
 
     if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_alloc_callstack_named(ptr.cast(), len, CALLSTACK_DEPTH, 0, name.as_ptr());
+        ___tracy_emit_memory_alloc_callstack_named(
+            ptr.cast(),
+            len,
+            CALLSTACK_DEPTH,
+            0,
+            name.as_ptr(),
+        );
     } else {
         ___tracy_emit_memory_alloc_named(ptr.cast(), len, 0, name.as_ptr());
     }
@@ -327,13 +333,16 @@ mod tracy_fns {
         srcloc: *const ___tracy_source_location_data,
         depth: c_int,
         active: c_int,
-    ) -> ___tracy_c_zone_context;
+    )
+        -> ___tracy_c_zone_context;
     pub(super) type emit_zone_text =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
     pub(super) type emit_zone_name =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
-    pub(super) type emit_zone_color = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, color: u32);
-    pub(super) type emit_zone_value = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
+    pub(super) type emit_zone_color =
+        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, color: u32);
+    pub(super) type emit_zone_value =
+        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
     pub(super) type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
     pub(super) type emit_memory_alloc =
         unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int);
@@ -355,7 +364,8 @@ mod tracy_fns {
         unsafe extern "C" fn(ptr: *const c_void, secure: c_int, name: *const c_char);
     pub(super) type emit_memory_free_callstack_named =
         unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int, name: *const c_char);
-    pub(super) type emit_message = unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
+    pub(super) type emit_message =
+        unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
     pub(super) type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
     pub(super) type emit_message_c =
         unsafe extern "C" fn(txt: *const u8, size: usize, color: u32, callstack: c_int);
@@ -424,13 +434,15 @@ fn ___tracy_set_thread_name(name: *const c_char) {
 
 #[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark_start(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark_start>(c"___tracy_emit_frame_mark_start").expect("tracy symbol");
+    let f = dlsym::<tracy_fns::emit_frame_mark_start>(c"___tracy_emit_frame_mark_start")
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark_end(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark_end>(c"___tracy_emit_frame_mark_end").expect("tracy symbol");
+    let f = dlsym::<tracy_fns::emit_frame_mark_end>(c"___tracy_emit_frame_mark_end")
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
@@ -486,7 +498,8 @@ fn ___tracy_emit_zone_end(ctx: ___tracy_c_zone_context) {
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_alloc(ptr: *const c_void, size: usize, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").expect("tracy symbol");
+    let f =
+        dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, secure) }
 }
@@ -497,14 +510,16 @@ fn ___tracy_emit_memory_alloc_callstack(
     depth: c_int,
     secure: c_int,
 ) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc_callstack>(c"___tracy_emit_memory_alloc_callstack")
-        .expect("tracy symbol");
+    let f =
+        dlsym::<tracy_fns::emit_memory_alloc_callstack>(c"___tracy_emit_memory_alloc_callstack")
+            .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, depth, secure) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_free(ptr: *const c_void, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").expect("tracy symbol");
+    let f =
+        dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, secure) }
 }
@@ -522,8 +537,8 @@ fn ___tracy_emit_memory_alloc_named(
     secure: c_int,
     name: *const c_char,
 ) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named").expect("tracy symbol");
+    let f = dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named")
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, secure, name) }
 }
@@ -544,7 +559,8 @@ fn ___tracy_emit_memory_alloc_callstack_named(
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_free_named(ptr: *const c_void, secure: c_int, name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named").expect("tracy symbol");
+    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named")
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, secure, name) }
 }
@@ -677,11 +693,7 @@ static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 fn handle_getter() -> Option<*mut c_void> {
     let h = HANDLE.load(Ordering::Acquire);
-    if h.is_null() {
-        None
-    } else {
-        Some(h)
-    }
+    if h.is_null() { None } else { Some(h) }
 }
 
 /// `&'static CStr` → `&'static ZStr` (both are NUL-terminated, len excludes NUL).
@@ -699,7 +711,10 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 
     #[cfg(not(target_family = "wasm"))]
     {
-        debug_assert_eq!(core::mem::size_of::<T>(), core::mem::size_of::<*mut c_void>());
+        debug_assert_eq!(
+            core::mem::size_of::<T>(),
+            core::mem::size_of::<*mut c_void>()
+        );
 
         let sym_z = cstr_as_zstr(symbol);
 

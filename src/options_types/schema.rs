@@ -30,10 +30,7 @@ impl<'a> Writer<'a> {
     #[inline]
     pub fn write_int<I: Copy>(&mut self, int: I) {
         let bytes = unsafe {
-            core::slice::from_raw_parts(
-                (&raw const int).cast::<u8>(),
-                core::mem::size_of::<I>(),
-            )
+            core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
         };
         self.writable.extend_from_slice(bytes);
     }
@@ -403,12 +400,27 @@ pub mod api {
         #[inline]
         pub const fn from_raw(n: u8) -> Loader {
             match n {
-                1 => Loader::jsx, 2 => Loader::js, 3 => Loader::ts, 4 => Loader::tsx,
-                5 => Loader::css, 6 => Loader::file, 7 => Loader::json, 8 => Loader::jsonc,
-                9 => Loader::toml, 10 => Loader::wasm, 11 => Loader::napi, 12 => Loader::base64,
-                13 => Loader::dataurl, 14 => Loader::text, 15 => Loader::bunsh,
-                16 => Loader::sqlite, 17 => Loader::sqlite_embedded, 18 => Loader::html,
-                19 => Loader::yaml, 20 => Loader::json5, 21 => Loader::md,
+                1 => Loader::jsx,
+                2 => Loader::js,
+                3 => Loader::ts,
+                4 => Loader::tsx,
+                5 => Loader::css,
+                6 => Loader::file,
+                7 => Loader::json,
+                8 => Loader::jsonc,
+                9 => Loader::toml,
+                10 => Loader::wasm,
+                11 => Loader::napi,
+                12 => Loader::base64,
+                13 => Loader::dataurl,
+                14 => Loader::text,
+                15 => Loader::bunsh,
+                16 => Loader::sqlite,
+                17 => Loader::sqlite_embedded,
+                18 => Loader::html,
+                19 => Loader::yaml,
+                20 => Loader::json5,
+                21 => Loader::md,
                 _ => Loader::_none,
             }
         }
@@ -476,7 +488,10 @@ pub mod api {
     }
 
     impl StringMap {
-        pub const EMPTY: StringMap = StringMap { keys: Vec::new(), values: Vec::new() };
+        pub const EMPTY: StringMap = StringMap {
+            keys: Vec::new(),
+            values: Vec::new(),
+        };
     }
 
     /// schema.zig:1151

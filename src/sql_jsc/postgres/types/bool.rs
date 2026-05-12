@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_sql::postgres::types::int_types::short;
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::postgres::types::int_types::short;
 
 pub const TO: short = 16;
 pub const FROM: [short; 1] = [16];

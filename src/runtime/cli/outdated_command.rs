@@ -3,18 +3,18 @@ use core::fmt::Write as _;
 use bstr::BStr;
 
 use bun_core::fmt::{Table, TableSymbols};
+use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
+use bun_install::lockfile::package::{PackageColumns as _};
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    self, populate_manifest_cache, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter,
+    self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
-use bun_install::{resolution, CommandLineArguments, DependencyID, PackageID, PackageManager};
+use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
-use bun_core::strings;
 use bun_wyhash::hash;
 
 use crate::Command;
@@ -77,10 +77,7 @@ impl OutdatedCommand {
                         if err == bun_core::err!("MissingPackageJSON") {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
-                        Output::err_generic(
-                            "failed to initialize bun install: {s}",
-                            (err.name(),),
-                        );
+                        Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
                     }
                     Global::crash();
                 }
@@ -108,8 +105,7 @@ impl OutdatedCommand {
 
         // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
         // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile =
-            unsafe { &mut *(*pm_ptr).lockfile };
+        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
@@ -148,7 +144,8 @@ impl OutdatedCommand {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.
-                        let _ = unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
+                        let _ =
+                            unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
                     }
                 }
                 Global::crash();
@@ -174,17 +171,12 @@ impl OutdatedCommand {
     ) -> Result<(), bun_core::Error> {
         if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids =
-                Self::find_matching_workspaces(original_cwd, manager, filters);
+            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
             populate_manifest_cache::populate_manifest_cache(
                 manager,
                 populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
             )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
-                manager,
-                &workspace_pkg_ids,
-                true,
-            )
+            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
         } else if manager.options.do_.recursive() {
             let all_workspaces = Self::get_all_workspaces(manager);
             populate_manifest_cache::populate_manifest_cache(
@@ -251,11 +243,7 @@ impl OutdatedCommand {
         let converted_filters: Vec<WorkspaceFilter> = filters
             .iter()
             .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(
-                    filter,
-                    original_cwd,
-                    &mut path_buf.0,
-                ))
+                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
             })
             .collect();
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
@@ -287,12 +275,11 @@ impl OutdatedCommand {
                                 _ => unreachable!(),
                             };
 
-                            let abs_res_path =
-                                path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
-                                    top_level_dir,
-                                    &mut path_buf.0,
-                                    &[res_path],
-                                );
+                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
+                                path::platform::Posix,
+                            >(
+                                top_level_dir, &mut path_buf.0, &[res_path]
+                            );
 
                             if !glob::r#match(
                                 pattern,
@@ -359,7 +346,10 @@ impl OutdatedCommand {
                     catalog_name_hash,
                     behavior: dep.behavior,
                 };
-                catalog_map.entry(key).or_default().push(item.workspace_pkg_id);
+                catalog_map
+                    .entry(key)
+                    .or_default()
+                    .push(item.workspace_pkg_id);
             } else {
                 result.push(GroupedOutdatedInfo {
                     package_id: item.package_id,
@@ -503,8 +493,7 @@ impl OutdatedCommand {
                 {
                     continue;
                 }
-                let resolution =
-                    manager.lockfile.packages.items_resolution()[package_id as usize];
+                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
                 if resolution.tag != resolution::Tag::Npm {
                     continue;
                 }
@@ -554,8 +543,7 @@ impl OutdatedCommand {
                     continue;
                 };
 
-                let latest =
-                    manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
+                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
 
                 let update_version = if resolved_version.tag == dependency::Tag::Npm {
                     manifest.find_best_version_with_filter(
@@ -573,11 +561,8 @@ impl OutdatedCommand {
                 };
 
                 let current_version = resolution.npm().version;
-                if current_version.order(
-                    actual_latest.version,
-                    string_buf,
-                    &manifest.string_buf,
-                ) != core::cmp::Ordering::Less
+                if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
+                    != core::cmp::Ordering::Less
                 {
                     continue;
                 }
@@ -659,7 +644,8 @@ impl OutdatedCommand {
         }
 
         // Group catalog dependencies
-        let grouped_ids = Self::group_catalog_dependencies(manager, &outdated_ids, workspace_pkg_ids);
+        let grouped_ids =
+            Self::group_catalog_dependencies(manager, &outdated_ids, workspace_pkg_ids);
 
         // Recalculate max workspace length after grouping
         let mut new_max_workspace: usize = max_workspace;
@@ -685,8 +671,7 @@ impl OutdatedCommand {
         const COLUMN_LEFT_PAD: usize = 1;
         const COLUMN_RIGHT_PAD: usize = 1;
 
-        let names_5: [&[u8]; 5] =
-            [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
+        let names_5: [&[u8]; 5] = [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
         let names_4: [&[u8]; 4] = [b"Package", b"Current", b"Update", b"Latest"];
         let lengths_5 = [
             package_column_inside_length,
@@ -739,8 +724,7 @@ impl OutdatedCommand {
 
                 let package_name =
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-                let resolution =
-                    manager.lockfile.packages.items_resolution()[package_id as usize];
+                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
@@ -755,8 +739,7 @@ impl OutdatedCommand {
                     continue;
                 };
 
-                let latest =
-                    manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
+                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
                 else {
                     continue;
@@ -837,11 +820,8 @@ impl OutdatedCommand {
                             .expect("OOM writing version");
                         Output::pretty(format_args!(
                             "{}",
-                            uv.version.diff_fmt(
-                                current_version,
-                                &manifest.string_buf,
-                                string_buf
-                            )
+                            uv.version
+                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
                         ));
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
@@ -871,11 +851,8 @@ impl OutdatedCommand {
                             .expect("OOM writing version");
                         Output::pretty(format_args!(
                             "{}",
-                            lv.version.diff_fmt(
-                                current_version,
-                                &manifest.string_buf,
-                                string_buf
-                            )
+                            lv.version
+                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
                         ));
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
@@ -899,19 +876,15 @@ impl OutdatedCommand {
                         Output::pretty(format_args!(" "));
                     }
 
-                    let workspace_name: &[u8] = if let Some(names) =
-                        &item.grouped_workspace_names
-                    {
+                    let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
                     } else {
-                        manager.lockfile.packages.items_name()
-                            [item.workspace_pkg_id as usize]
+                        manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
                     Output::pretty(format_args!("{}", BStr::new(workspace_name)));
 
-                    for _ in
-                        workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
+                    for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
                     {
                         Output::pretty(format_args!(" "));
                     }

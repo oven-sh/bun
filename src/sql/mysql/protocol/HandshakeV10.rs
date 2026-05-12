@@ -57,7 +57,8 @@ impl HandshakeV10 {
 
         // Auth plugin data part 1 (8 bytes)
         let auth_data = reader.read(8)?;
-        self.auth_plugin_data_part_1.copy_from_slice(auth_data.slice());
+        self.auth_plugin_data_part_1
+            .copy_from_slice(auth_data.slice());
 
         // Skip filler byte
         let _ = reader.int::<u8>()?;
@@ -74,8 +75,9 @@ impl HandshakeV10 {
 
         // Capability flags (upper 2 bytes)
         let capabilities_upper = reader.int::<u16>()?;
-        self.capability_flags =
-            Capabilities::from_int((u32::from(capabilities_upper) << 16) | u32::from(capabilities_lower));
+        self.capability_flags = Capabilities::from_int(
+            (u32::from(capabilities_upper) << 16) | u32::from(capabilities_lower),
+        );
 
         // Length of auth plugin data
         let mut auth_plugin_data_len = reader.int::<u8>()?;

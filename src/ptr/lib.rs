@@ -1,4 +1,11 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, deprecated, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    deprecated,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
@@ -25,8 +32,8 @@ pub mod cow_slice;
 
 // owned/shared — OBSOLETE per PORTING.md §Pointers: callers
 // use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
- pub mod owned;
- pub mod shared;
+pub mod owned;
+pub mod shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
@@ -39,7 +46,7 @@ pub type AtomicShared<T> = std::sync::Arc<T>;
 pub use bun_core::external_shared;
 pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
-pub use bun_core::{cast_fn_ptr, RawSlice};
+pub use bun_core::{RawSlice, cast_fn_ptr};
 
 pub mod raw_ref_count;
 pub mod weak_ptr;
@@ -50,8 +57,8 @@ pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPoi
 
 pub mod ref_count;
 pub use ref_count::{
-    RefCounted, ThreadSafeRefCounted, AnyRefCounted, CellRefCounted, RefCount, ThreadSafeRefCount,
-    RefPtr, ScopedRef, finalize_js_box, finalize_js_box_noop,
+    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
+    ThreadSafeRefCounted, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -313,7 +320,6 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     }
     view
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interned — process-lifetime byte-slice proof type.

@@ -51,15 +51,20 @@ pub use live_streams as LIVE_STREAMS;
 // Un-gated: Stream/ClientSession/dispatch/encode now compile against the
 // real crate surface (bridge stubs below cover gated HTTPClient methods).
 // They no longer reference bun_str/bun_output/crate::state/crate::Signal.
-#[path = "h2_client/Stream.rs"]         pub mod stream;
-#[path = "h2_client/ClientSession.rs"]  pub mod client_session;
-#[path = "h2_client/PendingConnect.rs"] pub mod pending_connect;
-#[path = "h2_client/dispatch.rs"]       pub mod dispatch;
-#[path = "h2_client/encode.rs"]         pub mod encode;
+#[path = "h2_client/ClientSession.rs"]
+pub mod client_session;
+#[path = "h2_client/dispatch.rs"]
+pub mod dispatch;
+#[path = "h2_client/encode.rs"]
+pub mod encode;
+#[path = "h2_client/PendingConnect.rs"]
+pub mod pending_connect;
+#[path = "h2_client/Stream.rs"]
+pub mod stream;
 
-pub use stream::Stream;
 pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
+pub use stream::Stream;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
 // — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the
@@ -112,11 +117,7 @@ pub(crate) mod bridge {
             self.progress_update::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_do_redirect(
-            &mut self,
-            ctx: *mut NewHTTPContext<true>,
-            socket: HTTPSocket<true>,
-        ) {
+        pub fn h2_do_redirect(&mut self, ctx: *mut NewHTTPContext<true>, socket: HTTPSocket<true>) {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]

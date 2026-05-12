@@ -1,19 +1,19 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
 use crate::parser::{self, Parser};
-use crate::types::{SpanType, TextType, VerbatimLine, OFF};
+use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub const MAX_EMPH_MATCHES: usize = 6;
 
 #[derive(Clone, Copy)]
 pub struct EmphDelim {
-    pub pos: usize,   // start position in content
-    pub count: usize, // original run length
+    pub pos: usize,    // start position in content
+    pub count: usize,  // original run length
     pub emph_char: u8, // * or _
     pub can_open: bool,
     pub can_close: bool,
-    pub remaining: usize, // chars not yet consumed
+    pub remaining: usize,   // chars not yet consumed
     pub open_count: usize,  // total chars consumed as opener
     pub close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
@@ -270,10 +270,7 @@ impl Parser<'_> {
                     if i > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
-                    self.render_autolink(
-                        &content[i + 1..autolink.end_pos - 1],
-                        autolink.is_email,
-                    )?;
+                    self.render_autolink(&content[i + 1..autolink.end_pos - 1], autolink.is_email)?;
                     i = autolink.end_pos;
                     text_start = i;
                     continue;
@@ -281,10 +278,7 @@ impl Parser<'_> {
             }
 
             // Wiki links: [[destination]] or [[destination|label]]
-            if c == b'['
-                && self.flags.wiki_links
-                && i + 1 < content.len()
-                && content[i + 1] == b'['
+            if c == b'[' && self.flags.wiki_links && i + 1 < content.len() && content[i + 1] == b'['
             {
                 if i > text_start {
                     self.emit_text(TextType::Normal, &content[text_start..i])?;
@@ -464,12 +458,7 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
-    pub fn find_code_span_end(
-        &self,
-        content: &[u8],
-        start: usize,
-        count: usize,
-    ) -> Option<usize> {
+    pub fn find_code_span_end(&self, content: &[u8], start: usize, count: usize) -> Option<usize> {
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -641,8 +630,7 @@ impl Parser<'_> {
                     // Rule of three: if closer can also open OR opener can also close,
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
                     if self.emph_delims[oi].emph_char != b'~'
-                        && (self.emph_delims[oi].can_close
-                            || self.emph_delims[closer_idx].can_open)
+                        && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
                         && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count) % 3
                             == 0
                         && self.emph_delims[oi].count % 3 != 0
@@ -674,7 +662,8 @@ impl Parser<'_> {
                     self.emph_delims[closer_idx].close_count += use_;
                     if (self.emph_delims[closer_idx].close_num as usize) < MAX_EMPH_MATCHES {
                         let n = self.emph_delims[closer_idx].close_num as usize;
-                        self.emph_delims[closer_idx].close_sizes[n] = u8::try_from(use_).expect("int cast");
+                        self.emph_delims[closer_idx].close_sizes[n] =
+                            u8::try_from(use_).expect("int cast");
                         self.emph_delims[closer_idx].close_num += 1;
                     }
 
@@ -848,9 +837,7 @@ impl Parser<'_> {
                 }
 
                 // Attribute name
-                if !helpers::is_alpha(content[pos])
-                    && content[pos] != b'_'
-                    && content[pos] != b':'
+                if !helpers::is_alpha(content[pos]) && content[pos] != b'_' && content[pos] != b':'
                 {
                     return None;
                 }

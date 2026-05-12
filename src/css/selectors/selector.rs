@@ -1,9 +1,9 @@
 use crate::css_parser as css;
-use bun_ast::symbol::List as SymbolList;
-use crate::css_parser::{CSSString, Printer, PrintErr, StyleContext, VendorPrefix};
-use crate::css_parser::targets::Targets;
 use crate::css_parser::compat::Feature;
+use crate::css_parser::targets::Targets;
+use crate::css_parser::{CSSString, PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
+use bun_ast::symbol::List as SymbolList;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
@@ -11,14 +11,14 @@ use bun_core::Output;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
-pub use css::Printer as _Printer; // re-export alias parity
 pub use css::PrintErr as _PrintErr;
+pub use css::Printer as _Printer; // re-export alias parity
 
-pub use parser::Selector;
-pub use parser::SelectorList;
 pub use parser::Component;
 pub use parser::PseudoClass;
 pub use parser::PseudoElement;
+pub use parser::Selector;
+pub use parser::SelectorList;
 
 /// Our implementation of the `SelectorImpl` interface — the trait-based
 /// `impl_::Selectors` marker lives in the hub (`super::impl_`) so the
@@ -55,7 +55,9 @@ pub mod r#impl {
         pub mod local_identifier {
             use super::*;
 
-            pub fn from_ident(ident: css::css_values::ident::Ident) -> selector_impl::LocalIdentifier {
+            pub fn from_ident(
+                ident: css::css_values::ident::Ident,
+            ) -> selector_impl::LocalIdentifier {
                 css::css_values::ident::IdentOrRef::from_ident(ident)
             }
         }
@@ -79,9 +81,13 @@ pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
         debug_assert_eq!(a.components.len(), b.components.len());
         for (a_comp, b_comp) in a.components.iter().zip(b.components.iter()) {
             let is_equiv = 'blk: {
-                if let (Component::NonTsPseudoClass(a_pc), Component::NonTsPseudoClass(b_pc)) = (a_comp, b_comp) {
+                if let (Component::NonTsPseudoClass(a_pc), Component::NonTsPseudoClass(b_pc)) =
+                    (a_comp, b_comp)
+                {
                     break 'blk a_pc.is_equivalent(b_pc);
-                } else if let (Component::PseudoElement(a_pe), Component::PseudoElement(b_pe)) = (a_comp, b_comp) {
+                } else if let (Component::PseudoElement(a_pe), Component::PseudoElement(b_pe)) =
+                    (a_comp, b_comp)
+                {
                     break 'blk a_pe.is_equivalent(b_pe);
                 } else if matches!(
                     (a_comp, b_comp),
@@ -117,7 +123,11 @@ pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
 
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
-pub fn downlevel_selectors<'bump>(bump: &'bump Bump, selectors: &mut [Selector], targets: Targets) -> VendorPrefix {
+pub fn downlevel_selectors<'bump>(
+    bump: &'bump Bump,
+    selectors: &mut [Selector],
+    targets: Targets,
+) -> VendorPrefix {
     let mut necessary_prefixes = VendorPrefix::empty();
     for selector in selectors.iter_mut() {
         for component in selector.components.iter_mut() {
@@ -127,7 +137,11 @@ pub fn downlevel_selectors<'bump>(bump: &'bump Bump, selectors: &mut [Selector],
     necessary_prefixes
 }
 
-pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, targets: Targets) -> VendorPrefix {
+pub fn downlevel_component<'bump>(
+    bump: &'bump Bump,
+    component: &mut Component,
+    targets: Targets,
+) -> VendorPrefix {
     match component {
         Component::NonTsPseudoClass(pc) => {
             return match pc {
@@ -141,7 +155,8 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
                 PseudoClass::Lang { languages } => {
                     // :lang() with multiple languages is not supported everywhere.
                     // compile this to :is(:lang(a), :lang(b)) etc.
-                    if languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList) {
+                    if languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList)
+                    {
                         *component = Component::Is(lang_list_to_selectors(bump, languages));
                         return downlevel_component(bump, component, targets);
                     }
@@ -167,7 +182,9 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
                     break 'brk true;
                 }
             {
-                necessary_prefixes.insert(targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo));
+                necessary_prefixes.insert(
+                    targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
+                );
             } else {
                 necessary_prefixes.insert(VendorPrefix::NONE);
             }
@@ -195,8 +212,9 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
                 *component = Component::Negation(vec![is].into_boxed_slice());
 
                 if targets.should_compile_same(Feature::IsSelector) {
-                    necessary_prefixes
-                        .insert(targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo));
+                    necessary_prefixes.insert(
+                        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
+                    );
                 } else {
                     necessary_prefixes.insert(VendorPrefix::NONE);
                 }
@@ -211,8 +229,8 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
 }
 
 const RTL_LANGS: &[&[u8]] = &[
-    b"ae", b"ar", b"arc", b"bcc", b"bqi", b"ckb", b"dv", b"fa", b"glk", b"he", b"ku", b"mzn", b"nqo", b"pnb",
-    b"ps", b"sd", b"ug", b"ur", b"yi",
+    b"ae", b"ar", b"arc", b"bcc", b"bqi", b"ckb", b"dv", b"fa", b"glk", b"he", b"ku", b"mzn",
+    b"nqo", b"pnb", b"ps", b"sd", b"ug", b"ur", b"yi",
 ];
 
 fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targets) -> Component {
@@ -306,7 +324,11 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
 
                 Component::AttributeInNoNamespaceExists { .. } => F::Selectors2,
 
-                Component::AttributeInNoNamespace { case_sensitivity, operator, .. } => 'brk: {
+                Component::AttributeInNoNamespace {
+                    case_sensitivity,
+                    operator,
+                    ..
+                } => 'brk: {
                     if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
                         break 'brk F::CaseInsensitive;
                     }
@@ -327,7 +349,8 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
                         operator,
                         ..
                     } => 'brk: {
-                        if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
+                        if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive
+                        {
                             break 'brk F::CaseInsensitive;
                         }
                         match operator {
@@ -360,7 +383,9 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
                     F::Selectors3
                 }
                 Component::NthOf(n) => {
-                    if !targets.is_compatible(F::NthChildOf) || !is_compatible(&n.selectors, targets) {
+                    if !targets.is_compatible(F::NthChildOf)
+                        || !is_compatible(&n.selectors, targets)
+                    {
                         return false;
                     }
                     continue;
@@ -432,9 +457,11 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
                         }
 
                         PseudoClass::Valid | PseudoClass::Invalid | PseudoClass::Required => {
-                            break 'brk F::FormValidation
+                            break 'brk F::FormValidation;
                         }
-                        PseudoClass::InRange | PseudoClass::OutOfRange => break 'brk F::InOutOfRange,
+                        PseudoClass::InRange | PseudoClass::OutOfRange => {
+                            break 'brk F::InOutOfRange;
+                        }
 
                         PseudoClass::Autofill(prefix) => {
                             if *prefix == VendorPrefix::NONE {
@@ -612,7 +639,9 @@ pub mod serialize {
         context: Option<&StyleContext>,
         is_relative: bool,
     ) -> Result<(), PrintErr> {
-        dest.write_comma_separated(list, |d, sel| serialize_selector(sel, d, context, is_relative))
+        dest.write_comma_separated(list, |d, sel| {
+            serialize_selector(sel, d, context, is_relative)
+        })
     }
 
     pub fn serialize_selector(
@@ -632,7 +661,10 @@ pub mod serialize {
             }
 
             bun_core::scoped_log!(CSS_SELECTORS, "Compound selector iter\n");
-            let mut compound_selectors = CompoundSelectorIter { sel: selector, i: 0 };
+            let mut compound_selectors = CompoundSelectorIter {
+                sel: selector,
+                i: 0,
+            };
             while let Some(comp) = compound_selectors.next() {
                 for c in comp {
                     bun_core::scoped_log!(CSS_SELECTORS, "  {}, ", c);
@@ -652,8 +684,14 @@ pub mod serialize {
         // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
         // which we need for |split|. So we split by combinators on a match-order
         // sequence and then reverse.
-        let mut combinators = CombinatorIter { sel: selector, i: 0 };
-        let mut compound_selectors = CompoundSelectorIter { sel: selector, i: 0 };
+        let mut combinators = CombinatorIter {
+            sel: selector,
+            i: 0,
+        };
+        let mut compound_selectors = CompoundSelectorIter {
+            sel: selector,
+            i: 0,
+        };
         let should_compile_nesting = dest.targets.should_compile_same(Feature::Nesting);
 
         let mut first = true;
@@ -712,10 +750,14 @@ pub mod serialize {
                 // Combinator::SlotAssignment, don't exist in the
                 // spec.
                 if next_combinator == Some(parser::Combinator::PseudoElement)
-                    && compound[first_non_namespace].as_combinator() == Some(parser::Combinator::SlotAssignment)
+                    && compound[first_non_namespace].as_combinator()
+                        == Some(parser::Combinator::SlotAssignment)
                 {
                     // do nothing
-                } else if matches!(compound[first_non_namespace], Component::ExplicitUniversalType) {
+                } else if matches!(
+                    compound[first_non_namespace],
+                    Component::ExplicitUniversalType
+                ) {
                     // Iterate over everything so we serialize the namespace
                     // too.
                     let swap_nesting = has_leading_nesting && should_compile_nesting;
@@ -826,7 +868,13 @@ pub mod serialize {
     ) -> Result<(), PrintErr> {
         match component {
             Component::Combinator(c) => return serialize_combinator(c, dest),
-            Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity, .. } => {
+            Component::AttributeInNoNamespace {
+                local_name,
+                operator,
+                value,
+                case_sensitivity,
+                ..
+            } => {
                 dest.write_char(b'[')?;
                 css::css_values::ident::IdentFns::to_css(local_name, dest)?;
                 operator.to_css(dest)?;
@@ -865,7 +913,10 @@ pub mod serialize {
                 }
                 return dest.write_char(b']');
             }
-            Component::Is(_) | Component::Where(_) | Component::Negation(_) | Component::Any { .. } => {
+            Component::Is(_)
+            | Component::Where(_)
+            | Component::Negation(_)
+            | Component::Any { .. } => {
                 match component {
                     Component::Where(_) => dest.write_str(b":where(")?,
                     Component::Is(selectors) => {
@@ -900,7 +951,9 @@ pub mod serialize {
                 }
                 serialize_selector_list(
                     match component {
-                        Component::Where(list) | Component::Is(list) | Component::Negation(list) => list,
+                        Component::Where(list)
+                        | Component::Is(list)
+                        | Component::Negation(list) => list,
                         Component::Any { selectors, .. } => selectors,
                         _ => unreachable!(),
                     },
@@ -955,7 +1008,6 @@ pub mod serialize {
             //         dest.write_char(b')')?;
             //     }
             // }
-
             _ => {
                 tocss_servo::to_css_component(component, dest)?;
             }
@@ -993,7 +1045,9 @@ pub mod serialize {
         match pseudo_class {
             PseudoClass::Lang { languages } => {
                 dest.write_str(b":lang(")?;
-                dest.write_comma_separated(languages.iter(), |d, lang| d.serialize_identifier(lang))?;
+                dest.write_comma_separated(languages.iter(), |d, lang| {
+                    d.serialize_identifier(lang)
+                })?;
                 return dest.write_str(b")");
             }
             PseudoClass::Dir { direction } => {
@@ -1104,7 +1158,9 @@ pub mod serialize {
             PseudoClass::Disabled => dest.write_str(b":disabled")?,
             PseudoClass::ReadOnly(prefix) => write_prefixed(dest, *prefix, b"read-only")?,
             PseudoClass::ReadWrite(prefix) => write_prefixed(dest, *prefix, b"read-write")?,
-            PseudoClass::PlaceholderShown(prefix) => write_prefixed(dest, *prefix, b"placeholder-shown")?,
+            PseudoClass::PlaceholderShown(prefix) => {
+                write_prefixed(dest, *prefix, b"placeholder-shown")?
+            }
             PseudoClass::Default => dest.write_str(b":default")?,
             PseudoClass::Checked => dest.write_str(b":checked")?,
             PseudoClass::Indeterminate => dest.write_str(b":indeterminate")?,
@@ -1121,9 +1177,7 @@ pub mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local { selector } => {
-                serialize_selector(selector, dest, context, false)?
-            }
+            PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
             PseudoClass::Global { selector } => {
                 let css_module = if let Some(module) = dest.css_module.take() {
                     Some(module)
@@ -1163,7 +1217,7 @@ pub mod serialize {
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-                
+
                 arguments.to_css_raw(dest)?;
                 let _ = arguments;
                 dest.write_char(b')')?;
@@ -1195,7 +1249,11 @@ pub mod serialize {
             Ok(vp)
         }
 
-        fn write_prefixed(d: &mut Printer, prefix: VendorPrefix, val: &'static [u8]) -> Result<(), PrintErr> {
+        fn write_prefixed(
+            d: &mut Printer,
+            prefix: VendorPrefix,
+            val: &'static [u8],
+        ) -> Result<(), PrintErr> {
             let _ = write_prefix(d, prefix)?;
             d.write_str(val)
         }
@@ -1299,7 +1357,7 @@ pub mod serialize {
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-                
+
                 arguments.to_css_raw(dest)?;
                 let _ = arguments;
                 dest.write_char(b')')?;
@@ -1320,7 +1378,8 @@ pub mod serialize {
             // so use :is() if that is not the case.
             if ctx.selectors.v.len() == 1
                 && (first
-                    || (!has_type_selector(ctx.selectors.v.at(0)) && is_simple(ctx.selectors.v.at(0))))
+                    || (!has_type_selector(ctx.selectors.v.at(0))
+                        && is_simple(ctx.selectors.v.at(0))))
             {
                 serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
             } else {
@@ -1378,8 +1437,14 @@ pub mod tocss_servo {
         // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
         // which we need for |split|. So we split by combinators on a match-order
         // sequence and then reverse.
-        let mut combinators = CombinatorIter { sel: selector, i: 0 };
-        let mut compound_selectors = CompoundSelectorIter { sel: selector, i: 0 };
+        let mut combinators = CombinatorIter {
+            sel: selector,
+            i: 0,
+        };
+        let mut compound_selectors = CompoundSelectorIter {
+            sel: selector,
+            i: 0,
+        };
 
         let mut combinators_exhausted = false;
         while let Some(compound) = compound_selectors.next() {
@@ -1426,7 +1491,10 @@ pub mod tocss_servo {
                         == Some(parser::Combinator::SlotAssignment)
                 {
                     // do nothing
-                } else if matches!(compound[first_non_namespace], Component::ExplicitUniversalType) {
+                } else if matches!(
+                    compound[first_non_namespace],
+                    Component::ExplicitUniversalType
+                ) {
                     // Iterate over everything so we serialize the namespace
                     // too.
                     for simple in compound {
@@ -1540,7 +1608,13 @@ pub mod tocss_servo {
                 IdentFns::to_css(local_name, dest)?;
                 dest.write_char(b']')?;
             }
-            Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity, .. } => {
+            Component::AttributeInNoNamespace {
+                local_name,
+                operator,
+                value,
+                case_sensitivity,
+                ..
+            } => {
                 dest.write_char(b'[')?;
                 IdentFns::to_css(local_name, dest)?;
                 operator.to_css(dest)?;
@@ -1589,7 +1663,8 @@ pub mod tocss_servo {
                 nth_data.write_affine(dest)?;
                 // Only :nth-child or :nth-last-child can be of a selector list
                 debug_assert!(
-                    nth_data.ty == parser::NthType::Child || nth_data.ty == parser::NthType::LastChild
+                    nth_data.ty == parser::NthType::Child
+                        || nth_data.ty == parser::NthType::LastChild
                 );
                 // The selector list should not be empty
                 debug_assert!(!nth_of_data.selectors.is_empty());
@@ -1706,7 +1781,10 @@ fn is_namespace(component: Option<&parser::Component>) -> bool {
 
 fn is_type_selector(component: Option<&parser::Component>) -> bool {
     if let Some(c) = component {
-        return matches!(c, Component::LocalName(_) | Component::ExplicitUniversalType);
+        return matches!(
+            c,
+            Component::LocalName(_) | Component::ExplicitUniversalType
+        );
     }
     false
 }
@@ -1801,7 +1879,11 @@ impl<'a> CompoundSelectorIter<'a> {
                 break 'next_index None;
             };
             if let Some(combinator_index) = next_index {
-                let start = if combinator_index == 0 { 0 } else { combinator_index - 1 };
+                let start = if combinator_index == 0 {
+                    0
+                } else {
+                    combinator_index - 1
+                };
                 let end = self.i;
                 let slice = &items[items.len() - 1 - start..items.len() - end];
                 self.i = combinator_index + 1;

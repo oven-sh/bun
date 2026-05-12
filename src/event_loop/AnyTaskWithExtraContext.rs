@@ -85,11 +85,7 @@ impl AnyTaskWithExtraContext {
     // `*void` is zero-bit so the callee is effectively `fn(*T)` only. Mapped here
     // to `*mut ()` — Phase B may want `fn(*mut T)` and to drop the second arg.
     // PORT NOTE: name kept as `from` to match Zig; not the `From` trait.
-    pub fn from<T>(
-        &mut self,
-        of: *mut T,
-        callback: fn(*mut T, *mut ()),
-    ) -> *mut Self {
+    pub fn from<T>(&mut self, of: *mut T, callback: fn(*mut T, *mut ())) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
         std::ptr::from_mut::<Self>(self)
     }

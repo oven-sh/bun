@@ -1,16 +1,16 @@
-use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
+use bun_collections::VecExt;
 
-use bun_ast as js_ast;
-use bun_ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
-use bun_ast::op::Level;
-use crate::p::P;
 use crate::js_lexer;
 use crate::js_lexer::T;
+use crate::p::P;
 use crate::parser::{
-    AwaitOrYield, FnOrArrowDataParse, FunctionKind, JsxT, LexicalDecl, ParseStatementOptions,
-    TypeParameterFlag, ARGUMENTS_STR as arguments_str,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, JsxT,
+    LexicalDecl, ParseStatementOptions, TypeParameterFlag,
 };
+use bun_ast as js_ast;
+use bun_ast::op::Level;
+use bun_ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 // TODO(port): narrow error set
 type Error = bun_core::Error;
@@ -492,10 +492,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub fn parse_fn_body(
-        &mut self,
-        data: &mut FnOrArrowDataParse,
-    ) -> Result<G::FnBody, Error> {
+    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
@@ -505,7 +502,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = p.lexer.loc();
         let mut pushed_scope_for_function_body = false;
         if p.lexer.token == T::TOpenBrace {
-            let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, p.lexer.loc())?;
+            let _ =
+                p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, p.lexer.loc())?;
             pushed_scope_for_function_body = true;
         }
 

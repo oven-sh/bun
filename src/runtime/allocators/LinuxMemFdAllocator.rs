@@ -73,7 +73,9 @@ impl LinuxMemFdAllocator {
     pub fn ref_(&self) {
         // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
         // touches the interior-mutable atomic `ref_count` field.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        unsafe {
+            bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
+        };
     }
 
     /// Zig: `pub const deref = RefCount.deref;`
@@ -144,52 +146,52 @@ impl LinuxMemFdAllocator {
         }
         #[cfg(not(windows))]
         {
-        let mut size = len;
+            let mut size = len;
 
-        // size rounded up to nearest page
-        let page = bun_alloc::page_size();
-        size = (size + page - 1) & !(page - 1);
+            // size rounded up to nearest page
+            let page = bun_alloc::page_size();
+            size = (size + page - 1) & !(page - 1);
 
-        // Zig: `flags_mut.TYPE = .SHARED;` — `TYPE` is the low-4-bit field of
-        // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
-        // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
-        // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
-        #[cfg(target_os = "linux")]
-        const MAP_TYPE: i32 = libc::MAP_TYPE;
-        #[cfg(not(target_os = "linux"))]
-        const MAP_TYPE: i32 = 0x0f; // `std.posix.MAP.TYPE` is `u4` on every POSIX target
-        let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
+            // Zig: `flags_mut.TYPE = .SHARED;` — `TYPE` is the low-4-bit field of
+            // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
+            // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
+            // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
+            #[cfg(target_os = "linux")]
+            const MAP_TYPE: i32 = libc::MAP_TYPE;
+            #[cfg(not(target_os = "linux"))]
+            const MAP_TYPE: i32 = 0x0f; // `std.posix.MAP.TYPE` is `u4` on every POSIX target
+            let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
-        // SAFETY: `this` is live per caller contract; we only read scalar fields.
-        let self_size = unsafe { (*this).size };
-        let self_fd = unsafe { (*this).fd };
+            // SAFETY: `this` is live per caller contract; we only read scalar fields.
+            let self_size = unsafe { (*this).size };
+            let self_fd = unsafe { (*this).fd };
 
-        let map_len = size.min(self_size);
-        match sys::mmap(
-            core::ptr::null_mut(),
-            map_len,
-            libc::PROT_READ | libc::PROT_WRITE,
-            flags_mut,
-            self_fd,
-            offset as i64,
-        ) {
-            Ok(slice_ptr) => {
-                // Zig: `Blob.Store.Bytes{ .cap = @truncate(slice.len), .ptr = slice.ptr,
-                //                          .len = @truncate(len), .allocator = self.arena() }`
-                // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
-                // is the vtable whose `free` will `munmap` exactly that region and then
-                // `deref` `this`. `len <= map_len` (cap) by construction.
-                Ok(unsafe {
-                    BlobStoreBytes::from_raw_parts(
-                        slice_ptr,
-                        len as crate::webcore::blob::SizeType,
-                        map_len as crate::webcore::blob::SizeType,
-                        Self::allocator(this),
-                    )
-                })
+            let map_len = size.min(self_size);
+            match sys::mmap(
+                core::ptr::null_mut(),
+                map_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                flags_mut,
+                self_fd,
+                offset as i64,
+            ) {
+                Ok(slice_ptr) => {
+                    // Zig: `Blob.Store.Bytes{ .cap = @truncate(slice.len), .ptr = slice.ptr,
+                    //                          .len = @truncate(len), .allocator = self.arena() }`
+                    // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
+                    // is the vtable whose `free` will `munmap` exactly that region and then
+                    // `deref` `this`. `len <= map_len` (cap) by construction.
+                    Ok(unsafe {
+                        BlobStoreBytes::from_raw_parts(
+                            slice_ptr,
+                            len as crate::webcore::blob::SizeType,
+                            map_len as crate::webcore::blob::SizeType,
+                            Self::allocator(this),
+                        )
+                    })
+                }
+                Err(errno) => Err(errno),
             }
-            Err(errno) => Err(errno),
-        }
         } // #[cfg(not(windows))]
     }
 
@@ -367,6 +369,9 @@ mod allocator_interface {
 }
 
 /// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
-#[inline] pub(super) fn std_vtable() -> &'static AllocatorVTable { allocator_interface::VTABLE }
+#[inline]
+pub(super) fn std_vtable() -> &'static AllocatorVTable {
+    allocator_interface::VTABLE
+}
 
 // ported from: src/bun_alloc/LinuxMemFdAllocator.zig

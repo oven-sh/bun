@@ -13,11 +13,11 @@ use core::ptr::NonNull;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
+pub use super::codec_bmp as bmp;
+pub use super::codec_gif as gif;
 pub use super::codec_jpeg as jpeg;
 pub use super::codec_png as png;
 pub use super::codec_webp as webp;
-pub use super::codec_bmp as bmp;
-pub use super::codec_gif as gif;
 
 /// Optional OS-native backend. Absent on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
@@ -74,9 +74,12 @@ impl bun_jsc::FromJsEnum for Backend {
 
 // PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
 // "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
-pub static BACKEND: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(
-    if HAS_SYSTEM_BACKEND { Backend::System as u8 } else { Backend::Bun as u8 },
-);
+pub static BACKEND: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(if HAS_SYSTEM_BACKEND {
+        Backend::System as u8
+    } else {
+        Backend::Bun as u8
+    });
 
 /// Runtime half of the dispatch check; the comptime half is the
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
@@ -135,9 +138,9 @@ impl Format {
         // brands that appear in BOTH, so they can't decide on first sight —
         // scan the whole brand list and let a codec-specific brand win.
         if bytes.len() >= 16 && &bytes[4..8] == b"ftyp" {
-            let box_: usize = bytes.len().min(
-                16usize.max(u32::from_be_bytes(bytes[0..4].try_into().expect("infallible: size matches")) as usize),
-            );
+            let box_: usize = bytes.len().min(16usize.max(u32::from_be_bytes(
+                bytes[0..4].try_into().expect("infallible: size matches"),
+            ) as usize));
             let mut miaf = false;
             let mut off: usize = 8;
             while off + 4 <= box_ {
@@ -363,7 +366,9 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
             // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) } != 0 {
+            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
+                != 0
+            {
                 return Err(Error::DecodeFailed);
             }
             // SAFETY: handle is live and has had a header decoded into it above.
@@ -380,7 +385,8 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let mut cw: c_int = 0;
             let mut ch: c_int = 0;
             // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
+            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
+                == 0
                 || cw <= 0
                 || ch <= 0
             {
@@ -399,8 +405,10 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             if bytes.len() < 10 {
                 return Err(Error::DecodeFailed);
             }
-            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches")) as u32;
-            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches")) as u32;
+            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
+                as u32;
+            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
+                as u32;
         }
         Format::Tiff => {
             // IFD walk would be a full TIFF parser; defer to whoever
@@ -421,7 +429,11 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         return Err(Error::DecodeFailed);
     }
     guard(w, h, max_pixels)?;
-    Ok(Probe { format: fmt, width: w, height: h })
+    Ok(Probe {
+        format: fmt,
+        width: w,
+        height: h,
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -484,7 +496,12 @@ pub struct Encoded {
 impl Drop for Encoded {
     fn drop(&mut self) {
         // SAFETY: `bytes` was allocated by the codec whose deallocator is `free`.
-        unsafe { (self.free)(self.bytes.as_ptr().cast::<u8>().cast::<c_void>(), core::ptr::null_mut()) }
+        unsafe {
+            (self.free)(
+                self.bytes.as_ptr().cast::<u8>().cast::<c_void>(),
+                core::ptr::null_mut(),
+            )
+        }
     }
 }
 
@@ -508,7 +525,12 @@ impl Encoded {
     pub fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
-        let slice = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())) };
+        let slice = unsafe {
+            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            ))
+        };
         Encoded {
             bytes: slice,
             free: encoded_wrap_free!(bun_alloc::mimalloc::mi_free),
@@ -528,7 +550,15 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Resu
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         Format::Png => {
             if opts.palette {
-                png::encode_indexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, icc)
+                png::encode_indexed(
+                    rgba,
+                    width,
+                    height,
+                    opts.compression_level,
+                    opts.colors,
+                    opts.dither,
+                    icc,
+                )
             } else {
                 png::encode(rgba, width, height, opts.compression_level, icc)
             }
@@ -542,9 +572,9 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Resu
         Format::Heic | Format::Avif => {
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
-                return match system_backend::BackendError::split(
-                    system_backend::encode(rgba, width, height, &opts),
-                ) {
+                return match system_backend::BackendError::split(system_backend::encode(
+                    rgba, width, height, &opts,
+                )) {
                     Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
                     Ok(None) => Err(Error::UnsupportedOnPlatform),
@@ -594,7 +624,13 @@ pub static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn bun_image_resize_scratch_size(src_w: i32, src_h: i32, dst_w: i32, dst_h: i32, filter: i32) -> usize;
+    fn bun_image_resize_scratch_size(
+        src_w: i32,
+        src_h: i32,
+        dst_w: i32,
+        dst_h: i32,
+        filter: i32,
+    ) -> usize;
     fn bun_image_resize_rgba8(
         src: *const u8,
         src_w: i32,
@@ -670,11 +706,22 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
 }
 
 pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
-    let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 { (h, w) } else { (w, h) };
+    let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
+        (h, w)
+    } else {
+        (w, h)
+    };
     #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
-            Ok(Some(out)) => return Ok(Decoded { rgba: out, width: dw, height: dh, icc_profile: None }),
+            Ok(Some(out)) => {
+                return Ok(Decoded {
+                    rgba: out,
+                    width: dw,
+                    height: dh,
+                    icc_profile: None,
+                });
+            }
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
@@ -690,7 +737,12 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
             i32::try_from(degrees).expect("int cast"),
         )
     };
-    Ok(Decoded { rgba: out, width: dw, height: dh, icc_profile: None })
+    Ok(Decoded {
+        rgba: out,
+        width: dw,
+        height: dh,
+        icc_profile: None,
+    })
 }
 
 pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {

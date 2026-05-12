@@ -2,15 +2,15 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 #![cfg(windows)]
 
-use core::ffi::{c_char, c_int, c_uint, CStr};
+use core::ffi::{CStr, c_char, c_int, c_uint};
 
 use bstr::BStr;
 
 use bun_core::ZStr;
 
-use crate::windows::libuv as uv;
-use crate::{Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS, E};
 use crate::Tag;
+use crate::windows::libuv as uv;
+use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
 // `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation that
 // Zig's `ReturnCode::errno()` does inline; without it the raw `UV_E*` magnitude
 // (e.g. 4058 for UV_ENOENT) would land in `Error.errno` and break callers that
@@ -147,7 +147,15 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_mkdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), flags as c_int, None) };
+    let rc = unsafe {
+        uv::uv_fs_mkdir(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            flags as c_int,
+            None,
+        )
+    };
 
     log!(
         "uv mkdir({}, {}) = {}",
@@ -167,7 +175,15 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
     let mut req = FsReq::new();
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_chmod(uv::Loop::get(), &mut *req, file_path.as_ptr(), flags as c_int, None) };
+    let rc = unsafe {
+        uv::uv_fs_chmod(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            flags as c_int,
+            None,
+        )
+    };
 
     log!(
         "uv chmod({}, {}) = {}",
@@ -231,8 +247,16 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc =
-        unsafe { uv::uv_fs_chown(uv::Loop::get(), &mut *req, file_path.as_ptr(), uid, gid, None) };
+    let rc = unsafe {
+        uv::uv_fs_chown(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            uid,
+            gid,
+            None,
+        )
+    };
 
     log!(
         "uv chown({}, {}, {}) = {}",
@@ -380,7 +404,8 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
+    let rc =
+        unsafe { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
 
     log!(
         "uv link({}, {}) = {}",
@@ -779,8 +804,7 @@ pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
     // exactly instead of re-deriving it.
-    let const_bufs =
-        unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
+    let const_bufs = unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
     pwritev(fd, const_bufs, -1)
 }
 

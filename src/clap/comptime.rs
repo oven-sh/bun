@@ -95,7 +95,11 @@ pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
 pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [Param<usize>; N] {
     const DUMMY: Param<usize> = Param {
         id: 0,
-        names: Names { short: None, long: None, long_aliases: &[] },
+        names: Names {
+            short: None,
+            long: None,
+            long_aliases: &[],
+        },
         takes_value: Values::None,
     };
     let mut out = [DUMMY; N];
@@ -122,7 +126,11 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
                 }
             }
         }
-        out[i] = Param { id: index, names: p.names, takes_value: p.takes_value };
+        out[i] = Param {
+            id: index,
+            names: p.names,
+            takes_value: p.takes_value,
+        };
         i += 1;
     }
     assert!(i == N, "convert_params_array: N != params.len()");
@@ -201,12 +209,18 @@ pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [Long
     while i < params.len() {
         let n = &params[i].names;
         if let Some(l) = n.long {
-            out[w] = LongEntry { hash: fnv1a64(l), idx: i as u16 };
+            out[w] = LongEntry {
+                hash: fnv1a64(l),
+                idx: i as u16,
+            };
             w += 1;
         }
         let mut a = 0;
         while a < n.long_aliases.len() {
-            out[w] = LongEntry { hash: fnv1a64(n.long_aliases[a]), idx: i as u16 };
+            out[w] = LongEntry {
+                hash: fnv1a64(n.long_aliases[a]),
+                idx: i as u16,
+            };
             w += 1;
             a += 1;
         }
@@ -357,7 +371,11 @@ impl ConvertedTable {
                 index = *ctr;
                 *ctr += 1;
             }
-            converted.push(Param { id: index, names: p.names, takes_value: p.takes_value });
+            converted.push(Param {
+                id: index,
+                names: p.names,
+                takes_value: p.takes_value,
+            });
         }
         let converted: &'static [Param<usize>] = Box::leak(converted.into_boxed_slice());
 
@@ -369,10 +387,16 @@ impl ConvertedTable {
                 short_index[(s & 0x7f) as usize] = i as i16;
             }
             if let Some(l) = p.names.long {
-                long.push(LongEntry { hash: fnv1a64(l), idx: i as u16 });
+                long.push(LongEntry {
+                    hash: fnv1a64(l),
+                    idx: i as u16,
+                });
             }
             for alias in p.names.long_aliases {
-                long.push(LongEntry { hash: fnv1a64(alias), idx: i as u16 });
+                long.push(LongEntry {
+                    hash: fnv1a64(alias),
+                    idx: i as u16,
+                });
             }
         }
         long.sort_unstable_by_key(|e| e.hash);
@@ -454,7 +478,11 @@ pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, us
             index = *ptr;
             *ptr += 1;
         }
-        converted.push(Param { id: index, names: param.names, takes_value: param.takes_value });
+        converted.push(Param {
+            id: index,
+            names: param.names,
+            takes_value: param.takes_value,
+        });
     }
     (converted, flags, single, multi)
 }
@@ -508,7 +536,7 @@ impl<Id> ComptimeClap<Id> {
     ) -> Result<Self, bun_core::Error>
     where
         I: ArgIter<'static>,
-    // TODO(port): narrow error set
+        // TODO(port): narrow error set
     {
         // `opt.allocator` dropped — global mimalloc.
         let mut multis: Vec<Vec<&'static [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
@@ -534,14 +562,16 @@ impl<Id> ComptimeClap<Id> {
             let param = arg.param;
             if param.names.long.is_none() && param.names.short.is_none() {
                 pos.push(arg.value.unwrap());
-                if opt.stop_after_positional_at > 0
-                    && pos.len() >= opt.stop_after_positional_at
-                {
+                if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
                     let mut remaining_ = stream.iter.remain();
                     // PORT NOTE: Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv
                     // entries. Our `ArgIter` already yields sized `&[u8]`, so `span` is a
                     // no-op and is dropped.
-                    let first: &[u8] = if !remaining_.is_empty() { remaining_[0] } else { b"" };
+                    let first: &[u8] = if !remaining_.is_empty() {
+                        remaining_[0]
+                    } else {
+                        b""
+                    };
                     if !first.is_empty() && first == b"--" {
                         remaining_ = &remaining_[1..];
                     }

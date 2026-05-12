@@ -12,9 +12,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, StandaloneModuleGraph};
 
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
-pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
 pub use crate::api;
 pub use crate::webcore;
+pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
 
 /// Canonical `Run` lives in `cli::run_command`; re-export so callers that
 /// expect `bun.js.Run` resolve to the single definition.
@@ -35,8 +35,9 @@ pub fn apply_standalone_runtime_flags(
 
     b.resolver.opts.load_tsconfig_json =
         !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);
-    b.resolver.opts.load_package_json =
-        !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
+    b.resolver.opts.load_package_json = !graph
+        .flags
+        .contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
 }
 
 // Bun__on{Resolve,Reject}EntryPointResult are defined in `crate::hw_exports`

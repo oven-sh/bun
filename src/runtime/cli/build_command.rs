@@ -1,19 +1,19 @@
 use std::io::Write as _;
 
+use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
-use crate::cli::command::{Context, HotReload};
-use bun_core::{fmt as bun_fmt, Global, Output};
+use bun_core::env::OperatingSystem;
+use bun_core::strings;
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 #[allow(unused_imports)]
 use bun_options_types::compile_target;
-use bun_core::env::OperatingSystem;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{resolve_path, PathBuffer};
-use bun_core::strings;
+use bun_paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -50,7 +50,10 @@ impl BuildCommand {
         ctx: Context,
         fetcher: Option<&mut bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
-        Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
+        Global::configure_allocator(Global::AllocatorConfiguration {
+            long_running: true,
+            ..Default::default()
+        });
         // PERF(port): allocator param dropped — global mimalloc
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
@@ -114,8 +117,9 @@ impl BuildCommand {
         // stack local because the borrow would still be live in its destructor.
         // Allocate in the process-lifetime arena (same rationale as `arena`;
         // `exec` diverges so this is never dropped).
-        let this_transpiler: &mut transpiler::Transpiler<'static> =
-            arena.alloc(transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?);
+        let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
+            transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
+        );
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
             // resolver.opts is a distinct subset type; entry_points / IMRE live
@@ -186,16 +190,15 @@ impl BuildCommand {
 
         this_transpiler.options.allow_unresolved =
             if let Some(a) = ctx.bundler_options.allow_unresolved.as_ref() {
-                options::AllowUnresolved::from_strings(
-                    a.clone().into_boxed_slice(),
-                    |p, s| bun_glob::r#match(p, s).matches(),
-                )
+                options::AllowUnresolved::from_strings(a.clone().into_boxed_slice(), |p, s| {
+                    bun_glob::r#match(p, s).matches()
+                })
             } else {
                 options::AllowUnresolved::All
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
-        this_transpiler.options.metafile = !ctx.bundler_options.metafile.is_empty()
-            || !ctx.bundler_options.metafile_md.is_empty();
+        this_transpiler.options.metafile =
+            !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir.clone();
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
@@ -339,8 +342,12 @@ impl BuildCommand {
                         .unwrap_or(b".");
                 }
 
-                let entries: Vec<&[u8]> =
-                    this_transpiler.options.entry_points.iter().map(|s| &**s).collect();
+                let entries: Vec<&[u8]> = this_transpiler
+                    .options
+                    .entry_points
+                    .iter()
+                    .map(|s| &**s)
+                    .collect();
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
@@ -510,8 +517,7 @@ impl BuildCommand {
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
-                this_transpiler.options.import_path_format =
-                    options::ImportPathFormat::Relative;
+                this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
                 this_transpiler.resolver.opts.allow_runtime = false;
 
@@ -519,7 +525,9 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -567,7 +575,9 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
+                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                            Output::error_writer(),
+                        ))?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -636,10 +646,7 @@ impl BuildCommand {
                                     "could not open metafile-md {}",
                                     (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
-                                exit_or_watch(
-                                    1,
-                                    ctx.debug.hot_reload == HotReload::Watch,
-                                );
+                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                             }
                         };
 
@@ -651,10 +658,7 @@ impl BuildCommand {
                                     "could not write metafile-md {}",
                                     (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
-                                exit_or_watch(
-                                    1,
-                                    ctx.debug.hot_reload == HotReload::Watch,
-                                );
+                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                             }
                         }
                         drop(file);
@@ -750,9 +754,8 @@ impl BuildCommand {
             let mut size_padding: usize = 0;
 
             for f in output_files.iter() {
-                max_path_len = max_path_len.max(
-                    from_path.len().max(f.dest_path.len()) + 2 - from_path.len(),
-                );
+                max_path_len =
+                    max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -773,11 +776,7 @@ impl BuildCommand {
 
                 let is_cross_compile = !compile_target.is_default();
 
-                if outfile.is_empty()
-                    || outfile == b"."
-                    || outfile == b".."
-                    || outfile == b"../"
-                {
+                if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
                     outfile = b"index";
                 }
 
@@ -804,55 +803,53 @@ impl BuildCommand {
                     }
                 }
 
-                let result =
-                    match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
-                        compile_target,
-                        output_files,
-                        root_dir.fd,
-                        &opt_public_path,
-                        outfile,
-                        // SAFETY: `env` is a process-lifetime singleton.
-                        unsafe { &mut *env_ptr },
-                        opt_output_format,
-                        std::mem::take(&mut ctx.bundler_options.windows),
-                        ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or(b""),
-                        ctx.bundler_options.compile_executable_path.as_deref(),
-                        {
-                            use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                            let mut flags = Flags::default();
-                            if !ctx.bundler_options.compile_autoload_dotenv {
-                                flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                            }
-                            if !ctx.bundler_options.compile_autoload_bunfig {
-                                flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                            }
-                            if !ctx.bundler_options.compile_autoload_tsconfig {
-                                flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                            }
-                            if !ctx.bundler_options.compile_autoload_package_json {
-                                flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                            }
-                            flags
-                        },
-                    ) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            Output::print_errorln(format_args!(
-                                "failed to create executable: {}",
-                                err.name()
-                            ));
-                            Global::exit(1);
+                let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
+                    compile_target,
+                    output_files,
+                    root_dir.fd,
+                    &opt_public_path,
+                    outfile,
+                    // SAFETY: `env` is a process-lifetime singleton.
+                    unsafe { &mut *env_ptr },
+                    opt_output_format,
+                    std::mem::take(&mut ctx.bundler_options.windows),
+                    ctx.bundler_options
+                        .compile_exec_argv
+                        .as_deref()
+                        .unwrap_or(b""),
+                    ctx.bundler_options.compile_executable_path.as_deref(),
+                    {
+                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                        let mut flags = Flags::default();
+                        if !ctx.bundler_options.compile_autoload_dotenv {
+                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
                         }
-                    };
+                        if !ctx.bundler_options.compile_autoload_bunfig {
+                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                        }
+                        if !ctx.bundler_options.compile_autoload_tsconfig {
+                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                        }
+                        if !ctx.bundler_options.compile_autoload_package_json {
+                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                        }
+                        flags
+                    },
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        Output::print_errorln(format_args!(
+                            "failed to create executable: {}",
+                            err.name()
+                        ));
+                        Global::exit(1);
+                    }
+                };
 
-                if let bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(
-                    err,
-                ) = &result
+                if let bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(err) =
+                    &result
                 {
-                    Output::print_errorln(format_args!(
-                        "{}",
-                        bstr::BStr::new(err.slice())
-                    ));
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
                     Global::exit(1);
                 }
 
@@ -1027,9 +1024,7 @@ impl BuildCommand {
                 if Output::enable_ansi_colors_stdout() {
                     // highlight big files
                     let warn_threshold: usize = match f.output_kind {
-                        options::OutputKind::EntryPoint | options::OutputKind::Chunk => {
-                            128 * 1024
-                        }
+                        options::OutputKind::EntryPoint | options::OutputKind::Chunk => 128 * 1024,
                         options::OutputKind::Asset => 16 * 1024 * 1024,
                         _ => usize::MAX,
                     };
@@ -1079,7 +1074,9 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
+        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+            Output::error_writer(),
+        ))?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
@@ -1116,7 +1113,8 @@ fn print_summary(
         bundle_until_now
     };
 
-    let minified_digit_count: usize = 4usize.saturating_sub(bun_fmt::count_int(minify_duration as i64));
+    let minified_digit_count: usize =
+        4usize.saturating_sub(bun_fmt::count_int(minify_duration as i64));
     if minified {
         Output::pretty(format_args!(
             "{}",
@@ -1138,19 +1136,26 @@ fn print_summary(
         if delta > 1024 {
             Output::prettyln(format_args!(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
-                bun_fmt::size(usize::try_from(delta).expect("int cast"), Default::default())
+                bun_fmt::size(
+                    usize::try_from(delta).expect("int cast"),
+                    Default::default()
+                )
             ));
         } else if -delta > 1024 {
             Output::prettyln(format_args!(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
-                bun_fmt::size(usize::try_from(-delta).expect("int cast"), Default::default())
+                bun_fmt::size(
+                    usize::try_from(-delta).expect("int cast"),
+                    Default::default()
+                )
             ));
         } else {
             Output::prettyln(format_args!("  <b>minify<r>"));
         }
     }
 
-    let bundle_elapsed_digit_count: usize = 4usize.saturating_sub(bun_fmt::count_int(bundle_elapsed.max(0)));
+    let bundle_elapsed_digit_count: usize =
+        4usize.saturating_sub(bun_fmt::count_int(bundle_elapsed.max(0)));
 
     Output::pretty(format_args!(
         "{}",

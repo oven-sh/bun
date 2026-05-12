@@ -6,10 +6,9 @@ use bun_core::Output;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
-use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::Pipe;
+use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{blob, readable_stream};
-
 
 bun_output::declare_scope!(ByteStream, visible);
 
@@ -45,7 +44,10 @@ impl Default for ByteStream {
         Self {
             buffer: JsCell::new(Vec::new()),
             has_received_last_chunk: Cell::new(false),
-            pending: JsCell::new(streams::Pending { result: streams::Result::Done, ..Default::default() }),
+            pending: JsCell::new(streams::Pending {
+                result: streams::Result::Done,
+                ..Default::default()
+            }),
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
@@ -75,14 +77,24 @@ impl readable_stream::SourceContext for ByteStream {
     // R-2: trait sigs are fixed at `&mut self` (shared with the other
     // `SourceContext` impls); `&mut T` auto-derefs to `&T` so each body
     // forwards to the `&self` inherent method below.
-    fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
+    fn on_start(&mut self) -> streams::Start {
+        Self::on_start(self)
+    }
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) { Self::on_cancel(self) }
-    fn deinit_fn(&mut self) { Self::finalize(self) }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
-    fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
+    fn on_cancel(&mut self) {
+        Self::on_cancel(self)
+    }
+    fn deinit_fn(&mut self) {
+        Self::finalize(self)
+    }
+    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+        Self::drain(self)
+    }
+    fn memory_cost_fn(&self) -> usize {
+        Self::memory_cost(self)
+    }
     fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
@@ -131,7 +143,8 @@ impl ByteStream {
         // #define LIBUS_RECV_BUFFER_LENGTH 524288
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        let page_size: blob::SizeType = blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
+        let page_size: blob::SizeType =
+            blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
@@ -170,7 +183,9 @@ impl ByteStream {
             return Ok(());
         }
 
-        debug_assert!(!self.has_received_last_chunk.get() || matches!(stream, streams::Result::Err(_)));
+        debug_assert!(
+            !self.has_received_last_chunk.get() || matches!(stream, streams::Result::Err(_))
+        );
         self.has_received_last_chunk.set(stream.is_done());
 
         // R-2: snapshot `pipe` (two `Option<Copy>` fields) — `on_pipe` re-enters
@@ -216,14 +231,20 @@ impl ByteStream {
                 let mut action = self.buffer_action.replace(None).unwrap();
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
-                    bun_output::scoped_log!(ByteStream, "ByteStream.onData done and action.fulfill()");
+                    bun_output::scoped_log!(
+                        ByteStream,
+                        "ByteStream.onData done and action.fulfill()"
+                    );
 
                     let mut blob = self.to_any_blob().unwrap();
                     return action.fulfill(self.parent_const().global_this(), &mut blob);
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
-                        bun_output::scoped_log!(ByteStream, "ByteStream.onData owned_and_done and action.fulfill()");
+                        bun_output::scoped_log!(
+                            ByteStream,
+                            "ByteStream.onData owned_and_done and action.fulfill()"
+                        );
 
                         // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
                         // PORT NOTE: reshaped for borrowck — move the owned Vec<u8> into `buffer`
@@ -235,9 +256,13 @@ impl ByteStream {
                     }
                 }
 
-                bun_output::scoped_log!(ByteStream, "ByteStream.onData appendSlice and action.fulfill()");
+                bun_output::scoped_log!(
+                    ByteStream,
+                    "ByteStream.onData appendSlice and action.fulfill()"
+                );
 
-                self.buffer.with_mut(|b| b.extend_from_slice(stream.slice()));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(stream.slice()));
                 // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `Vec<u8>`
                 // payload of `stream` is freed by its Drop glue at the explicit `drop` below
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone, matching Zig).
@@ -245,7 +270,8 @@ impl ByteStream {
                 let mut blob = self.to_any_blob().unwrap();
                 return action.fulfill(self.parent_const().global_this(), &mut blob);
             } else {
-                self.buffer.with_mut(|b| b.extend_from_slice(stream.slice()));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(stream.slice()));
                 // Zig: `if owned* allocator.free(stream.slice())` — owned `Vec<u8>` payload of
                 // `stream` is freed by its Drop glue (Temporary* are non-owning `RawSlice`, left alone).
                 drop(stream);
@@ -267,14 +293,16 @@ impl ByteStream {
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
             self.pending_buffer.set(Self::empty_pending_buffer());
 
-            let is_really_done = self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
+            let is_really_done =
+                self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
 
             if is_really_done {
                 self.done.set(true);
 
                 if to_copy_len == 0 {
                     if let streams::Result::Err(err) = &stream {
-                        self.pending.with_mut(|p| p.result = streams::Result::Err(err.clone()));
+                        self.pending
+                            .with_mut(|p| p.result = streams::Result::Err(err.clone()));
                     } else {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
@@ -346,7 +374,8 @@ impl ByteStream {
                     self.buffer.set(buf);
                 }
                 streams::Result::Err(err) => {
-                    self.pending.with_mut(|p| p.result = streams::Result::Err(err));
+                    self.pending
+                        .with_mut(|p| p.result = streams::Result::Err(err));
                 }
                 streams::Result::Done => {}
                 _ => unreachable!(),
@@ -356,17 +385,20 @@ impl ByteStream {
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffer.with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffer.with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
                 // Zig: `allocator.free(@constCast(base_address))` — `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
                 if self.buffer_action.get().is_some() {
                     panic!("Expected buffer action to be null");
                 }
-                self.pending.with_mut(|p| p.result = streams::Result::Err(err));
+                self.pending
+                    .with_mut(|p| p.result = streams::Result::Err(err));
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet
@@ -464,7 +496,10 @@ impl ByteStream {
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
             // TODO: properly propagate exception upwards
-            let _ = action.reject(global, streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort));
+            let _ = action.reject(
+                global,
+                streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+            );
             self.buffer_action.set(None);
         }
     }
@@ -561,10 +596,12 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(jsc::JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err_js,
-            ));
+            return Ok(
+                jsc::JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err_js,
+                ),
+            );
         }
 
         if let Some(blob_) = self.to_any_blob() {
@@ -572,7 +609,8 @@ impl ByteStream {
             return Ok(blob.to_promise(global_this, action)?);
         }
 
-        self.buffer_action.set(Some(BufferAction::new(action, global_this)));
+        self.buffer_action
+            .set(Some(BufferAction::new(action, global_this)));
 
         Ok(self.buffer_action.get().as_ref().unwrap().value())
     }

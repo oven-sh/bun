@@ -1,5 +1,5 @@
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use crate::api::bun::Rusage;
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_spawn::RusageFields as _; // trait + impls now live in bun_spawn_sys::spawn_process
 
 // `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
@@ -21,12 +21,18 @@ impl ResourceUsage {
         let cpu = JSValue::create_empty_object_with_null_prototype(global);
         let rusage = &this.rusage;
 
-        let usr_time = JSValue::from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
-        let sys_time = JSValue::from_timeval_no_truncate(global, rusage.stime_usec(), rusage.stime_sec())?;
+        let usr_time =
+            JSValue::from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
+        let sys_time =
+            JSValue::from_timeval_no_truncate(global, rusage.stime_usec(), rusage.stime_sec())?;
 
         cpu.put(global, b"user", usr_time);
         cpu.put(global, b"system", sys_time);
-        cpu.put(global, b"total", JSValue::big_int_sum(global, usr_time, sys_time));
+        cpu.put(
+            global,
+            b"total",
+            JSValue::big_int_sum(global, usr_time, sys_time),
+        );
 
         Ok(cpu)
     }
@@ -58,7 +64,11 @@ impl ResourceUsage {
     pub fn get_messages(this: &Self, global: &JSGlobalObject) -> JSValue {
         let msgs = JSValue::create_empty_object_with_null_prototype(global);
         msgs.put(global, b"sent", JSValue::js_number(this.rusage.msgsnd_()));
-        msgs.put(global, b"received", JSValue::js_number(this.rusage.msgrcv_()));
+        msgs.put(
+            global,
+            b"received",
+            JSValue::js_number(this.rusage.msgrcv_()),
+        );
         msgs
     }
 
@@ -70,8 +80,16 @@ impl ResourceUsage {
     #[bun_jsc::host_fn(getter)]
     pub fn get_context_switches(this: &Self, global: &JSGlobalObject) -> JSValue {
         let ctx = JSValue::create_empty_object_with_null_prototype(global);
-        ctx.put(global, b"voluntary", JSValue::js_number(this.rusage.nvcsw_()));
-        ctx.put(global, b"involuntary", JSValue::js_number(this.rusage.nivcsw_()));
+        ctx.put(
+            global,
+            b"voluntary",
+            JSValue::js_number(this.rusage.nvcsw_()),
+        );
+        ctx.put(
+            global,
+            b"involuntary",
+            JSValue::js_number(this.rusage.nivcsw_()),
+        );
         ctx
     }
 }

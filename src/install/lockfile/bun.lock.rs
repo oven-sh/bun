@@ -3,59 +3,49 @@
 use bun_collections::VecExt;
 use core::fmt::Write as _;
 
-use bun_core::{self, OOM};
-use bun_collections::{HashMap, StringHashMap, ArrayHashMap};
-use bun_paths::PathBuffer;
-use bun_core::strings;
-use bun_semver::{self as Semver, String, ExternalString};
-use bun_semver::semver_string::{Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts};
-use bun_ast::{Expr, expr::Data as ExprData};
 use crate::bun_json as JSON;
+use bun_ast::{Expr, expr::Data as ExprData};
+use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_core::strings;
+use bun_core::{self, OOM};
+use bun_paths::PathBuffer;
+use bun_semver::semver_string::{
+    Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
+};
+use bun_semver::{self as Semver, ExternalString, String};
 
 use crate::{
-    self as Install,
-    dependency,
-    dependency::{Dependency, Behavior, Version as DependencyVersion, Value as DependencyVersionValue},
+    self as Install, DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash,
+    Repository, Resolution, TruncatedPackageNameHash,
     bin::{Bin, Tag as BinTag},
-    DependencyID,
-    PackageID,
-    PackageManager,
-    PackageNameHash,
-    Repository,
-    Resolution,
-    resolution::{Tag as ResolutionTag, Value as ResolutionValue},
-    TruncatedPackageNameHash,
+    dependency,
+    dependency::{
+        Behavior, Dependency, Value as DependencyVersionValue, Version as DependencyVersion,
+    },
     invalid_package_id,
-    Origin,
-    Npm,
+    resolution::{Tag as ResolutionTag, Value as ResolutionValue},
 };
 // Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a Phase-A
 // duplicate enum (different nominal type) that does not unify with the
 // `bun_install_types::DependencyVersion::tag` field; use the install_types one
 // so assignments at the two `.tag = Workspace` sites type-check.
-use bun_install_types::DependencyVersionTag;
-use crate::repository::RepositoryExt as _;
-use crate::dependency::DependencyExt as _;
 use crate::bin_real::ToJsonStyle;
-use crate::npm::Negatable;
+use crate::config_version::ConfigVersion;
+use crate::dependency::DependencyExt as _;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
-use crate::config_version::ConfigVersion;
+use crate::npm::Negatable;
 use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::repository::RepositoryExt as _;
+use bun_install_types::DependencyVersionTag;
 // PORT NOTE: this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
-use super::{
-    Lockfile as BinaryLockfile,
-    DependencySlice,
-    LoadResult,
-    VersionHashMap,
-    TrustedDependenciesSet,
-    PatchedDep,
-    Package,
-    tree,
-};
-use super::package::{Meta, PackageColumns as _, PackageColumns as _};
 use super::PackageIDSlice;
+use super::package::{Meta, PackageColumns as _};
+use super::{
+    DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PatchedDep,
+    TrustedDependenciesSet, VersionHashMap, tree,
+};
 
 use bun_io::AsFmt;
 
@@ -72,7 +62,10 @@ fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
 /// resolve against the lockfile's string buffer.
 #[inline]
 fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
-    bun_semver::string::ArrayHashContext { arg_buf: buf, existing_buf: buf }
+    bun_semver::string::ArrayHashContext {
+        arg_buf: buf,
+        existing_buf: buf,
+    }
 }
 
 // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
@@ -136,7 +129,11 @@ impl<'a> TreeDepsSortCtx<'a> {
     pub fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
-        strings::cmp_strings_asc(&(), l.name.slice(self.string_buf), r.name.slice(self.string_buf))
+        strings::cmp_strings_asc(
+            &(),
+            l.name.slice(self.string_buf),
+            r.name.slice(self.string_buf),
+        )
     }
 }
 
@@ -223,7 +220,8 @@ impl Stringifier {
                             bstr::BStr::new(node.relative_path),
                             if node.depth == 0 { "" } else { "/" },
                             bstr::BStr::new(dep.name.slice(buf)),
-                        ).ok();
+                        )
+                        .ok();
                     }
                     pkg_map.put(&key, ());
                 }
@@ -237,10 +235,15 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            write!(writer, "\"lockfileVersion\": {},\n", Version::CURRENT as u32)?;
+            write!(
+                writer,
+                "\"lockfileVersion\": {},\n",
+                Version::CURRENT as u32
+            )?;
             Self::write_indent(writer, indent)?;
 
-            let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
+            let config_version: ConfigVersion =
+                options.config_version.unwrap_or(ConfigVersion::CURRENT);
             write!(writer, "\"configVersion\": {},\n", config_version as u32)?;
             Self::write_indent(writer, indent)?;
 
@@ -353,19 +356,28 @@ impl Stringifier {
                         write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf))).ok();
                         match res.tag {
                             ResolutionTag::Workspace => {
-                                if let Some(workspace_version) = lockfile.workspace_versions.get(&pkg_name_hash) {
+                                if let Some(workspace_version) =
+                                    lockfile.workspace_versions.get(&pkg_name_hash)
+                                {
                                     write!(&mut temp_buf, "{}", workspace_version.fmt(buf)).ok();
                                 }
                             }
                             _ => {
-                                write!(&mut temp_buf, "{}", res.fmt(buf, bun_core::fmt::PathSep::Posix)).ok();
+                                write!(
+                                    &mut temp_buf,
+                                    "{}",
+                                    res.fmt(buf, bun_core::fmt::PathSep::Posix)
+                                )
+                                .ok();
                             }
                         }
 
                         let name_and_version = temp_buf.as_slice();
                         let name_and_version_hash = StringBuilder::string_hash(name_and_version);
 
-                        if let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) {
+                        if let Some(patch) =
+                            lockfile.patched_dependencies.get(&name_and_version_hash)
+                        {
                             found_patched_dependencies.insert(
                                 name_and_version_hash,
                                 (Box::<[u8]>::from(name_and_version), patch.path),
@@ -377,7 +389,9 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies.contains(&(dep.name_hash as TruncatedPackageNameHash)) {
+                        if trusted_dependencies
+                            .contains(&(dep.name_hash as TruncatedPackageNameHash))
+                        {
                             found_trusted_dependencies.insert(dep.name_hash, dep.name);
                         }
                     }
@@ -412,7 +426,10 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}: {},\n",
-                        bun_core::fmt::format_json_string_utf8(name_and_version, Default::default()),
+                        bun_core::fmt::format_json_string_utf8(
+                            name_and_version,
+                            Default::default()
+                        ),
                         patch_path.fmt_json(buf, Default::default()),
                     )?;
                 }
@@ -422,7 +439,9 @@ impl Stringifier {
             }
 
             if lockfile.overrides.map.count() > 0 {
-                lockfile.overrides.sort(lockfile.buffers.string_bytes.as_slice());
+                lockfile
+                    .overrides
+                    .sort(lockfile.buffers.string_bytes.as_slice());
 
                 Self::write_indent(writer, indent)?;
                 writer.write_all(b"\"overrides\": {\n")?;
@@ -433,7 +452,10 @@ impl Stringifier {
                         writer,
                         "{}: {},\n",
                         override_dep.name.fmt_json(buf, Default::default()),
-                        override_dep.version.literal.fmt_json(buf, Default::default()),
+                        override_dep
+                            .version
+                            .literal
+                            .fmt_json(buf, Default::default()),
                     )?;
                 }
 
@@ -457,7 +479,10 @@ impl Stringifier {
                         writer,
                         "{}: {},\n",
                         catalog_dep.name.fmt_json(buf, Default::default()),
-                        catalog_dep.version.literal.fmt_json(buf, Default::default()),
+                        catalog_dep
+                            .version
+                            .literal
+                            .fmt_json(buf, Default::default()),
                     )?;
                 }
 
@@ -472,9 +497,12 @@ impl Stringifier {
 
                 let mut iter = lockfile.catalogs.groups.iter();
                 while let Some((catalog_name, catalog_deps)) = iter.next() {
-
                     Self::write_indent(writer, indent)?;
-                    write!(writer, "{}: {{\n", catalog_name.fmt_json(buf, Default::default()))?;
+                    write!(
+                        writer,
+                        "{}: {{\n",
+                        catalog_name.fmt_json(buf, Default::default())
+                    )?;
                     *indent += 1;
 
                     for catalog_dep in catalog_deps.values() {
@@ -483,7 +511,10 @@ impl Stringifier {
                             writer,
                             "{}: {},\n",
                             catalog_dep.name.fmt_json(buf, Default::default()),
-                            catalog_dep.version.literal.fmt_json(buf, Default::default()),
+                            catalog_dep
+                                .version
+                                .literal
+                                .fmt_json(buf, Default::default()),
                         )?;
                     }
 
@@ -507,11 +538,18 @@ impl Stringifier {
                 tree_deps_sort_buf.extend_from_slice(dependencies);
 
                 {
-                    let ctx = TreeDepsSortCtx { string_buf: buf, deps_buf };
+                    let ctx = TreeDepsSortCtx {
+                        string_buf: buf,
+                        deps_buf,
+                    };
                     tree_deps_sort_buf.sort_by(|&a, &b| {
-                        if ctx.is_less_than(a, b) { core::cmp::Ordering::Less }
-                        else if ctx.is_less_than(b, a) { core::cmp::Ordering::Greater }
-                        else { core::cmp::Ordering::Equal }
+                        if ctx.is_less_than(a, b) {
+                            core::cmp::Ordering::Less
+                        } else if ctx.is_less_than(b, a) {
+                            core::cmp::Ordering::Greater
+                        } else {
+                            core::cmp::Ordering::Equal
+                        }
                     });
                     // PERF(port): std.sort.pdq with isLessThan
                 }
@@ -553,7 +591,10 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}",
-                        bun_core::fmt::format_json_string_utf8(relative_path, bun_core::fmt::JSONFormatterUTF8Options { quote: false }),
+                        bun_core::fmt::format_json_string_utf8(
+                            relative_path,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
                     )?;
 
                     if *depth != 0 {
@@ -566,7 +607,10 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}\": ",
-                        bun_core::fmt::format_json_string_utf8(dep_name, bun_core::fmt::JSONFormatterUTF8Options { quote: false }),
+                        bun_core::fmt::format_json_string_utf8(
+                            dep_name,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
                     )?;
 
                     let pkg_name = pkg_names[pkg_id as usize];
@@ -585,11 +629,18 @@ impl Stringifier {
                     // but we print behaviors in different groups so it won't affect
                     // the result
                     {
-                        let ctx = TreeDepsSortCtx { string_buf: buf, deps_buf };
+                        let ctx = TreeDepsSortCtx {
+                            string_buf: buf,
+                            deps_buf,
+                        };
                         pkg_deps_sort_buf.sort_by(|&a, &b| {
-                            if ctx.is_less_than(a, b) { core::cmp::Ordering::Less }
-                            else if ctx.is_less_than(b, a) { core::cmp::Ordering::Greater }
-                            else { core::cmp::Ordering::Equal }
+                            if ctx.is_less_than(a, b) {
+                                core::cmp::Ordering::Less
+                            } else if ctx.is_less_than(b, a) {
+                                core::cmp::Ordering::Greater
+                            } else {
+                                core::cmp::Ordering::Equal
+                            }
                         });
                     }
 
@@ -623,14 +674,13 @@ impl Stringifier {
                                 })?;
 
                                 // TODO(dylan-conway) move this to "workspaces" object
-                                pkg_bin
-                                    .to_json::<_, { ToJsonStyle::SingleLine }>(
-                                        None,
-                                        buf,
-                                        extern_strings,
-                                        &mut AsFmt::new(writer),
-                                        write_indent_fmt,
-                                    )?;
+                                pkg_bin.to_json::<_, { ToJsonStyle::SingleLine }>(
+                                    None,
+                                    buf,
+                                    extern_strings,
+                                    &mut AsFmt::new(writer),
+                                    write_indent_fmt,
+                                )?;
 
                                 writer.write_all(b" }]")?;
                             } else {
@@ -696,7 +746,8 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.remote_tarball().fmt_json(buf, JsonOpts { quote: false }),
+                                res.remote_tarball()
+                                    .fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -762,14 +813,18 @@ impl Stringifier {
                             write!(
                                 writer,
                                 "\"{}\", ",
-                                bstr::BStr::new(if strings::has_prefix(
-                                    url_slice,
-                                    strings::without_trailing_slash(Npm::Registry::DEFAULT_URL.as_bytes()),
-                                ) {
-                                    b"" as &[u8]
-                                } else {
-                                    url_slice
-                                }),
+                                bstr::BStr::new(
+                                    if strings::has_prefix(
+                                        url_slice,
+                                        strings::without_trailing_slash(
+                                            Npm::Registry::DEFAULT_URL.as_bytes()
+                                        ),
+                                    ) {
+                                        b"" as &[u8]
+                                    } else {
+                                        url_slice
+                                    }
+                                ),
                             )?;
 
                             Self::write_package_info_object(
@@ -800,7 +855,11 @@ impl Stringifier {
                         tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                             // inline .git, .github
                             let repo: &Repository = res.repository();
-                            let prefix: &str = if tag == ResolutionTag::Git { "git+" } else { "github:" };
+                            let prefix: &str = if tag == ResolutionTag::Git {
+                                "git+"
+                            } else {
+                                "github:"
+                            };
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
@@ -914,11 +973,20 @@ impl Stringifier {
                     writer,
                     "{}: {}",
                     bun_core::fmt::format_json_string_utf8(dep.name.slice(buf), Default::default()),
-                    bun_core::fmt::format_json_string_utf8(dep.version.literal.slice(buf), Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        dep.version.literal.slice(buf),
+                        Default::default()
+                    ),
                 )?;
 
-                if dep.behavior.contains(Behavior::PEER) && !dep.behavior.contains(Behavior::OPTIONAL) && pkg_map.map.len() > 0 {
-                    if pkg_map.find_resolution(relative_path, dep, buf, path_buf).is_err() {
+                if dep.behavior.contains(Behavior::PEER)
+                    && !dep.behavior.contains(Behavior::OPTIONAL)
+                    && pkg_map.map.len() > 0
+                {
+                    if pkg_map
+                        .find_resolution(relative_path, dep, buf, path_buf)
+                        .is_err()
+                    {
                         optional_peers_buf.push(dep.name);
                     }
                 }
@@ -938,8 +1006,15 @@ impl Stringifier {
                     writer,
                     "{}{}{}",
                     if i != 0 { " " } else { "" },
-                    bun_core::fmt::format_json_string_utf8(optional_peer.slice(buf), Default::default()),
-                    if i != optional_peers_buf.len() - 1 { "," } else { "" },
+                    bun_core::fmt::format_json_string_utf8(
+                        optional_peer.slice(buf),
+                        Default::default()
+                    ),
+                    if i != optional_peers_buf.len() - 1 {
+                        ","
+                    } else {
+                        ""
+                    },
                 )?;
             }
 
@@ -1069,7 +1144,10 @@ impl Stringifier {
             write!(
                 writer,
                 "\"name\": {}",
-                bun_core::fmt::format_json_string_utf8(pkg_names[pkg_id as usize].slice(buf), Default::default()),
+                bun_core::fmt::format_json_string_utf8(
+                    pkg_names[pkg_id as usize].slice(buf),
+                    Default::default()
+                ),
             )?;
 
             if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id as usize]) {
@@ -1146,7 +1224,10 @@ impl Stringifier {
                     bun_core::fmt::format_json_string_utf8(version, Default::default()),
                 )?;
 
-                if dep.behavior.contains(Behavior::PEER) && !dep.behavior.contains(Behavior::OPTIONAL) && pkg_map.map.len() > 0 {
+                if dep.behavior.contains(Behavior::PEER)
+                    && !dep.behavior.contains(Behavior::OPTIONAL)
+                    && pkg_map.map.len() > 0
+                {
                     if let Err(err) = pkg_map.find_resolution(relative_path, dep, buf, path_buf) {
                         if err == ResolveError::Unresolvable {
                             optional_peers_buf.push(dep.name);
@@ -1172,7 +1253,10 @@ impl Stringifier {
                 write!(
                     writer,
                     "{},\n",
-                    bun_core::fmt::format_json_string_utf8(optional_peer.slice(buf), Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        optional_peer.slice(buf),
+                        Default::default()
+                    ),
                 )?;
             }
             Self::dec_indent(writer, indent)?;
@@ -1272,7 +1356,9 @@ impl<T> PkgMap<T> {
     // unstable in Rust; callers name `T` directly.
 
     pub fn init() -> Self {
-        Self { map: StringHashMap::default() }
+        Self {
+            map: StringHashMap::default(),
+        }
     }
 
     // deinit → Drop (StringHashMap drops itself)
@@ -1401,12 +1487,20 @@ pub fn parse_into_binary_lockfile(
             }
         }
 
-        log.add_error(Some(source), lockfile_version_expr.loc, b"Invalid lockfile version");
+        log.add_error(
+            Some(source),
+            lockfile_version_expr.loc,
+            b"Invalid lockfile version",
+        );
         return Err(ParseError::InvalidLockfileVersion);
     };
 
     let Some(lockfile_version) = Version::from_int(lockfile_version_num) else {
-        log.add_error(Some(source), lockfile_version_expr.loc, b"Unknown lockfile version");
+        log.add_error(
+            Some(source),
+            lockfile_version_expr.loc,
+            b"Unknown lockfile version",
+        );
         return Err(ParseError::UnknownLockfileVersion);
     };
 
@@ -1417,7 +1511,11 @@ pub fn parse_into_binary_lockfile(
         lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
             Some(v) => Some(v),
             None => {
-                log.add_error(Some(source), config_version_expr.loc, b"Invalid \"configVersion\". Expected a number");
+                log.add_error(
+                    Some(source),
+                    config_version_expr.loc,
+                    b"Invalid \"configVersion\". Expected a number",
+                );
                 return Err(ParseError::InvalidConfigVersion);
             }
         };
@@ -1426,17 +1524,28 @@ pub fn parse_into_binary_lockfile(
     if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
         let mut trusted_dependencies = TrustedDependenciesSet::default();
         if !trusted_dependencies_expr.is_array() {
-            log.add_error(Some(source), trusted_dependencies_expr.loc, b"Expected an array");
+            log.add_error(
+                Some(source),
+                trusted_dependencies_expr.loc,
+                b"Expected an array",
+            );
             return Err(ParseError::InvalidTrustedDependenciesSet);
         }
 
-        for dep in trusted_dependencies_expr.data.e_array().expect("infallible: variant checked").items.slice() {
+        for dep in trusted_dependencies_expr
+            .data
+            .e_array()
+            .expect("infallible: variant checked")
+            .items
+            .slice()
+        {
             if !dep.is_string() {
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             }
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash_utf8(StringBuilder::string_hash)?.unwrap() as TruncatedPackageNameHash;
+                dep.as_string_hash_utf8(StringBuilder::string_hash)?
+                    .unwrap() as TruncatedPackageNameHash;
             trusted_dependencies.insert(name_hash, ());
         }
 
@@ -1445,11 +1554,21 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(patched_dependencies_expr) = root.get(b"patchedDependencies") {
         if !patched_dependencies_expr.is_object() {
-            log.add_error(Some(source), patched_dependencies_expr.loc, b"Expected an object");
+            log.add_error(
+                Some(source),
+                patched_dependencies_expr.loc,
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidPatchedDependencies);
         }
 
-        for prop in patched_dependencies_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in patched_dependencies_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
             if !key.is_string() {
@@ -1462,10 +1581,19 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPatchedDependencies);
             }
 
-            let key_hash = key.as_string_hash_utf8(StringBuilder::string_hash)?.unwrap();
+            let key_hash = key
+                .as_string_hash_utf8(StringBuilder::string_hash)?
+                .unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
-                PatchedDep { path: sbuf!(lockfile).append(value.as_utf8_string_literal().expect("infallible: is_string checked"))?, ..Default::default() },
+                PatchedDep {
+                    path: sbuf!(lockfile).append(
+                        value
+                            .as_utf8_string_literal()
+                            .expect("infallible: is_string checked"),
+                    )?,
+                    ..Default::default()
+                },
             );
         }
     }
@@ -1476,16 +1604,31 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidOverridesObject);
         }
 
-        for prop in overrides_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in overrides_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
 
-            if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
+            if !key.is_string()
+                || key
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .len()
+                    == 0
+            {
                 log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
+            let name_str = key
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
@@ -1495,7 +1638,9 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
+            let version_str = value
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1530,16 +1675,31 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidCatalogObject);
         }
 
-        for prop in catalog_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in catalog_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
 
-            if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
+            if !key.is_string()
+                || key
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .len()
+                    == 0
+            {
                 log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
-            let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
+            let dep_name_str = key
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
             let dep_name_hash = StringBuilder::string_hash(dep_name_str);
             let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
@@ -1548,7 +1708,9 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidCatalogObject);
             }
 
-            let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
+            let version_str = value
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1594,12 +1756,29 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidCatalogsObject);
         }
 
-        for catalog_prop in catalogs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for catalog_prop in catalogs_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let catalog_key = catalog_prop.key.expect("infallible: prop has key");
             let catalog_value = catalog_prop.value.expect("infallible: prop has value");
 
-            if !catalog_key.is_string() || catalog_key.data.e_string().expect("infallible: variant checked").len() == 0 {
-                log.add_error(Some(source), catalog_key.loc, b"Expected a non-empty string");
+            if !catalog_key.is_string()
+                || catalog_key
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .len()
+                    == 0
+            {
+                log.add_error(
+                    Some(source),
+                    catalog_key.loc,
+                    b"Expected a non-empty string",
+                );
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
@@ -1608,21 +1787,40 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
-            let catalog_name_str = catalog_key.as_utf8_string_literal().expect("infallible: is_string checked");
+            let catalog_name_str = catalog_key
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
             let catalog_name = sbuf!(lockfile).append(catalog_name_str)?;
 
-            let group = lockfile.catalogs.get_or_put_group(lockfile.buffers.string_bytes.as_slice(), catalog_name)?;
+            let group = lockfile
+                .catalogs
+                .get_or_put_group(lockfile.buffers.string_bytes.as_slice(), catalog_name)?;
 
-            for prop in catalog_value.data.e_object().expect("infallible: variant checked").properties.slice() {
+            for prop in catalog_value
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .properties
+                .slice()
+            {
                 let key = prop.key.expect("infallible: prop has key");
                 let value = prop.value.expect("infallible: prop has value");
 
-                if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
+                if !key.is_string()
+                    || key
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .len()
+                        == 0
+                {
                     log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
-                let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
+                let dep_name_str = key
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
                 let dep_name_hash = StringBuilder::string_hash(dep_name_str);
                 let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
@@ -1631,7 +1829,9 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
-                let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
+                let version_str = value
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
                 let version_hash = StringBuilder::string_hash(version_str);
                 let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
                 let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1673,13 +1873,23 @@ pub fn parse_into_binary_lockfile(
     }
 
     let Some(workspaces_obj) = root.get_object(b"workspaces") else {
-        log.add_error(Some(source), root.loc, b"Missing a workspaces object property");
+        log.add_error(
+            Some(source),
+            root.loc,
+            b"Missing a workspaces object property",
+        );
         return Err(ParseError::InvalidWorkspaceObject);
     };
 
     let mut maybe_root_pkg: Option<Expr> = None;
 
-    for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+    for prop in workspaces_obj
+        .data
+        .e_object()
+        .expect("infallible: variant checked")
+        .properties
+        .slice()
+    {
         let key = prop.key.expect("infallible: prop has key");
         let value: Expr = prop.value.expect("infallible: prop has value");
         if !key.is_string() {
@@ -1691,7 +1901,9 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         }
 
-        let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
+        let path = key
+            .as_utf8_string_literal()
+            .expect("infallible: is_string checked");
 
         if path.is_empty() {
             if maybe_root_pkg.is_some() {
@@ -1709,28 +1921,46 @@ pub fn parse_into_binary_lockfile(
         };
 
         let Some(name_hash) = name_expr.as_string_hash_utf8(StringBuilder::string_hash)? else {
-            log.add_error(Some(source), name_expr.loc, b"Expected a string name property");
+            log.add_error(
+                Some(source),
+                name_expr.loc,
+                b"Expected a string name property",
+            );
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
-        lockfile.workspace_paths.insert(name_hash, sbuf!(lockfile).append(path)?);
+        lockfile
+            .workspace_paths
+            .insert(name_hash, sbuf!(lockfile).append(path)?);
 
         // versions are optional
         if let Some(version_expr) = value.get(b"version") {
             if !version_expr.is_string() {
-                log.add_error(Some(source), version_expr.loc, b"Expected a string version property");
+                log.add_error(
+                    Some(source),
+                    version_expr.loc,
+                    b"Expected a string version property",
+                );
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
-            let version_str = sbuf!(lockfile).append(version_expr.as_utf8_string_literal().expect("infallible: is_string checked"))?;
+            let version_str = sbuf!(lockfile).append(
+                version_expr
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked"),
+            )?;
 
-            let parsed = Semver::Version::parse(version_str.sliced(lockfile.buffers.string_bytes.as_slice()));
+            let parsed = Semver::Version::parse(
+                version_str.sliced(lockfile.buffers.string_bytes.as_slice()),
+            );
             if !parsed.valid {
                 log.add_error(Some(source), version_expr.loc, b"Invalid semver version");
                 return Err(ParseError::InvalidSemver);
             }
 
-            lockfile.workspace_versions.insert(name_hash, parsed.version.min());
+            lockfile
+                .workspace_versions
+                .insert(name_hash, parsed.version.min());
         }
     }
 
@@ -1799,25 +2029,38 @@ pub fn parse_into_binary_lockfile(
         // body can take `&mut *lockfile` (`parse_append_dependencies`,
         // `append_package_dedupe`) without conflicting with the
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
-        let workspace_path_snapshot: Vec<String> =
-            lockfile.workspace_paths.values().to_vec();
+        let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_path_snapshot {
-            for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+            for prop in workspaces_obj
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .properties
+                .slice()
+            {
                 let key = prop.key.expect("infallible: prop has key");
                 let value = prop.value.expect("infallible: prop has value");
-                let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
-                if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
+                let path = key
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
+                    true,
+                ) {
                     continue;
                 }
 
                 let mut pkg = Package::default();
 
-                pkg.resolution = Resolution::init(
-                    crate::resolution::TaggedValue::Workspace(sbuf!(lockfile).append(path)?),
-                );
+                pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Workspace(
+                    sbuf!(lockfile).append(path)?,
+                ));
 
                 let name_expr = value.get(b"name").unwrap();
-                let name = name_expr.as_utf8_string_literal().expect("infallible: is_string checked");
+                let name = name_expr
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
@@ -1838,9 +2081,14 @@ pub fn parse_into_binary_lockfile(
                 pkg.resolutions = PackageIDSlice::new(off, len);
 
                 if let Some(bin_expr) = value.get(b"bin") {
-                    pkg.bin = Bin::parse_append(&bin_expr, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
+                    pkg.bin = Bin::parse_append(
+                        &bin_expr,
+                        &mut sbuf!(lockfile),
+                        &mut lockfile.buffers.extern_strings,
+                    )?;
                 } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                    pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
+                    pkg.bin =
+                        Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
                 }
 
                 // there should be no duplicates
@@ -1848,7 +2096,11 @@ pub fn parse_into_binary_lockfile(
 
                 let entry = pkg_map.get_or_put(name)?;
                 if entry.found_existing {
-                    log.add_error_fmt(source, key.loc, format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)));
+                    log.add_error_fmt(
+                        source,
+                        key.loc,
+                        format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
+                    );
                     return Err(ParseError::InvalidWorkspaceObject);
                 }
 
@@ -1886,7 +2138,13 @@ pub fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in pkgs_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
 
@@ -1900,20 +2158,34 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPackageInfo);
             }
 
-            let pkg_info = &value.data.e_array().expect("infallible: variant checked").items;
+            let pkg_info = &value
+                .data
+                .e_array()
+                .expect("infallible: variant checked")
+                .items;
             if (pkg_info.len_u32() as usize) < 3 {
                 continue;
             }
             let maybe_info_obj = pkg_info.at(2);
-            let Some(bundled_expr) = maybe_info_obj.get(b"bundled") else { continue };
-            let Some(bundled) = bundled_expr.as_bool() else { continue };
+            let Some(bundled_expr) = maybe_info_obj.get(b"bundled") else {
+                continue;
+            };
+            let Some(bundled) = bundled_expr.as_bool() else {
+                continue;
+            };
             if !bundled {
                 continue;
             }
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        'next_pkg_key: for prop in pkgs_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
 
@@ -1928,7 +2200,11 @@ pub fn parse_into_binary_lockfile(
             }
 
             let mut i: usize = 0;
-            let pkg_info = &value.data.e_array().expect("infallible: variant checked").items;
+            let pkg_info = &value
+                .data
+                .e_array()
+                .expect("infallible: variant checked")
+                .items;
 
             if (pkg_info.len_u32() as usize) == 0 {
                 log.add_error(Some(source), value.loc, b"Missing package info");
@@ -1966,11 +2242,19 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::OutOfMemory);
                 }
                 Err(crate::resolution::FromTextLockfileError::UnexpectedResolution) => {
-                    log.add_error_fmt(source, res_info.loc, format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)));
+                    log.add_error_fmt(
+                        source,
+                        res_info.loc,
+                        format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)),
+                    );
                     return Err(ParseError::UnexpectedResolution);
                 }
                 Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
-                    log.add_error_fmt(source, res_info.loc, format_args!("Invalid package version: {}", bstr::BStr::new(res_str)));
+                    log.add_error_fmt(
+                        source,
+                        res_info.loc,
+                        format_args!("Invalid package version: {}", bstr::BStr::new(res_str)),
+                    );
                     return Err(ParseError::InvalidSemver);
                 }
             };
@@ -1998,7 +2282,9 @@ pub fn parse_into_binary_lockfile(
 
                     let url = ExtractTarball::build_url(
                         registry_url,
-                        &strings::StringOrTinyString::init(name.slice(lockfile.buffers.string_bytes.as_slice())),
+                        &strings::StringOrTinyString::init(
+                            name.slice(lockfile.buffers.string_bytes.as_slice()),
+                        ),
                         res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
@@ -2023,14 +2309,22 @@ pub fn parse_into_binary_lockfile(
                     let pkg_resolutions = pkgs.items_resolution();
 
                     // new entry, a matching workspace MUST exist
-                    for _workspace_pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
-                        let workspace_pkg_id: PackageID = u32::try_from(_workspace_pkg_id).expect("int cast");
-                        if res.eql(&pkg_resolutions[workspace_pkg_id as usize], lockfile.buffers.string_bytes.as_slice(), lockfile.buffers.string_bytes.as_slice()) {
+                    for _workspace_pkg_id in
+                        workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len
+                    {
+                        let workspace_pkg_id: PackageID =
+                            u32::try_from(_workspace_pkg_id).expect("int cast");
+                        if res.eql(
+                            &pkg_resolutions[workspace_pkg_id as usize],
+                            lockfile.buffers.string_bytes.as_slice(),
+                            lockfile.buffers.string_bytes.as_slice(),
+                        ) {
                             #[cfg(debug_assertions)]
                             {
                                 debug_assert!(!strings::eql_long(
                                     pkg_path,
-                                    pkg_names[workspace_pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice()),
+                                    pkg_names[workspace_pkg_id as usize]
+                                        .slice(lockfile.buffers.string_bytes.as_slice()),
                                     true,
                                 ));
                             }
@@ -2059,7 +2353,13 @@ pub fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         res_info.loc,
-                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.workspace().slice(lockfile.buffers.string_bytes.as_slice()))),
+                        format_args!(
+                            "Unknown workspace: '{}'",
+                            bstr::BStr::new(
+                                res.workspace()
+                                    .slice(lockfile.buffers.string_bytes.as_slice())
+                            )
+                        ),
                     );
                     return Err(ParseError::InvalidPackageInfo);
                 }
@@ -2090,7 +2390,11 @@ pub fn parse_into_binary_lockfile(
                         let deps_os_cpu_libc_bin_bundle_obj = pkg_info.at(i);
                         i += 1;
                         if !deps_os_cpu_libc_bin_bundle_obj.is_object() {
-                            log.add_error(Some(source), deps_os_cpu_libc_bin_bundle_obj.loc, b"Expected an object");
+                            log.add_error(
+                                Some(source),
+                                deps_os_cpu_libc_bin_bundle_obj.loc,
+                                b"Expected an object",
+                            );
                             return Err(ParseError::InvalidPackageInfo);
                         }
 
@@ -2109,17 +2413,25 @@ pub fn parse_into_binary_lockfile(
                         pkg.resolutions = PackageIDSlice::new(off, len);
 
                         if let Some(bin) = deps_os_cpu_libc_bin_bundle_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
-                        } else if let Some(bin_dir) = deps_os_cpu_libc_bin_bundle_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
+                            pkg.bin = Bin::parse_append(
+                                &bin,
+                                &mut sbuf!(lockfile),
+                                &mut lockfile.buffers.extern_strings,
+                            )?;
+                        } else if let Some(bin_dir) = deps_os_cpu_libc_bin_bundle_obj.get(b"binDir")
+                        {
+                            pkg.bin =
+                                Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
 
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
-                                pkg.meta.os = Npm::negatable_from_json::<Npm::OperatingSystem>(&os)?;
+                                pkg.meta.os =
+                                    Npm::negatable_from_json::<Npm::OperatingSystem>(&os)?;
                             }
                             if let Some(arch) = deps_os_cpu_libc_bin_bundle_obj.get(b"cpu") {
-                                pkg.meta.arch = Npm::negatable_from_json::<Npm::Architecture>(&arch)?;
+                                pkg.meta.arch =
+                                    Npm::negatable_from_json::<Npm::Architecture>(&arch)?;
                             }
                             // TODO(dylan-conway)
                             // if (os_cpu_libc_obj.get("libc")) |libc| {
@@ -2129,7 +2441,11 @@ pub fn parse_into_binary_lockfile(
                     }
                     ResolutionTag::Root => {
                         if i >= (pkg_info.len_u32() as usize) {
-                            log.add_error(Some(source), value.loc, b"Missing package binaries object");
+                            log.add_error(
+                                Some(source),
+                                value.loc,
+                                b"Missing package binaries object",
+                            );
                             return Err(ParseError::InvalidPackageInfo);
                         }
                         let bin_obj = pkg_info.at(i);
@@ -2140,9 +2456,14 @@ pub fn parse_into_binary_lockfile(
                         }
 
                         if let Some(bin) = bin_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
+                            pkg.bin = Bin::parse_append(
+                                &bin,
+                                &mut sbuf!(lockfile),
+                                &mut lockfile.buffers.extern_strings,
+                            )?;
                         } else if let Some(bin_dir) = bin_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
+                            pkg.bin =
+                                Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
                     }
                     _ => {}
@@ -2225,10 +2546,17 @@ pub fn parse_into_binary_lockfile(
         }
 
         lockfile.buffers.resolutions.reserve_exact(
-            lockfile.buffers.dependencies.len().saturating_sub(lockfile.buffers.resolutions.len()),
+            lockfile
+                .buffers
+                .dependencies
+                .len()
+                .saturating_sub(lockfile.buffers.resolutions.len()),
         );
         // Zig: ensureTotalCapacityPrecise → expandToCapacity → @memset(invalid_package_id).
-        lockfile.buffers.resolutions.resize(lockfile.buffers.dependencies.len(), invalid_package_id);
+        lockfile
+            .buffers
+            .resolutions
+            .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
         // a package can list the same dependency in each dependnecy group, but only the first
@@ -2268,18 +2596,34 @@ pub fn parse_into_binary_lockfile(
                     if dep.behavior.contains(Behavior::OPTIONAL) {
                         continue;
                     }
-                    dependency_resolution_failure(dep, None, string_buf, source, log, root_pkg_exr.loc)?;
+                    dependency_resolution_failure(
+                        dep,
+                        None,
+                        string_buf,
+                        source,
+                        log,
+                        root_pkg_exr.loc,
+                    )?;
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
                 if !dep.behavior.is_workspace()
-                    && seen_deps.get_or_put(dep.name.slice(string_buf))?.found_existing
+                    && seen_deps
+                        .get_or_put(dep.name.slice(string_buf))?
+                        .found_existing
                 {
                     resolutions[dep_id as usize] = res_id;
                     continue;
                 }
 
-                map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
+                map_dep_to_pkg(
+                    dep,
+                    dep_id,
+                    res_id,
+                    resolutions,
+                    lockfile_version,
+                    pkg_resolutions,
+                );
             }
         }
 
@@ -2320,11 +2664,21 @@ pub fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let Some(&res_id) = pkg_map.get(workspace_node_modules).or_else(|| pkg_map.get(dep_name)) else {
+                    let Some(&res_id) = pkg_map
+                        .get(workspace_node_modules)
+                        .or_else(|| pkg_map.get(dep_name))
+                    else {
                         if dep.behavior.contains(Behavior::OPTIONAL) {
                             continue;
                         }
-                        dependency_resolution_failure(dep, Some(workspace_name), string_buf, source, log, root_pkg_exr.loc)?;
+                        dependency_resolution_failure(
+                            dep,
+                            Some(workspace_name),
+                            string_buf,
+                            source,
+                            log,
+                            root_pkg_exr.loc,
+                        )?;
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
@@ -2333,16 +2687,31 @@ pub fn parse_into_binary_lockfile(
                         continue;
                     }
 
-                    map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
+                    map_dep_to_pkg(
+                        dep,
+                        dep_id,
+                        res_id,
+                        resolutions,
+                        lockfile_version,
+                        pkg_resolutions,
+                    );
                 }
             }
         }
 
         // then each package dependency
-        for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+        for prop in pkgs_expr
+            .data
+            .e_object()
+            .expect("infallible: variant checked")
+            .properties
+            .slice()
+        {
             let key = prop.key.expect("infallible: prop has key");
 
-            let pkg_path = key.as_utf8_string_literal().expect("infallible: is_string checked");
+            let pkg_path = key
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {
                 return Err(ParseError::InvalidPackagesObject);
@@ -2361,22 +2730,37 @@ pub fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                 let dep = &mut dependencies[dep_id as usize];
 
-                let res_id = match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
-                    Ok(&id) => id,
-                    Err(ResolveError::InvalidPackageKey) => {
-                        log.add_error(Some(source), key.loc, b"Invalid package path");
-                        return Err(ParseError::InvalidPackageKey);
-                    }
-                    Err(ResolveError::Unresolvable) => {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
-                            continue 'deps;
+                let res_id =
+                    match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
+                        Ok(&id) => id,
+                        Err(ResolveError::InvalidPackageKey) => {
+                            log.add_error(Some(source), key.loc, b"Invalid package path");
+                            return Err(ParseError::InvalidPackageKey);
                         }
-                        dependency_resolution_failure(dep, Some(pkg_path), string_buf, source, log, key.loc)?;
-                        return Err(ParseError::InvalidPackageInfo);
-                    }
-                };
+                        Err(ResolveError::Unresolvable) => {
+                            if dep.behavior.contains(Behavior::OPTIONAL) {
+                                continue 'deps;
+                            }
+                            dependency_resolution_failure(
+                                dep,
+                                Some(pkg_path),
+                                string_buf,
+                                source,
+                                log,
+                                key.loc,
+                            )?;
+                            return Err(ParseError::InvalidPackageInfo);
+                        }
+                    };
 
-                map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
+                map_dep_to_pkg(
+                    dep,
+                    dep_id,
+                    res_id,
+                    resolutions,
+                    lockfile_version,
+                    pkg_resolutions,
+                );
             }
         }
 
@@ -2412,7 +2796,9 @@ fn map_dep_to_pkg(
             dep.version.tag = DependencyVersionTag::Workspace;
             // SAFETY: `res.tag == Workspace` was just checked, so the
             // `workspace` arm of the `Resolution.value` union is the active one.
-            dep.version.value = DependencyVersionValue { workspace: *res.workspace() };
+            dep.version.value = DependencyVersionValue {
+                workspace: *res.workspace(),
+            };
         }
     }
 }
@@ -2489,7 +2875,13 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
             return Err(ParseError::InvalidPackageInfo);
         }
 
-        for item in optional_peers.data.e_array().expect("infallible: variant checked").items.slice() {
+        for item in optional_peers
+            .data
+            .e_array()
+            .expect("infallible: variant checked")
+            .items
+            .slice()
+        {
             let Some(name_hash) = item.as_string_hash_utf8(StringBuilder::string_hash)? else {
                 log.add_error(Some(source), item.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageInfo);
@@ -2514,7 +2906,13 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 return Err(ParseError::InvalidPackagesTree);
             }
 
-            for prop in deps.data.e_object().expect("infallible: variant checked").properties.slice() {
+            for prop in deps
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .properties
+                .slice()
+            {
                 let key = prop.key.expect("infallible: prop has key");
                 let value = prop.value.expect("infallible: prop has value");
 
@@ -2537,7 +2935,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let mut dep = Dependency {
                     name: name.value,
                     name_hash: name.hash,
-                    behavior: if group_behavior.contains(Behavior::PEER) && optional_peers_buf.contains_key(&name.hash) {
+                    behavior: if group_behavior.contains(Behavior::PEER)
+                        && optional_peers_buf.contains_key(&name.hash)
+                    {
                         group_behavior.add(Behavior::OPTIONAL)
                     } else {
                         group_behavior
@@ -2561,7 +2961,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
                 if CHECK_FOR_BUNDLED {
                     let pkg_path = pkg_path.expect("pkg_path required when CHECK_FOR_BUNDLED");
-                    let bundled_pkgs = bundled_pkgs.expect("bundled_pkgs required when CHECK_FOR_BUNDLED");
+                    let bundled_pkgs =
+                        bundled_pkgs.expect("bundled_pkgs required when CHECK_FOR_BUNDLED");
                     let path_buf = &mut path_buf.as_mut().unwrap()[..];
                     path_buf[0..pkg_path.len()].copy_from_slice(pkg_path);
                     let remain = &mut path_buf[pkg_path.len()..];
@@ -2582,16 +2983,30 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     if IS_ROOT {
         let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
         'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+            for prop in workspaces_obj
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .properties
+                .slice()
+            {
                 let key = prop.key.expect("infallible: prop has key");
                 let value = prop.value.expect("infallible: prop has value");
-                let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
-                if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
+                let path = key
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
+                    true,
+                ) {
                     continue;
                 }
 
                 let name_expr = value.get(b"name").unwrap();
-                let name = name_expr.as_utf8_string_literal().expect("infallible: is_string checked");
+                let name = name_expr
+                    .as_utf8_string_literal()
+                    .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
                 let dep = Dependency {
@@ -2628,7 +3043,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     optional_peers_buf.clear();
 
-    Ok((u32::try_from(off).expect("int cast"), u32::try_from(end - off).expect("int cast")))
+    Ok((
+        u32::try_from(off).expect("int cast"),
+        u32::try_from(end - off).expect("int cast"),
+    ))
 }
 
 // ported from: src/install/lockfile/bun.lock.zig

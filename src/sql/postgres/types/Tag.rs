@@ -343,7 +343,9 @@ pub trait WireByteSwap: Copy {
 }
 impl WireByteSwap for i32 {
     #[inline]
-    fn wire_byte_swap(self) -> Self { self.swap_bytes() }
+    fn wire_byte_swap(self) -> Self {
+        self.swap_bytes()
+    }
     #[inline]
     fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
         Self::from_ne_bytes(b.try_into().expect("size_of::<i32>"))
@@ -355,7 +357,9 @@ impl WireByteSwap for i32 {
 }
 impl WireByteSwap for f32 {
     #[inline]
-    fn wire_byte_swap(self) -> Self { f32::from_bits(self.to_bits().swap_bytes()) }
+    fn wire_byte_swap(self) -> Self {
+        f32::from_bits(self.to_bits().swap_bytes())
+    }
     #[inline]
     fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
         Self::from_ne_bytes(b.try_into().expect("size_of::<f32>"))
@@ -367,7 +371,9 @@ impl WireByteSwap for f32 {
 }
 impl WireByteSwap for f64 {
     #[inline]
-    fn wire_byte_swap(self) -> Self { f64::from_bits(self.to_bits().swap_bytes()) }
+    fn wire_byte_swap(self) -> Self {
+        f64::from_bits(self.to_bits().swap_bytes())
+    }
     #[inline]
     fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
         Self::from_ne_bytes(b.try_into().expect("size_of::<f64>"))

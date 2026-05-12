@@ -1,24 +1,24 @@
 //! Port of src/cli/create/SourceFileProjectGenerator.zig
 
-use bun_bundler::mal_prelude::*;
-use bun_collections::{VecExt, ByteVecExt};
+use crate::api::bun::process as bun_process;
+use crate::api::bun::process::SignalCodeExt as _;
+use crate::api::bun::process::sync as spawn_sync;
+use crate::cli::Command;
+use crate::cli::create_command::ExampleTag;
+use bun_ast::Source as LoggerSource;
+use bun_bundler::ResolvedExports;
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
-use bun_bundler::ResolvedExports;
-use crate::cli::create_command::ExampleTag;
-use crate::cli::Command;
-use crate::api::bun::process as bun_process;
-use crate::api::bun::process::sync as spawn_sync;
-use crate::api::bun::process::SignalCodeExt as _;
+use bun_bundler::mal_prelude::*;
 use bun_collections::StringSet;
+use bun_collections::{ByteVecExt, VecExt};
+use bun_core::MutableString;
+use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
-use bun_ast::Source as LoggerSource;
 use bun_paths as path;
-use bun_paths::resolve_path;
 use bun_paths::fs::FileSystem;
-use bun_core::strings;
-use bun_core::MutableString;
+use bun_paths::resolve_path;
 use bun_sys::{self, Fd, FdExt as _};
 
 // Generate project files based on the entry point and dependencies
@@ -96,11 +96,7 @@ pub fn generate(
     result.dependencies.insert(b"react-dom@19")?;
     result.dependencies.insert(b"react@19")?;
 
-    let dev_dependencies: &[&[u8]] = &[
-        b"@types/bun",
-        b"@types/react@19",
-        b"@types/react-dom@19",
-    ];
+    let dev_dependencies: &[&[u8]] = &[b"@types/bun", b"@types/react@19", b"@types/react-dom@19"];
 
     // Choose template based on dependencies and example type
     let template: Template = 'brk: {
@@ -186,7 +182,8 @@ fn string_with_replacements(
     }
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME") {
-        input = strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
+        input =
+            strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
     }
 
     Ok(input)
@@ -208,7 +205,9 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
             ..Default::default()
         },
         ..Default::default()
@@ -294,8 +293,12 @@ pub fn generate_files(
         // Create all template files
         for index in 0..files.len() {
             let file = &files[index];
-            let file_name =
-                string_with_replacements(file.name, basename, normalized_name, react_component_export)?;
+            let file_name = string_with_replacements(
+                file.name,
+                basename,
+                normalized_name,
+                react_component_export,
+            )?;
             if file.overwrite || !exists(&file_name) {
                 let content = string_with_replacements(
                     file.content,
@@ -311,11 +314,7 @@ pub fn generate_files(
                         }
                     }
                     bun_sys::Result::Err(err) => {
-                        Output::err(
-                            err,
-                            "failed to create {}",
-                            (bstr::BStr::new(&file_name),),
-                        );
+                        Output::err(err, "failed to create {}", (bstr::BStr::new(&file_name),));
                         Global::crash();
                     }
                 }
@@ -385,28 +384,29 @@ pub fn generate_files(
                 shadcn_argv[0] = bun_core::self_exe_path()?;
 
                 // Now we need to run shadcn to add the components to the project
-                let shadcn_process =
-                    match spawn_sync::spawn(&spawn_sync::Options {
-                        argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                        envp: None,
-                        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
-                        stderr: spawn_sync::SyncStdio::Inherit,
-                        stdout: spawn_sync::SyncStdio::Inherit,
-                        stdin: spawn_sync::SyncStdio::Inherit,
+                let shadcn_process = match spawn_sync::spawn(&spawn_sync::Options {
+                    argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+                    envp: None,
+                    cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+                    stderr: spawn_sync::SyncStdio::Inherit,
+                    stdout: spawn_sync::SyncStdio::Inherit,
+                    stdin: spawn_sync::SyncStdio::Inherit,
 
-                        #[cfg(windows)]
-                        windows: bun_process::WindowsOptions {
-                            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
-                            ..Default::default()
-                        },
+                    #[cfg(windows)]
+                    windows: bun_process::WindowsOptions {
+                        loop_: bun_jsc::EventLoopHandle::init_mini(
+                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                        ),
                         ..Default::default()
-                    }) {
-                        Ok(p) => p,
-                        Err(err) => {
-                            Output::err(err, "failed to add shadcn components", ());
-                            Global::crash();
-                        }
-                    };
+                    },
+                    ..Default::default()
+                }) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        Output::err(err, "failed to add shadcn components", ());
+                        Global::crash();
+                    }
+                };
 
                 match shadcn_process {
                     bun_sys::Result::Err(err) => {
@@ -421,9 +421,7 @@ pub fn generate_files(
                                 }
                             }
 
-                            if let bun_process::Status::Exited(exited) =
-                                spawn_result.status
-                            {
+                            if let bun_process::Status::Exited(exited) = spawn_result.status {
                                 Global::exit(exited.code as u32);
                             }
 
@@ -458,7 +456,9 @@ pub fn generate_files(
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
             ..Default::default()
         },
         ..Default::default()
@@ -506,9 +506,29 @@ fn has_any_tailwind_classes_in_source_files(
 
     // Common Tailwind class patterns to look for
     const COMMON_TAILWIND_PATTERNS: &[&[u8]] = &[
-        b"bg-", b"text-", b"p-", b"m-", b"flex", b"grid", b"border", b"rounded", b"shadow",
-        b"hover:", b"focus:", b"dark:", b"sm:", b"md:", b"lg:", b"xl:", b"w-", b"h-", b"space-",
-        b"gap-", b"items-", b"justify-", b"font-",
+        b"bg-",
+        b"text-",
+        b"p-",
+        b"m-",
+        b"flex",
+        b"grid",
+        b"border",
+        b"rounded",
+        b"shadow",
+        b"hover:",
+        b"focus:",
+        b"dark:",
+        b"sm:",
+        b"md:",
+        b"lg:",
+        b"xl:",
+        b"w-",
+        b"h-",
+        b"space-",
+        b"gap-",
+        b"items-",
+        b"justify-",
+        b"font-",
     ];
 
     for file in reachable_files {
@@ -631,10 +651,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
     let entry_point_ids = bundler.graph.entry_points.as_slice();
     for entry_point_id in entry_point_ids {
         let loader = loaders[entry_point_id.get() as usize];
-        if matches!(
-            loader,
-            bun_ast::Loader::Jsx | bun_ast::Loader::Tsx
-        ) {
+        if matches!(loader, bun_ast::Loader::Jsx | bun_ast::Loader::Tsx) {
             let source: &LoggerSource = &sources[entry_point_id.get() as usize];
             let exports = &resolved_exports[entry_point_id.get() as usize];
 
@@ -675,8 +692,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 // (only freed on the fall-through). Route through the process-
                 // lifetime CLI arena to match the returned-slice lifetime; the
                 // fall-through `free` is a no-op (arena-backed).
-                let duped: &'static mut [u8] =
-                    crate::cli::cli_arena().alloc_slice_copy(filename);
+                let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] = duped[0] - 32;
                 if js_lexer::is_identifier(duped) {
                     if exports.contains(duped) {
@@ -786,14 +802,20 @@ pub struct TemplateFile {
 
 impl TemplateFile {
     const fn new(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
-        Self { name, content, reason, overwrite: true }
+        Self {
+            name,
+            content,
+            reason,
+            overwrite: true,
+        }
     }
-    const fn new_no_overwrite(
-        name: &'static [u8],
-        content: &'static [u8],
-        reason: Reason,
-    ) -> Self {
-        Self { name, content, reason, overwrite: false }
+    const fn new_no_overwrite(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+        Self {
+            name,
+            content,
+            reason,
+            overwrite: false,
+        }
     }
 }
 
@@ -956,7 +978,10 @@ pub enum Tag {
 
 impl Tag {
     pub fn logger(self) -> Logger {
-        Logger { template: self, has_written_initial_message: false }
+        Logger {
+            template: self,
+            has_written_initial_message: false,
+        }
     }
 
     pub fn label(self) -> &'static [u8] {
@@ -979,7 +1004,10 @@ impl Tag {
 
 impl Template {
     pub fn logger(&self) -> Logger {
-        Logger { template: self.tag(), has_written_initial_message: false }
+        Logger {
+            template: self.tag(),
+            has_written_initial_message: false,
+        }
     }
 }
 

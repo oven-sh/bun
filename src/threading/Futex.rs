@@ -77,16 +77,12 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
     imp::wake(ptr, max_waiters);
 }
 
-#[cfg(windows)]
-use windows_impl as imp;
 #[cfg(target_vendor = "apple")]
 use darwin_impl as imp;
-#[cfg(target_os = "linux")]
-use linux_impl as imp;
 #[cfg(target_os = "freebsd")]
 use freebsd_impl as imp;
-#[cfg(target_arch = "wasm32")]
-use wasm_impl as imp;
+#[cfg(target_os = "linux")]
+use linux_impl as imp;
 #[cfg(not(any(
     windows,
     target_vendor = "apple",
@@ -95,6 +91,10 @@ use wasm_impl as imp;
     target_arch = "wasm32",
 )))]
 use unsupported_impl as imp;
+#[cfg(target_arch = "wasm32")]
+use wasm_impl as imp;
+#[cfg(windows)]
+use windows_impl as imp;
 
 /// We can't do @compileError() in the `Impl` switch statement above as its eagerly evaluated.
 /// So instead, we @compileError() on the methods themselves for platforms which don't support futex.
@@ -102,7 +102,11 @@ use unsupported_impl as imp;
 mod unsupported_impl {
     use super::*;
 
-    pub(super) fn wait(_ptr: &AtomicU32, _expect: u32, _timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        _ptr: &AtomicU32,
+        _expect: u32,
+        _timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         unsupported()
     }
 
@@ -124,7 +128,11 @@ mod windows_impl {
     use super::*;
     use bun_sys::windows;
 
-    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         // NTDLL functions work with time in units of 100 nanoseconds.
         // Positive values are absolute deadlines while negative values are relative durations.
         let timeout_value: windows::LARGE_INTEGER;
@@ -176,7 +184,11 @@ mod darwin_impl {
     use super::*;
     use bun_sys::darwin as c;
 
-    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
         // https://github.com/apple/darwin-xnu/commit/d4061fb0260b3ed486147341b72468f836ed6c8f#diff-08f993cc40af475663274687b7c326cc6c3031e0db3ac8de7b24624610616be6
         //
@@ -284,7 +296,11 @@ mod darwin_impl {
 mod linux_impl {
     use super::*;
 
-    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
@@ -299,9 +315,16 @@ mod linux_impl {
         let rc = unsafe {
             linux::futex_4arg(
                 ptr.as_ptr().cast(),
-                linux::FutexOp { cmd: linux::FutexCmd::WAIT, private: true },
+                linux::FutexOp {
+                    cmd: linux::FutexCmd::WAIT,
+                    private: true,
+                },
                 expect,
-                if timeout.is_some() { &raw const ts } else { core::ptr::null() },
+                if timeout.is_some() {
+                    &raw const ts
+                } else {
+                    core::ptr::null()
+                },
             )
         };
 
@@ -336,7 +359,10 @@ mod linux_impl {
         let rc = unsafe {
             linux::futex_3arg(
                 ptr.as_ptr().cast(),
-                linux::FutexOp { cmd: linux::FutexCmd::WAKE, private: true },
+                linux::FutexOp {
+                    cmd: linux::FutexCmd::WAKE,
+                    private: true,
+                },
                 val,
             )
         };
@@ -437,11 +463,7 @@ mod wasm_impl {
         };
         // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).
         let result = unsafe {
-            core::arch::wasm32::memory_atomic_wait32(
-                ptr.as_ptr().cast::<i32>(),
-                expect as i32,
-                to,
-            )
+            core::arch::wasm32::memory_atomic_wait32(ptr.as_ptr().cast::<i32>(), expect as i32, to)
         };
         match result {
             0 => Ok(()), // ok

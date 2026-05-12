@@ -3,9 +3,9 @@
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
-use bun_sys::{self as sys, Fd, FdExt as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value` per the .zig spec.
@@ -15,7 +15,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
-use crate::api::bun_process::{self as process, StdioKind, Dup2 as ProcessDup2};
+use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 
 // `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
 // can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
@@ -214,13 +214,21 @@ impl Stdio {
         // WindowsStdio; only three variant *constructors* differ in arity
         // between targets, so spell those per-cfg and share the rest.
         #[cfg(not(windows))]
-        fn buffer() -> SpawnOptionsStdio { SpawnOptionsStdio::Buffer }
+        fn buffer() -> SpawnOptionsStdio {
+            SpawnOptionsStdio::Buffer
+        }
         #[cfg(windows)]
-        fn buffer() -> SpawnOptionsStdio { SpawnOptionsStdio::Buffer(create_zeroed_pipe()) }
+        fn buffer() -> SpawnOptionsStdio {
+            SpawnOptionsStdio::Buffer(create_zeroed_pipe())
+        }
         #[cfg(not(windows))]
-        fn ipc() -> SpawnOptionsStdio { SpawnOptionsStdio::Ipc }
+        fn ipc() -> SpawnOptionsStdio {
+            SpawnOptionsStdio::Ipc
+        }
         #[cfg(windows)]
-        fn ipc() -> SpawnOptionsStdio { SpawnOptionsStdio::Ipc(create_zeroed_pipe()) }
+        fn ipc() -> SpawnOptionsStdio {
+            SpawnOptionsStdio::Ipc(create_zeroed_pipe())
+        }
 
         let result = match self {
             Self::Blob(blob) => 'brk: {
@@ -273,7 +281,10 @@ impl Stdio {
 
                 buffer()
             }
-            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 { out: d.out, to: d.to }),
+            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 {
+                out: d.out,
+                to: d.to,
+            }),
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
                 buffer()
             }
@@ -324,7 +335,10 @@ impl Stdio {
             }
             webcore::body::Value::Used => {
                 return Err(global
-                    .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("Body already used"))
+                    .err(
+                        jsc::ErrorCode::BODY_ALREADY_USED,
+                        format_args!("Body already used"),
+                    )
                     .throw());
             }
             webcore::body::Value::Error(err) => {
@@ -359,12 +373,9 @@ impl Stdio {
 
                 let stream_value = body.to_readable_stream(global)?;
 
-                let Some(stream) =
-                    webcore::ReadableStream::from_js(stream_value, global)?
-                else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Failed to create ReadableStream"
-                    )));
+                let Some(stream) = webcore::ReadableStream::from_js(stream_value, global)? else {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
                 };
 
                 if stream.is_disturbed(global) {

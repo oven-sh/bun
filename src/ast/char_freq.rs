@@ -38,7 +38,11 @@ pub struct CharFreq {
 
 impl Default for CharFreq {
     #[inline]
-    fn default() -> Self { Self { freqs: [0i32; CHAR_FREQ_COUNT] } }
+    fn default() -> Self {
+        Self {
+            freqs: [0i32; CHAR_FREQ_COUNT],
+        }
+    }
 }
 
 const SCAN_BIG_CHUNK_SIZE: usize = 32;
@@ -67,7 +71,8 @@ impl CharFreq {
     pub fn compile(&self) -> crate::NameMinifier {
         use crate::NameMinifier;
         let array: CharAndCountArray = 'brk: {
-            let mut arr: [CharAndCount; CHAR_FREQ_COUNT] = [CharAndCount::default(); CHAR_FREQ_COUNT];
+            let mut arr: [CharAndCount; CHAR_FREQ_COUNT] =
+                [CharAndCount::default(); CHAR_FREQ_COUNT];
 
             debug_assert_eq!(NameMinifier::DEFAULT_TAIL.len(), CHAR_FREQ_COUNT);
             for (i, ((dest, &char), &freq)) in arr
@@ -103,12 +108,16 @@ impl CharFreq {
         };
 
         let mut minifier = NameMinifier::init();
-        minifier
-            .head
-            .reserve_exact(NameMinifier::DEFAULT_HEAD.len().saturating_sub(minifier.head.len()));
-        minifier
-            .tail
-            .reserve_exact(NameMinifier::DEFAULT_TAIL.len().saturating_sub(minifier.tail.len()));
+        minifier.head.reserve_exact(
+            NameMinifier::DEFAULT_HEAD
+                .len()
+                .saturating_sub(minifier.head.len()),
+        );
+        minifier.tail.reserve_exact(
+            NameMinifier::DEFAULT_TAIL
+                .len()
+                .saturating_sub(minifier.tail.len()),
+        );
         // TODO: investigate counting number of < 0 and > 0 and pre-allocating
         for item in array {
             if item.char < b'0' || item.char > b'9' {
@@ -160,9 +169,15 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
     // makes the freq table both correct and run-to-run stable. Minified
     // output therefore differs from Zig by design here (three.js: 2 bytes
     // smaller); byte-identical-vs-Zig is not a goal for this function.
-    for i in 0..26 { out[i] += deltas[b'a' as usize + i]; }
-    for i in 0..26 { out[26 + i] += deltas[b'A' as usize + i]; }
-    for i in 0..10 { out[52 + i] += deltas[b'0' as usize + i]; }
+    for i in 0..26 {
+        out[i] += deltas[b'a' as usize + i];
+    }
+    for i in 0..26 {
+        out[26 + i] += deltas[b'A' as usize + i];
+    }
+    for i in 0..10 {
+        out[52 + i] += deltas[b'0' as usize + i];
+    }
     out[62] += deltas[b'_' as usize];
     out[63] += deltas[b'$' as usize];
 }

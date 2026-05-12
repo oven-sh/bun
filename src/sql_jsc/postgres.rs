@@ -7,11 +7,15 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
         b"PostgresSQLConnection",
         postgres_sql_connection::js::get_constructor(global_object),
     );
-    crate::put_host_functions!(binding, global_object, [
-        ("init", PostgresSQLContext::init, 0),
-        ("createQuery", PostgresSQLQuery::call, 6),
-        ("createConnection", postgres_sql_connection::call, 2),
-    ])
+    crate::put_host_functions!(
+        binding,
+        global_object,
+        [
+            ("init", PostgresSQLContext::init, 0),
+            ("createQuery", PostgresSQLQuery::call, 6),
+            ("createConnection", postgres_sql_connection::call, 2),
+        ]
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────

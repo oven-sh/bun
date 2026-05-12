@@ -7,7 +7,6 @@
 //! Similarly to an arena, you can call .reset() to reset state, reusing memory
 //! across operations.
 
-
 // Scope name distinct from the macro-generated `struct Store`.
 ::bun_core::declare_scope!(STORE_LOG, hidden);
 

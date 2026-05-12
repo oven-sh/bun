@@ -1,17 +1,19 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::{Parser, Printer, PrintErr, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext};
+use crate::css_values::color::ColorFallbackKind;
+use crate::css_values::color::CssColor;
+use crate::css_values::image::Image;
+use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
+use crate::css_values::ratio::Ratio;
 use crate::generics::{CssEql, DeepClone};
 use crate::properties::{Property, PropertyId, PropertyIdTag};
-use crate::css_values::color::ColorFallbackKind;
-use crate::css_values::length::LengthPercentageOrAuto;
-use crate::css_values::image::Image;
-use crate::css_values::color::CssColor;
-use crate::css_values::ratio::Ratio;
-use crate::css_values::position::{HorizontalPosition, VerticalPosition, Position};
+use crate::{
+    DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
+};
 use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
 use bun_core::strings;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
@@ -183,7 +185,8 @@ impl Background {
         }
 
         let output_padding_box = self.origin != BackgroundOrigin::PaddingBox
-            || (!self.clip.eql_origin(&BackgroundOrigin::BorderBox) && self.clip.is_background_box());
+            || (!self.clip.eql_origin(&BackgroundOrigin::BorderBox)
+                && self.clip.is_background_box());
 
         if output_padding_box {
             if has_output {
@@ -235,7 +238,8 @@ impl Background {
     }
 
     pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
-        self.color.get_necessary_fallbacks(targets) | self.get_image().get_necessary_fallbacks(targets)
+        self.color.get_necessary_fallbacks(targets)
+            | self.get_image().get_necessary_fallbacks(targets)
     }
 
     #[inline]
@@ -302,7 +306,10 @@ impl BackgroundSize {
             let height = input
                 .try_parse(LengthPercentageOrAuto::parse)
                 .unwrap_or(LengthPercentageOrAuto::Auto);
-            return Ok(BackgroundSize::Explicit(ExplicitBackgroundSize { width, height }));
+            return Ok(BackgroundSize::Explicit(ExplicitBackgroundSize {
+                width,
+                height,
+            }));
         }
 
         let location = input.current_source_location();
@@ -387,7 +394,10 @@ impl BackgroundPosition {
     }
 
     pub fn into_position(&self) -> Position {
-        Position { x: self.x.clone(), y: self.y.clone() }
+        Position {
+            x: self.x.clone(),
+            y: self.y.clone(),
+        }
     }
 
     #[inline]
@@ -474,13 +484,13 @@ impl BackgroundRepeat {
 // Phase B: implement as a derive macro or trait that maps kebab-case names.
 pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
-        Repeat,
+    Repeat,
     /// The image is repeated so that it fits, and then spaced apart evenly.
-        Space,
+    Space,
     /// The image is scaled so that it repeats an even number of times.
-        Round,
+    Round,
     /// The image is placed once and not repeated in this direction.
-        NoRepeat,
+    NoRepeat,
 }
 
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
@@ -488,11 +498,11 @@ pub enum BackgroundRepeatKeyword {
 
 pub enum BackgroundAttachment {
     /// The background scrolls with the container.
-        Scroll,
+    Scroll,
     /// The background is fixed to the viewport.
-        Fixed,
+    Fixed,
     /// The background is fixed with regard to the element's contents.
-        Local,
+    Local,
 }
 
 impl BackgroundAttachment {
@@ -507,11 +517,11 @@ impl BackgroundAttachment {
 
 pub enum BackgroundOrigin {
     /// The position is relative to the border box.
-        BorderBox,
+    BorderBox,
     /// The position is relative to the padding box.
-        PaddingBox,
+    PaddingBox,
     /// The position is relative to the content box.
-        ContentBox,
+    ContentBox,
 }
 
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
@@ -520,15 +530,15 @@ pub enum BackgroundOrigin {
 
 pub enum BackgroundClip {
     /// The background is clipped to the border box.
-        BorderBox,
+    BorderBox,
     /// The background is clipped to the padding box.
-        PaddingBox,
+    PaddingBox,
     /// The background is clipped to the content box.
-        ContentBox,
+    ContentBox,
     /// The background is clipped to the area painted by the border.
-        Border,
+    Border,
     /// The background is clipped to the text content of the element.
-        Text,
+    Text,
 }
 
 impl BackgroundClip {
@@ -582,7 +592,8 @@ impl BackgroundProperty {
     pub const BACKGROUND_IMAGE: Self = Self::IMAGE;
     pub const BACKGROUND_POSITION_X: Self = Self::POSITION_X;
     pub const BACKGROUND_POSITION_Y: Self = Self::POSITION_Y;
-    pub const BACKGROUND_POSITION: Self = Self::from_bits_truncate(Self::POSITION_X.bits() | Self::POSITION_Y.bits());
+    pub const BACKGROUND_POSITION: Self =
+        Self::from_bits_truncate(Self::POSITION_X.bits() | Self::POSITION_Y.bits());
     pub const BACKGROUND_REPEAT: Self = Self::REPEAT;
     pub const BACKGROUND_SIZE: Self = Self::SIZE;
     pub const BACKGROUND_ATTACHMENT: Self = Self::ATTACHMENT;
@@ -601,7 +612,7 @@ impl BackgroundProperty {
             | Self::CLIP.bits(),
     );
 
-     // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
+    // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
     pub fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),
@@ -875,13 +886,16 @@ impl BackgroundHandler {
 
         let mut maybe_color: Option<CssColor> = self.color.take();
         let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
-        let mut maybe_x_positions: Option<SmallList<HorizontalPosition, 1>> = self.x_positions.take();
+        let mut maybe_x_positions: Option<SmallList<HorizontalPosition, 1>> =
+            self.x_positions.take();
         let mut maybe_y_positions: Option<SmallList<VerticalPosition, 1>> = self.y_positions.take();
         let mut maybe_repeats: Option<SmallList<BackgroundRepeat, 1>> = self.repeats.take();
         let mut maybe_sizes: Option<SmallList<BackgroundSize, 1>> = self.sizes.take();
-        let mut maybe_attachments: Option<SmallList<BackgroundAttachment, 1>> = self.attachments.take();
+        let mut maybe_attachments: Option<SmallList<BackgroundAttachment, 1>> =
+            self.attachments.take();
         let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = self.origins.take();
-        let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> = self.clips.take();
+        let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> =
+            self.clips.take();
         // Zig had `defer { ... deinit }` here — Drop handles cleanup at scope exit.
 
         if maybe_color.is_some()
@@ -914,13 +928,21 @@ impl BackgroundHandler {
                 && origins.len() == len
                 && clips.0.len() == len
             {
-                let clip_prefixes = if clips.0.any(|clip: &BackgroundClip| *clip == BackgroundClip::Text) {
-                    context.targets.prefixes(clips.1, css::prefixes::Feature::BackgroundClip)
+                let clip_prefixes = if clips
+                    .0
+                    .any(|clip: &BackgroundClip| *clip == BackgroundClip::Text)
+                {
+                    context
+                        .targets
+                        .prefixes(clips.1, css::prefixes::Feature::BackgroundClip)
                 } else {
                     clips.1
                 };
                 let clip_property = if clip_prefixes != VendorPrefix::NONE {
-                    Some(Property::BackgroundClip((clips.0.deep_clone(arena), clip_prefixes)))
+                    Some(Property::BackgroundClip((
+                        clips.0.deep_clone(arena),
+                        clip_prefixes,
+                    )))
                 } else {
                     None
                 };
@@ -958,19 +980,33 @@ impl BackgroundHandler {
                 // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
 
                 if self.flushed_properties.is_empty() {
-                    let mut fallbacks = crate::small_list::get_fallbacks(&mut backgrounds, arena, context.targets);
+                    let mut fallbacks =
+                        crate::small_list::get_fallbacks(&mut backgrounds, arena, context.targets);
                     // PORT NOTE: Vec has no owning iterator; pop in reverse then
                     // re-reverse via a temp Vec to preserve order.
-                    let mut tmp: Vec<SmallList<Background, 1>> = Vec::with_capacity(fallbacks.len());
+                    let mut tmp: Vec<SmallList<Background, 1>> =
+                        Vec::with_capacity(fallbacks.len());
                     while let Some(fb) = fallbacks.pop() {
                         tmp.push(fb);
                     }
                     for fallback in tmp.into_iter().rev() {
-                        push_property!(self, dest, Background, BackgroundProperty::BACKGROUND, fallback);
+                        push_property!(
+                            self,
+                            dest,
+                            Background,
+                            BackgroundProperty::BACKGROUND,
+                            fallback
+                        );
                     }
                 }
 
-                push_property!(self, dest, Background, BackgroundProperty::BACKGROUND, backgrounds);
+                push_property!(
+                    self,
+                    dest,
+                    Background,
+                    BackgroundProperty::BACKGROUND,
+                    backgrounds
+                );
 
                 if let Some(clip) = clip_property {
                     dest.push(clip);
@@ -986,15 +1022,28 @@ impl BackgroundHandler {
             if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
                 let fallbacks = color.get_fallbacks(arena, context.targets);
                 for fallback in fallbacks.into_iter() {
-                    push_property!(self, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, fallback);
+                    push_property!(
+                        self,
+                        dest,
+                        BackgroundColor,
+                        BackgroundProperty::BACKGROUND_COLOR,
+                        fallback
+                    );
                 }
             }
-            push_property!(self, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, color);
+            push_property!(
+                self,
+                dest,
+                BackgroundColor,
+                BackgroundProperty::BACKGROUND_COLOR,
+                color
+            );
         }
 
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
-                let mut fallbacks = crate::small_list::get_fallbacks(&mut images, arena, context.targets);
+                let mut fallbacks =
+                    crate::small_list::get_fallbacks(&mut images, arena, context.targets);
                 // PORT NOTE: Vec has no owning iterator; pop in reverse then
                 // re-reverse via a temp Vec to preserve order.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
@@ -1002,57 +1051,121 @@ impl BackgroundHandler {
                     tmp.push(fb);
                 }
                 for fallback in tmp.into_iter().rev() {
-                    push_property!(self, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, fallback);
+                    push_property!(
+                        self,
+                        dest,
+                        BackgroundImage,
+                        BackgroundProperty::BACKGROUND_IMAGE,
+                        fallback
+                    );
                 }
             }
-            push_property!(self, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, images);
+            push_property!(
+                self,
+                dest,
+                BackgroundImage,
+                BackgroundProperty::BACKGROUND_IMAGE,
+                images
+            );
         }
 
         if maybe_x_positions.is_some()
             && maybe_y_positions.is_some()
-            && maybe_x_positions.as_ref().unwrap().len() == maybe_y_positions.as_ref().unwrap().len()
+            && maybe_x_positions.as_ref().unwrap().len()
+                == maybe_y_positions.as_ref().unwrap().len()
         {
             let xs = maybe_x_positions.take().unwrap();
             let ys = maybe_y_positions.take().unwrap();
-            let mut positions: SmallList<BackgroundPosition, 1> = SmallList::init_capacity(xs.len());
+            let mut positions: SmallList<BackgroundPosition, 1> =
+                SmallList::init_capacity(xs.len());
             debug_assert_eq!(xs.slice().len(), ys.slice().len());
             for (x, y) in xs.slice().iter().zip(ys.slice().iter()) {
-                positions.append_assume_capacity(BackgroundPosition { x: x.clone(), y: y.clone() });
+                positions.append_assume_capacity(BackgroundPosition {
+                    x: x.clone(),
+                    y: y.clone(),
+                });
             }
             // Zig: clearRetainingCapacity on xs/ys after moving values out — Drop handles it.
-            push_property!(self, dest, BackgroundPosition, BackgroundProperty::BACKGROUND_POSITION, positions);
+            push_property!(
+                self,
+                dest,
+                BackgroundPosition,
+                BackgroundProperty::BACKGROUND_POSITION,
+                positions
+            );
         } else {
             if let Some(x) = maybe_x_positions.take() {
-                push_property!(self, dest, BackgroundPositionX, BackgroundProperty::BACKGROUND_POSITION_X, x);
+                push_property!(
+                    self,
+                    dest,
+                    BackgroundPositionX,
+                    BackgroundProperty::BACKGROUND_POSITION_X,
+                    x
+                );
             }
             if let Some(y) = maybe_y_positions.take() {
-                push_property!(self, dest, BackgroundPositionY, BackgroundProperty::BACKGROUND_POSITION_Y, y);
+                push_property!(
+                    self,
+                    dest,
+                    BackgroundPositionY,
+                    BackgroundProperty::BACKGROUND_POSITION_Y,
+                    y
+                );
             }
         }
 
         if let Some(rep) = maybe_repeats.take() {
-            push_property!(self, dest, BackgroundRepeat, BackgroundProperty::BACKGROUND_REPEAT, rep);
+            push_property!(
+                self,
+                dest,
+                BackgroundRepeat,
+                BackgroundProperty::BACKGROUND_REPEAT,
+                rep
+            );
         }
 
         if let Some(rep) = maybe_sizes.take() {
-            push_property!(self, dest, BackgroundSize, BackgroundProperty::BACKGROUND_SIZE, rep);
+            push_property!(
+                self,
+                dest,
+                BackgroundSize,
+                BackgroundProperty::BACKGROUND_SIZE,
+                rep
+            );
         }
 
         if let Some(rep) = maybe_attachments.take() {
-            push_property!(self, dest, BackgroundAttachment, BackgroundProperty::BACKGROUND_ATTACHMENT, rep);
+            push_property!(
+                self,
+                dest,
+                BackgroundAttachment,
+                BackgroundProperty::BACKGROUND_ATTACHMENT,
+                rep
+            );
         }
 
         if let Some(rep) = maybe_origins.take() {
-            push_property!(self, dest, BackgroundOrigin, BackgroundProperty::BACKGROUND_ORIGIN, rep);
+            push_property!(
+                self,
+                dest,
+                BackgroundOrigin,
+                BackgroundProperty::BACKGROUND_ORIGIN,
+                rep
+            );
         }
 
         if let Some((clips, vp)) = maybe_clips.take() {
             let prefixes = if clips.any(|clip: &BackgroundClip| *clip == BackgroundClip::Text) {
-                context.targets.prefixes(vp, css::prefixes::Feature::BackgroundClip)
+                context
+                    .targets
+                    .prefixes(vp, css::prefixes::Feature::BackgroundClip)
             } else {
                 vp
             };
-            dest.push(Property::BackgroundClip((clips.deep_clone(arena), prefixes)));
+            dest.push(Property::BackgroundClip((
+                clips.deep_clone(arena),
+                prefixes,
+            )));
             self.flushed_properties.insert(BackgroundProperty::CLIP);
         }
 

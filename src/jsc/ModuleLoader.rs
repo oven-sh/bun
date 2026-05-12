@@ -20,9 +20,9 @@ use crate::{
 };
 
 // Re-exports (thin re-exports from the original Zig file).
+pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use bun_resolve_builtins::HardcodedModule;
 pub use bun_resolver::node_fallbacks;
-pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 
 // Spec ModuleLoader.zig:4 — `pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;`
 // LAYERING: re-export from the crate-level mount (`crate::async_module`)
@@ -184,8 +184,11 @@ pub enum FetchBuiltinResult {
 pub struct LoaderHooks {
     /// `ModuleLoader.transpileSourceCode(...)` — full body. Returns `false`
     /// on error (error is written into `*ret` as `.err(...)`).
-    pub transpile_source_code:
-        unsafe fn(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>, ret: *mut ErrorableResolvedSource) -> bool,
+    pub transpile_source_code: unsafe fn(
+        jsc_vm: *mut VirtualMachine,
+        args: &TranspileArgs<'_>,
+        ret: *mut ErrorableResolvedSource,
+    ) -> bool,
     /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — writes `*out`
     /// (as `ErrorableResolvedSource`) and returns a tri-state. On
     /// `Found`/`Errored`, `*out` is populated; on `NotFound` it is untouched.
@@ -425,10 +428,8 @@ pub extern "C" fn Bun__transpileFile(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret = ErrorableResolvedSource::err(
-                bun_core::err!("ModuleNotFound"),
-                JSValue::UNDEFINED,
-            )
+            *ret =
+                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED)
         };
         return core::ptr::null_mut();
     };
@@ -533,7 +534,9 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     // high tier extracts the embedded addon to a temp file and writes the
     // on-disk path back into `*in_out_str` (spec ModuleLoader.zig:1332-1342:
     // `bun.String.cloneUTF8(result)`).
-    let Some(hooks) = loader_hooks() else { unreachable!() };
+    let Some(hooks) = loader_hooks() else {
+        unreachable!()
+    };
     // SAFETY: hook contract — `vm` is the live per-thread VM; `in_out_str` is a
     // valid in/out `bun.String*` (C++ ABI, BunProcess.cpp:463).
     // PERF(port): was inline switch.
@@ -603,16 +606,16 @@ pub extern "C" fn Bun__transpileVirtualModule(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret = ErrorableResolvedSource::err(
-                bun_core::err!("ModuleNotFound"),
-                JSValue::UNDEFINED,
-            );
+            *ret =
+                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
         }
         return true;
     };
     // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
     // PERF(port): was inline switch.
-    unsafe { (hooks.transpile_virtual_module)(global, specifier, referrer, source_code, loader, ret) }
+    unsafe {
+        (hooks.transpile_virtual_module)(global, specifier, referrer, source_code, loader, ret)
+    }
 }
 
 /// Spec ModuleLoader.zig:1122-1143.

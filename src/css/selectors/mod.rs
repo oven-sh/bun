@@ -32,9 +32,9 @@ pub use parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
 /// needs `impl_::Selectors` to instantiate `Component`/`Selector`/
 /// `SelectorList`, and `selector.rs` needs those instantiations.
 pub mod impl_ {
+    use crate::VendorPrefix;
     use crate::css_values::ident::{Ident, IdentOrRef};
     use crate::css_values::string::CssString;
-    use crate::VendorPrefix;
 
     /// Marker type carrying the associated-type bundle for Bun's selector
     /// grammar.

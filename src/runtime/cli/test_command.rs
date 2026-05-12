@@ -5,25 +5,25 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
-use bun_core::{self as bun, env_var, fmt as bun_fmt, Global, Output};
+use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{err_generic, pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_http::HTTPThread;
-use bun_jsc::{self as jsc};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
-use bun_jsc::zig_string::ZigString;
 use bun_core::ZigStringSlice;
-use bun_js_parser as js_ast;
-use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
-use bun_paths::{self as bun_path, PathBuffer};
-use bun_paths::resolve_path;
-use bun_resolver::fs::FileSystem;
-use bun_core::{strings, PathString};
-use bun_paths::string_paths::without_leading_path_separator;
 use bun_core::immutable::Appender as _;
+use bun_core::{PathString, strings};
+use bun_js_parser as js_ast;
+use bun_jsc::zig_string::ZigString;
+use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
+use bun_paths::resolve_path;
+use bun_paths::string_paths::without_leading_path_separator;
+use bun_paths::{self as bun_path, PathBuffer};
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 use bun_uws as uws;
 
@@ -39,13 +39,16 @@ bun_output::declare_scope!(bun_test, hidden);
 // `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub use bun_sourcemap_jsc::code_coverage::{
-        lcov as Lcov, ByteRangeMapping, ByteRangeMappingHashMap, Fraction,
-        Report as CodeCoverageReport,
+        ByteRangeMapping, ByteRangeMappingHashMap, Fraction, Report as CodeCoverageReport,
+        lcov as Lcov,
     };
 
     /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
     #[inline]
-    pub fn is_less_than_cmp(a: &&mut ByteRangeMapping, b: &&mut ByteRangeMapping) -> core::cmp::Ordering {
+    pub fn is_less_than_cmp(
+        a: &&mut ByteRangeMapping,
+        b: &&mut ByteRangeMapping,
+    ) -> core::cmp::Ordering {
         bun_core::order(a.source_url.slice(), b.source_url.slice())
     }
 
@@ -67,7 +70,13 @@ mod coverage {
             if enable_ansi_colors {
                 text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
             } else {
-                text::write_format::<false>(report, max_filename_length, fraction, base_path, writer)
+                text::write_format::<false>(
+                    report,
+                    max_filename_length,
+                    fraction,
+                    base_path,
+                    writer,
+                )
             }
         }
 
@@ -85,11 +94,23 @@ mod coverage {
         ) -> bun_io::Result<()> {
             if enable_ansi_colors {
                 text::write_format_with_values::<true>(
-                    filename, max_filename_length, vals, failing, failed, writer, indent_name,
+                    filename,
+                    max_filename_length,
+                    vals,
+                    failing,
+                    failed,
+                    writer,
+                    indent_name,
                 )
             } else {
                 text::write_format_with_values::<false>(
-                    filename, max_filename_length, vals, failing, failed, writer, indent_name,
+                    filename,
+                    max_filename_length,
+                    vals,
+                    failing,
+                    failed,
+                    writer,
+                    indent_name,
                 )
             }
         }
@@ -103,9 +124,9 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileId, FileColumns as _, Summary, TestRunner};
-use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
 use crate::test_runner::bun_test as bun_test_mod;
+use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
+use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
 
 /// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
 pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
@@ -115,10 +136,6 @@ mod bun_test {
     //! Façade over `crate::test_runner` that preserves the Zig-shaped paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
     //! `bun_test::DescribeScope`, …). Drop once the body is normalised.
-    pub use crate::test_runner::bun_test::*;
-    pub use crate::test_runner::execution::{
-        Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
-    };
     /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
     /// module scope. Alias here so `bun_test::FirstLast` paths in
     /// the body resolve without a 2k-line rewrite. Phase B may collapse the
@@ -127,6 +144,10 @@ mod bun_test {
     /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
     /// Rust port collapsed it into `RefDataValue`.
     pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
+    pub use crate::test_runner::bun_test::*;
+    pub use crate::test_runner::execution::{
+        Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
+    };
     #[allow(non_snake_case)]
     pub mod Execution {
         pub use crate::test_runner::execution::*;
@@ -178,7 +199,10 @@ pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bu
     Ok(())
 }
 
-fn fmt_status_text_line(status: bun_test::Execution::Result, emoji_or_color: bool) -> Output::PrettyBuf {
+fn fmt_status_text_line(
+    status: bun_test::Execution::Result,
+    emoji_or_color: bool,
+) -> Output::PrettyBuf {
     // emoji and color might be split into two different options in the future
     // some terminals support color, but not emoji.
     // For now, they are the same.
@@ -200,7 +224,10 @@ fn fmt_status_text_line(status: bun_test::Execution::Result, emoji_or_color: boo
     }
 }
 
-pub fn write_test_status_line(status: bun_test::Execution::Result, writer: &mut impl bun_io::Write) {
+pub fn write_test_status_line(
+    status: bun_test::Execution::Result,
+    writer: &mut impl bun_io::Write,
+) {
     // PORT NOTE: was `comptime status` in Zig; `Execution::Result` lacks
     // `ConstParamTy`, so this is a runtime arg.
     // PERF(port): was comptime monomorphization — profile in Phase B.
@@ -345,10 +372,19 @@ impl JunitReporter {
             if let Some(github_run_id) = env_var::GITHUB_RUN_ID.get() {
                 if let Some(github_server_url) = env_var::GITHUB_SERVER_URL.get() {
                     if let Some(github_repository) = env_var::GITHUB_REPOSITORY.get() {
-                        if !github_run_id.is_empty() && !github_server_url.is_empty() && !github_repository.is_empty() {
+                        if !github_run_id.is_empty()
+                            && !github_server_url.is_empty()
+                            && !github_repository.is_empty()
+                        {
                             let mut v = Vec::new();
                             // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
-                            let _ = write!(&mut v, "{}/{}/actions/runs/{}", bstr::BStr::new(github_server_url), bstr::BStr::new(github_repository), bstr::BStr::new(github_run_id));
+                            let _ = write!(
+                                &mut v,
+                                "{}/{}/actions/runs/{}",
+                                bstr::BStr::new(github_server_url),
+                                bstr::BStr::new(github_repository),
+                                bstr::BStr::new(github_run_id)
+                            );
                             ci_buf = v;
                             break 'brk &ci_buf[..];
                         }
@@ -417,7 +453,8 @@ impl JunitReporter {
     }
 
     fn get_indent(depth: u32) -> &'static [u8] {
-        const SPACES: &[u8] = b"                                                                                ";
+        const SPACES: &[u8] =
+            b"                                                                                ";
         const INDENT_SIZE: u32 = 2;
         let total_spaces = (depth + 1) * INDENT_SIZE;
         &SPACES[0..(total_spaces as usize).min(SPACES.len())]
@@ -427,10 +464,17 @@ impl JunitReporter {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
-    pub fn begin_test_suite_with_line(&mut self, name: &[u8], line_number: u32, is_file_suite: bool) -> Result<(), bun_core::Error> {
+    pub fn begin_test_suite_with_line(
+        &mut self,
+        name: &[u8],
+        line_number: u32,
+        is_file_suite: bool,
+    ) -> Result<(), bun_core::Error> {
         if self.contents.is_empty() {
-            self.contents.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-            self.contents.extend_from_slice(b"<testsuites name=\"bun test\" ");
+            self.contents
+                .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            self.contents
+                .extend_from_slice(b"<testsuites name=\"bun test\" ");
             self.offset_of_testsuites_value = self.contents.len();
             self.contents.extend_from_slice(b">\n");
         }
@@ -523,7 +567,10 @@ impl JunitReporter {
             );
         }
 
-        self.contents.splice(suite_info.offset_of_attributes..suite_info.offset_of_attributes, summary.iter().copied());
+        self.contents.splice(
+            suite_info.offset_of_attributes..suite_info.offset_of_attributes,
+            summary.iter().copied(),
+        );
 
         let indent = Self::get_indent(self.current_depth);
         self.contents.extend_from_slice(indent);
@@ -555,7 +602,10 @@ impl JunitReporter {
         if !self.suite_stack.is_empty() {
             let last = self.suite_stack.len() - 1;
             let current_suite = &mut self.suite_stack[last];
-            current_suite.metrics.elapsed_time = current_suite.metrics.elapsed_time.saturating_add(elapsed_ms as u64);
+            current_suite.metrics.elapsed_time = current_suite
+                .metrics
+                .elapsed_time
+                .saturating_add(elapsed_ms as u64);
             current_suite.metrics.test_cases += 1;
             current_suite.metrics.assertions += assertions;
         }
@@ -570,7 +620,11 @@ impl JunitReporter {
         self.contents.extend_from_slice(b"\"");
 
         let elapsed_seconds = elapsed_ms / bun::time::MS_PER_S as f64;
-        let _ = write!(&mut self.contents, " time=\"{}\"", bun_fmt::trimmed_precision::<6>(elapsed_seconds));
+        let _ = write!(
+            &mut self.contents,
+            " time=\"{}\"",
+            bun_fmt::trimmed_precision::<6>(elapsed_seconds)
+        );
 
         self.contents.extend_from_slice(b" file=\"");
         escape_xml(file, &mut self.contents)?;
@@ -600,7 +654,8 @@ impl JunitReporter {
                 // }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"  <failure type=\"AssertionError\" />\n");
+                self.contents
+                    .extend_from_slice(b"  <failure type=\"AssertionError\" />\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -611,7 +666,10 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(&mut self.contents, "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>\n");
+                let _ = write!(
+                    &mut self.contents,
+                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>\n"
+                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -622,7 +680,11 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(&mut self.contents, "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>\n", assertions);
+                let _ = write!(
+                    &mut self.contents,
+                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>\n",
+                    assertions
+                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -633,7 +695,10 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(&mut self.contents, "  <failure message=\"TODO passed\" type=\"AssertionError\"/>\n");
+                let _ = write!(
+                    &mut self.contents,
+                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>\n"
+                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -644,7 +709,10 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(&mut self.contents, "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>\n");
+                let _ = write!(
+                    &mut self.contents,
+                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>\n"
+                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -666,18 +734,23 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"  <skipped message=\"TODO\" />\n");
+                self.contents
+                    .extend_from_slice(b"  <skipped message=\"TODO\" />\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseTimeout | R::FailBecauseTimeoutWithDoneCallback | R::FailBecauseHookTimeout | R::FailBecauseHookTimeoutWithDoneCallback => {
+            R::FailBecauseTimeout
+            | R::FailBecauseTimeoutWithDoneCallback
+            | R::FailBecauseHookTimeout
+            | R::FailBecauseHookTimeoutWithDoneCallback => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"  <failure type=\"TimeoutError\" />\n");
+                self.contents
+                    .extend_from_slice(b"  <failure type=\"TimeoutError\" />\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -698,7 +771,8 @@ impl JunitReporter {
         {
             // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
             let metrics = self.total_metrics;
-            let elapsed_time = (bun::time::nano_timestamp() - bun::start_time()) as f64 / bun::time::NS_PER_S as f64;
+            let elapsed_time = (bun::time::nano_timestamp() - bun::start_time()) as f64
+                / bun::time::NS_PER_S as f64;
             let mut summary = Vec::new();
             {
                 // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
@@ -712,7 +786,10 @@ impl JunitReporter {
                     elapsed_time,
                 );
             }
-            self.contents.splice(self.offset_of_testsuites_value..self.offset_of_testsuites_value, summary.iter().copied());
+            self.contents.splice(
+                self.offset_of_testsuites_value..self.offset_of_testsuites_value,
+                summary.iter().copied(),
+            );
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
@@ -723,16 +800,29 @@ impl JunitReporter {
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
         let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(Fd::cwd(), zpath, bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC, 0o664) {
+        match File::openat(
+            Fd::cwd(),
+            zpath,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+            0o664,
+        ) {
             bun_sys::Result::Err(err) => {
-                Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
+                Output::err(
+                    bun_core::err!("JUnitReportFailed"),
+                    "Failed to write JUnit report to {}\n{}",
+                    (bstr::BStr::new(path), err),
+                );
             }
             bun_sys::Result::Ok(fd) => {
                 let _close_fd = bun_sys::CloseOnDrop::file(&fd);
                 match File::write_all(&fd, &self.contents) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(err) => {
-                        Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
+                        Output::err(
+                            bun_core::err!("JUnitReportFailed"),
+                            "Failed to write JUnit report to {}\n{}",
+                            (bstr::BStr::new(path), err),
+                        );
                     }
                 }
             }
@@ -798,8 +888,10 @@ impl CommandLineReporter {
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p.cast_const());
+        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
+            BoundedArray::default();
+        let mut parent_: Option<*const bun_test::DescribeScope> =
+            test_entry.base.parent.map(|p| p.cast_const());
 
         while let Some(scope) = parent_ {
             if scopes_stack.push(scope).is_err() {
@@ -822,16 +914,34 @@ impl CommandLineReporter {
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
-                    let expected_count = if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions { n } else { 12345 };
-                    Output::err(bun_core::err!("AssertionError"), "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n", (
-                        expected_count,
-                        if expected_count == 1 { "" } else { "s" },
-                        sequence.expect_call_count,
-                        if sequence.expect_call_count == 1 { "" } else { "s" }));
+                    let expected_count =
+                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
+                            n
+                        } else {
+                            12345
+                        };
+                    Output::err(
+                        bun_core::err!("AssertionError"),
+                        "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
+                        (
+                            expected_count,
+                            if expected_count == 1 { "" } else { "s" },
+                            sequence.expect_call_count,
+                            if sequence.expect_call_count == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                        ),
+                    );
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
-                    Output::err(bun_core::err!("AssertionError"), "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", ());
+                    Output::err(
+                        bun_core::err!("AssertionError"),
+                        "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
+                        (),
+                    );
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
@@ -839,7 +949,11 @@ impl CommandLineReporter {
                 | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
                 | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
-                        Output::print_error(format_args!("::error title=error: Test \"{}\" timed out after {}ms::\n", bstr::BStr::new(display_label), test_entry.timeout));
+                        Output::print_error(format_args!(
+                            "::error title=error: Test \"{}\" timed out after {}ms::\n",
+                            bstr::BStr::new(display_label),
+                            test_entry.timeout
+                        ));
                         Output::flush();
                     }
                 }
@@ -857,7 +971,11 @@ impl CommandLineReporter {
                     }
                     let _ = writer.write_all(b" ");
 
-                    let prefix = if DIM { Output::pretty_fmt::<true>("<r><d>") } else { Output::pretty_fmt::<true>("<r>") };
+                    let prefix = if DIM {
+                        Output::pretty_fmt::<true>("<r><d>")
+                    } else {
+                        Output::pretty_fmt::<true>("<r>")
+                    };
                     let _ = writer.write_all(&prefix);
                     let _ = writer.write_all(name);
                     let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
@@ -879,7 +997,11 @@ impl CommandLineReporter {
             }
 
             if Output::enable_ansi_colors_stderr() {
-                let label_prefix = if DIM { Output::pretty_fmt::<true>("<r><d> ") } else { Output::pretty_fmt::<true>("<r><b> ") };
+                let label_prefix = if DIM {
+                    Output::pretty_fmt::<true>("<r><d> ")
+                } else {
+                    Output::pretty_fmt::<true>("<r><b> ")
+                };
                 let _ = writer.write_all(&label_prefix);
                 let _ = writer.write_all(display_label);
                 let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
@@ -893,7 +1015,11 @@ impl CommandLineReporter {
                 let _ = write!(
                     writer,
                     "{}",
-                    Output::pretty_fmt_args(" <d>(attempt {d})<r>", Output::enable_ansi_colors_stderr(), (attempts,)),
+                    Output::pretty_fmt_args(
+                        " <d>(attempt {d})<r>",
+                        Output::enable_ansi_colors_stderr(),
+                        (attempts,)
+                    ),
                 );
             }
 
@@ -902,15 +1028,23 @@ impl CommandLineReporter {
                 let _ = write!(
                     writer,
                     "{}",
-                    Output::pretty_fmt_args(" <d>(run {d})<r>", Output::enable_ansi_colors_stderr(), (repeats,)),
+                    Output::pretty_fmt_args(
+                        " <d>(run {d})<r>",
+                        Output::enable_ansi_colors_stderr(),
+                        (repeats,)
+                    ),
                 );
             }
 
             if elapsed_ns > (bun::time::NS_PER_US * 10) {
-                let _ = write!(writer, " {}", Output::ElapsedFormatter {
-                    colors: Output::enable_ansi_colors_stderr(),
-                    duration_ns: elapsed_ns,
-                });
+                let _ = write!(
+                    writer,
+                    " {}",
+                    Output::ElapsedFormatter {
+                        colors: Output::enable_ansi_colors_stderr(),
+                        duration_ns: elapsed_ns,
+                    }
+                );
             }
 
             let _ = writer.write_all(b"\n");
@@ -921,13 +1055,44 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)); }
-                R::FailBecauseTodoPassed => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)); }
+                R::FailBecauseFailingTestPassed => {
+                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors));
+                }
+                R::FailBecauseTodoPassed => {
+                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors));
+                }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
-                R::FailBecauseTimeout => { let _ = write!(writer, "{}", Output::pretty_fmt_args("  <d>^<r> <red>this test timed out after {}ms.<r>\n", colors, (test_entry.timeout,))); }
-                R::FailBecauseHookTimeout => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n", colors)); }
-                R::FailBecauseTimeoutWithDoneCallback => { let _ = write!(writer, "{}", Output::pretty_fmt_args("  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors, (test_entry.timeout,))); }
-                R::FailBecauseHookTimeoutWithDoneCallback => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors)); }
+                R::FailBecauseTimeout => {
+                    let _ = write!(
+                        writer,
+                        "{}",
+                        Output::pretty_fmt_args(
+                            "  <d>^<r> <red>this test timed out after {}ms.<r>\n",
+                            colors,
+                            (test_entry.timeout,)
+                        )
+                    );
+                }
+                R::FailBecauseHookTimeout => {
+                    let _ = writer.write_all(&Output::pretty_fmt_rt(
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n",
+                        colors,
+                    ));
+                }
+                R::FailBecauseTimeoutWithDoneCallback => {
+                    let _ = write!(
+                        writer,
+                        "{}",
+                        Output::pretty_fmt_args(
+                            "  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                            colors,
+                            (test_entry.timeout,)
+                        )
+                    );
+                }
+                R::FailBecauseHookTimeoutWithDoneCallback => {
+                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors));
+                }
             }
         }
     }
@@ -940,21 +1105,29 @@ impl CommandLineReporter {
         elapsed_ns: u64,
     ) {
         // PERF(port): was comptime monomorphization on `status` — profile in Phase B
-        let Some(cmd_reporter) = buntest.reporter else { return; };
+        let Some(cmd_reporter) = buntest.reporter else {
+            return;
+        };
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
         // exclusive access for the duration of this callback (mirrors Zig
         // `?*CommandLineReporter`).
         let cmd_reporter: &mut CommandLineReporter = unsafe { &mut *cmd_reporter.as_ptr() };
-        let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
+        let Some(junit) = cmd_reporter.reporters.junit.as_mut() else {
+            return;
+        };
 
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p.cast_const());
+        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
+            BoundedArray::default();
+        let mut parent_: Option<*const bun_test::DescribeScope> =
+            test_entry.base.parent.map(|p| p.cast_const());
         let assertions = sequence.expect_call_count;
         let line_number = test_entry.base.line_no;
 
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.items_source()[buntest.file_id as usize].path.text
+            runner.files.items_source()[buntest.file_id as usize]
+                .path
+                .text
         } else {
             b""
         };
@@ -981,7 +1154,9 @@ impl CommandLineReporter {
             };
 
             if !strings::eql(&junit.current_file, filename) {
-                while !junit.suite_stack.is_empty() && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite {
+                while !junit.suite_stack.is_empty()
+                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
+                {
                     junit.end_test_suite().expect("oom");
                 }
 
@@ -1017,7 +1192,9 @@ impl CommandLineReporter {
             }
 
             while (current_suite_depth as usize) > needed_suites.len() {
-                if !junit.suite_stack.is_empty() && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite {
+                if !junit.suite_stack.is_empty()
+                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
+                {
                     junit.end_test_suite().expect("oom");
                     current_suite_depth -= 1;
                 } else {
@@ -1035,20 +1212,25 @@ impl CommandLineReporter {
                 if suite_index < needed_suites.len() {
                     let needed_scope = needed_suites[suite_index];
                     // SAFETY: needed_scope alive for test run
-                    let needed_name = unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
+                    let needed_name =
+                        unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = u32::try_from(current_suite_depth).unwrap() - u32::try_from(suite_index).unwrap();
+                        suites_to_close = u32::try_from(current_suite_depth).unwrap()
+                            - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = u32::try_from(current_suite_depth).unwrap() - u32::try_from(suite_index).unwrap();
+                    suites_to_close = u32::try_from(current_suite_depth).unwrap()
+                        - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;
             }
 
             while suites_to_close > 0 {
-                if !junit.suite_stack.is_empty() && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite {
+                if !junit.suite_stack.is_empty()
+                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
+                {
                     junit.end_test_suite().expect("oom");
                     current_suite_depth -= 1;
                     suites_to_close -= 1;
@@ -1067,8 +1249,15 @@ impl CommandLineReporter {
             while describe_suite_index < needed_suites.len() {
                 let scope = needed_suites[describe_suite_index];
                 // SAFETY: scope alive for test run
-                let (name, line_no) = unsafe { ((*scope).base.name.as_deref().unwrap_or(b""), (*scope).base.line_no) };
-                junit.begin_test_suite_with_line(name, line_no, false).expect("oom");
+                let (name, line_no) = unsafe {
+                    (
+                        (*scope).base.name.as_deref().unwrap_or(b""),
+                        (*scope).base.line_no,
+                    )
+                };
+                junit
+                    .begin_test_suite_with_line(name, line_no, false)
+                    .expect("oom");
                 describe_suite_index += 1;
             }
 
@@ -1092,9 +1281,29 @@ impl CommandLineReporter {
             }
 
             for attempt in sequence.flaky_attempts() {
-                junit.write_test_case(attempt.result, filename, display_label, &concatenated_describe_scopes, 0, attempt.elapsed_ns, line_number).expect("oom");
+                junit
+                    .write_test_case(
+                        attempt.result,
+                        filename,
+                        display_label,
+                        &concatenated_describe_scopes,
+                        0,
+                        attempt.elapsed_ns,
+                        line_number,
+                    )
+                    .expect("oom");
             }
-            junit.write_test_case(status, filename, display_label, &concatenated_describe_scopes, assertions, elapsed_ns, line_number).expect("oom");
+            junit
+                .write_test_case(
+                    status,
+                    filename,
+                    display_label,
+                    &concatenated_describe_scopes,
+                    assertions,
+                    elapsed_ns,
+                    line_number,
+                )
+                .expect("oom");
         }
     }
 
@@ -1103,7 +1312,12 @@ impl CommandLineReporter {
         &mut self.jest.summary
     }
 
-    pub fn handle_test_completed(buntest: &mut bun_test::BunTest, sequence: &mut bun_test::Execution::ExecutionSequence, test_entry: &mut bun_test::ExecutionEntry, elapsed_ns: u64) {
+    pub fn handle_test_completed(
+        buntest: &mut bun_test::BunTest,
+        sequence: &mut bun_test::Execution::ExecutionSequence,
+        test_entry: &mut bun_test::ExecutionEntry,
+        elapsed_ns: u64,
+    ) {
         let mut output_buf: Vec<u8> = Vec::new();
 
         let initial_length = output_buf.len();
@@ -1123,16 +1337,33 @@ impl CommandLineReporter {
                 buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
-                && matches!(basic, bun_test::BasicResult::Pass | bun_test::BasicResult::Skip | bun_test::BasicResult::Todo | bun_test::BasicResult::Pending);
+                && matches!(
+                    basic,
+                    bun_test::BasicResult::Pass
+                        | bun_test::BasicResult::Skip
+                        | bun_test::BasicResult::Todo
+                        | bun_test::BasicResult::Pending
+                );
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
                 // PERF(port): was comptime bool dispatch — profile in Phase B
                 match basic {
-                    bun_test::BasicResult::Pass => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors)); }
-                    bun_test::BasicResult::Skip => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors)); }
-                    bun_test::BasicResult::Todo => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors)); }
-                    bun_test::BasicResult::Pending => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors)); }
-                    bun_test::BasicResult::Fail => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors)); }
+                    bun_test::BasicResult::Pass => {
+                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors));
+                    }
+                    bun_test::BasicResult::Skip => {
+                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors));
+                    }
+                    bun_test::BasicResult::Todo => {
+                        let _ =
+                            writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors));
+                    }
+                    bun_test::BasicResult::Pending => {
+                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors));
+                    }
+                    bun_test::BasicResult::Fail => {
+                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors));
+                    }
                 }
                 reporter_ref.unwrap().last_printed_dot.set(true);
             } else if basic != bun_test::BasicResult::Fail
@@ -1150,7 +1381,11 @@ impl CommandLineReporter {
                 }
                 let dim = match basic {
                     bun_test::BasicResult::Todo => {
-                        if let Some(runner) = jest::Jest::runner() { !runner.run_todo } else { true }
+                        if let Some(runner) = jest::Jest::runner() {
+                            !runner.run_todo
+                        } else {
+                            true
+                        }
                     }
                     bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => true,
                     bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
@@ -1158,7 +1393,9 @@ impl CommandLineReporter {
                 if dim {
                     Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
                 } else {
-                    Self::print_test_line::<false>(result, sequence, test_entry, elapsed_ns, writer);
+                    Self::print_test_line::<false>(
+                        result, sequence, test_entry, elapsed_ns, writer,
+                    );
                 }
             }
         }
@@ -1179,7 +1416,9 @@ impl CommandLineReporter {
             let _ = Output::error_writer().write_all(formatted_line);
         }
 
-        let Some(this) = buntest.reporter else { return; }; // command line reporter is missing! uh oh!
+        let Some(this) = buntest.reporter else {
+            return;
+        }; // command line reporter is missing! uh oh!
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
         // sole writer for the duration of this completion callback.
@@ -1187,9 +1426,15 @@ impl CommandLineReporter {
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {
-                bun_test::BasicResult::Skip => this.skips_to_repeat_buf.extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Todo => this.todos_to_repeat_buf.extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Fail => this.failures_to_repeat_buf.extend_from_slice(&output_buf[initial_length..]),
+                bun_test::BasicResult::Skip => this
+                    .skips_to_repeat_buf
+                    .extend_from_slice(&output_buf[initial_length..]),
+                bun_test::BasicResult::Todo => this
+                    .todos_to_repeat_buf
+                    .extend_from_slice(&output_buf[initial_length..]),
+                bun_test::BasicResult::Fail => this
+                    .failures_to_repeat_buf
+                    .extend_from_slice(&output_buf[initial_length..]),
                 bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => {}
             }
         }
@@ -1215,14 +1460,21 @@ impl CommandLineReporter {
 
                 if this.summary().fail == this.jest.bail {
                     this.print_summary();
-                    pretty_error!("\nBailed out after {} failure{}<r>\n", this.jest.bail, if this.jest.bail == 1 { "" } else { "s" });
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        this.jest.bail,
+                        if this.jest.bail == 1 { "" } else { "s" }
+                    );
                     Output::flush();
                     this.write_junit_report_if_needed();
                     Global::exit(1);
                 }
             }
         }
-        this.summary().expectations = this.summary().expectations.saturating_add(sequence.expect_call_count);
+        this.summary().expectations = this
+            .summary()
+            .expectations
+            .saturating_add(sequence.expect_call_count);
     }
 
     pub fn print_summary(&mut self) {
@@ -1230,11 +1482,13 @@ impl CommandLineReporter {
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
         let files = summary_.files;
 
-        pretty_error!("Ran {} test{} across {} file{}. ", 
+        pretty_error!(
+            "Ran {} test{} across {} file{}. ",
             tests,
             if tests == 1 { "" } else { "s" },
             files,
-            if files == 1 { "" } else { "s" });
+            if files == 1 { "" } else { "s" }
+        );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
@@ -1253,7 +1507,11 @@ impl CommandLineReporter {
         }
     }
 
-    pub fn generate_code_coverage<const REPORTERS_TEXT: bool, const REPORTERS_LCOV: bool, const ENABLE_ANSI_COLORS: bool>(
+    pub fn generate_code_coverage<
+        const REPORTERS_TEXT: bool,
+        const REPORTERS_LCOV: bool,
+        const ENABLE_ANSI_COLORS: bool,
+    >(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
@@ -1264,7 +1522,9 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+        let Some(map) = ByteRangeMapping::map() else {
+            return Ok(());
+        };
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
@@ -1284,13 +1544,24 @@ impl CommandLineReporter {
 
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
-        self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(vm, opts, &mut byte_ranges)
+        self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
+            vm,
+            opts,
+            &mut byte_ranges,
+        )
     }
 
     /// Write an LCOV-only report to a specific path. Used by `--parallel`
     /// workers to emit a fragment the coordinator merges.
-    pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_core::ZStr) -> Result<(), bun_core::Error> {
-        let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+    pub fn write_lcov_only(
+        &mut self,
+        vm: &mut VirtualMachine,
+        opts: &CodeCoverageOptions,
+        out_path: &bun_core::ZStr,
+    ) -> Result<(), bun_core::Error> {
+        let Some(map) = ByteRangeMapping::map() else {
+            return Ok(());
+        };
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
@@ -1306,9 +1577,18 @@ impl CommandLineReporter {
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let file = match File::openat(Fd::cwd(), out_path, bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC, 0o644) {
+        let file = match File::openat(
+            Fd::cwd(),
+            out_path,
+            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+            0o644,
+        ) {
             bun_sys::Result::Err(e) => {
-                Output::err(bun_core::err!("lcovCoverageError"), "failed to open coverage fragment {}\n{}", (bstr::BStr::new(out_path.as_bytes()), e));
+                Output::err(
+                    bun_core::err!("lcovCoverageError"),
+                    "failed to open coverage fragment {}\n{}",
+                    (bstr::BStr::new(out_path.as_bytes()), e),
+                );
                 return Err(bun_core::err!("OpenFailed"));
             }
             bun_sys::Result::Ok(f) => f,
@@ -1334,7 +1614,11 @@ impl CommandLineReporter {
                     continue;
                 }
             }
-            let Some(mut report) = CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) =
+                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
+            else {
+                continue;
+            };
             // report dropped at end of iteration
             if coverage::Lcov::write_format(&report, relative_dir, writer).is_err() {
                 continue;
@@ -1348,7 +1632,11 @@ impl CommandLineReporter {
         Ok(())
     }
 
-    pub fn print_code_coverage<const REPORTERS_TEXT: bool, const REPORTERS_LCOV: bool, const ENABLE_ANSI_COLORS: bool>(
+    pub fn print_code_coverage<
+        const REPORTERS_TEXT: bool,
+        const REPORTERS_LCOV: bool,
+        const ENABLE_ANSI_COLORS: bool,
+    >(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
@@ -1411,16 +1699,64 @@ impl CommandLineReporter {
         let mut failing = false;
 
         if REPORTERS_TEXT {
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>")).is_err() { return Ok(()); }
-            if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
-            if console.write_all(b"File").is_err() { return Ok(()); }
-            if console.splat_byte_all(b' ', max_filepath_length - b"File".len() + 1).is_err() { return Ok(()); }
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console
+                .splat_byte_all(b'-', max_filepath_length + 2)
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    "|---------|---------|-------------------<r>\n",
+                ))
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console.write_all(b"File").is_err() {
+                return Ok(());
+            }
+            if console
+                .splat_byte_all(b' ', max_filepath_length - b"File".len() + 1)
+                .is_err()
+            {
+                return Ok(());
+            }
             // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n")).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>")).is_err() { return Ok(()); }
-            if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n",
+                ))
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"))
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console
+                .splat_byte_all(b'-', max_filepath_length + 2)
+                .is_err()
+            {
+                return Ok(());
+            }
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    "|---------|---------|-------------------<r>\n",
+                ))
+                .is_err()
+            {
+                return Ok(());
+            }
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
@@ -1441,73 +1777,88 @@ impl CommandLineReporter {
         // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
         // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
         // Option here.
-        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> = if REPORTERS_LCOV {
-            'brk: {
-                // Ensure the directory exists
-                let mut fs = crate::node::fs::NodeFS::default();
-                let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                    path: crate::node::PathLike::EncodedSlice(
-                        ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
-                    ),
-                    always_return_none: true,
-                    recursive: true,
-                    ..Default::default()
-                });
-
-                // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
-                let mut base64_bytes = [0u8; 8];
-                let mut shortname_buf = [0u8; 512];
-                bun_core::csprng(&mut base64_bytes);
-                // Spec: `std.fmt.bufPrintZ(..., ".lcov.info.{x}.tmp", .{&base64_bytes})`
-                // — Zig `{x}` on `*[8]u8` prints contiguous lowercase hex.
-                let tmpname = {
-                    use std::io::Write as _;
-                    let mut cursor = &mut shortname_buf[..];
-                    let _ = cursor.write_all(b".lcov.info.");
-                    for b in base64_bytes {
-                        let _ = write!(cursor, "{:02x}", b);
-                    }
-                    let _ = cursor.write_all(b".tmp\0");
-                    let s = bun_core::slice_to_nul(&shortname_buf);
-                    // NUL written above; `slice_to_nul` returns the prefix before it.
-                    bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
-                };
-                let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()]);
-                let file = File::openat(
-                    Fd::cwd(),
-                    path,
-                    bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-                    0o644,
-                );
-
-                match file {
-                    bun_sys::Result::Err(err) => {
-                        Output::err(bun_core::err!("lcovCoverageError"), "Failed to create lcov file", ());
-                        Output::print_error(format_args!("\n{}", err));
-                        Global::exit(1);
-                    }
-                    bun_sys::Result::Ok(f) => {
-                        // TODO(port): Zig used `f.writer().adaptToNewApi(buf)` (64 KB
-                        // buffered file writer). `bun_sys::File` has no `writer()` yet;
-                        // accumulate in a `Vec<u8>` (impl `bun_io::Write`) and flush to
-                        // the fd via `write_all` on success below.
-                        let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
-                        break 'brk Some((f, path, buffered));
-                    }
-                }
-            }
-        } else {
-            None
-        };
-        // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
-        let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
+        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
             if REPORTERS_LCOV {
-                if let Some((file, name, _)) = s.take() {
-                    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
-                    let _ = bun_sys::unlink(name);
+                'brk: {
+                    // Ensure the directory exists
+                    let mut fs = crate::node::fs::NodeFS::default();
+                    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+                        path: crate::node::PathLike::EncodedSlice(
+                            ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
+                        ),
+                        always_return_none: true,
+                        recursive: true,
+                        ..Default::default()
+                    });
+
+                    // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
+                    let mut base64_bytes = [0u8; 8];
+                    let mut shortname_buf = [0u8; 512];
+                    bun_core::csprng(&mut base64_bytes);
+                    // Spec: `std.fmt.bufPrintZ(..., ".lcov.info.{x}.tmp", .{&base64_bytes})`
+                    // — Zig `{x}` on `*[8]u8` prints contiguous lowercase hex.
+                    let tmpname = {
+                        use std::io::Write as _;
+                        let mut cursor = &mut shortname_buf[..];
+                        let _ = cursor.write_all(b".lcov.info.");
+                        for b in base64_bytes {
+                            let _ = write!(cursor, "{:02x}", b);
+                        }
+                        let _ = cursor.write_all(b".tmp\0");
+                        let s = bun_core::slice_to_nul(&shortname_buf);
+                        // NUL written above; `slice_to_nul` returns the prefix before it.
+                        bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
+                    };
+                    let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+                        relative_dir,
+                        &mut lcov_name_buf,
+                        &[&opts.reports_directory, tmpname.as_bytes()],
+                    );
+                    let file = File::openat(
+                        Fd::cwd(),
+                        path,
+                        bun_sys::O::CREAT
+                            | bun_sys::O::WRONLY
+                            | bun_sys::O::TRUNC
+                            | bun_sys::O::CLOEXEC,
+                        0o644,
+                    );
+
+                    match file {
+                        bun_sys::Result::Err(err) => {
+                            Output::err(
+                                bun_core::err!("lcovCoverageError"),
+                                "Failed to create lcov file",
+                                (),
+                            );
+                            Output::print_error(format_args!("\n{}", err));
+                            Global::exit(1);
+                        }
+                        bun_sys::Result::Ok(f) => {
+                            // TODO(port): Zig used `f.writer().adaptToNewApi(buf)` (64 KB
+                            // buffered file writer). `bun_sys::File` has no `writer()` yet;
+                            // accumulate in a `Vec<u8>` (impl `bun_io::Write`) and flush to
+                            // the fd via `write_all` on success below.
+                            let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
+                            break 'brk Some((f, path, buffered));
+                        }
+                    }
                 }
-            }
-        });
+            } else {
+                None
+            };
+        // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
+        let mut lcov_guard = scopeguard::guard(
+            &mut lcov_state,
+            |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
+                if REPORTERS_LCOV {
+                    if let Some((file, name, _)) = s.take() {
+                        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = bun_sys::unlink(name);
+                    }
+                }
+            },
+        );
         // --- LCOV ---
 
         for entry in byte_ranges.iter_mut() {
@@ -1529,11 +1880,24 @@ impl CommandLineReporter {
                 }
             }
 
-            let Some(mut report) = CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) =
+                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
+            else {
+                continue;
+            };
 
             if REPORTERS_TEXT {
                 let mut fraction = base_fraction;
-                if coverage::Text::write_format(&report, max_filepath_length, &mut fraction, relative_dir, console_writer, ENABLE_ANSI_COLORS).is_err() {
+                if coverage::Text::write_format(
+                    &report,
+                    max_filepath_length,
+                    &mut fraction,
+                    relative_dir,
+                    console_writer,
+                    ENABLE_ANSI_COLORS,
+                )
+                .is_err()
+                {
                     continue;
                 }
                 avg.functions += fraction.functions;
@@ -1573,7 +1937,12 @@ impl CommandLineReporter {
                 let failed = if avg_count > 0.0 {
                     base_fraction
                 } else {
-                    Fraction { functions: 0.0, lines: 0.0, stmts: 0.0, ..Default::default() }
+                    Fraction {
+                        functions: 0.0,
+                        lines: 0.0,
+                        stmts: 0.0,
+                        ..Default::default()
+                    }
                 };
 
                 coverage::Text::write_format_with_values(
@@ -1596,11 +1965,19 @@ impl CommandLineReporter {
             // Spec uses `catch return` (NOT `try`) — Zig's `errdefer` does not
             // fire on a success-return, so disarm the lcov cleanup guard before
             // the early `Ok(())` (matches Zig: temp file is left for the OS).
-            if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() {
+            if console
+                .splat_byte_all(b'-', max_filepath_length + 2)
+                .is_err()
+            {
                 let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
                 return Ok(());
             }
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() {
+            if console
+                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    "|---------|---------|-------------------<r>\n",
+                ))
+                .is_err()
+            {
                 let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
                 return Ok(());
             }
@@ -1652,7 +2029,8 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::S
     let slice: &[u8] = zig_slice.slice();
 
     // always ignore node_modules.
-    if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\") {
+    if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")
+    {
         return false;
     }
 
@@ -1660,7 +2038,11 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::S
     // TODO(port): std.fs.path.extension — using bun_path equivalent
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
-    let loader_by_ext = VirtualMachine::get().as_mut().transpiler.options.loader(ext);
+    let loader_by_ext = VirtualMachine::get()
+        .as_mut()
+        .transpiler
+        .options
+        .loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
@@ -1689,7 +2071,10 @@ impl TestCommand {
     // PORT NOTE: re-exports moved to top-level `use` per crate map.
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::IS_GITHUB_ACTION.store(Output::is_github_action(), core::sync::atomic::Ordering::Relaxed);
+        Output::IS_GITHUB_ACTION.store(
+            Output::is_github_action(),
+            core::sync::atomic::Ordering::Relaxed,
+        );
         // PORT NOTE: Zig `Output.is_github_action = Output.isGithubAction()` — Rust uses an
         // AtomicBool global; `is_github_action()` performs the env-based detection.
 
@@ -1698,13 +2083,25 @@ impl TestCommand {
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
             let _ = w.write_all(&if colors {
-                Output::pretty_fmt::<true>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
+                Output::pretty_fmt::<true>(const_format::concatcp!(
+                    "<r><b>bun test <r><d>v",
+                    Global::package_json_version_with_sha,
+                    "<r>"
+                ))
             } else {
-                Output::pretty_fmt::<false>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
+                Output::pretty_fmt::<false>(const_format::concatcp!(
+                    "<r><b>bun test <r><d>v",
+                    Global::package_json_version_with_sha,
+                    "<r>"
+                ))
             });
             if ctx.test_options.parallel > 0 {
                 if colors {
-                    let _ = write!(w, " \x1b[1;2m{}\u{00d7} PARALLEL\x1b[0m", ctx.test_options.parallel);
+                    let _ = write!(
+                        w,
+                        " \x1b[1;2m{}\u{00d7} PARALLEL\x1b[0m",
+                        ctx.test_options.parallel
+                    );
                 } else {
                     let _ = write!(w, " {}x PARALLEL", ctx.test_options.parallel);
                 }
@@ -1719,13 +2116,16 @@ impl TestCommand {
         // (the map is never freed — process-lifetime singleton).
         let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
         // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
-        let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
+        let mut env_loader: Box<DotEnv::Loader> =
+            Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
         jsc::initialize(false);
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {
-            ctx.test_options.seed.unwrap_or_else(|| bun::fast_random() as u32) // @truncate
+            ctx.test_options
+                .seed
+                .unwrap_or_else(|| bun::fast_random() as u32) // @truncate
         } else {
             0
         }; // seed is limited to u32 so storing it in js doesn't lose precision
@@ -1737,7 +2137,11 @@ impl TestCommand {
         }
         // PORT NOTE: Zig threads a `std.Random` vtable; Rust `DefaultPrng` is `Copy`, so
         // pass the prng by value to TestRunner and keep a local copy for shuffling.
-        let random_instance: Option<bun::rand::DefaultPrng> = if enable_random { Some(bun::rand::DefaultPrng::init(seed as u64)) } else { None };
+        let random_instance: Option<bun::rand::DefaultPrng> = if enable_random {
+            Some(bun::rand::DefaultPrng::init(seed as u64))
+        } else {
+            None
+        };
 
         let mut snapshot_file_buf: Vec<u8> = Vec::new();
         // TODO(port): `Snapshots::ValuesHashMap` is an inherent associated
@@ -1755,11 +2159,8 @@ impl TestCommand {
         // backing `Vec`s live in `ctx` for the process lifetime, so each element
         // is detached to `&'static [u8]` up front (lets the outer view detach to
         // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> = ctx
-            .test_options
-            .concurrent_test_glob
-            .as_ref()
-            .map(|v| {
+        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
+            ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
                     .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                     .collect()
@@ -1813,7 +2214,9 @@ impl TestCommand {
                     counts: unsafe { &mut *(&raw mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
-                    inline_snapshots_to_write: unsafe { &mut *(&raw mut inline_snapshots_to_write) },
+                    inline_snapshots_to_write: unsafe {
+                        &mut *(&raw mut inline_snapshots_to_write)
+                    },
                     last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
@@ -1829,9 +2232,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe {
-                    &*(&raw const ctx.test_options)
-                },
+                test_options: unsafe { &*(&raw const ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -1851,8 +2252,7 @@ impl TestCommand {
         // until `exec()` exits the process, so `&mut reporter.jest` remains
         // valid for the process lifetime.
         unsafe {
-            jest::Jest::RUNNER
-                .write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
+            jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
         // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
@@ -1899,11 +2299,16 @@ impl TestCommand {
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
-        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
-            .store(ctx.runtime_options.experimental_http2_fetch, core::sync::atomic::Ordering::Relaxed);
-        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
-            .store(ctx.runtime_options.experimental_http3_fetch, core::sync::atomic::Ordering::Relaxed);
-        vm.transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
+            ctx.runtime_options.experimental_http2_fetch,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.store(
+            ctx.runtime_options.experimental_http3_fetch,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        vm.transpiler.options.env.behavior =
+            bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {
@@ -1970,7 +2375,8 @@ impl TestCommand {
                     || strings::starts_with(arg, b"./")
                     || strings::starts_with(arg, b"../")
                     || (cfg!(windows)
-                        && (strings::starts_with(arg, b".\\") || strings::starts_with(arg, b"..\\")))
+                        && (strings::starts_with(arg, b".\\")
+                            || strings::starts_with(arg, b"..\\")))
                 {
                     break 'hr true;
                 }
@@ -1990,9 +2396,16 @@ impl TestCommand {
                     Err(scanner::ScanError::DoesNotExist) => {
                         if file_or_dirnames.len() == 1 {
                             if Output::is_ai_agent() {
-                                pretty_errorln!("Test filter <b>{}<r> had no matches in --cwd={}", bun_fmt::quote(arg), bun_fmt::quote(FileSystem::instance().top_level_dir));
+                                pretty_errorln!(
+                                    "Test filter <b>{}<r> had no matches in --cwd={}",
+                                    bun_fmt::quote(arg),
+                                    bun_fmt::quote(FileSystem::instance().top_level_dir)
+                                );
                             } else {
-                                pretty_errorln!("Test filter <b>{}<r> had no matches", bun_fmt::quote(arg));
+                                pretty_errorln!(
+                                    "Test filter <b>{}<r> had no matches",
+                                    bun_fmt::quote(arg)
+                                );
                             }
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
@@ -2062,7 +2475,11 @@ impl TestCommand {
             let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(scanner.fs.top_level_dir, &ctx.debug.test_directory).into();
+                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
+                        scanner.fs.top_level_dir,
+                        &ctx.debug.test_directory,
+                    )
+                    .into();
                     break 'brk &dir_to_scan_owned;
                 }
 
@@ -2074,9 +2491,16 @@ impl TestCommand {
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                 Err(scanner::ScanError::DoesNotExist) => {
                     if Output::is_ai_agent() {
-                        pretty_errorln!("<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}", bun_fmt::quote(dir_to_scan), bun_fmt::quote(FileSystem::instance().top_level_dir));
+                        pretty_errorln!(
+                            "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
+                            bun_fmt::quote(dir_to_scan),
+                            bun_fmt::quote(FileSystem::instance().top_level_dir)
+                        );
                     } else {
-                        pretty_errorln!("<red>Failed to scan non-existent root directory for tests:<r> {}", bun_fmt::quote(dir_to_scan));
+                        pretty_errorln!(
+                            "<red>Failed to scan non-existent root directory for tests:<r> {}",
+                            bun_fmt::quote(dir_to_scan)
+                        );
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
@@ -2100,7 +2524,9 @@ impl TestCommand {
         let mut pass_with_no_tests_from_filter = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
         // PORT NOTE: defer free handled by Drop.
-        let mut test_files: &mut [PathString] = if let Some(changed_since) = &ctx.test_options.changed {
+        let mut test_files: &mut [PathString] = if let Some(changed_since) =
+            &ctx.test_options.changed
+        {
             'brk: {
                 // If the Scanner found nothing, fall through to the existing
                 // "no tests found" error path rather than treating it as a
@@ -2110,7 +2536,12 @@ impl TestCommand {
                 }
                 // TODO(port): borrowck — all_test_files ownership vs slicing; Phase B reshape
 
-                let result = match ChangedFilesFilter::filter(&ctx, vm, &mut all_test_files[..], changed_since) {
+                let result = match ChangedFilesFilter::filter(
+                    &ctx,
+                    vm,
+                    &mut all_test_files[..],
+                    changed_since,
+                ) {
                     Ok(r) => r,
                     Err(err) => {
                         Output::err(err, "--changed: unable to determine affected tests", ());
@@ -2122,15 +2553,21 @@ impl TestCommand {
                     pretty_error!("<r><d>--changed:<r> no changed files, nothing to run\n");
                     pass_with_no_tests_from_filter = true;
                 } else if result.test_files.is_empty() {
-                    pretty_error!("<r><d>--changed:<r> {} changed file{}, but no test files are affected\n", result.changed_count, if result.changed_count == 1 { "" } else { "s" });
+                    pretty_error!(
+                        "<r><d>--changed:<r> {} changed file{}, but no test files are affected\n",
+                        result.changed_count,
+                        if result.changed_count == 1 { "" } else { "s" }
+                    );
                     pass_with_no_tests_from_filter = true;
                 } else {
-                    pretty_error!("<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n", 
-                            result.changed_count,
-                            if result.changed_count == 1 { "" } else { "s" },
-                            result.test_files.len(),
-                            result.total_tests,
-                            if result.total_tests == 1 { "" } else { "s" });
+                    pretty_error!(
+                        "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
+                        result.changed_count,
+                        if result.changed_count == 1 { "" } else { "s" },
+                        result.test_files.len(),
+                        result.total_tests,
+                        if result.total_tests == 1 { "" } else { "s" }
+                    );
                 }
                 Output::flush();
                 break 'brk result.test_files;
@@ -2164,12 +2601,14 @@ impl TestCommand {
                     }
                 }
 
-                pretty_error!("<r><d>--shard={}/{}:<r> running {}/{} test file{}\n", 
-                        shard.index,
-                        shard.count,
-                        write,
-                        test_files.len(),
-                        if test_files.len() == 1 { "" } else { "s" });
+                pretty_error!(
+                    "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
+                    shard.index,
+                    shard.count,
+                    write,
+                    test_files.len(),
+                    if test_files.len() == 1 { "" } else { "s" }
+                );
                 Output::flush();
 
                 if write == 0 {
@@ -2187,7 +2626,9 @@ impl TestCommand {
         // With --changed we always want to keep watching as long as any test
         // files exist, since "nothing changed yet" is the common starting
         // state and editing a source file should kick off a run.
-        if !test_files.is_empty() || (ctx.test_options.changed.is_some() && all_test_files_count != 0) {
+        if !test_files.is_empty()
+            || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
+        {
             vm.hot_reload = ctx.debug.hot_reload as u8;
 
             // Install the --changed trigger collector BEFORE the watcher
@@ -2195,7 +2636,9 @@ impl TestCommand {
             // recorded. The addFileByPathSlow seeding stays after
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
-            if ctx.test_options.changed.is_some() && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+            if ctx.test_options.changed.is_some()
+                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
+            {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
@@ -2236,7 +2679,13 @@ impl TestCommand {
             }
 
             if ctx.test_options.parallel > 0 {
-                ran_parallel = ParallelRunner::run_as_coordinator(&mut reporter, vm, test_files, &mut *ctx, &mut coverage_options)?;
+                ran_parallel = ParallelRunner::run_as_coordinator(
+                    &mut reporter,
+                    vm,
+                    test_files,
+                    &mut *ctx,
+                    &mut coverage_options,
+                )?;
             } else {
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
@@ -2272,9 +2721,19 @@ impl TestCommand {
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner().unwrap().snapshots.write_inline_snapshots()?;
-        jest::Jest::runner().unwrap().snapshots.write_snapshot_file()?;
-        if reporter.summary().pass > 20 && !Output::is_ai_agent() && !reporter.reporters.dots && !reporter.reporters.only_failures {
+        let write_snapshots_success = jest::Jest::runner()
+            .unwrap()
+            .snapshots
+            .write_inline_snapshots()?;
+        jest::Jest::runner()
+            .unwrap()
+            .snapshots
+            .write_snapshot_file()?;
+        if reporter.summary().pass > 20
+            && !Output::is_ai_agent()
+            && !reporter.reporters.dots
+            && !reporter.reporters.only_failures
+        {
             if reporter.summary().skip > 0 {
                 pretty_error!("\n<r><d>{} tests skipped:<r>\n", reporter.summary().skip);
                 Output::flush();
@@ -2320,19 +2779,33 @@ impl TestCommand {
             if ctx.positionals.len() < 2 {
                 if Output::is_ai_agent() {
                     // Be very clear to ai.
-                    Output::err_generic("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", (bun_fmt::quote(FileSystem::instance().top_level_dir),));
+                    Output::err_generic(
+                        "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
+                        (bun_fmt::quote(FileSystem::instance().top_level_dir),),
+                    );
                 } else {
                     // Be friendlier to humans.
-                    pretty_errorln!("<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n");
+                    pretty_errorln!(
+                        "<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n"
+                    );
                 }
             } else {
                 if Output::is_ai_agent() {
-                    pretty_errorln!("<yellow>The following filters did not match any test files in --cwd={}:<r>", bun_fmt::quote(FileSystem::instance().top_level_dir));
+                    pretty_errorln!(
+                        "<yellow>The following filters did not match any test files in --cwd={}:<r>",
+                        bun_fmt::quote(FileSystem::instance().top_level_dir)
+                    );
                 } else {
-                    pretty_errorln!("<yellow>The following filters did not match any test files:<r>");
+                    pretty_errorln!(
+                        "<yellow>The following filters did not match any test files:<r>"
+                    );
                 }
                 let mut has_file_like: Option<usize> = None;
-                for (i, filter) in ctx.positionals[1..].iter().enumerate().map(|(i, f)| (i + 1, f)) {
+                for (i, filter) in ctx.positionals[1..]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| (i + 1, f))
+                {
                     pretty_error!(" {}", bstr::BStr::new(filter));
 
                     if has_file_like.is_none()
@@ -2349,16 +2822,23 @@ impl TestCommand {
                     Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
                 }
 
-                pretty_errorln!("\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>");
+                pretty_errorln!(
+                    "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+                );
 
                 // print a helpful note
                 if let Some(i) = has_file_like {
-                    pretty_errorln!("<blue>note<r><d>:<r> To treat the \"{}\" filter as a path, run \"bun test ./{}\"<r>", bstr::BStr::new(&ctx.positionals[i]), bstr::BStr::new(&ctx.positionals[i]),
+                    pretty_errorln!(
+                        "<blue>note<r><d>:<r> To treat the \"{}\" filter as a path, run \"bun test ./{}\"<r>",
+                        bstr::BStr::new(&ctx.positionals[i]),
+                        bstr::BStr::new(&ctx.positionals[i]),
                     );
                 }
             }
             if !Output::is_ai_agent() {
-                pretty_error!("\nLearn more about bun test: <magenta>https://bun.com/docs/cli/test<r>", );
+                pretty_error!(
+                    "\nLearn more about bun test: <magenta>https://bun.com/docs/cli/test<r>",
+                );
             }
         } else {
             pretty_error!("\n");
@@ -2366,15 +2846,27 @@ impl TestCommand {
             if coverage_options.enabled && !ran_parallel {
                 // PORT NOTE: nested `switch ... inline else` over 3 runtime bools → 8-way dispatch.
                 // PERF(port): was comptime bool dispatch — profile in Phase B
-                match (Output::enable_ansi_colors_stderr(), coverage_options.reporters.text, coverage_options.reporters.lcov) {
-                    (true,  true,  true ) => reporter.generate_code_coverage::<true,  true,  true >(vm, &mut coverage_options)?,
-                    (true,  true,  false) => reporter.generate_code_coverage::<true,  false, true >(vm, &mut coverage_options)?,
-                    (true,  false, true ) => reporter.generate_code_coverage::<false, true,  true >(vm, &mut coverage_options)?,
-                    (true,  false, false) => reporter.generate_code_coverage::<false, false, true >(vm, &mut coverage_options)?,
-                    (false, true,  true ) => reporter.generate_code_coverage::<true,  true,  false>(vm, &mut coverage_options)?,
-                    (false, true,  false) => reporter.generate_code_coverage::<true,  false, false>(vm, &mut coverage_options)?,
-                    (false, false, true ) => reporter.generate_code_coverage::<false, true,  false>(vm, &mut coverage_options)?,
-                    (false, false, false) => reporter.generate_code_coverage::<false, false, false>(vm, &mut coverage_options)?,
+                match (
+                    Output::enable_ansi_colors_stderr(),
+                    coverage_options.reporters.text,
+                    coverage_options.reporters.lcov,
+                ) {
+                    (true, true, true) => reporter
+                        .generate_code_coverage::<true, true, true>(vm, &mut coverage_options)?,
+                    (true, true, false) => reporter
+                        .generate_code_coverage::<true, false, true>(vm, &mut coverage_options)?,
+                    (true, false, true) => reporter
+                        .generate_code_coverage::<false, true, true>(vm, &mut coverage_options)?,
+                    (true, false, false) => reporter
+                        .generate_code_coverage::<false, false, true>(vm, &mut coverage_options)?,
+                    (false, true, true) => reporter
+                        .generate_code_coverage::<true, true, false>(vm, &mut coverage_options)?,
+                    (false, true, false) => reporter
+                        .generate_code_coverage::<true, false, false>(vm, &mut coverage_options)?,
+                    (false, false, true) => reporter
+                        .generate_code_coverage::<false, true, false>(vm, &mut coverage_options)?,
+                    (false, false, false) => reporter
+                        .generate_code_coverage::<false, false, false>(vm, &mut coverage_options)?,
                 }
                 // TODO(port): generic param order is <TEXT, LCOV, COLORS>; verify mapping in Phase B
             }
@@ -2383,7 +2875,8 @@ impl TestCommand {
             // `reporter.summary()` doesn't span the whole printing block and
             // conflict with the `reporter.jest.*` reads below.
             let summary: Summary = *reporter.summary();
-            let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests() && reporter.jest.unhandled_errors_between_tests == 0;
+            let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests()
+                && reporter.jest.unhandled_errors_between_tests == 0;
 
             if !did_label_filter_out_all_tests {
                 struct DotIndenter {
@@ -2399,7 +2892,9 @@ impl TestCommand {
                     }
                 }
 
-                let indenter = DotIndenter { indent: !ctx.test_options.reporters.dots };
+                let indenter = DotIndenter {
+                    indent: !ctx.test_options.reporters.dots,
+                };
                 if !indenter.indent {
                     pretty_error!("\n");
                 }
@@ -2418,7 +2913,11 @@ impl TestCommand {
                 if summary.skip > 0 {
                     pretty_error!("{}<r><yellow>{:5>} skip<r>\n", &indenter, summary.skip);
                 } else if summary.skipped_because_label > 0 {
-                    pretty_error!("{}<r><d>{:5>} filtered out<r>\n", &indenter, summary.skipped_because_label);
+                    pretty_error!(
+                        "{}<r><d>{:5>} filtered out<r>\n",
+                        &indenter,
+                        summary.skipped_because_label
+                    );
                 }
 
                 if summary.todo > 0 {
@@ -2433,7 +2932,16 @@ impl TestCommand {
 
                 pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
                 if reporter.jest.unhandled_errors_between_tests > 0 {
-                    pretty_error!("{}<r><red>{:5>} error{}<r>\n", &indenter, reporter.jest.unhandled_errors_between_tests, if reporter.jest.unhandled_errors_between_tests > 1 { "s" } else { "" });
+                    pretty_error!(
+                        "{}<r><red>{:5>} error{}<r>\n",
+                        &indenter,
+                        reporter.jest.unhandled_errors_between_tests,
+                        if reporter.jest.unhandled_errors_between_tests > 1 {
+                            "s"
+                        } else {
+                            ""
+                        }
+                    );
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
@@ -2445,7 +2953,12 @@ impl TestCommand {
                     let mut first = true;
                     if print_expect_calls && added == 0 && failed == 0 {
                         print_expect_calls = false;
-                        pretty_error!("{}{:5>} snapshots, {:5>} expect() calls", &indenter, reporter.jest.snapshots.total, summary.expectations);
+                        pretty_error!(
+                            "{}{:5>} snapshots, {:5>} expect() calls",
+                            &indenter,
+                            reporter.jest.snapshots.total,
+                            summary.expectations
+                        );
                     } else {
                         pretty_error!("<d>snapshots:<r> ");
 
@@ -2482,12 +2995,17 @@ impl TestCommand {
 
                 reporter.print_summary();
             } else {
-                pretty_error!("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {} file{} (skipping {} test{}) ",
+                pretty_error!(
+                    "<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {} file{} (skipping {} test{}) ",
                     bun_fmt::quote(ctx.test_options.test_filter_pattern.as_ref().unwrap()),
                     summary.files,
                     if summary.files == 1 { "" } else { "s" },
                     summary.skipped_because_label,
-                    if summary.skipped_because_label == 1 { "" } else { "s" },
+                    if summary.skipped_because_label == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
                 );
                 Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
             }
@@ -2504,8 +3022,15 @@ impl TestCommand {
         }
         let summary = reporter.summary();
 
-        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
-        if should_fail_on_no_tests || summary.fail > 0 || (coverage_options.enabled && coverage_options.fractions.failing && coverage_options.fail_on_low_coverage) || !write_snapshots_success {
+        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
+            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+        if should_fail_on_no_tests
+            || summary.fail > 0
+            || (coverage_options.enabled
+                && coverage_options.fractions.failing
+                && coverage_options.fail_on_low_coverage)
+            || !write_snapshots_success
+        {
             vm.exit_handler.exit_code = 1;
         } else if reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.exit_code = 1;
@@ -2553,25 +3078,38 @@ impl TestCommand {
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
-                        if let Err(err) = TestCommand::run(reporter, vm, file_name.slice(), bun_test::FirstLast {
-                            first: isolate || i == 0,
-                            last: isolate,
-                        }) {
+                        if let Err(err) = TestCommand::run(
+                            reporter,
+                            vm,
+                            file_name.slice(),
+                            bun_test::FirstLast {
+                                first: isolate || i == 0,
+                                last: isolate,
+                            },
+                        ) {
                             handle_top_level_test_error_before_javascript_start(err);
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             vm.swap_global_for_test_isolation();
-                            reporter.jest.bun_test_root.reset_hook_scope_for_test_isolation();
+                            reporter
+                                .jest
+                                .bun_test_root
+                                .reset_hook_scope_for_test_isolation();
                         }
                     }
                 }
 
-                if let Err(err) = TestCommand::run(reporter, vm, files[files.len() - 1].slice(), bun_test::FirstLast {
-                    first: isolate || files.len() == 1,
-                    last: true,
-                }) {
+                if let Err(err) = TestCommand::run(
+                    reporter,
+                    vm,
+                    files[files.len() - 1].slice(),
+                    bun_test::FirstLast {
+                        first: isolate || files.len() == 1,
+                        last: true,
+                    },
+                ) {
                     handle_top_level_test_error_before_javascript_start(err);
                 }
             }
@@ -2584,7 +3122,11 @@ impl TestCommand {
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        let mut ctx = Context { reporter: reporter_, vm: vm_, files: files_ };
+        let mut ctx = Context {
+            reporter: reporter_,
+            vm: vm_,
+            files: files_,
+        };
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
@@ -2633,12 +3175,19 @@ impl TestCommand {
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
         let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
-        let file_id = jest::Jest::runner().unwrap().get_or_put_file(file_path).file_id;
+        let file_id = jest::Jest::runner()
+            .unwrap()
+            .get_or_put_file(file_path)
+            .file_id;
 
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
-        let file_prefix: &[u8] = if Output::is_github_action() { b"::group::" } else { b"" };
+        let file_prefix: &[u8] = if Output::is_github_action() {
+            b"::group::"
+        } else {
+            b""
+        };
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
@@ -2672,10 +3221,20 @@ impl TestCommand {
             // freely-aliasing `*CommandLineReporter` without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
-                (*rp).jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, &mut *rp);
+                (*rp).jest.current_file.set(
+                    file_title,
+                    file_prefix,
+                    repeat_count,
+                    repeat_index,
+                    &mut *rp,
+                );
             }
 
-            bun_output::scoped_log!(bun_test, "loadEntryPointForTestRunner(\"{}\")", bstr::BStr::new(file_path));
+            bun_output::scoped_log!(
+                bun_test,
+                "loadEntryPointForTestRunner(\"{}\")",
+                bstr::BStr::new(file_path)
+            );
             // PORT NOTE: bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
@@ -2699,7 +3258,11 @@ impl TestCommand {
 
                     if reporter.jest.bail == reporter.summary().fail {
                         reporter.print_summary();
-                        pretty_error!("\nBailed out after {} failure{}<r>\n", reporter.jest.bail, if reporter.jest.bail == 1 { "" } else { "s" });
+                        pretty_error!(
+                            "\nBailed out after {} failure{}<r>\n",
+                            reporter.jest.bail,
+                            if reporter.jest.bail == 1 { "" } else { "s" }
+                        );
                         reporter.write_junit_report_if_needed();
 
                         vm.exit_handler.exit_code = 1;

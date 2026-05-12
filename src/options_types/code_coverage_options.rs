@@ -15,7 +15,12 @@ pub struct Fraction {
 
 impl Default for Fraction {
     fn default() -> Self {
-        Self { functions: 0.9, lines: 0.9, stmts: 0.75, failing: false }
+        Self {
+            functions: 0.9,
+            lines: 0.9,
+            stmts: 0.75,
+            failing: false,
+        }
     }
 }
 
@@ -41,7 +46,10 @@ impl Default for CodeCoverageOptions {
             // TODO(port): Zig `!bun.Environment.allow_assert` (allow_assert = isDebug || is_canary || isTest);
             // mapped to `!cfg!(debug_assertions)` — Phase B may want a `bun_core::Environment::ALLOW_ASSERT` const.
             skip_test_files: !cfg!(debug_assertions),
-            reporters: Reporters { text: true, lcov: false },
+            reporters: Reporters {
+                text: true,
+                lcov: false,
+            },
             reports_directory: Box::from(b"coverage" as &[u8]),
             fractions: Fraction::default(),
             ignore_sourcemap: false,

@@ -2,12 +2,12 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
-use bun_io::Closer;
+use bun_core::String as BunString;
 use bun_http::{Headers, Method};
-use bun_http_types::ETag::{StringPointer};
+use bun_http_types::ETag::StringPointer;
+use bun_io::Closer;
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
-use bun_core::String as BunString;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -15,9 +15,9 @@ use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
-use crate::server::{write_status, AnyServer, FileResponseStream, RangeRequest};
-use crate::webcore::blob::store::Data as StoreData;
+use crate::server::{AnyServer, FileResponseStream, RangeRequest, write_status};
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
@@ -52,7 +52,11 @@ pub struct InitOptions<'a> {
 
 impl<'a> Default for InitOptions<'a> {
     fn default() -> Self {
-        Self { server: None, status_code: 200, headers: None }
+        Self {
+            server: None,
+            status_code: 200,
+            headers: None,
+        }
     }
 }
 
@@ -76,7 +80,9 @@ impl FileRoute {
     }
 
     pub fn memory_cost(&self) -> usize {
-        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size.get()
+        size_of::<FileRoute>()
+            + self.headers.memory_cost()
+            + self.blob.reported_estimated_size.get()
     }
 
     pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
@@ -157,7 +163,10 @@ impl FileRoute {
                 let mut blob = body_value.use_();
 
                 blob.global_this.set(std::ptr::from_ref(global));
-                debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
+                debug_assert!(
+                    !blob.is_heap_allocated(),
+                    "expected blob not to be heap-allocated"
+                );
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
@@ -179,7 +188,10 @@ impl FileRoute {
             if blob.needs_to_read_file() {
                 let mut b = blob.dupe();
                 b.global_this.set(std::ptr::from_ref(global));
-                debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
+                debug_assert!(
+                    !b.is_heap_allocated(),
+                    "expected blob not to be heap-allocated"
+                );
                 let headers = headers_from(None, &b);
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
@@ -371,8 +383,9 @@ impl FileRoute {
         // LAYERING: Zig's `req.dateForHeader` was a method on `uws.Request`;
         // in Rust the parse step lives HERE (T6) because it needs `bun_jsc` —
         // call site moved up so `bun_uws_sys` (T0) carries no upward hook.
-        let input_if_modified_since_date: Option<u64> =
-            req.header(b"if-modified-since").and_then(crate::jsc_hooks::parse_http_date);
+        let input_if_modified_since_date: Option<u64> = req
+            .header(b"if-modified-since")
+            .and_then(crate::jsc_hooks::parse_http_date);
 
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
@@ -435,7 +448,9 @@ impl FileRoute {
             // ignored, unless the server doesn't support If-None-Match.
             if let Some(requested_if_modified_since) = input_if_modified_since_date {
                 if method == Method::HEAD || method == Method::GET {
-                    let Ok(lmd) = this.last_modified_date() else { return }; // TODO: properly propagate exception upwards
+                    let Ok(lmd) = this.last_modified_date() else {
+                        return;
+                    }; // TODO: properly propagate exception upwards
                     if let Some(actual_last_modified_at) = lmd {
                         // Compare at second precision: the Last-Modified header we
                         // emit is second-granular (HTTP-date), so a sub-second
@@ -500,7 +515,11 @@ impl FileRoute {
                 return;
             }
             RangeRequest::Result::None => (
-                if file_type == FileType::File { this.blob.offset.get() } else { 0 },
+                if file_type == FileType::File {
+                    this.blob.offset.get()
+                } else {
+                    0
+                },
                 if file_type == FileType::File && this.blob.size.get() > 0 {
                     Some(size)
                 } else {

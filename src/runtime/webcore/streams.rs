@@ -3,14 +3,14 @@ use core::ptr::NonNull;
 
 use bun_ptr::{BackRef, RawSlice};
 
-use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
-    self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSPromise, JSPromiseStrong,
-    JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
+    self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
+    JSPromise, JSPromiseStrong, JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
 };
+use bun_collections::{ByteVecExt, VecExt};
+use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
-use bun_core::{strings, FeatureFlags};
 
 use crate::webcore::blob::{Any as AnyBlob, Blob};
 use crate::webcore::sink::{Sink, SinkHandler};
@@ -473,7 +473,9 @@ impl WritablePending {
                     global: BackRef::new(global_this),
                 };
                 match &self.future {
-                    WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
+                    WritableFuture::Promise { strong, .. } => {
+                        std::ptr::from_mut::<JSPromise>(strong.get())
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -564,7 +566,11 @@ impl Writable {
         )
     }
 
-    pub fn fulfill_promise(result: Writable, promise: &mut JSPromise, global_this: &JSGlobalObject) {
+    pub fn fulfill_promise(
+        result: Writable,
+        promise: &mut JSPromise,
+        global_this: &JSGlobalObject,
+    ) {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         match result {
@@ -766,13 +772,19 @@ impl Pending {
         }
         self.state = PendingState::Used;
         match &self.future {
-            PendingFuture::Promise { promise, global_this } => {
+            PendingFuture::Promise {
+                promise,
+                global_this,
+            } => {
                 StreamResult::fulfill_promise(&mut self.result, *promise, global_this);
             }
             PendingFuture::Handler(h) => {
                 // PORT NOTE: Zig left self.result intact (bitwise copy); reset to Done here —
                 // verify no caller reads it after run().
-                (h.handler)(h.ctx, core::mem::replace(&mut self.result, StreamResult::Done));
+                (h.handler)(
+                    h.ctx,
+                    core::mem::replace(&mut self.result, StreamResult::Done),
+                );
             }
         }
     }
@@ -824,7 +836,8 @@ impl StreamResult {
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
                 // deref. Fresh temp `&mut` is the sole borrow across this
                 // re-entrant call (no long-lived `&mut JSPromise` held).
-                let _ = JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
+                let _ =
+                    JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
@@ -940,7 +953,9 @@ pub struct Signal {
 const _: () = {
     assert!(core::mem::offset_of!(Signal, ptr) == 0);
     assert!(core::mem::size_of::<Option<NonNull<c_void>>>() == core::mem::size_of::<*mut c_void>());
-    assert!(core::mem::align_of::<Option<NonNull<c_void>>>() == core::mem::align_of::<*mut c_void>());
+    assert!(
+        core::mem::align_of::<Option<NonNull<c_void>>>() == core::mem::align_of::<*mut c_void>()
+    );
 };
 
 impl Signal {
@@ -1007,7 +1022,11 @@ impl Default for SignalVTable {
         fn dead_close(_: *mut c_void, _: Option<SysError>) {}
         fn dead_ready(_: *mut c_void, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
         fn dead_start(_: *mut c_void) {}
-        SignalVTable { close: dead_close, ready: dead_ready, start: dead_start }
+        SignalVTable {
+            close: dead_close,
+            ready: dead_ready,
+            start: dead_start,
+        }
     }
 }
 
@@ -1166,9 +1185,9 @@ pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
 // and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
 // the optimizer folds it to a direct call per monomorphization.
 mod http_sink_abi {
-    crate::decl_js_sink_externs!("HTTPResponseSink"  as http);
+    crate::decl_js_sink_externs!("HTTPResponseSink" as http);
     crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-    crate::decl_js_sink_externs!("H3ResponseSink"    as h3);
+    crate::decl_js_sink_externs!("H3ResponseSink" as h3);
 }
 
 macro_rules! http_sink_dispatch {
@@ -1410,8 +1429,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             res.end(&self.buffer[base..], false);
             self.has_backpressure = false;
         } else {
-            self.has_backpressure =
-                matches!(res.write(&self.buffer[base..]), uws::WriteResult::Backpressure(_));
+            self.has_backpressure = matches!(
+                res.write(&self.buffer[base..]),
+                uws::WriteResult::Backpressure(_)
+            );
         }
         self.handle_wrote(buf_len);
         bun_core::scoped_log!(
@@ -1484,8 +1505,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if !self.done && !self.requested_end && !self.has_backpressure() {
             // no pending and total_written > 0
             if total_written > 0 && self.readable_slice().is_empty() {
-                self.signal
-                    .ready(Some(total_written as BlobSizeType), None);
+                self.signal.ready(Some(total_written as BlobSizeType), None);
             }
         }
 
@@ -1493,10 +1513,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
-        if self.aborted
-            || self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.aborted || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
             self.signal.close(None);
             return bun_sys::Result::Ok(());
@@ -1535,8 +1552,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.buffer.clear_retaining_capacity();
-        self
-            .buffer
+        self.buffer
             .ensure_total_capacity_precise(self.high_water_mark as usize);
 
         self.done = false;
@@ -1619,9 +1635,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(());
         }
 
-        if self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
             self.signal.close(None);
         }
@@ -1678,9 +1692,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return Writable::Owned(0);
         }
 
-        if self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.signal.close(None);
             self.mark_done();
             return Writable::Done;
@@ -1738,9 +1750,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return Writable::Owned(0);
         }
 
-        if self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.signal.close(None);
             self.mark_done();
             return Writable::Done;
@@ -1756,9 +1766,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let utf16: &[u16] = bytemuck::cast_slice(bytes);
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
-            Err(_) => {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write))
-            }
+            Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         };
 
         let readable_len = self.readable_slice().len();
@@ -1785,10 +1793,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(());
         }
 
-        if self.done
-            || self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.signal.close(err);
             self.mark_done();
             self.finalize();
@@ -1817,10 +1822,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(JSValue::js_number(0.0));
         }
 
-        if self.done
-            || self.res.is_none()
-            || self.any_res().unwrap().has_responded()
-        {
+        if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.requested_end = true;
             self.signal.close(None);
             self.mark_done();
@@ -2466,7 +2468,10 @@ pub enum BufferActionTag {
 
 impl BufferAction {
     pub fn new(tag: BufferActionTag, global: &JSGlobalObject) -> Self {
-        Self { tag, promise: JSPromiseStrong::init(global) }
+        Self {
+            tag,
+            promise: JSPromiseStrong::init(global),
+        }
     }
 
     pub const fn tag(&self) -> BufferActionTag {
@@ -2476,7 +2481,7 @@ impl BufferAction {
     // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
-    
+
     pub fn fulfill(
         &mut self,
         global: &JSGlobalObject,

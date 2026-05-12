@@ -1,4 +1,4 @@
-use crate::jsc::{js_error_to_postgres, ArrayBuffer, JSGlobalObject, JSValue};
+use crate::jsc::{ArrayBuffer, JSGlobalObject, JSValue, js_error_to_postgres};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
@@ -29,10 +29,7 @@ impl ByteaToJs for Data {
     }
 }
 
-pub fn to_js<T: ByteaToJs>(
-    global: &JSGlobalObject,
-    value: T,
-) -> Result<JSValue, AnyPostgresError> {
+pub fn to_js<T: ByteaToJs>(global: &JSGlobalObject, value: T) -> Result<JSValue, AnyPostgresError> {
     value.bytea_to_js(global)
 }
 

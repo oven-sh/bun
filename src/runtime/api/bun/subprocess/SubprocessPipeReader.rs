@@ -1,15 +1,15 @@
 use core::ptr::NonNull;
 
-use bun_io::Loop as AsyncLoop;
+use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
 use bun_io::FilePollFlag;
+use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 use bun_ptr::{IntrusiveRc, ParentRef, RefCount, RefCounted, ScopedRef};
-use crate::webcore::ReadableStream;
 use bun_sys;
 
 use super::readable::Readable;

@@ -5,21 +5,22 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
-use bun_io::KeepAlive;
+use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
+use bun_io::KeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
+    WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
-use bun_core::strings;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
@@ -299,9 +300,12 @@ impl StatWatcherScheduler {
                 ctx: core::ptr::NonNull::new(holder_ptr.cast()),
                 callback: update_timer,
             };
-            (*this).vm.event_loop_shared().enqueue_task_concurrent(ConcurrentTask::create(
-                Task::init(core::ptr::addr_of_mut!((*holder_ptr).task)),
-            ));
+            (*this)
+                .vm
+                .event_loop_shared()
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(
+                    core::ptr::addr_of_mut!((*holder_ptr).task),
+                )));
         }
     }
 
@@ -325,9 +329,8 @@ impl StatWatcherScheduler {
         // SAFETY: `task` points to `StatWatcherScheduler.task` — only ever
         // invoked by the thread pool against a scheduler it scheduled in
         // `timer_callback`, so provenance covers the full allocation.
-        let this: *mut StatWatcherScheduler = unsafe {
-            bun_core::from_field_ptr!(StatWatcherScheduler, task, task)
-        };
+        let this: *mut StatWatcherScheduler =
+            unsafe { bun_core::from_field_ptr!(StatWatcherScheduler, task, task) };
         // ref'd when the timer was scheduled
         // SAFETY: `this` is live; one ref (taken in `set_interval`) is owned by
         // this callback and adopted here.
@@ -363,7 +366,8 @@ impl StatWatcherScheduler {
             }
             contain_watchers = true;
 
-            let time_since = u64::try_from(now.duration_since(w.last_check.get()).as_nanos()).expect("int cast");
+            let time_since =
+                u64::try_from(now.duration_since(w.last_check.get()).as_nanos()).expect("int cast");
             let interval = u64::try_from(w.interval).expect("int cast") * 1_000_000;
 
             if time_since >= interval.saturating_sub(500) {
@@ -379,7 +383,10 @@ impl StatWatcherScheduler {
 
         if contain_watchers {
             // choose the smallest interval or the closest time to the next check
-            Self::set_interval(this, min_interval.min(i32::try_from(closest_next_check).expect("int cast")));
+            Self::set_interval(
+                this,
+                min_interval.min(i32::try_from(closest_next_check).expect("int cast")),
+            );
         } else {
             // we do not have watchers, we can stop the timer
             Self::set_interval(this, 0);
@@ -548,7 +555,10 @@ impl StatWatcher {
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask) {
+    pub fn enqueue_task_concurrent(
+        &self,
+        task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+    ) {
         // `event_loop_shared()` returns the VM's live `&EventLoop`;
         // `enqueue_task_concurrent` takes `&self`.
         self.ctx.event_loop_shared().enqueue_task_concurrent(task);
@@ -590,7 +600,10 @@ impl StatWatcher {
             // `as_mut()` routes through the thread-local `*mut VM` (write
             // provenance) so `rare_data()`'s `&mut self` borrow is sound on
             // the JS thread.
-            this_ref.ctx.as_mut().rare_data()
+            this_ref
+                .ctx
+                .as_mut()
+                .rare_data()
                 .remove_stat_watcher_for_isolation(this.cast::<c_void>());
         }
         this_ref.persistent.set(false);
@@ -612,11 +625,7 @@ impl StatWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(
-        this: &Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn do_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
             let el_ctx = this.ctx_el_ctx();
@@ -697,13 +706,14 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
 
-        let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
-            Ok(v) => v,
-            Err(err) => {
-                global_this.report_active_exception_as_unhandled(err);
-                return Ok(());
-            }
-        };
+        let jsvalue =
+            match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
+                Ok(v) => v,
+                Err(err) => {
+                    global_this.report_active_exception_as_unhandled(err);
+                    return Ok(());
+                }
+            };
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
@@ -729,13 +739,14 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
-            Ok(v) => v,
-            Err(err) => {
-                global_this.report_active_exception_as_unhandled(err);
-                return Ok(());
-            }
-        };
+        let jsvalue =
+            match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
+                Ok(v) => v,
+                Err(err) => {
+                    global_this.report_active_exception_as_unhandled(err);
+                    return Ok(());
+                }
+            };
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -906,19 +917,23 @@ impl StatWatcher {
         if this_ref.ctx.test_isolation_enabled {
             // `as_mut()` routes through the thread-local `*mut VM` (write
             // provenance) so `rare_data()`'s `&mut self` borrow is sound.
-            this_ref.ctx.as_mut().rare_data().add_stat_watcher_for_isolation(
-                this_ptr.cast::<c_void>(),
-                // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                // (ptr, close-fn) so it can fire close without naming
-                // StatWatcher. BACKREF — `p` is the live watcher we registered
-                // above; `ParentRef` Deref gives safe `&StatWatcher`.
-                |p| {
-                    ParentRef::from(
-                        NonNull::new(p.cast::<StatWatcher>()).expect("isolation close cb"),
-                    )
-                    .close()
-                },
-            );
+            this_ref
+                .ctx
+                .as_mut()
+                .rare_data()
+                .add_stat_watcher_for_isolation(
+                    this_ptr.cast::<c_void>(),
+                    // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
+                    // (ptr, close-fn) so it can fire close without naming
+                    // StatWatcher. BACKREF — `p` is the live watcher we registered
+                    // above; `ParentRef` Deref gives safe `&StatWatcher`.
+                    |p| {
+                        ParentRef::from(
+                            NonNull::new(p.cast::<StatWatcher>()).expect("isolation close cb"),
+                        )
+                        .close()
+                    },
+                );
         }
         InitialStatTask::create_and_schedule(this_ptr);
 
@@ -954,9 +969,8 @@ pub struct Arguments {
 impl Arguments {
     pub fn from_js(global: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Arguments> {
         let Some(path) = PathLike::from_js_with_allocator(global, arguments)? else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "filename must be a string or TypedArray"
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
 
         let mut listener: JSValue = JSValue::ZERO;
@@ -1015,11 +1029,7 @@ impl Arguments {
         let obj = ParentRef::from(
             NonNull::new(StatWatcher::init(self)?).expect("create_stat_watcher: init"),
         );
-        Ok(obj
-            .this_value
-            .get()
-            .try_get()
-            .unwrap_or(JSValue::UNDEFINED))
+        Ok(obj.this_value.get().try_get().unwrap_or(JSValue::UNDEFINED))
     }
 }
 

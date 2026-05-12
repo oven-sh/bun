@@ -13,12 +13,12 @@
 //! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
 //! in JS.
 
+use crate::crypto::boringssl_jsc::err_to_js;
+use crate::socket::uws_jsc::create_bun_socket_error_to_js;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use crate::crypto::boringssl_jsc::err_to_js;
-use crate::socket::{SSLConfig, SSLConfigFromJs};
-use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use bun_uws as uws;
 
 /// Mirrors Zig's `pub const js = jsc.Codegen.JSSecureContext`. Re-export the
@@ -61,7 +61,11 @@ impl SecureContext {
         callframe: &CallFrame,
     ) -> JsResult<Box<SecureContext>> {
         let args = callframe.arguments();
-        let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
+        let opts = if args.len() > 0 {
+            args[0]
+        } else {
+            JSValue::UNDEFINED
+        };
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
@@ -83,7 +87,11 @@ impl SecureContext {
     // and cannot resolve an associated fn.
     pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
-        let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
+        let opts = if args.len() > 0 {
+            args[0]
+        } else {
+            JSValue::UNDEFINED
+        };
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();

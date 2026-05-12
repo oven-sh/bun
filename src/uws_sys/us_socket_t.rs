@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 
 use bun_core::Fd;
 
-use crate::{SocketGroup, SocketKind, SslCtx, LIBUS_SOCKET_DESCRIPTOR, us_bun_verify_error_t};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
 
 bun_core::declare_scope!(uws, visible);
 
@@ -65,7 +65,12 @@ impl us_socket_t {
     }
 
     pub fn close(&mut self, code: CloseCode) {
-        bun_core::scoped_log!(uws, "us_socket_close({:p}, {})", self, <&'static str>::from(code));
+        bun_core::scoped_log!(
+            uws,
+            "us_socket_close({:p}, {})",
+            self,
+            <&'static str>::from(code)
+        );
         unsafe {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
@@ -160,7 +165,9 @@ impl us_socket_t {
         }
         unsafe {
             // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            c::us_socket_get_native_handle(self).cast::<bun_boringssl_sys::SSL>().as_mut()
+            c::us_socket_get_native_handle(self)
+                .cast::<bun_boringssl_sys::SSL>()
+                .as_mut()
         }
     }
 
@@ -270,7 +277,11 @@ impl us_socket_t {
     pub fn write(&mut self, data: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
-            c::us_socket_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).expect("int cast"))
+            c::us_socket_write(
+                self,
+                data.as_ptr(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+            )
         };
         bun_core::scoped_log!(uws, "us_socket_write({:p}, {}) = {}", self, data.len(), rc);
         rc
@@ -309,9 +320,22 @@ impl us_socket_t {
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: both slices valid for their respective lengths
-            c::us_socket_write2(self, first.as_ptr(), first.len(), second.as_ptr(), second.len())
+            c::us_socket_write2(
+                self,
+                first.as_ptr(),
+                first.len(),
+                second.as_ptr(),
+                second.len(),
+            )
         };
-        bun_core::scoped_log!(uws, "us_socket_write2({:p}, {}, {}) = {}", self, first.len(), second.len(), rc);
+        bun_core::scoped_log!(
+            uws,
+            "us_socket_write2({:p}, {}, {}) = {}",
+            self,
+            first.len(),
+            second.len(),
+            rc
+        );
         rc
     }
 
@@ -320,7 +344,11 @@ impl us_socket_t {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
         unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
-            c::us_socket_raw_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).expect("int cast"))
+            c::us_socket_raw_write(
+                self,
+                data.as_ptr(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+            )
         }
     }
 
@@ -337,8 +365,14 @@ impl us_socket_t {
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
         // Windows. Tag kind=system explicitly — `from_native` would store raw
         // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
-        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
-        #[cfg(not(windows))] { Fd::from_native(raw) }
+        #[cfg(windows)]
+        {
+            Fd::from_system(raw as *mut core::ffi::c_void)
+        }
+        #[cfg(not(windows))]
+        {
+            Fd::from_native(raw)
+        }
     }
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
@@ -377,7 +411,8 @@ mod c {
         pub safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
-        pub safe fn us_socket_keepalive(s: &mut us_socket_t, enable: c_int, delay: c_uint) -> c_int;
+        pub safe fn us_socket_keepalive(s: &mut us_socket_t, enable: c_int, delay: c_uint)
+        -> c_int;
 
         pub safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
         pub safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
@@ -387,15 +422,35 @@ mod c {
         pub safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
-        pub fn us_socket_write2(s: *mut us_socket_t, header: *const u8, len: usize, payload: *const u8, len2: usize) -> i32;
+        pub fn us_socket_ipc_write_fd(
+            s: *mut us_socket_t,
+            data: *const u8,
+            length: i32,
+            fd: i32,
+        ) -> i32;
+        pub fn us_socket_write2(
+            s: *mut us_socket_t,
+            header: *const u8,
+            len: usize,
+            payload: *const u8,
+            len2: usize,
+        ) -> i32;
         pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         pub safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub fn us_socket_open(s: *mut us_socket_t, is_client: i32, ip: *const u8, ip_length: i32) -> *mut us_socket_t;
+        pub fn us_socket_open(
+            s: *mut us_socket_t,
+            is_client: i32,
+            ip: *const u8,
+            ip_length: i32,
+        ) -> *mut us_socket_t;
         pub safe fn us_socket_pause(s: &mut us_socket_t);
         pub safe fn us_socket_resume(s: &mut us_socket_t);
-        pub fn us_socket_close(s: *mut us_socket_t, code: CloseCode, reason: *mut c_void) -> *mut us_socket_t;
+        pub fn us_socket_close(
+            s: *mut us_socket_t,
+            code: CloseCode,
+            reason: *mut c_void,
+        ) -> *mut us_socket_t;
         pub safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub safe fn us_socket_shutdown_read(s: &mut us_socket_t);
@@ -406,9 +461,23 @@ mod c {
         pub safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
+        pub fn us_socket_adopt(
+            s: *mut us_socket_t,
+            group: *mut SocketGroup,
+            kind: u8,
+            old_ext_size: i32,
+            ext_size: i32,
+        ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
-        pub fn us_socket_adopt_tls(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, sni: *const c_char, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
+        pub fn us_socket_adopt_tls(
+            s: *mut us_socket_t,
+            group: *mut SocketGroup,
+            kind: u8,
+            ssl_ctx: *mut SslCtx,
+            sni: *const c_char,
+            old_ext_size: i32,
+            ext_size: i32,
+        ) -> *mut us_socket_t;
         pub safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }
 }

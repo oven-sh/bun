@@ -115,7 +115,8 @@ where
     // TODO: this should be concurrent.
     let mut isatty = false;
     let mut is_nonblocking = false;
-    let result = input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
+    let result =
+        input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
     let fd = match result {
         Err(err) => return Err(err),
         Ok(fd) => fd,
@@ -179,7 +180,9 @@ where
     #[cfg(windows)]
     {
         // TODO(b2-blocked): bun_sys::windows::GetFileType
-        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE) != 0 && !force_sync;
+        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
+            != 0
+            && !force_sync;
         return Ok(fd);
     }
 }

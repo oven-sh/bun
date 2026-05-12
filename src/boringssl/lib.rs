@@ -3,10 +3,9 @@
 
 #![allow(unused, static_mut_refs)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ffi::CStr;
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use std::cell::Cell;
 
@@ -94,13 +93,19 @@ const ssl_verify_ok: ssl_verify_result_t = 0;
 /// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
 pub const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
 
-use boring::{CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set0_buffer_pool, SSL_CTX_set_cipher_list};
+use boring::{
+    CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set_cipher_list, SSL_CTX_set0_buffer_pool,
+};
 
 type SslCustomVerifyCb =
     Option<unsafe extern "C" fn(ssl: *mut boring::SSL, out_alert: *mut u8) -> ssl_verify_result_t>;
 
 unsafe extern "C" {
-    fn SSL_CTX_set_custom_verify(ctx: *mut boring::SSL_CTX, mode: c_int, callback: SslCustomVerifyCb);
+    fn SSL_CTX_set_custom_verify(
+        ctx: *mut boring::SSL_CTX,
+        mode: c_int,
+        callback: SslCustomVerifyCb,
+    );
 }
 
 unsafe extern "C" fn noop_custom_verify(
@@ -248,9 +253,12 @@ pub fn canonicalize_ip<'a>(
     // get the standard text representation of the IP
     // SAFETY: out_ip is NUL-terminated above; ip_std_text is large enough for any address.
     unsafe {
-        if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0 {
+        if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0
+        {
             af = AF_INET6;
-            if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0 {
+            if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast())
+                <= 0
+            {
                 return None;
             }
         }
@@ -415,8 +423,10 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     if cn_ptr.is_null() || cn_len <= 0 {
                         continue;
                     }
-                    let cn =
-                        core::slice::from_raw_parts(cn_ptr, usize::try_from(cn_len).expect("int cast"));
+                    let cn = core::slice::from_raw_parts(
+                        cn_ptr,
+                        usize::try_from(cn_len).expect("int cast"),
+                    );
                     if match_dns_name(cn, hostname) {
                         return true;
                     }

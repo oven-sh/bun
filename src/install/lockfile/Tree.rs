@@ -1,23 +1,21 @@
-use core::marker::ConstParamTy;
 use core::fmt::Display;
+use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_semver::String as SemverString;
 use bun_core::ZStr;
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_semver::String as SemverString;
 
-use crate::lockfile::{
-    DependencyIDList, DependencyIDSlice, DepSorter, Lockfile,
-};
-use crate::lockfile::package::{PackageColumns as _};
 use crate::external_slice::ExternalSlice;
-use crate::{
-    invalid_dependency_id, invalid_package_id, Dependency, DependencyID, PackageID,
-    PackageNameHash, Resolution,
-};
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
+use crate::{
+    Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
+    invalid_package_id,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tree
@@ -105,7 +103,9 @@ impl Tree {
     pub fn to_tree(out: External) -> Tree {
         Tree {
             id: u32::from_ne_bytes(out[0..4].try_into().expect("infallible: size matches")),
-            dependency_id: u32::from_ne_bytes(out[4..8].try_into().expect("infallible: size matches")),
+            dependency_id: u32::from_ne_bytes(
+                out[4..8].try_into().expect("infallible: size matches"),
+            ),
             parent: u32::from_ne_bytes(out[8..12].try_into().expect("infallible: size matches")),
             dependencies: DependencyIDSlice::new(
                 u32::from_ne_bytes(out[12..16].try_into().expect("infallible: size matches")),
@@ -140,7 +140,10 @@ pub struct Placement {
 
 impl Default for Placement {
     fn default() -> Self {
-        Self { id: 0, bundled: false }
+        Self {
+            id: 0,
+            bundled: false,
+        }
     }
 }
 
@@ -608,8 +611,10 @@ pub fn is_filtered_dependency_or_workspace(
 
     for filter in workspace_filters {
         // bun.AbsPath(.{ .sep = .posix }) — separator is a const generic on `bun_paths::AbsPath`.
-        let mut filter_path =
-            bun_paths::AbsPath::<u8, { bun_paths::path_options::PathSeparators::POSIX }>::init_top_level_dir();
+        let mut filter_path = bun_paths::AbsPath::<
+            u8,
+            { bun_paths::path_options::PathSeparators::POSIX },
+        >::init_top_level_dir();
         // filter_path drops at end of iteration.
 
         let (pattern, name_or_path): (&[u8], &[u8]) = match filter {
@@ -627,7 +632,8 @@ pub fn is_filtered_dependency_or_workspace(
                 }
 
                 // path-buffer overflow unreachable for bounded inputs
-                let _ = filter_path.join(&[res.workspace()
+                let _ = filter_path.join(&[res
+                    .workspace()
                     .slice(lockfile.buffers.string_bytes.as_slice())]);
 
                 break 'path_pattern (path_pattern, filter_path.slice());
@@ -702,9 +708,7 @@ impl Tree {
         let dependencies: &[Dependency] = builder.dependencies;
 
         builder.sort_buf.clear();
-        builder
-            .sort_buf
-            .reserve(resolution_list.len as usize);
+        builder.sort_buf.reserve(resolution_list.len as usize);
 
         for dep_id in resolution_list.begin()..resolution_list.end() {
             // PERF(port): was assume_capacity. `resolution_list` bounds are u32
@@ -715,17 +719,15 @@ impl Tree {
         {
             let sorter = DepSorter { lockfile };
             // PERF(port): Zig used std.sort.pdq; Rust slice::sort_unstable_by is also pdqsort.
-            builder
-                .sort_buf
-                .sort_unstable_by(|a, b| {
-                    if DepSorter::is_less_than(&sorter, *a, *b) {
-                        core::cmp::Ordering::Less
-                    } else if DepSorter::is_less_than(&sorter, *b, *a) {
-                        core::cmp::Ordering::Greater
-                    } else {
-                        core::cmp::Ordering::Equal
-                    }
-                });
+            builder.sort_buf.sort_unstable_by(|a, b| {
+                if DepSorter::is_less_than(&sorter, *a, *b) {
+                    core::cmp::Ordering::Less
+                } else if DepSorter::is_less_than(&sorter, *b, *a) {
+                    core::cmp::Ordering::Greater
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            });
         }
 
         // PORT NOTE: reshaped for borrowck — iterate over a snapshot of sort_buf indices since
@@ -822,11 +824,16 @@ impl Tree {
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
                     if cfg!(debug_assertions) {
-                        debug_assert!(!builder.pending_optional_peers.contains_key(&dependency.name_hash));
+                        debug_assert!(
+                            !builder
+                                .pending_optional_peers
+                                .contains_key(&dependency.name_hash)
+                        );
                     }
 
-                    if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                    if let Some(entry) = builder
+                        .pending_optional_peers
+                        .fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -844,8 +851,9 @@ impl Tree {
                 HoistDependencyResult::ResolveReplace(replace) => {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
-                    if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                    if let Some(entry) = builder
+                        .pending_optional_peers
+                        .fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -897,7 +905,9 @@ impl Tree {
                         // accessors sequentially so the &mut borrows do not overlap.
                         // bun.handleOom -> push (aborts on OOM via global allocator)
                         builder.list.items_dependencies_mut()[dest.id as usize].push(dep_id);
-                        builder.list.items_tree_mut()[dest.id as usize].dependencies.len += 1;
+                        builder.list.items_tree_mut()[dest.id as usize]
+                            .dependencies
+                            .len += 1;
                     }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
@@ -959,8 +969,7 @@ impl Tree {
         for i in 0..this.dependencies.len {
             let dep_id: DependencyID = this
                 .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice())
-                [i as usize];
+                .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i as usize];
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
             // Zig release builds have no bounds check here.
             let dep = unsafe { deps.get_unchecked(dep_id as usize) };
@@ -1016,11 +1025,7 @@ impl Tree {
                         builder.lockfile().packages.items_resolution()[res_id as usize];
                     let version = &dependency.version.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
-                        && version.satisfies(
-                            resolution.npm().version,
-                            builder.buf(),
-                            builder.buf(),
-                        )
+                        && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {
                         return Ok(HoistDependencyResult::Hoisted); // 1
                     }

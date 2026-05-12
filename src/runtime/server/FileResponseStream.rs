@@ -12,11 +12,11 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
+#[cfg(windows)]
+use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
 use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
-#[cfg(windows)]
-use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
@@ -68,7 +68,12 @@ struct Sendfile {
 
 impl Default for Sendfile {
     fn default() -> Self {
-        Self { socket_fd: Fd::INVALID, remain: 0, offset: 0, has_set_on_writable: false }
+        Self {
+            socket_fd: Fd::INVALID,
+            remain: 0,
+            offset: 0,
+            has_set_on_writable: false,
+        }
     }
 }
 
@@ -110,25 +115,30 @@ impl FileResponseStream {
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
         // via `heap::take` in `deref()` when the intrusive refcount hits 0.
-        let this: *mut FileResponseStream = bun_core::heap::into_raw(Box::new(FileResponseStream {
-            ref_count: Cell::new(1),
-            resp: opts.resp,
-            vm: opts.vm,
-            event_loop_handle: EventLoopHandle::init(opts.vm.event_loop().cast::<()>()),
-            fd: opts.fd,
-            auto_close: opts.auto_close,
-            idle_timeout: opts.idle_timeout,
-            ctx: opts.ctx,
-            on_complete: opts.on_complete,
-            on_abort: opts.on_abort,
-            on_error: opts.on_error,
-            mode: if use_sendfile { Mode::Sendfile } else { Mode::Reader },
-            reader: BufferedReader::init::<FileResponseStream>(),
-            max_size: None,
-            eof_task: None,
-            sendfile: Sendfile::default(),
-            state: State::default(),
-        }));
+        let this: *mut FileResponseStream =
+            bun_core::heap::into_raw(Box::new(FileResponseStream {
+                ref_count: Cell::new(1),
+                resp: opts.resp,
+                vm: opts.vm,
+                event_loop_handle: EventLoopHandle::init(opts.vm.event_loop().cast::<()>()),
+                fd: opts.fd,
+                auto_close: opts.auto_close,
+                idle_timeout: opts.idle_timeout,
+                ctx: opts.ctx,
+                on_complete: opts.on_complete,
+                on_abort: opts.on_abort,
+                on_error: opts.on_error,
+                mode: if use_sendfile {
+                    Mode::Sendfile
+                } else {
+                    Mode::Reader
+                },
+                reader: BufferedReader::init::<FileResponseStream>(),
+                max_size: None,
+                eof_task: None,
+                sendfile: Sendfile::default(),
+                state: State::default(),
+            }));
         // SAFETY: just allocated above; uWS callbacks below alias `this` as raw ptr.
         let this = unsafe { &mut *this };
 
@@ -221,7 +231,9 @@ impl FileResponseStream {
         // PORT NOTE: reshaped for borrowck — Zig captured `*max` mutably across the block.
         let (chunk, state) = 'brk: {
             if let Some(max) = self.max_size.as_mut() {
-                let c = &chunk_[..chunk_.len().min(usize::try_from(*max).unwrap_or(usize::MAX))];
+                let c = &chunk_[..chunk_
+                    .len()
+                    .min(usize::try_from(*max).unwrap_or(usize::MAX))];
                 *max = max.saturating_sub(c.len() as u64);
                 if state_ != ReadState::Eof && *max == 0 {
                     #[cfg(not(unix))]
@@ -238,9 +250,11 @@ impl FileResponseStream {
                     // `eof_task` was just set and lives inside `*this` which
                     // outlives the task (refcount held until `on_reader_done`).
                     unsafe {
-                        (*self.vm.event_loop()).enqueue_task(Task::init(
-                            std::ptr::from_mut::<AnyTask::AnyTask>(self.eof_task.as_mut().unwrap()),
-                        ));
+                        (*self.vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut::<
+                            AnyTask::AnyTask,
+                        >(
+                            self.eof_task.as_mut().unwrap(),
+                        )));
                     }
                     break 'brk (c, ReadState::Eof);
                 }
@@ -342,8 +356,10 @@ impl FileResponseStream {
                 )
             };
             let errno = sys::get_errno(rc);
-            let sent: u64 =
-                u64::try_from((off - i64::try_from(self.sendfile.offset).expect("int cast")).max(0)).unwrap();
+            let sent: u64 = u64::try_from(
+                (off - i64::try_from(self.sendfile.offset).expect("int cast")).max(0),
+            )
+            .unwrap();
             self.sendfile.offset = u64::try_from(off).expect("int cast");
             self.sendfile.remain = self.sendfile.remain.saturating_sub(sent);
 

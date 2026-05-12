@@ -3,8 +3,8 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
 use bun_core::strings;
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
@@ -39,7 +39,6 @@ impl Default for FallbackEntryPoint {
 }
 
 impl FallbackEntryPoint {
-    
     // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
     // module is still gated; body also touched `bun_resolver::fs` (see
     // PORTING.md §Forbidden) before un-gating.
@@ -133,7 +132,6 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
-    
     // PORT NOTE: takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
     // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
     // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
@@ -157,15 +155,13 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_path.ext.len()]
     }
 
-    
     pub fn decode_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &Fs::PathName,
     ) -> &'a [u8] {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
         // SAFETY: FileSystem singleton is initialized before bundling.
-        let generated_path =
-            Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
+        let generated_path = Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
         let len = generated_path.len();
         let mut original_ext = original_path.ext;
         if let Some(entry_i) = strings::index_of(original_path.ext, b"entry") {
@@ -177,7 +173,6 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_ext.len()]
     }
 
-    
     pub fn generate<TranspilerType>(
         &mut self,
         transpiler: &mut TranspilerType,
@@ -383,7 +378,12 @@ impl Default for MacroEntryPoint {
 }
 
 impl MacroEntryPoint {
-    pub fn generate_id(entry_path: &[u8], function_name: &[u8], buf: &mut [u8], len: &mut u32) -> i32 {
+    pub fn generate_id(
+        entry_path: &[u8],
+        function_name: &[u8],
+        buf: &mut [u8],
+        len: &mut u32,
+    ) -> i32 {
         let mut hasher = Wyhash11::init(0);
         hasher.update(js_ast::Macro::NAMESPACE_WITH_COLON);
         hasher.update(entry_path);
@@ -415,7 +415,6 @@ impl MacroEntryPoint {
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
-    
     // TODO(b2-blocked): bun_ast::Macro + bun_resolver::fs::PathName —
     // see `generate_id`.
     pub fn generate(
@@ -440,8 +439,7 @@ impl MacroEntryPoint {
 
         let code_len: usize = 'brk: {
             if import_path.base == b"bun" {
-                let mut cursor =
-                    std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
+                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
                 write!(
                     &mut cursor,
                     "//Auto-generated file\n\
@@ -482,12 +480,36 @@ impl MacroEntryPoint {
                  }}\n\
                  \n\
                  Bun.registerMacro({}, Macros['{}']);",
-                bun_fmt::fmt_path_u8(dir_to_use, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
-                bun_fmt::fmt_path_u8(import_path.filename, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
+                bun_fmt::fmt_path_u8(
+                    dir_to_use,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
+                bun_fmt::fmt_path_u8(
+                    import_path.filename,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
                 BStr::new(function_name),
                 BStr::new(function_name),
-                bun_fmt::fmt_path_u8(dir_to_use, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
-                bun_fmt::fmt_path_u8(import_path.filename, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
+                bun_fmt::fmt_path_u8(
+                    dir_to_use,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
+                bun_fmt::fmt_path_u8(
+                    import_path.filename,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
                 macro_id,
                 BStr::new(function_name),
             )

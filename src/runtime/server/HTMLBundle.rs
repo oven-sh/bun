@@ -6,20 +6,20 @@ use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
 
+use bun_ast::Loader;
+use bun_ast::Log;
 use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_bundler::output_file::Value as OutputFileValue;
-use bun_http::Headers;
-use bun_jsc::JsCell;
-use bun_http_types::Method::Method;
-use bun_ast::Log;
-use bun_ast::Loader;
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_core::strings;
+use bun_http::Headers;
+use bun_http_types::Method::Method;
+use bun_jsc::JsCell;
+use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
-    create_and_schedule_completion_task, JSBundleCompletionTask,
+    JSBundleCompletionTask, create_and_schedule_completion_task,
 };
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
@@ -303,9 +303,11 @@ impl Route {
                         // R-2: pass the raw `this` (not `route: &Route`) so
                         // DevServer's `*mut Route` userdata path doesn't alias
                         // a live shared borrow.
-                        bun_core::handle_oom(
-                            dev.respond_for_html_bundle(this, bun_opaque::opaque_deref_mut(h1), resp),
-                        );
+                        bun_core::handle_oom(dev.respond_for_html_bundle(
+                            this,
+                            bun_opaque::opaque_deref_mut(h1),
+                            resp,
+                        ));
                     }
                     AnyRequest::H3(_) => {
                         resp.write_status(b"503 Service Unavailable");
@@ -330,7 +332,11 @@ impl Route {
             match route.state.get() {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(debug, "onRequest: {} - pending", bstr::BStr::new(req.url()));
+                        bun_output::scoped_log!(
+                            debug,
+                            "onRequest: {} - pending",
+                            bstr::BStr::new(req.url())
+                        );
                     }
                     // TODO(dezig-oom): verify route.schedule_bundle is fallible
                     bun_core::handle_oom(route.schedule_bundle(server));
@@ -338,7 +344,11 @@ impl Route {
                 }
                 State::Building(_) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(debug, "onRequest: {} - building", bstr::BStr::new(req.url()));
+                        bun_output::scoped_log!(
+                            debug,
+                            "onRequest: {} - building",
+                            bstr::BStr::new(req.url())
+                        );
                     }
 
                     // create the PendingResponse, add it to the list
@@ -365,14 +375,22 @@ impl Route {
                 }
                 State::Err(_log) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(debug, "onRequest: {} - err", bstr::BStr::new(req.url()));
+                        bun_output::scoped_log!(
+                            debug,
+                            "onRequest: {} - err",
+                            bstr::BStr::new(req.url())
+                        );
                     }
                     // TODO: use the code from DevServer.zig to render the error
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(debug, "onRequest: {} - html", bstr::BStr::new(req.url()));
+                        bun_output::scoped_log!(
+                            debug,
+                            "onRequest: {} - html",
+                            bstr::BStr::new(req.url())
+                        );
                     }
                     if is_head {
                         // SAFETY: `*html` is a live intrusive-refcounted allocation.
@@ -479,7 +497,9 @@ impl Route {
         }
 
         if !is_development {
-            config.define.put(b"process.env.NODE_ENV", b"\"production\"")?;
+            config
+                .define
+                .put(b"process.env.NODE_ENV", b"\"production\"")?;
             config.jsx.development = false;
         } else {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
@@ -520,8 +540,7 @@ impl Route {
     pub fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
-        let _drop_build_ref =
-            unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
+        let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
@@ -550,7 +569,9 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
                 // Find the HTML entry point and create static routes
-                let Some(server) = self.server.get() else { return };
+                let Some(server) = self.server.get() else {
+                    return;
+                };
                 // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let global_this = bun_opaque::opaque_deref(server.global_this());
                 let output_files = &mut bundle.output_files;
@@ -581,7 +602,8 @@ impl Route {
                 // entry-point until after cloning so we retain the sole owner for
                 // the `clone()` mutable borrow. Static routes are keyed by
                 // `dest_path`, so registration order is immaterial.
-                let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> = None;
+                let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> =
+                    None;
 
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.

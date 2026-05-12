@@ -66,7 +66,9 @@ fn raw(e: Errno) -> i32 {
 /// in `bun_core::ffi` (already a safe wrapper over `__errno_location()`), so
 /// this is just a local re-export — no caller obligation.
 #[inline(always)]
-fn errno() -> i32 { bun_core::ffi::errno() }
+fn errno() -> i32 {
+    bun_core::ffi::errno()
+}
 
 /// EINTR-retry a rustix call. Matches the `while (true) { ...; if .INTR continue }`
 /// loop in the sys.zig Linux arms.
@@ -155,11 +157,7 @@ pub fn close(fd: i32) -> Result<(), i32> {
     // SAFETY: raw `close(2)`; `fd` is caller-owned (or already invalid, which
     // is exactly the EBADF case we want to detect).
     let rc = unsafe { libc::syscall(libc::SYS_close, fd) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(errno())
-    }
+    if rc == 0 { Ok(()) } else { Err(errno()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -289,7 +287,16 @@ pub unsafe fn preadv(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Re
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
         // `iov_base` are writable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_preadv, fd.native(), vecs, n as libc::c_long, lo, hi) }
+        unsafe {
+            libc::syscall(
+                libc::SYS_preadv,
+                fd.native(),
+                vecs,
+                n as libc::c_long,
+                lo,
+                hi,
+            )
+        }
     })
 }
 
@@ -304,7 +311,16 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
         // `iov_base` are readable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_pwritev, fd.native(), vecs, n as libc::c_long, lo, hi) }
+        unsafe {
+            libc::syscall(
+                libc::SYS_pwritev,
+                fd.native(),
+                vecs,
+                n as libc::c_long,
+                lo,
+                hi,
+            )
+        }
     })
 }
 
@@ -395,14 +411,24 @@ pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) 
 /// and `*mut i64 → &mut u64` type-pun on the offset pointers.
 #[inline]
 pub unsafe fn copy_file_range(
-    in_: i32, off_in: *mut i64, out: i32, off_out: *mut i64, len: usize, flags: u32,
+    in_: i32,
+    off_in: *mut i64,
+    out: i32,
+    off_out: *mut i64,
+    len: usize,
+    flags: u32,
 ) -> isize {
     // SAFETY: raw `copy_file_range(2)`; kernel validates fds; offset ptrs may
     // be null.
     unsafe {
         libc::syscall(
             libc::SYS_copy_file_range,
-            in_, off_in, out, off_out, len, flags as libc::c_long,
+            in_,
+            off_in,
+            out,
+            off_out,
+            len,
+            flags as libc::c_long,
         ) as isize
     }
 }
@@ -422,7 +448,9 @@ pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 #[inline]
 #[cfg(target_os = "android")]
 pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
-    if pid <= 0 { return Err(libc::EINVAL); }
+    if pid <= 0 {
+        return Err(libc::EINVAL);
+    }
     // libc 0.2.x doesn't expose `SYS_pidfd_open` for Android either, so use
     // the kernel constant. `pidfd_open` has the same number on every arch.
     const SYS_PIDFD_OPEN: libc::c_long = 434;

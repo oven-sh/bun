@@ -86,22 +86,42 @@ impl ColumnDefinition41 {
     ) -> Result<(), bun_core::Error> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "catalog: {}", BStr::new(self.catalog.slice()));
+        bun_core::scoped_log!(
+            ColumnDefinition41,
+            "catalog: {}",
+            BStr::new(self.catalog.slice())
+        );
 
         self.schema = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(self.schema.slice()));
+        bun_core::scoped_log!(
+            ColumnDefinition41,
+            "schema: {}",
+            BStr::new(self.schema.slice())
+        );
 
         self.table = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(self.table.slice()));
+        bun_core::scoped_log!(
+            ColumnDefinition41,
+            "table: {}",
+            BStr::new(self.table.slice())
+        );
 
         self.org_table = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "org_table: {}", BStr::new(self.org_table.slice()));
+        bun_core::scoped_log!(
+            ColumnDefinition41,
+            "org_table: {}",
+            BStr::new(self.org_table.slice())
+        );
 
         self.name = reader.encode_len_string()?;
         bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));
 
         self.org_name = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "org_name: {}", BStr::new(self.org_name.slice()));
+        bun_core::scoped_log!(
+            ColumnDefinition41,
+            "org_name: {}",
+            BStr::new(self.org_name.slice())
+        );
 
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;

@@ -151,7 +151,8 @@ impl Default for OutputFormat {
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 /// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
-pub type SymbolCallback = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
+pub type SymbolCallback =
+    unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
 bun_opaque::opaque_ffi! {
     /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
@@ -180,7 +181,11 @@ where
     fn default() -> Self {
         // TODO(port): Zig field defaults are `options = null, output_type = .Memory`; `err.handler`
         // has no default so a literal `.{}` is invalid in Zig too. This Default impl is best-effort.
-        Self { options: None, output_type: OutputFormat::Memory, err: Default::default() }
+        Self {
+            options: None,
+            output_type: OutputFormat::Memory,
+            err: Default::default(),
+        }
     }
 }
 
@@ -263,9 +268,10 @@ impl State {
         // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
         // pointee type); mirrors Zig `@ptrCast(errorFunc)`.
         let erased: TCCErrorFunc = Some(unsafe {
-            bun_ptr::cast_fn_ptr::<ErrorFunc<Context>, unsafe extern "C" fn(*mut c_void, *const c_char)>(
-                error_func,
-            )
+            bun_ptr::cast_fn_ptr::<
+                ErrorFunc<Context>,
+                unsafe extern "C" fn(*mut c_void, *const c_char),
+            >(error_func)
         });
         let opaque = error_opaque.map_or(core::ptr::null_mut(), |p| p.cast::<c_void>());
         // SAFETY: self is a valid *mut TCCState.
@@ -517,7 +523,10 @@ impl State {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
         let erased = symbol_cb.map(|f| unsafe {
-            bun_ptr::cast_fn_ptr::<SymbolCallback, unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void)>(f)
+            bun_ptr::cast_fn_ptr::<
+                SymbolCallback,
+                unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void),
+            >(f)
         });
         // SAFETY: self is a valid *mut TCCState.
         unsafe { tcc_list_symbols(self, ctx, erased) }

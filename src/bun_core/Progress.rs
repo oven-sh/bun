@@ -33,7 +33,10 @@ use crate::windows_sys as windows;
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    safe fn GetConsoleMode(hConsoleHandle: windows::HANDLE, lpMode: &mut windows::DWORD) -> windows::BOOL;
+    safe fn GetConsoleMode(
+        hConsoleHandle: windows::HANDLE,
+        lpMode: &mut windows::DWORD,
+    ) -> windows::BOOL;
     safe fn GetConsoleScreenBufferInfo(
         hConsoleOutput: windows::HANDLE,
         lpConsoleScreenBufferInfo: &mut windows::CONSOLE_SCREEN_BUFFER_INFO,
@@ -62,9 +65,9 @@ unsafe extern "system" {
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
 // from B-0 round 1 is removed; tty/ansi/winsize route through the new
 // `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
+use crate::Fd;
 pub use crate::output::File;
 use crate::output::output_sink;
-use crate::Fd;
 
 impl File {
     /// `std.io.tty.supportsAnsiEscapeCodes()` — on unix this is `isatty()`;
@@ -457,7 +460,9 @@ impl Progress {
             // PORT NOTE: reshaped for borrowck — capture *mut self before the
             // guard borrows update_mutex.
             let ctx_ptr = std::ptr::from_mut::<Self>(self);
-            let Some(_g) = self.update_mutex.try_lock() else { return };
+            let Some(_g) = self.update_mutex.try_lock() else {
+                return;
+            };
             // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
             unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
         }
@@ -483,7 +488,9 @@ impl Progress {
     /// Updates the terminal and resets `self.next_refresh_timestamp`. Thread-safe.
     pub fn refresh(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);
-        let Some(_g) = self.update_mutex.try_lock() else { return };
+        let Some(_g) = self.update_mutex.try_lock() else {
+            return;
+        };
         // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
         unsafe { (*ctx_ptr).refresh_with_held_lock() };
     }
@@ -515,7 +522,8 @@ impl Progress {
 
                     // TODO(port): verify bun_sys::windows::CONSOLE_SCREEN_BUFFER_INFO layout & kernel32 bindings.
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = crate::ffi::zeroed();
-                    if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE {
+                    if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE
+                    {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;
@@ -559,7 +567,8 @@ impl Progress {
                         self.terminal = None;
                         break 'winapi;
                     }
-                    if SetConsoleCursorPosition(file.console_handle(), cursor_pos) != windows::TRUE {
+                    if SetConsoleCursorPosition(file.console_handle(), cursor_pos) != windows::TRUE
+                    {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;
@@ -615,8 +624,7 @@ impl Progress {
                     completed_items = (*maybe_node)
                         .unprotected_completed_items
                         .load(Ordering::Relaxed);
-                    maybe_node =
-                        (*maybe_node).recently_updated_child.load(Ordering::Acquire);
+                    maybe_node = (*maybe_node).recently_updated_child.load(Ordering::Acquire);
                 }
                 let current_item = completed_items + 1;
 
@@ -634,18 +642,16 @@ impl Progress {
                             self.buf_write(&mut end, format_args!(" "));
                         }
                         match unit {
-                            Unit::None => {
-                                self.buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti))
-                            }
+                            Unit::None => self
+                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                             Unit::Files => self.buf_write(
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
                             // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
                             // Need a bun_core::fmt::BytesBi helper in Phase B.
-                            Unit::Bytes => {
-                                self.buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti))
-                            }
+                            Unit::Bytes => self
+                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
                         need_ellipse = false;
                     } else if completed_items != 0 {
@@ -678,7 +684,8 @@ impl Progress {
             self.terminal = None;
         }
         if let Some(timer) = self.timer {
-            self.prev_refresh_timestamp = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
+            self.prev_refresh_timestamp =
+                u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
         }
     }
 

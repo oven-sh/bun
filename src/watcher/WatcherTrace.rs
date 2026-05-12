@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_core::{env_var, fmt as bun_fmt, output, ZStr};
+use bun_core::{ZStr, env_var, fmt as bun_fmt, output};
 use bun_sys::{Fd, File, O};
 use parking_lot::Mutex;
 
@@ -34,7 +34,11 @@ pub fn init() {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
-pub fn write_events(watchlist: &WatchList, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
+pub fn write_events(
+    watchlist: &WatchList,
+    events: &[WatchEvent],
+    changed_files: &[ChangedFilePath],
+) {
     use crate::watcher_impl::WatchItemColumns;
     let guard = TRACE_FILE.lock();
     let Some(file) = guard.as_ref() else {

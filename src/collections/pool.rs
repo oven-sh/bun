@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use core::mem::{offset_of, MaybeUninit};
+use core::mem::{MaybeUninit, offset_of};
 use core::ptr;
 
 use bun_core::Error;
@@ -132,7 +132,9 @@ pub struct SinglyLinkedList<T> {
 
 impl<T> Default for SinglyLinkedList<T> {
     fn default() -> Self {
-        Self { first: ptr::null_mut() }
+        Self {
+            first: ptr::null_mut(),
+        }
     }
 }
 
@@ -450,14 +452,16 @@ where
     /// RAII front-door: pop or allocate a node and wrap it in a `PoolGuard`
     /// that returns it to this pool on `Drop`.
     pub fn get() -> PoolGuard<'static, T> {
-        PoolGuard { node: Self::get_node(), release: Self::release, _marker: PhantomData }
+        PoolGuard {
+            node: Self::get_node(),
+            release: Self::release,
+            _marker: PhantomData,
+        }
     }
 
     pub fn release_value(value: *mut T) {
         // SAFETY: `value` points to the `data` field of a live `Node<T>`
-        let node = unsafe {
-            bun_core::from_field_ptr!(Node<T>, data, value)
-        };
+        let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
         Self::release(node);
     }
 

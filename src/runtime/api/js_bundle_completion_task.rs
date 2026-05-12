@@ -12,38 +12,38 @@ use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_io::KeepAlive;
-use bun_ptr::BackRef;
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
-    dispatch, BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
-    JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin,
+    BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
+    JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
-use bun_jsc::AnyTask::AnyTask;
-use bun_jsc::event_loop::EventLoop;
-use bun_options_types::schema::api;
+use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
+use bun_core::strings;
+use bun_io::KeepAlive;
+use bun_jsc::AnyTask::AnyTask;
+use bun_jsc::WorkPool;
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
+use bun_options_types::WindowsOptions;
+use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
+use bun_ptr::BackRef;
 use bun_ptr::{RefCount, RefCounted};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    self as standalone_graph, target_base_public_path, to_executable, CompileErrorReason,
-    CompileResult, Flags as StandaloneFlags,
+    self as standalone_graph, CompileErrorReason, CompileResult, Flags as StandaloneFlags,
+    target_base_public_path, to_executable,
 };
-use bun_options_types::WindowsOptions;
-use bun_core::String as BunString;
-use bun_core::strings;
 use bun_sys::{self as sys, Dir, Fd, OpenDirOptions};
-use bun_jsc::WorkPool;
 
-use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::js_bundler::BuildArtifact;
+use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
-use crate::node::fs::{self as node_fs, args as fs_args, NodeFS};
+use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{
     Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
 };
@@ -137,7 +137,8 @@ pub fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        (*completion).task = AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
+        (*completion).task =
+            AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
         if let Some(plugin) = (*completion).plugins {
             (*plugin.as_ptr()).set_config(completion.cast());
         }
@@ -150,7 +151,11 @@ pub fn create_and_schedule_completion_task(
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe { (*completion).poll_ref.ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm)) };
+    unsafe {
+        (*completion)
+            .poll_ref
+            .ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm))
+    };
 
     Ok(completion)
 }
@@ -162,8 +167,7 @@ pub fn generate_from_javascript(
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
 ) -> Result<JSValue, bun_core::Error> {
-    let completion =
-        create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
+    let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
     // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
     // thread until the enqueued task runs.
     unsafe {
@@ -175,7 +179,11 @@ pub fn generate_from_javascript(
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
 #[inline]
 fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
-    if s.is_empty() { None } else { Some(Box::from(s)) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(Box::from(s))
+    }
 }
 
 impl JSBundleCompletionTask {
@@ -300,8 +308,7 @@ impl JSBundleCompletionTask {
         let mut outbuf = paths::path_buffer_pool::get();
         // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
         // initialized during VM startup before any `Bun.build` is reachable.
-        let top_level_dir =
-            bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
         // Always get an absolute path for the outfile to ensure it works
         // correctly with PE metadata operations.
@@ -356,7 +363,10 @@ impl JSBundleCompletionTask {
             #[cfg(not(windows))]
             {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir.0 = match root_dir.0.make_open_path(dirname, OpenDirOptions::default()) {
+                root_dir.0 = match root_dir
+                    .0
+                    .make_open_path(dirname, OpenDirOptions::default())
+                {
                     Ok(d) => d,
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
@@ -381,8 +391,7 @@ impl JSBundleCompletionTask {
         }
 
         // Use the target-specific base path for compile mode, not the user-configured public_path
-        let module_prefix =
-            target_base_public_path(compile_options.compile_target.os, b"root/");
+        let module_prefix = target_base_public_path(compile_options.compile_target.os, b"root/");
 
         let mut flags = StandaloneFlags::default();
         if !compile_options.autoload_dotenv {
@@ -429,10 +438,7 @@ impl JSBundleCompletionTask {
         ) {
             Ok(r) => r,
             Err(err) => {
-                return CompileResult::fail_fmt(format_args!(
-                    "{}",
-                    bstr::BStr::new(err.name())
-                ));
+                return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(err.name())));
             }
         };
 
@@ -475,22 +481,23 @@ impl JSBundleCompletionTask {
                         paths::basename(&derived_map_basename)
                     };
 
-                    let sourcemap_full_path: Box<[u8]> =
-                        if dirname.is_empty() || dirname == b"." {
-                            Box::from(map_basename)
-                        } else {
-                            let mut v =
-                                Vec::with_capacity(dirname.len() + 1 + map_basename.len());
-                            v.extend_from_slice(dirname);
-                            v.push(SEP);
-                            v.extend_from_slice(map_basename);
-                            v.into_boxed_slice()
-                        };
+                    let sourcemap_full_path: Box<[u8]> = if dirname.is_empty() || dirname == b"." {
+                        Box::from(map_basename)
+                    } else {
+                        let mut v = Vec::with_capacity(dirname.len() + 1 + map_basename.len());
+                        v.extend_from_slice(dirname);
+                        v.push(SEP);
+                        v.extend_from_slice(map_basename);
+                        v.into_boxed_slice()
+                    };
 
                     // Write the sourcemap file to disk next to the executable
                     let mut pathbuf = PathBuffer::uninit();
-                    let write_path: &[u8] =
-                        if cfg!(windows) { &sourcemap_full_path } else { map_basename };
+                    let write_path: &[u8] = if cfg!(windows) {
+                        &sourcemap_full_path
+                    } else {
+                        map_basename
+                    };
                     let bytes: &[u8] = match &output_files[i].value {
                         OutputFileValue::Buffer { bytes } => bytes,
                         // SAFETY: `Buffer` arm checked above.
@@ -554,7 +561,8 @@ impl JSBundleCompletionTask {
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
 
         let vm = this.global_this.bun_vm_ptr();
-        this.poll_ref.unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
+        this.poll_ref
+            .unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
         if this.cancelled {
             return Ok(());
         }
@@ -596,12 +604,11 @@ impl JSBundleCompletionTask {
 
             if let CompileResult::Err(err) = &compile_result {
                 // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
-                this.log
-                    .add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("{}", bstr::BStr::new(err.slice())),
-                    );
+                this.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{}", bstr::BStr::new(err.slice())),
+                );
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.
                 drop(output_files);
@@ -649,8 +656,7 @@ impl JSBundleCompletionTask {
                 let dir = this.config.dir.list.clone();
                 // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
                 // initialized during VM startup before any `Bun.build` is reachable.
-                let top_level_dir =
-                    bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
@@ -793,7 +799,9 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        from_completion_handle(c).jsc_event_loop.enqueue_task_concurrent(task)
+        from_completion_handle(c)
+            .jsc_event_loop
+            .enqueue_task_concurrent(task)
     },
 };
 
@@ -919,8 +927,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             None => options::AllowUnresolved::All,
         };
         transpiler.options.code_splitting = config.code_splitting;
-        transpiler.options.emit_dce_annotations =
-            config.emit_dce_annotations.unwrap_or(!config.minify.whitespace);
+        transpiler.options.emit_dce_annotations = config
+            .emit_dce_annotations
+            .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.compile_to_standalone_html = 'brk: {
@@ -970,7 +979,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_defines()?;
 
         if !transpiler.options.production {
-            transpiler.options.conditions.append_slice(&[b"development"])?;
+            transpiler
+                .options
+                .conditions
+                .append_slice(&[b"development"])?;
         }
         // SAFETY: `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
@@ -1089,9 +1101,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         // erased BACKREF — see LinkerContext.rs:50); cast through raw to erase
         // `'a` since the loop lives exactly as long as `bump` and `BundleV2`.
         let any_loop = bump.alloc(bun_event_loop::AnyEventLoop::default());
-        let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(
-            NonNull::from(&mut *any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>(),
-        );
+        let event_loop: bun_bundler::linker_context_mod::EventLoop =
+            Some(NonNull::from(&mut *any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
 
         // Zig passed the same `heap` by value (mimalloc handle struct copy);
         // bumpalo arenas can't be aliased that way, so `BundleV2` owns its
@@ -1106,9 +1117,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
-        let mut bv2 = BundleV2::init(
-            transpiler, None, bump, event_loop, false, worker_pool, heap,
-        )?;
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, heap)?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());
@@ -1120,8 +1129,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         self.set_transpiler(&raw mut *bv2);
 
         // Snapshot entry points as `&[&[u8]]` (Zig `keys()` is `[][]const u8`).
-        let entry_points: Vec<&[u8]> =
-            self.config.entry_points.keys().iter().map(|b| &**b).collect();
+        let entry_points: Vec<&[u8]> = self
+            .config
+            .entry_points
+            .keys()
+            .iter()
+            .map(|b| &**b)
+            .collect();
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 

@@ -7,9 +7,9 @@ use bun_core::{self, err};
 
 use bun_sha_hmac::{SHA1, SHA256};
 
-use crate::shared::Data;
 use super::new_reader::{NewReader, ReaderContext};
 use super::new_writer::{NewWriter, WriterContext};
+use crate::shared::Data;
 
 bun_core::declare_scope!(Auth, hidden);
 
@@ -177,8 +177,11 @@ pub mod caching_sha2_password {
             // `RawSlice` invariant: backing storage outlives the holder (this
             // struct lives only for the single `write()` call its caller wraps it
             // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
-            let (password, public_key, nonce) =
-                (self.password.slice(), self.public_key.slice(), self.nonce.slice());
+            let (password, public_key, nonce) = (
+                self.password.slice(),
+                self.public_key.slice(),
+                self.nonce.slice(),
+            );
             // The XOR below does `nonce[i % nonce.len]`; an empty nonce from a
             // malicious server's AuthSwitchRequest would be a divide-by-zero.
             if nonce.is_empty() {
@@ -217,7 +220,9 @@ pub mod caching_sha2_password {
             }
             let bio = scopeguard::guard(bio, |bio| {
                 // SAFETY: bio is a valid non-null BIO* allocated by BIO_new_mem_buf above.
-                unsafe { let _ = boringssl::c::BIO_free(bio); }
+                unsafe {
+                    let _ = boringssl::c::BIO_free(bio);
+                }
             });
 
             // SAFETY: *bio is a valid BIO*; null callback/userdata are permitted.
@@ -287,7 +292,10 @@ pub mod caching_sha2_password {
         }
 
         // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
-        pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+        pub fn write<Context: WriterContext>(
+            &self,
+            writer: NewWriter<Context>,
+        ) -> Result<(), bun_core::Error> {
             self.write_internal(writer)
         }
     }
@@ -335,7 +343,10 @@ pub mod caching_sha2_password {
         }
 
         // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
-        pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+        pub fn write<Context: WriterContext>(
+            &self,
+            writer: NewWriter<Context>,
+        ) -> Result<(), bun_core::Error> {
             self.write_internal(writer)
         }
     }

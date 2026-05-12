@@ -35,7 +35,7 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_uint, c_void, CStr};
+use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr;
 use std::sync::Once;
 
@@ -98,8 +98,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
 
     let stream = f.create_stream().ok_or(BackendUnavailable)?;
     scopeguard::defer! { release(stream.as_ptr()); }
-    if stream.initialize_from_memory(bytes.as_ptr(), u32::try_from(bytes.len()).expect("int cast"))
-        < 0
+    if stream.initialize_from_memory(
+        bytes.as_ptr(),
+        u32::try_from(bytes.len()).expect("int cast"),
+    ) < 0
     {
         return Err(DecodeFailed);
     }
@@ -124,7 +126,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
 
     // WIC frames come in whatever pixel format the codec emits; normalise to
     // straight-alpha RGBA8 in one hop.
-    let convert_fn = wicConvertBitmapSource.get().copied().ok_or(BackendUnavailable)?;
+    let convert_fn = wicConvertBitmapSource
+        .get()
+        .copied()
+        .ok_or(BackendUnavailable)?;
     let mut conv: *mut IWICBitmapSource = ptr::null_mut();
     // SAFETY: convert_fn resolved from windowscodecs.dll; frame is non-null.
     if unsafe { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame.as_ptr(), &mut conv) } < 0 {
@@ -157,7 +162,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
 
     // System backends colour-manage into sRGB during decode (WICConvertBitmapSource
     // → 32bppRGBA), so the source ICC profile is consumed, not forwarded.
-    Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: None })
+    Ok(codecs::Decoded {
+        rgba: out,
+        width: w,
+        height: h,
+        icc_profile: None,
+    })
 }
 
 pub fn encode(
@@ -276,7 +286,10 @@ pub fn encode(
             )
             .ok_or(EncodeFailed)?;
         scopeguard::defer! { release(src.as_ptr()); }
-        let convert_fn = wicConvertBitmapSource.get().copied().ok_or(BackendUnavailable)?;
+        let convert_fn = wicConvertBitmapSource
+            .get()
+            .copied()
+            .ok_or(BackendUnavailable)?;
         let mut conv: *mut IWICBitmapSource = ptr::null_mut();
         // SAFETY: convert_fn resolved; src is non-null; pf is the codec's chosen format.
         if unsafe { convert_fn(&pf, src.as_ptr(), &mut conv) } < 0 {
@@ -425,7 +438,9 @@ struct ComPtr<T>(ptr::NonNull<T>);
 impl<T> Copy for ComPtr<T> {}
 impl<T> Clone for ComPtr<T> {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<T> ComPtr<T> {
@@ -700,8 +715,13 @@ struct IWICBitmapSourceVTable {
     GetPixelFormat: *const c_void,
     GetResolution: *const c_void,
     CopyPalette: *const c_void,
-    CopyPixels:
-        unsafe extern "system" fn(*mut IWICBitmapSource, *const c_void, u32, u32, *mut u8) -> HRESULT,
+    CopyPixels: unsafe extern "system" fn(
+        *mut IWICBitmapSource,
+        *const c_void,
+        u32,
+        u32,
+        *mut u8,
+    ) -> HRESULT,
 }
 
 #[repr(C)]
@@ -916,7 +936,10 @@ fn load_factory() {
     {
         return;
     }
-    FACTORY_PTR.store(out as *mut IWICImagingFactory, core::sync::atomic::Ordering::Relaxed);
+    FACTORY_PTR.store(
+        out as *mut IWICImagingFactory,
+        core::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────
@@ -1024,10 +1047,18 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
         // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
         // 24/32-bit DIBs clipboards emit there's no colour table, but a
         // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
-        let ih_size: u64 = u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
-        let compression =
-            u32::from_le_bytes(buf[14 + 16..14 + 16 + 4].try_into().expect("infallible: size matches"));
-        let masks: u64 = if ih_size == 40 && compression == 3 { 12 } else { 0 };
+        let ih_size: u64 =
+            u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
+        let compression = u32::from_le_bytes(
+            buf[14 + 16..14 + 16 + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
+        let masks: u64 = if ih_size == 40 && compression == 3 {
+            12
+        } else {
+            0
+        };
         let off = 14 + ih_size + masks;
         if ih_size < 40 || off > buf.len() as u64 {
             continue;
@@ -1045,7 +1076,9 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 
 /// Copy a clipboard HGLOBAL into the global allocator, optionally leaving
 /// `PREFIX` zero bytes at the front for the caller to fill (BITMAPFILEHEADER).
-fn dup_global<const PREFIX: usize>(h: *mut c_void) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
+fn dup_global<const PREFIX: usize>(
+    h: *mut c_void,
+) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
     // SAFETY: h is a non-null HGLOBAL from GetClipboardData.
     let size = unsafe { GlobalSize(h) };
     if size == 0 {

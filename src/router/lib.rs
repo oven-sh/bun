@@ -5,7 +5,6 @@
 // Despite being Next.js-compatible, it's not tied to Next.js.
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
-
 #![warn(unreachable_pub)]
 use core::cmp::Ordering;
 use core::ptr::NonNull;
@@ -13,8 +12,8 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 use bun_core::Output;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_core::strings;
+use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
 
@@ -33,10 +32,10 @@ fn wyhash(input: &[u8]) -> u64 {
 
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
 // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
-use bun_resolver::fs as Fs;
-use bun_resolver::fs::FileSystem;
 use bun_resolver::DirInfo;
 use bun_resolver::DirInfoRef;
+use bun_resolver::fs as Fs;
+use bun_resolver::fs::FileSystem;
 
 // peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
 // the route-config pair lives in `bun_options_types::schema::api`.
@@ -111,7 +110,11 @@ impl RouteConfig {
     pub fn to_api(&self) -> api::LoadedRouteConfig {
         api::LoadedRouteConfig {
             asset_prefix: self.asset_prefix_path.clone(),
-            dir: if self.routes_enabled { self.dir.clone() } else { Box::default() },
+            dir: if self.routes_enabled {
+                self.dir.clone()
+            } else {
+                Box::default()
+            },
             extensions: self.extensions.clone(),
             static_dir: if self.static_dir_enabled {
                 self.static_dir.clone()
@@ -152,8 +155,7 @@ impl RouteConfig {
 
         let mut router = Self::zero();
 
-        let static_dir: &[u8] =
-            trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
+        let static_dir: &[u8] = trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
         let asset_prefix: &[u8] =
             trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
 
@@ -236,10 +238,7 @@ pub struct Router<'a> {
 }
 
 impl<'a> Router<'a> {
-    pub fn init(
-        fs: &'a FileSystem,
-        config: RouteConfig,
-    ) -> Result<Router<'a>, CoreError> {
+    pub fn init(fs: &'a FileSystem, config: RouteConfig) -> Result<Router<'a>, CoreError> {
         Ok(Router {
             dir: Fd::INVALID,
             routes: Routes {
@@ -398,13 +397,34 @@ impl RouteIndexList {
         self.public_path.push(item.public_path);
         self.hash.push(item.hash);
     }
-    #[inline] pub fn len(&self) -> usize { self.route.len() }
-    #[inline] pub fn items_route(&self) -> &[Box<Route>] { &self.route }
-    #[inline] pub fn items_name(&self) -> &[&'static [u8]] { &self.name }
-    #[inline] pub fn items_match_name(&self) -> &[&'static [u8]] { &self.match_name }
-    #[inline] pub fn items_filepath(&self) -> &[&'static [u8]] { &self.filepath }
-    #[inline] pub fn items_public_path(&self) -> &[&'static [u8]] { &self.public_path }
-    #[inline] pub fn items_hash(&self) -> &[u32] { &self.hash }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.route.len()
+    }
+    #[inline]
+    pub fn items_route(&self) -> &[Box<Route>] {
+        &self.route
+    }
+    #[inline]
+    pub fn items_name(&self) -> &[&'static [u8]] {
+        &self.name
+    }
+    #[inline]
+    pub fn items_match_name(&self) -> &[&'static [u8]] {
+        &self.match_name
+    }
+    #[inline]
+    pub fn items_filepath(&self) -> &[&'static [u8]] {
+        &self.filepath
+    }
+    #[inline]
+    pub fn items_public_path(&self) -> &[&'static [u8]] {
+        &self.public_path
+    }
+    #[inline]
+    pub fn items_hash(&self) -> &[u32] {
+        &self.hash
+    }
 }
 
 pub struct Routes {
@@ -556,7 +576,9 @@ impl Routes {
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
-        let Some(start) = self.dynamic_start else { return None; };
+        let Some(start) = self.dynamic_start else {
+            return None;
+        };
         let end = start + self.dynamic_len;
         let dynamic = &self.list.items_route()[start..end];
         let dynamic_names = &self.list.items_name()[start..end];
@@ -625,17 +647,16 @@ impl<'a> RouteLoader<'a> {
             // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
             if let Some(existing) = self.static_list.get(route.match_name.slice()) {
                 let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
-                self.log
-                    .add_error_fmt(
-                        Some(&source),
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Route \"{}\" is already defined by {}",
-                            bstr::BStr::new(route.name),
-                            // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                            bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
-                        ),
-                    );
+                self.log.add_error_fmt(
+                    Some(&source),
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Route \"{}\" is already defined by {}",
+                        bstr::BStr::new(route.name),
+                        // SAFETY: *existing aliases a Box<Route> in self.all_routes
+                        bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                    ),
+                );
                 return;
             }
 
@@ -652,25 +673,26 @@ impl<'a> RouteLoader<'a> {
             if new_route.has_uppercase {
                 if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
                     let source = bun_ast::Source::init_empty_file(new_route.abs_path.slice());
-                    self.log
-                        .add_error_fmt(
-                            Some(&source),
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Route \"{}\" is already defined by {}",
-                                bstr::BStr::new(new_route.name),
-                                // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                                bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
-                            ),
-                        );
+                    self.log.add_error_fmt(
+                        Some(&source),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Route \"{}\" is already defined by {}",
+                            bstr::BStr::new(new_route.name),
+                            // SAFETY: *existing aliases a Box<Route> in self.all_routes
+                            bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                        ),
+                    );
 
                     return;
                 }
 
-                self.static_list.put_assume_capacity(&new_route.name[1..], new_route_ptr);
+                self.static_list
+                    .put_assume_capacity(&new_route.name[1..], new_route_ptr);
             }
 
-            self.static_list.put_assume_capacity(new_route.match_name.slice(), new_route_ptr);
+            self.static_list
+                .put_assume_capacity(new_route.match_name.slice(), new_route_ptr);
             self.all_routes.push(new_route);
 
             return;
@@ -680,16 +702,15 @@ impl<'a> RouteLoader<'a> {
             match self.dedupe_dynamic.entry(route.full_hash) {
                 Entry::Occupied(e) => {
                     let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
-                    self.log
-                        .add_error_fmt(
-                            Some(&source),
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Route \"{}\" is already defined by {}",
-                                bstr::BStr::new(route.name),
-                                bstr::BStr::new(*e.get()),
-                            ),
-                        );
+                    self.log.add_error_fmt(
+                        Some(&source),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Route \"{}\" is already defined by {}",
+                            bstr::BStr::new(route.name),
+                            bstr::BStr::new(*e.get()),
+                        ),
+                    );
                     return;
                 }
                 Entry::Vacant(v) => {
@@ -719,9 +740,8 @@ impl<'a> RouteLoader<'a> {
         // to avoid the higher-tier bun_resolver dep.
         let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
-            route_dirname_len = (relative_dir.len()
-                + usize::from(config.dir[config.dir.len() - 1] != SEP))
-                as u16;
+            route_dirname_len =
+                (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
         }
 
         let mut this = RouteLoader {
@@ -877,8 +897,7 @@ impl<'a> RouteLoader<'a> {
                                 }
 
                                 // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                                let public_dir =
-                                    &entry_dir[base_dir.len() - 1..entry_dir.len()];
+                                let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
                                 if let Some(route) = Route::parse(
                                     entry.base(),
@@ -961,8 +980,8 @@ impl TinyPtr {
         }
 
         let length = end.max(right) - right;
-        let offset = (in_.as_ptr() as usize).max(parent.as_ptr() as usize)
-            - parent.as_ptr() as usize;
+        let offset =
+            (in_.as_ptr() as usize).max(parent.as_ptr() as usize) - parent.as_ptr() as usize;
         TinyPtr::new(offset as u16, length as u16)
     }
 }
@@ -1068,12 +1087,13 @@ impl Route {
                 buf[..extname.len()].copy_from_slice(extname);
                 buf = &mut buf[extname.len()..];
 
-                let written_len =
-                    buf.as_ptr() as usize - route_file_buf.as_ptr() as usize;
+                let written_len = buf.as_ptr() as usize - route_file_buf.as_ptr() as usize;
 
                 #[cfg(windows)]
                 {
-                    bun_paths::resolve_path::platform_to_posix_in_place(&mut route_file_buf[0..written_len]);
+                    bun_paths::resolve_path::platform_to_posix_in_place(
+                        &mut route_file_buf[0..written_len],
+                    );
                 }
 
                 // SAFETY: written_len computed from sub-slice pointer arithmetic above
@@ -1106,45 +1126,49 @@ impl Route {
             // abs-path block below needs it mutably.
             let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
                 if !name.is_empty() {
-                validation_result = match Pattern::validate(&name[1..], log) {
-                    Some(v) => v,
-                    None => return None,
-                };
+                    validation_result = match Pattern::validate(&name[1..], log) {
+                        Some(v) => v,
+                        None => return None,
+                    };
 
-                let mut name_i: usize = 0;
-                while !has_uppercase && name_i < public_path.len() {
-                    has_uppercase =
-                        public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
-                    name_i += 1;
-                }
+                    let mut name_i: usize = 0;
+                    while !has_uppercase && name_i < public_path.len() {
+                        has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
+                        name_i += 1;
+                    }
 
-                let name_offset =
-                    name.as_ptr() as usize - public_path.as_ptr() as usize;
-                let name_len = name.len();
+                    let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
+                    let name_len = name.len();
 
-                // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                // lifetime arena), so rebinding here drops the borrow on
-                // `route_file_buf` and removes the need for the Phase-A
-                // lifetime transmutes that were below.
-                let dirname_store = FileSystem::instance().dirname_store();
-                let public_path: &'static [u8] =
-                    dirname_store.append(public_path).expect("unreachable");
-                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                let match_name: &'static [u8] = if has_uppercase {
-                    dirname_store.append_lower_case(&name[1..]).expect("unreachable")
+                    // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                    // lifetime arena), so rebinding here drops the borrow on
+                    // `route_file_buf` and removes the need for the Phase-A
+                    // lifetime transmutes that were below.
+                    let dirname_store = FileSystem::instance().dirname_store();
+                    let public_path: &'static [u8] =
+                        dirname_store.append(public_path).expect("unreachable");
+                    let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                    let match_name: &'static [u8] = if has_uppercase {
+                        dirname_store
+                            .append_lower_case(&name[1..])
+                            .expect("unreachable")
+                    } else {
+                        &name[1..]
+                    };
+
+                    debug_assert!(match_name[0] != b'/');
+                    debug_assert!(name[0] == b'/');
+                    (public_path, name, match_name)
                 } else {
-                    &name[1..]
+                    let dirname_store = FileSystem::instance().dirname_store();
+                    let public_path: &'static [u8] =
+                        dirname_store.append(public_path).expect("unreachable");
+                    (
+                        public_path,
+                        Route::INDEX_ROUTE_NAME,
+                        Route::INDEX_ROUTE_NAME,
+                    )
                 };
-
-                debug_assert!(match_name[0] != b'/');
-                debug_assert!(name[0] == b'/');
-                (public_path, name, match_name)
-            } else {
-                let dirname_store = FileSystem::instance().dirname_store();
-                let public_path: &'static [u8] =
-                    dirname_store.append(public_path).expect("unreachable");
-                (public_path, Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
-            };
 
             if abs_path_str.is_empty() {
                 // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
@@ -1167,17 +1191,15 @@ impl Route {
                     // SAFETY: see fn-level PORT NOTE — read-only reborrow.
                     let entry_r = unsafe { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len =
-                        FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
                     // (router.zig:743). Rebind so the later getFdPath error
                     // message prints the computed path instead of `b""`.
                     // SAFETY: lifetime-laundered raw view into route_file_buf
                     // (same pattern as `public_path` above) so the buffer can
                     // be reborrowed mutably for the NUL write / open below.
-                    abs_path_str = unsafe {
-                        core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len)
-                    };
+                    abs_path_str =
+                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
                     route_file_buf[abs_len] = 0;
                     // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
@@ -1557,10 +1579,8 @@ pub mod pattern {
 
                 match pattern.value {
                     Value::Static(str_) => {
-                        let segment = &path_[0..path_
-                            .iter()
-                            .position(|&b| b == b'/')
-                            .unwrap_or(path_.len())];
+                        let segment =
+                            &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
                             params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
                             return false;
@@ -1597,8 +1617,7 @@ pub mod pattern {
                             });
                             return true;
                         } else if ALLOW_OPTIONAL_CATCH_ALL {
-                            pattern =
-                                Pattern::init(match_name, offset).expect("unreachable");
+                            pattern = Pattern::init(match_name, offset).expect("unreachable");
 
                             if matches!(pattern.value, Value::OptionalCatchAll(_)) {
                                 params.push(Param {
@@ -1676,9 +1695,7 @@ pub mod pattern {
                                 log.add_error_fmt(
                                     Some(&source),
                                     bun_ast::Loc::EMPTY,
-                                    format_args!(
-                                        "Catch-all route must be at the end of the path"
-                                    ),
+                                    format_args!("Catch-all route must be at the end of the path"),
                                 );
                             }
                             PatternParseError::InvalidCatchAllRoute => {
@@ -1710,9 +1727,7 @@ pub mod pattern {
                                 log.add_error_fmt(
                                     Some(&source),
                                     bun_ast::Loc::EMPTY,
-                                    format_args!(
-                                        "Route is missing a parameter name, e.g. [param]"
-                                    ),
+                                    format_args!("Route is missing a parameter name, e.g. [param]"),
                                 );
                             }
                             PatternParseError::PatternMissingClosingBracket => {
@@ -1734,7 +1749,10 @@ pub mod pattern {
                 count += u16::from((tag as u8) > (Tag::Static as u8));
             }
 
-            Some(ValidationResult { param_count: count, kind })
+            Some(ValidationResult {
+                param_count: count,
+                kind,
+            })
         }
 
         pub fn eql(a: Pattern, b: Pattern) -> bool {
@@ -1783,8 +1801,7 @@ pub mod pattern {
             let mut i: RoutePathInt = offset;
 
             let mut tag = Tag::Static;
-            let end: RoutePathInt =
-                u16::try_from(input.len() - 1).expect("route path fits in u16");
+            let end: RoutePathInt = u16::try_from(input.len() - 1).expect("route path fits in u16");
 
             if offset == end {
                 return Ok(Pattern {
@@ -1826,24 +1843,18 @@ pub mod pattern {
                         }
 
                         match input[i as usize] {
-                            b'/' | b']' => {
-                                return Err(PatternParseError::MissingParamName)
-                            }
+                            b'/' | b']' => return Err(PatternParseError::MissingParamName),
                             b'[' => {
                                 tag = Tag::OptionalCatchAll;
 
                                 if end < i + 4 {
-                                    return Err(
-                                        PatternParseError::InvalidOptionalCatchAllRoute,
-                                    );
+                                    return Err(PatternParseError::InvalidOptionalCatchAllRoute);
                                 }
 
                                 i += 1;
 
                                 if !input[i as usize..].starts_with(b"...") {
-                                    return Err(
-                                        PatternParseError::InvalidOptionalCatchAllRoute,
-                                    );
+                                    return Err(PatternParseError::InvalidOptionalCatchAllRoute);
                                 }
                                 i += 3;
                                 param.set_offset(i);
@@ -1884,9 +1895,7 @@ pub mod pattern {
 
                         if matches!(tag, Tag::OptionalCatchAll) {
                             if input[i as usize] != b']' {
-                                return Err(
-                                    PatternParseError::PatternMissingClosingBracket,
-                                );
+                                return Err(PatternParseError::PatternMissingClosingBracket);
                             }
                             i += 1;
                         }
@@ -1911,9 +1920,7 @@ pub mod pattern {
             }
             Ok(Pattern {
                 len: i,
-                value: Value::Static(HashedString::init(
-                    &input[offset as usize..i as usize],
-                )),
+                value: Value::Static(HashedString::init(&input[offset as usize..i as usize])),
             })
         }
     }
@@ -2057,9 +2064,7 @@ mod tests {
         // PORT NOTE: Zig used comptime field iteration over an anonymous struct.
         // Ported as runtime slice of (path, content) pairs.
         Output::init_test();
-        debug_assert!(
-            cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun")
-        );
+        debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
         // const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
         let bun_tests_dir = bun_sys::Dir::cwd()
             .make_open_path(b"bun-test-scratch", bun_sys::OpenDirOptions::default())?;
@@ -2151,8 +2156,7 @@ mod tests {
             // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer());
+                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2167,8 +2171,7 @@ mod tests {
             };
 
             // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-            let mut resolver =
-                TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+            let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver
@@ -2220,8 +2223,7 @@ mod tests {
             let mut log = bun_ast::Log::init();
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer());
+                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
             });
 
             let opts = bun_resolver::options::BundleOptions {
@@ -2230,8 +2232,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut resolver =
-                TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+            let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver
@@ -2266,60 +2267,99 @@ mod tests {
             (
                 b"[teamSlug]",
                 b"value",
-                &[Entry { name: b"teamSlug", value: b"value" }],
+                &[Entry {
+                    name: b"teamSlug",
+                    value: b"value",
+                }],
             ),
             (
                 b"hi/hello/[teamSlug]",
                 b"hi/hello/123",
-                &[Entry { name: b"teamSlug", value: b"123" }],
+                &[Entry {
+                    name: b"teamSlug",
+                    value: b"123",
+                }],
             ),
             (
                 b"hi/[teamSlug]/hello",
                 b"hi/123/hello",
-                &[Entry { name: b"teamSlug", value: b"123" }],
+                &[Entry {
+                    name: b"teamSlug",
+                    value: b"123",
+                }],
             ),
             (
                 b"[teamSlug]/hi/hello",
                 b"123/hi/hello",
-                &[Entry { name: b"teamSlug", value: b"123" }],
+                &[Entry {
+                    name: b"teamSlug",
+                    value: b"123",
+                }],
             ),
             (
                 b"[teamSlug]/[project]",
                 b"team/bacon",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"bacon" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"bacon",
+                    },
                 ],
             ),
             (
                 b"lemon/[teamSlug]/[project]",
                 b"lemon/team/bacon",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"bacon" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"bacon",
+                    },
                 ],
             ),
             (
                 b"[teamSlug]/[project]/lemon",
                 b"team/bacon/lemon",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"bacon" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"bacon",
+                    },
                 ],
             ),
             (
                 b"[teamSlug]/lemon/[project]",
                 b"team/lemon/lemon",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"lemon" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"lemon",
+                    },
                 ],
             ),
             (
                 b"[teamSlug]/lemon/[...project]",
                 b"team/lemon/lemon-bacon-cheese/wow/brocollini",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
                     Entry {
                         name: b"project",
                         value: b"lemon-bacon-cheese/wow/brocollini",
@@ -2330,9 +2370,18 @@ mod tests {
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"lemon" },
-                    Entry { name: b"slug", value: b"slugggg" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"lemon",
+                    },
+                    Entry {
+                        name: b"slug",
+                        value: b"slugggg",
+                    },
                 ],
             ),
         ];
@@ -2345,9 +2394,18 @@ mod tests {
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
                 &[
-                    Entry { name: b"teamSlug", value: b"team" },
-                    Entry { name: b"project", value: b"lemon" },
-                    Entry { name: b"slug", value: b"slugggg" },
+                    Entry {
+                        name: b"teamSlug",
+                        value: b"team",
+                    },
+                    Entry {
+                        name: b"project",
+                        value: b"lemon",
+                    },
+                    Entry {
+                        name: b"slug",
+                        value: b"slugggg",
+                    },
                 ],
             ),
         ];

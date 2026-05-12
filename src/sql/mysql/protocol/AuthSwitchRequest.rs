@@ -1,7 +1,7 @@
 use bun_core::strings;
 
-use crate::shared::Data;
 use super::new_reader::{NewReader, ReaderContext};
+use crate::shared::Data;
 
 pub struct AuthSwitchRequest {
     pub header: u8,
@@ -45,7 +45,8 @@ impl AuthSwitchRequest {
             // EOF String
             self.plugin_name = Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[0..zero]));
             // End Of The Packet String
-            self.plugin_data = Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[zero + 1..]));
+            self.plugin_data =
+                Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[zero + 1..]));
             return Ok(());
         }
         Err(bun_core::err!("InvalidAuthSwitchRequest"))

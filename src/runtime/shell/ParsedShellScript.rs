@@ -2,14 +2,14 @@ use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
+use bun_core::String as BunString;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
-use bun_core::String as BunString;
 
 use super::interpreter::ShellArgs;
-use super::shell_body::{shell_cmd_from_js, JsStrings};
+use super::shell_body::{JsStrings, shell_cmd_from_js};
 use super::{EnvMap, EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
@@ -129,11 +129,7 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_quiet(
-        &self,
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)

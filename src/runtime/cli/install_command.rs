@@ -1,13 +1,13 @@
-use bun_core::{err, Error, Global, Output};
-use bun_install::package_manager_real::{
-    install_with_manager, update_package_json_and_install_with_manager, CommandLineArguments,
-    PackageManager, Subcommand, ROOT_PACKAGE_JSON_PATH,
-};
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
+use bun_core::{Error, Global, Output, err};
+use bun_install::package_manager_real::{
+    CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
+    update_package_json_and_install_with_manager,
+};
 
+use crate::Cli;
 use crate::build_command::BuildCommand;
 use crate::command::ContextData;
-use crate::Cli;
 
 pub struct InstallCommand;
 
@@ -60,8 +60,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 // Zig: `bun.default_allocator.alloc(string, keys.len + 1)` with
                 // no matching free — `Global::exit(0)` follows immediately.
                 // `OnceLock` (not leaking) per PORTING.md §Forbidden.
-                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> =
-                    std::sync::OnceLock::new();
+                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();
 

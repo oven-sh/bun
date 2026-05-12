@@ -3,9 +3,9 @@
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
-    use bun_install::package_manager::update_request::{self, UpdateRequest};
-    use bun_install::Subcommand;
     use bun_ast::Log;
+    use bun_install::Subcommand;
+    use bun_install::package_manager::update_request::{self, UpdateRequest};
 
     // PERF(port): was arena bulk-free — profile in Phase B
     // PERF(port): was stack-fallback — profile in Phase B
@@ -52,9 +52,11 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     ) {
         Ok(v) => v,
         Err(_) => {
-            return Err(global.throw_value(
-                crate::dependency_jsc::log_to_js(&log, global, b"Failed to parse dependencies")?,
-            ));
+            return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+                &log,
+                global,
+                b"Failed to parse dependencies",
+            )?));
         }
     };
     if update_requests.is_empty() {
@@ -62,9 +64,11 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     }
 
     if !log.msgs.is_empty() {
-        return Err(global.throw_value(
-            crate::dependency_jsc::log_to_js(&log, global, b"Failed to parse dependencies")?,
-        ));
+        return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+            &log,
+            global,
+            b"Failed to parse dependencies",
+        )?));
     }
 
     if update_requests[0].failed {

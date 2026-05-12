@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{E, Fd, FdExt, ErrorCase, O, Tag};
+use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
@@ -40,7 +40,8 @@ impl<'a> Tmpfile<'a> {
                     perm,
                 ) {
                     Ok(fd) => {
-                        tmpfile.fd = fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+                        tmpfile.fd =
+                            fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
                     // PORT NOTE: Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.

@@ -36,8 +36,8 @@ pub mod js_lexer {
 }
 
 pub mod js_printer {
-    use core::fmt;
     use super::strings::Encoding;
+    use core::fmt;
     /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, _enc: Encoding) -> fmt::Result {
@@ -70,8 +70,12 @@ pub struct TableSymbols {
 }
 
 impl TableSymbols {
-    pub const UNICODE: TableSymbols = TableSymbols { enable_ansi_colors: true };
-    pub const ASCII: TableSymbols = TableSymbols { enable_ansi_colors: false };
+    pub const UNICODE: TableSymbols = TableSymbols {
+        enable_ansi_colors: true,
+    };
+    pub const ASCII: TableSymbols = TableSymbols {
+        enable_ansi_colors: false,
+    };
 
     pub const fn top_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┌" } else { "|" }
@@ -130,14 +134,20 @@ pub struct Table<
 }
 
 impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
-    const SYMBOLS: TableSymbols = TableSymbols { enable_ansi_colors: C };
+    const SYMBOLS: TableSymbols = TableSymbols {
+        enable_ansi_colors: C,
+    };
 
     pub fn init(
         column_names: &'a [&'a [u8]],
         column_inside_lengths: &'a [usize],
         column_color: &'static str,
     ) -> Self {
-        Self { column_names, column_inside_lengths, column_color }
+        Self {
+            column_names,
+            column_inside_lengths,
+            column_color,
+        }
     }
 
     pub fn print_top_line_separator(&self) {
@@ -333,7 +343,10 @@ pub const INTEGRITY_SHORT: bool = true;
 pub const INTEGRITY_FULL: bool = false;
 #[doc(hidden)]
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle { Short, Full } // kept for callers that name the enum
+pub enum IntegrityFormatStyle {
+    Short,
+    Full,
+} // kept for callers that name the enum
 
 pub struct IntegrityFormatter<const SHORT: bool> {
     pub bytes: [u8; SHA512_DIGEST],
@@ -343,7 +356,8 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const BUF_LEN: usize = (SHA512_DIGEST + 2) / 3 * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count = bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
+        let count =
+            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
         let encoded = &buf[..count];
         if SHORT {
             write!(
@@ -397,13 +411,7 @@ impl Display for JSONFormatterUTF8<'_> {
         if self.opts.quote {
             js_printer::write_json_string(self.input, f, strings::Encoding::Utf8)
         } else {
-            js_printer::write_pre_quoted_string(
-                self.input,
-                f,
-                b'"',
-                false,
-                strings::Encoding::Utf8,
-            )
+            js_printer::write_pre_quoted_string(self.input, f, b'"', false, strings::Encoding::Utf8)
         }
     }
 }
@@ -413,7 +421,10 @@ pub fn format_json_string_latin1(text: &[u8]) -> JSONFormatter<'_> {
     JSONFormatter { input: text }
 }
 
-pub fn format_json_string_utf8(text: &[u8], opts: JSONFormatterUTF8Options) -> JSONFormatterUTF8<'_> {
+pub fn format_json_string_utf8(
+    text: &[u8],
+    opts: JSONFormatterUTF8Options,
+) -> JSONFormatterUTF8<'_> {
     JSONFormatterUTF8 { input: text, opts }
 }
 
@@ -441,7 +452,8 @@ struct SharedTempBufferBorrow {
 impl SharedTempBufferBorrow {
     fn new() -> Self {
         let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
-            cell.take().unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
+            cell.take()
+                .unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
         });
         Self { ptr }
     }
@@ -536,7 +548,10 @@ pub fn format_utf16_type_with_path_options(
 
 #[inline]
 pub fn utf16(slice_: &[u16]) -> FormatUTF16<'_> {
-    FormatUTF16 { buf: slice_, path_fmt_opts: None }
+    FormatUTF16 {
+        buf: slice_,
+        path_fmt_opts: None,
+    }
 }
 
 /// Debug, this does not handle invalid utf32
@@ -561,8 +576,11 @@ impl Display for DebugUTF32PathFormatter<'_> {
                 buf.as_mut_ptr(),
             )
         };
-        let converted: &[u8] =
-            if result.is_successful() { &buf[..result.count] } else { b"Invalid UTF32!" };
+        let converted: &[u8] = if result.is_successful() {
+            &buf[..result.count]
+        } else {
+            b"Invalid UTF32!"
+        };
         write_bytes(f, converted)
     }
 }
@@ -627,7 +645,10 @@ pub struct PathFormatOptions {
 
 impl Default for PathFormatOptions {
     fn default() -> Self {
-        Self { path_sep: PathSep::Any, escape_backslashes: false }
+        Self {
+            path_sep: PathSep::Any,
+            escape_backslashes: false,
+        }
     }
 }
 
@@ -650,17 +671,26 @@ pub type FormatOSPath<'a> = FormatUTF8<'a>;
 
 // TYPE_ONLY: bun_paths::OSPathSlice → bun_core (move-in pass).
 pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> FormatOSPath<'_> {
-    FormatOSPath { buf, path_fmt_opts: Some(options) }
+    FormatOSPath {
+        buf,
+        path_fmt_opts: Some(options),
+    }
 }
 
 // TODO(port): Zig `fmtPath` dispatches on `comptime T: type` returning either FormatUTF8
 // or FormatUTF16. In Rust, callers should call `fmt_path_u8` / `fmt_path_u16` directly,
 // or use a small trait. Providing both monomorphizations here.
 pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
-    FormatUTF8 { buf: path, path_fmt_opts: Some(options) }
+    FormatUTF8 {
+        buf: path,
+        path_fmt_opts: Some(options),
+    }
 }
 pub fn fmt_path_u16(path: &[u16], options: PathFormatOptions) -> FormatUTF16<'_> {
-    FormatUTF16 { buf: path, path_fmt_opts: Some(options) }
+    FormatUTF16 {
+        buf: path,
+        path_fmt_opts: Some(options),
+    }
 }
 /// `bun.fmt.fmtPath` — `u8` is the overwhelmingly common instantiation; route it
 /// here so callers can write `bun_core::fmt::fmt_path(..)` without naming the
@@ -693,7 +723,9 @@ impl fmt::Display for Raw<'_> {
 }
 /// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, Zig-style name).
 #[inline(always)]
-pub const fn raw(bytes: &[u8]) -> Raw<'_> { Raw(bytes) }
+pub const fn raw(bytes: &[u8]) -> Raw<'_> {
+    Raw(bytes)
+}
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
 // `bun_alloc` so that crate can use them too; re-exported here for the
@@ -728,7 +760,9 @@ pub fn buf_print_z<'a>(
     let mut c = SliceCursor { buf, at: 0 };
     core::fmt::write(&mut c, args)?;
     let n = c.at;
-    if n >= c.buf.len() { return Err(core::fmt::Error); }
+    if n >= c.buf.len() {
+        return Err(core::fmt::Error);
+    }
     c.buf[n] = 0;
     Ok(crate::ZStr::from_buf(c.buf, n))
 }
@@ -746,7 +780,10 @@ pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_
 /// `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
 #[inline]
 #[track_caller]
-pub fn buf_print_z_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a crate::ZStr {
+pub fn buf_print_z_infallible<'a>(
+    buf: &'a mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> &'a crate::ZStr {
     buf_print_z(buf, args).expect("buf_print_z: buffer too small")
 }
 
@@ -767,7 +804,9 @@ pub struct VecWriter<'a>(pub &'a mut Vec<u8>);
 
 impl<'a> VecWriter<'a> {
     #[inline]
-    pub fn new(v: &'a mut Vec<u8>) -> Self { Self(v) }
+    pub fn new(v: &'a mut Vec<u8>) -> Self {
+        Self(v)
+    }
 }
 impl core::fmt::Write for VecWriter<'_> {
     #[inline]
@@ -820,7 +859,9 @@ fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
     let radix_u = radix as u128;
     let mut acc: u128 = 0;
     for &c in digits {
-        if c == b'_' { continue; }
+        if c == b'_' {
+            continue;
+        }
         let d = match c {
             b'0'..=b'9' => (c - b'0') as u128,
             b'a'..=b'z' => (c - b'a' + 10) as u128,
@@ -842,7 +883,9 @@ fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
 /// through unchanged. Mirrors `std.fmt.parseIntWithSign` radix-0 branch.
 #[inline]
 fn auto_radix(digits: &[u8], radix: u8) -> (&[u8], u8) {
-    if radix != 0 { return (digits, radix); }
+    if radix != 0 {
+        return (digits, radix);
+    }
     if digits.len() >= 2 && digits[0] == b'0' {
         match digits[1] {
             b'x' | b'X' => return (&digits[2..], 16),
@@ -947,7 +990,9 @@ impl core::fmt::Display for InvalidCharacter {
 impl core::error::Error for InvalidCharacter {}
 impl From<InvalidCharacter> for crate::Error {
     #[inline]
-    fn from(_: InvalidCharacter) -> Self { crate::Error::from_name("InvalidCharacter") }
+    fn from(_: InvalidCharacter) -> Self {
+        crate::Error::from_name("InvalidCharacter")
+    }
 }
 
 /// `WTF.parseDouble` — partial-match Latin-1 double parser. Returns `Ok` if
@@ -983,17 +1028,30 @@ unsafe extern "C" {
 /// special-cased here so callers ported from `std.fmt.parseFloat` keep the
 /// same surface.
 pub fn parse_f64(s: &[u8]) -> Option<f64> {
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     let mut count: usize = 0;
     // SAFETY: `s` is a valid slice; WTF reads at most `len` Latin-1 bytes.
     let res = unsafe { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
-    if count == s.len() { return Some(res); }
+    if count == s.len() {
+        return Some(res);
+    }
     if count == 0 {
         // WTF__parseDouble doesn't recognise inf/nan; std.fmt.parseFloat does.
-        let (neg, rest) = match s[0] { b'-' => (true, &s[1..]), b'+' => (false, &s[1..]), _ => (false, s) };
+        let (neg, rest) = match s[0] {
+            b'-' => (true, &s[1..]),
+            b'+' => (false, &s[1..]),
+            _ => (false, s),
+        };
         return match rest {
-            b if b.eq_ignore_ascii_case(b"inf") || b.eq_ignore_ascii_case(b"infinity") =>
-                Some(if neg { f64::NEG_INFINITY } else { f64::INFINITY }),
+            b if b.eq_ignore_ascii_case(b"inf") || b.eq_ignore_ascii_case(b"infinity") => {
+                Some(if neg {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                })
+            }
             b if b.eq_ignore_ascii_case(b"nan") => Some(f64::NAN),
             _ => None,
         };
@@ -1003,7 +1061,9 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
 
 /// `parse_f64` truncated to `f32`. (Zig `std.fmt.parseFloat(f32, ..)`.)
 #[inline]
-pub fn parse_f32(s: &[u8]) -> Option<f32> { parse_f64(s).map(|v| v as f32) }
+pub fn parse_f32(s: &[u8]) -> Option<f32> {
+    parse_f64(s).map(|v| v as f32)
+}
 
 /// Parse `s` as `T` for grammars whose alphabet is pure ASCII (IP addresses,
 /// booleans). Any non-ASCII byte short-circuits to `None`, so the `&str` view
@@ -1011,14 +1071,20 @@ pub fn parse_f32(s: &[u8]) -> Option<f32> { parse_f64(s).map(|v| v as f32) }
 /// use [`parse_int`] / [`parse_f64`].
 #[inline]
 pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    if !s.is_ascii() { return None; }
+    if !s.is_ascii() {
+        return None;
+    }
     // SAFETY: every byte < 0x80 ⇒ `s` is valid (ASCII ⊂ UTF-8).
-    unsafe { core::str::from_utf8_unchecked(s) }.parse::<T>().ok()
+    unsafe { core::str::from_utf8_unchecked(s) }
+        .parse::<T>()
+        .ok()
 }
 
 #[deprecated = "use parse_int / parse_f64 / parse_ascii (no from_utf8)"]
 #[inline]
-pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> { parse_ascii(s) }
+pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
+    parse_ascii(s)
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
@@ -1061,7 +1127,11 @@ pub struct URLFormatter<'a> {
 
 impl Default for URLFormatter<'_> {
     fn default() -> Self {
-        Self { proto: URLProto::Http, hostname: None, port: None }
+        Self {
+            proto: URLProto::Http,
+            hostname: None,
+            port: None,
+        }
     }
 }
 
@@ -1075,12 +1145,16 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}://", match self.proto {
-            URLProto::Http => "http",
-            URLProto::Https => "https",
-            URLProto::Unix => "unix",
-            URLProto::Abstract => "abstract",
-        })?;
+        write!(
+            f,
+            "{}://",
+            match self.proto {
+                URLProto::Http => "http",
+                URLProto::Https => "https",
+                URLProto::Unix => "unix",
+                URLProto::Abstract => "abstract",
+            }
+        )?;
 
         if let Some(hostname) = self.hostname {
             let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
@@ -1235,7 +1309,9 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
-        if let Some(rel) = crate::strings_impl::index_of_newline_or_non_ascii_or_ansi(&self_[offset..]) {
+        if let Some(rel) =
+            crate::strings_impl::index_of_newline_or_non_ascii_or_ansi(&self_[offset..])
+        {
             let i = offset + rel;
             let byte = self_[i];
             if byte > 0x7F {
@@ -1601,7 +1677,10 @@ pub struct RedactedKeywords;
 impl RedactedKeywords {
     // TODO(port): replace with phf::Map.
     pub fn has(s: &[u8]) -> bool {
-        matches!(s, b"_auth" | b"_authToken" | b"token" | b"_password" | b"email")
+        matches!(
+            s,
+            b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
+        )
     }
 }
 
@@ -1739,7 +1818,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         if self.opts.redact_sensitive_information {
                             if should_redact_value {
                                 should_redact_value = false;
-                                let end = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                                let end = crate::strings_impl::index_of_char(text, b'\n')
+                                    .unwrap_or(text.len());
                                 text = &text[end..];
                                 // TODO(port): Output.prettyFmt("<r><yellow>***<r>", true)
                                 write!(writer, "{}\x1b[33m***{}", Output::RESET, Output::RESET)?;
@@ -1838,7 +1918,12 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     i = 0;
                                     if !text.is_empty() && text[0] == char_ {
                                         // TODO(port): Output.prettyFmt("<r><green>`<r>", true)
-                                        write!(writer, "{}\x1b[32m`{}", Output::RESET, Output::RESET)?;
+                                        write!(
+                                            writer,
+                                            "{}\x1b[32m`{}",
+                                            Output::RESET,
+                                            Output::RESET
+                                        )?;
                                         text = &text[1..];
                                         continue 'outer;
                                     }
@@ -1943,7 +2028,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2036,7 +2122,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2049,7 +2136,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2061,7 +2149,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2075,7 +2164,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2087,7 +2177,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         {
                             i = 2;
 
-                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32) {
+                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
+                            {
                                 i += 1;
                             }
 
@@ -2114,7 +2205,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     b'<' => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2133,7 +2225,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             // (i.e. on normal loop exit, since the body has no `break`). So the
                             // else ALWAYS fires here and the code below is dead in Zig too.
                             // TODO(port): Zig while-else always fires here — likely upstream bug, verify in Phase B.
-                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32) {
+                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
+                            {
                                 i += 1;
                             }
                             i = 1;
@@ -2178,7 +2271,8 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     c => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                                .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2206,7 +2300,10 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 pub const SEP_LIST: bool = true;
 pub const SEP_DASH: bool = false;
 #[doc(hidden)]
-pub enum EnumTagListSeparator { List, Dash } // kept for callers naming the enum
+pub enum EnumTagListSeparator {
+    List,
+    Dash,
+} // kept for callers naming the enum
 
 pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
     pub pretty: bool,
@@ -2220,8 +2317,11 @@ impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<
         for (i, name) in names.iter().enumerate() {
             if LIST {
                 if i > 0 {
-                    if i + 1 == names.len() { f.write_str(", or ")?; }
-                    else { f.write_str(", ")?; }
+                    if i + 1 == names.len() {
+                        f.write_str(", or ")?;
+                    } else {
+                        f.write_str(", ")?;
+                    }
                 }
                 write!(f, "\"{}\"", name)?;
             } else {
@@ -2233,7 +2333,10 @@ impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<
 }
 
 pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
-    EnumTagListFormatter { pretty: true, _marker: core::marker::PhantomData }
+    EnumTagListFormatter {
+        pretty: true,
+        _marker: core::marker::PhantomData,
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2242,7 +2345,10 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 
 // TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
 // bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
-pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a mut [u8], crate::Error> {
+pub fn format_ip<'a>(
+    address: &impl Display,
+    into: &'a mut [u8],
+) -> Result<&'a mut [u8], crate::Error> {
     // std.net.Address.format includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
@@ -2285,7 +2391,9 @@ pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a m
 pub struct Null;
 impl fmt::Write for Null {
     #[inline]
-    fn write_str(&mut self, _: &str) -> fmt::Result { Ok(()) }
+    fn write_str(&mut self, _: &str) -> fmt::Result {
+        Ok(())
+    }
 }
 
 /// Counts every byte written; optionally forwards to a wrapped `fmt::Write`.
@@ -2299,24 +2407,38 @@ pub struct CountingWriter<'a, W: fmt::Write = Null> {
 impl<'a, W: fmt::Write> CountingWriter<'a, W> {
     /// Wrap an existing `fmt::Write` sink, forwarding writes through it.
     #[inline]
-    pub fn wrap(w: &'a mut W) -> Self { Self { inner: Some(w), count: 0 } }
+    pub fn wrap(w: &'a mut W) -> Self {
+        Self {
+            inner: Some(w),
+            count: 0,
+        }
+    }
     /// Direct access to the inner sink (bypasses counting). Panics on the
     /// `null()` variant — callers know which mode they constructed.
     #[inline]
-    pub fn inner(&mut self) -> &mut W { self.inner.as_mut().unwrap() }
+    pub fn inner(&mut self) -> &mut W {
+        self.inner.as_mut().unwrap()
+    }
 }
 
 impl CountingWriter<'static, Null> {
     /// Pure discarding sink — `inner: None`, never forwarded.
     #[inline]
-    pub fn null() -> Self { Self { inner: None, count: 0 } }
+    pub fn null() -> Self {
+        Self {
+            inner: None,
+            count: 0,
+        }
+    }
 }
 
 impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {
     #[inline]
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.count += s.len();
-        if let Some(w) = self.inner.as_mut() { w.write_str(s)?; }
+        if let Some(w) = self.inner.as_mut() {
+            w.write_str(s)?;
+        }
         Ok(())
     }
 }
@@ -2400,7 +2522,9 @@ pub struct SizeFormatterOptions {
 
 impl Default for SizeFormatterOptions {
     fn default() -> Self {
-        Self { space_between_number_and_unit: true }
+        Self {
+            space_between_number_and_unit: true,
+        }
     }
 }
 
@@ -2439,8 +2563,11 @@ impl Display for SizeFormatter {
             }
             return Ok(());
         }
-        let precision: usize =
-            if (new_value - new_value.trunc()).abs() <= 0.100 { 1 } else { 2 };
+        let precision: usize = if (new_value - new_value.trunc()).abs() <= 0.100 {
+            1
+        } else {
+            2
+        };
         write!(f, "{:.1$}", new_value, precision)?;
         if self.opts.space_between_number_and_unit {
             write!(f, " {}B", suffix as char)
@@ -2459,7 +2586,10 @@ pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
 /// (Zig: `bun.fmt.bytes`). Downstream: `bun_fmt::bytes(rss)`.
 #[inline]
 pub fn bytes(n: usize) -> SizeFormatter {
-    SizeFormatter { value: n, opts: SizeFormatterOptions::default() }
+    SizeFormatter {
+        value: n,
+        opts: SizeFormatterOptions::default(),
+    }
 }
 
 /// Lowercase hex encode into `out` (must be `2 * input.len()`). Port of
@@ -2481,10 +2611,16 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
     unsafe { String::from_utf8_unchecked(out) }
 }
 pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter { value: bytes as usize, opts }
+    SizeFormatter {
+        value: bytes as usize,
+        opts,
+    }
 }
 pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter { value: usize::try_from(bytes).expect("int cast"), opts }
+    SizeFormatter {
+        value: usize::try_from(bytes).expect("int cast"),
+        opts,
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2498,7 +2634,11 @@ pub struct HexBytes<'a, const LOWER: bool>(pub &'a [u8]);
 
 impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let table = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
+        let table = if LOWER {
+            &LOWER_HEX_TABLE
+        } else {
+            &UPPER_HEX_TABLE
+        };
         let mut buf = [0u8; 2];
         for &b in self.0 {
             buf[0] = table[(b >> 4) as usize];
@@ -2518,10 +2658,12 @@ pub fn hex_lower(bytes: &[u8]) -> HexBytes<'_, true> {
     HexBytes(bytes)
 }
 
-pub const LOWER_HEX_TABLE: [u8; 16] =
-    [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f'];
-pub const UPPER_HEX_TABLE: [u8; 16] =
-    [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F'];
+pub const LOWER_HEX_TABLE: [u8; 16] = [
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+];
+pub const UPPER_HEX_TABLE: [u8; 16] = [
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
+];
 
 /// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
 pub const HEX_INVALID: u8 = 0xff;
@@ -2569,18 +2711,26 @@ pub const fn hex_digit_value(b: u8) -> Option<u8> {
 /// Returns the nibble `0..=15`; callers cast to their accumulator width.
 #[inline]
 pub const fn hex_digit_value_u32(c: u32) -> Option<u8> {
-    if c <= 0xFF { hex_digit_value(c as u8) } else { None }
+    if c <= 0xFF {
+        hex_digit_value(c as u8)
+    } else {
+        None
+    }
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
 /// High bits are masked, so any `u8` is accepted.
 #[inline]
-pub const fn hex_char_lower(n: u8) -> u8 { LOWER_HEX_TABLE[(n & 0x0F) as usize] }
+pub const fn hex_char_lower(n: u8) -> u8 {
+    LOWER_HEX_TABLE[(n & 0x0F) as usize]
+}
 
 /// Map the low 4 bits of `n` to an uppercase ASCII hex digit (`0-9`, `A-F`).
 /// High bits are masked, so any `u8` is accepted.
 #[inline]
-pub const fn hex_char_upper(n: u8) -> u8 { UPPER_HEX_TABLE[(n & 0x0F) as usize] }
+pub const fn hex_char_upper(n: u8) -> u8 {
+    UPPER_HEX_TABLE[(n & 0x0F) as usize]
+}
 
 /// Encode a single byte as two lowercase ASCII hex digits `[hi, lo]`.
 /// Port of the open-coded `CHARSET[(b>>4)] / CHARSET[(b&0xF)]` pair found
@@ -2588,32 +2738,62 @@ pub const fn hex_char_upper(n: u8) -> u8 { UPPER_HEX_TABLE[(n & 0x0F) as usize] 
 /// [`bytes_to_hex_lower`].
 #[inline]
 pub const fn hex_byte_lower(b: u8) -> [u8; 2] {
-    [LOWER_HEX_TABLE[(b >> 4) as usize], LOWER_HEX_TABLE[(b & 0x0F) as usize]]
+    [
+        LOWER_HEX_TABLE[(b >> 4) as usize],
+        LOWER_HEX_TABLE[(b & 0x0F) as usize],
+    ]
 }
 
 /// Encode a single byte as two UPPERCASE ASCII hex digits `[hi, lo]`.
 /// Used by percent-encoders (RFC 3986 mandates uppercase).
 #[inline]
 pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
-    [UPPER_HEX_TABLE[(b >> 4) as usize], UPPER_HEX_TABLE[(b & 0x0F) as usize]]
+    [
+        UPPER_HEX_TABLE[(b >> 4) as usize],
+        UPPER_HEX_TABLE[(b & 0x0F) as usize],
+    ]
 }
 
 /// Two hex nibbles for a `u8` (`\\xXX`). `LOWER == false` → uppercase.
 #[inline]
 pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
-    if LOWER { hex_byte_lower(b) } else { hex_byte_upper(b) }
+    if LOWER {
+        hex_byte_lower(b)
+    } else {
+        hex_byte_upper(b)
+    }
 }
 
 // ── compat aliases (pre-dedup names) ──────────────────────────────────────
-#[doc(hidden)] #[inline] pub const fn hex2_upper(b: u8) -> [u8; 2] { hex_byte_upper(b) }
-#[doc(hidden)] #[inline] pub const fn hex2_lower(b: u8) -> [u8; 2] { hex_byte_lower(b) }
-#[doc(hidden)] #[inline] pub const fn hex4_upper(v: u16) -> [u8; 4] { hex_u16::<false>(v) }
-#[doc(hidden)] #[inline] pub const fn hex4_lower(v: u16) -> [u8; 4] { hex_u16::<true>(v) }
+#[doc(hidden)]
+#[inline]
+pub const fn hex2_upper(b: u8) -> [u8; 2] {
+    hex_byte_upper(b)
+}
+#[doc(hidden)]
+#[inline]
+pub const fn hex2_lower(b: u8) -> [u8; 2] {
+    hex_byte_lower(b)
+}
+#[doc(hidden)]
+#[inline]
+pub const fn hex4_upper(v: u16) -> [u8; 4] {
+    hex_u16::<false>(v)
+}
+#[doc(hidden)]
+#[inline]
+pub const fn hex4_lower(v: u16) -> [u8; 4] {
+    hex_u16::<true>(v)
+}
 
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
 pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
-    let t = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
+    let t = if LOWER {
+        &LOWER_HEX_TABLE
+    } else {
+        &UPPER_HEX_TABLE
+    };
     [
         t[((v >> 12) & 0xF) as usize],
         t[((v >> 8) & 0xF) as usize],
@@ -2632,7 +2812,11 @@ pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
 
 impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
     pub fn get_out_buf(value: u64) -> [u8; NIBBLES] {
-        let table = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
+        let table = if LOWER {
+            &LOWER_HEX_TABLE
+        } else {
+            &UPPER_HEX_TABLE
+        };
         let mut buf = [0u8; NIBBLES];
         // PERF(port): Zig used `inline for`; plain loop here.
         for (i, c) in buf.iter_mut().enumerate() {
@@ -2683,7 +2867,7 @@ pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];
     let mut i = 0;
     for &b in mac {
-        out[i]     = LOWER_HEX_TABLE[(b >> 4)  as usize];
+        out[i] = LOWER_HEX_TABLE[(b >> 4) as usize];
         out[i + 1] = LOWER_HEX_TABLE[(b & 0x0f) as usize];
         i += 3;
     }
@@ -2718,7 +2902,9 @@ pub fn u64_hex_var_lower(buf: &mut [u8; 16], mut n: u64) -> &[u8] {
         i -= 1;
         buf[i] = LOWER_HEX_TABLE[(n & 0xF) as usize];
         n >>= 4;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
     }
     &buf[i..]
 }
@@ -2756,8 +2942,13 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
     }
 }
 
-pub fn trimmed_precision<const PRECISION: usize>(value: f64) -> TrimmedPrecisionFormatter<PRECISION> {
-    TrimmedPrecisionFormatter { num: value, precision: PRECISION }
+pub fn trimmed_precision<const PRECISION: usize>(
+    value: f64,
+) -> TrimmedPrecisionFormatter<PRECISION> {
+    TrimmedPrecisionFormatter {
+        num: value,
+        precision: PRECISION,
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2772,7 +2963,10 @@ struct FormatDurationData {
 
 impl Default for FormatDurationData {
     fn default() -> Self {
-        Self { ns: 0, negative: false }
+        Self {
+            ns: 0,
+            negative: false,
+        }
     }
 }
 
@@ -2785,7 +2979,10 @@ const NS_PER_DAY: u64 = 24 * NS_PER_HOUR;
 const NS_PER_WEEK: u64 = 7 * NS_PER_DAY;
 
 /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
-fn format_duration_one_decimal(data: FormatDurationData, writer: &mut impl fmt::Write) -> fmt::Result {
+fn format_duration_one_decimal(
+    data: FormatDurationData,
+    writer: &mut impl fmt::Write,
+) -> fmt::Result {
     // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
     let mut buf = [0u8; 24];
     let mut pos: usize = 0;
@@ -2830,11 +3027,7 @@ fn format_duration_one_decimal(data: FormatDurationData, writer: &mut impl fmt::
         }
     }
 
-    const FINE: [(u64, &[u8]); 3] = [
-        (NS_PER_S, b"s"),
-        (NS_PER_MS, b"ms"),
-        (NS_PER_US, b"us"),
-    ];
+    const FINE: [(u64, &[u8]); 3] = [(NS_PER_S, b"s"), (NS_PER_MS, b"ms"), (NS_PER_US, b"us")];
     for &(unit_ns, sep) in FINE.iter() {
         let kunits = ns_remaining * 1000 / unit_ns;
         if kunits >= 1000 {
@@ -2865,7 +3058,10 @@ impl Display for DurationOneDecimal {
 }
 
 pub fn fmt_duration_one_decimal(ns: u64) -> DurationOneDecimal {
-    DurationOneDecimal(FormatDurationData { ns, negative: false })
+    DurationOneDecimal(FormatDurationData {
+        ns,
+        negative: false,
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2910,10 +3106,7 @@ pub fn fmt_conn_timeout(kind: ConnTimeoutKind, ms: u32, suffix: &str) -> impl Di
 // FormatSlice
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn fmt_slice<'a, T: AsRef<[u8]>>(
-    data: &'a [T],
-    delim: &'static str,
-) -> FormatSlice<'a, T> {
+pub fn fmt_slice<'a, T: AsRef<[u8]>>(data: &'a [T], delim: &'static str) -> FormatSlice<'a, T> {
     FormatSlice { slice: data, delim }
 }
 
@@ -3054,11 +3247,16 @@ pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
 /// limited to the 32-bit Lemire table). Used by ConsoleObject width tracking.
 #[inline]
 pub fn count_int(n: i64) -> usize {
-    if n == 0 { return 1; }
+    if n == 0 {
+        return 1;
+    }
     let neg = (n < 0) as usize;
     let mut x = n.unsigned_abs();
     let mut d = 0usize;
-    while x > 0 { d += 1; x /= 10; }
+    while x > 0 {
+        d += 1;
+        x /= 10;
+    }
     neg + d
 }
 
@@ -3074,8 +3272,14 @@ pub fn count_float(n: f64) -> usize {
 // NullableFallback
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn nullable_fallback<T: Display>(value: Option<T>, null_fallback: &[u8]) -> NullableFallback<'_, T> {
-    NullableFallback { value, null_fallback }
+pub fn nullable_fallback<T: Display>(
+    value: Option<T>,
+    null_fallback: &[u8],
+) -> NullableFallback<'_, T> {
+    NullableFallback {
+        value,
+        null_fallback,
+    }
 }
 
 pub struct NullableFallback<'a, T: Display> {
@@ -3140,32 +3344,42 @@ impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", double(*self))
     }
-    fn type_name() -> &'static str { "f64" }
+    fn type_name() -> &'static str {
+        "f64"
+    }
 }
 impl OutOfRangeValue for i64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
-    fn type_name() -> &'static str { "i64" }
+    fn type_name() -> &'static str {
+        "i64"
+    }
 }
 impl OutOfRangeValue for i32 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
-    fn type_name() -> &'static str { "i32" }
+    fn type_name() -> &'static str {
+        "i32"
+    }
 }
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))
     }
-    fn type_name() -> &'static str { "[]const u8" }
+    fn type_name() -> &'static str {
+        "[]const u8"
+    }
 }
 // MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
 impl OutOfRangeValue for bun_alloc::String {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
-    fn type_name() -> &'static str { "bun.String" }
+    fn type_name() -> &'static str {
+        "bun.String"
+    }
 }
 
 pub struct NewOutOfRangeFormatter<'a, T: OutOfRangeValue> {
@@ -3226,7 +3440,12 @@ pub struct OutOfRangeOptions<'a> {
 
 impl Default for OutOfRangeOptions<'_> {
     fn default() -> Self {
-        Self { min: i64::MAX, max: i64::MAX, field_name: b"", msg: b"" }
+        Self {
+            min: i64::MAX,
+            max: i64::MAX,
+            field_name: b"",
+            msg: b"",
+        }
     }
 }
 
@@ -3292,7 +3511,9 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
 /// Zero-validation `&[u8] -> impl Display` adapter — alias of [`raw`] named to
 /// read like Zig's `{s}` specifier at call sites (`bun_fmt::s(name)`).
 #[inline(always)]
-pub const fn s(bytes: &[u8]) -> Raw<'_> { Raw(bytes) }
+pub const fn s(bytes: &[u8]) -> Raw<'_> {
+    Raw(bytes)
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -3341,7 +3562,9 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
             b'\r' => "\\r",
             b'\t' => "\\t",
             0x00..=0x1F => {
-                if run < i { write_bytes(w, &s[run..i])?; }
+                if run < i {
+                    write_bytes(w, &s[run..i])?;
+                }
                 let hex = hex_u16::<true>(b as u16);
                 w.write_str("\\u")?;
                 write_bytes(w, &hex)?;
@@ -3350,11 +3573,15 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
             }
             _ => continue,
         };
-        if run < i { write_bytes(w, &s[run..i])?; }
+        if run < i {
+            write_bytes(w, &s[run..i])?;
+        }
         w.write_str(esc)?;
         run = i + 1;
     }
-    if run < s.len() { write_bytes(w, &s[run..])?; }
+    if run < s.len() {
+        write_bytes(w, &s[run..])?;
+    }
     Ok(())
 }
 

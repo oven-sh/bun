@@ -140,7 +140,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: None })
+    Ok(codecs::Decoded {
+        rgba: out,
+        width: w,
+        height: h,
+        icc_profile: None,
+    })
 }
 
 pub fn encode(
@@ -200,9 +205,28 @@ pub fn encode(
 
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
-    fn bun_coregraphics_scale(src: *const u8, sw: u32, sh: u32, dst: *mut u8, dw: u32, dh: u32) -> i32;
-    fn bun_coregraphics_rotate90(src: *const u8, w: u32, h: u32, dst: *mut u8, quarters: u32) -> i32;
-    fn bun_coregraphics_reflect(src: *const u8, w: u32, h: u32, dst: *mut u8, horizontal: i32) -> i32;
+    fn bun_coregraphics_scale(
+        src: *const u8,
+        sw: u32,
+        sh: u32,
+        dst: *mut u8,
+        dw: u32,
+        dh: u32,
+    ) -> i32;
+    fn bun_coregraphics_rotate90(
+        src: *const u8,
+        w: u32,
+        h: u32,
+        dst: *mut u8,
+        quarters: u32,
+    ) -> i32;
+    fn bun_coregraphics_reflect(
+        src: *const u8,
+        w: u32,
+        h: u32,
+        dst: *mut u8,
+        horizontal: i32,
+    ) -> i32;
 }
 
 /// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
@@ -232,7 +256,8 @@ pub fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, Back
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK {
+    if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
+    {
         return Err(BackendError::BackendUnavailable);
     }
     Ok(out)
@@ -242,7 +267,9 @@ pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Bac
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) } != CG_OK {
+    if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
+        != CG_OK
+    {
         return Err(BackendError::BackendUnavailable);
     }
     Ok(out)
@@ -283,7 +310,9 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 pub fn has_clipboard_image() -> bool {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
-    unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 1) == CG_OK && len > 0 }
+    unsafe {
+        bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 1) == CG_OK && len > 0
+    }
 }
 
 // TODO(port): move to runtime_sys

@@ -1,6 +1,5 @@
 #![allow(unused, non_camel_case_types, non_snake_case)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use core::ffi::c_int;
 use core::fmt;
@@ -46,27 +45,39 @@ mod c {
     pub type struct_phr_chunked_decoder = phr_chunked_decoder;
     unsafe extern "C" {
         pub fn phr_parse_request(
-            buf: *const u8, len: usize,
-            method: *mut *const c_char, method_len: *mut usize,
-            path: *mut *const c_char, path_len: *mut usize,
+            buf: *const u8,
+            len: usize,
+            method: *mut *const c_char,
+            method_len: *mut usize,
+            path: *mut *const c_char,
+            path_len: *mut usize,
             minor_version: *mut c_int,
-            headers: *mut phr_header, num_headers: *mut usize,
+            headers: *mut phr_header,
+            num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
         pub fn phr_parse_response(
-            buf: *const u8, len: usize,
-            minor_version: *mut c_int, status: *mut c_int,
-            msg: *mut *const c_char, msg_len: *mut usize,
-            headers: *mut phr_header, num_headers: *mut usize,
+            buf: *const u8,
+            len: usize,
+            minor_version: *mut c_int,
+            status: *mut c_int,
+            msg: *mut *const c_char,
+            msg_len: *mut usize,
+            headers: *mut phr_header,
+            num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
         pub fn phr_parse_headers(
-            buf: *const u8, len: usize,
-            headers: *mut phr_header, num_headers: *mut usize,
+            buf: *const u8,
+            len: usize,
+            headers: *mut phr_header,
+            num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
         pub fn phr_decode_chunked(
-            decoder: *mut phr_chunked_decoder, buf: *mut u8, len: *mut usize,
+            decoder: *mut phr_chunked_decoder,
+            buf: *mut u8,
+            len: *mut usize,
         ) -> isize;
         pub fn phr_decode_chunked_is_in_data(decoder: *mut phr_chunked_decoder) -> c_int;
     }
@@ -93,7 +104,9 @@ pub struct Header {
 
 impl Default for Header {
     #[inline]
-    fn default() -> Self { Self::ZERO }
+    fn default() -> Self {
+        Self::ZERO
+    }
 }
 
 impl Header {
@@ -187,7 +200,11 @@ impl fmt::Display for Header {
             }
         } else {
             if self.is_multiline() {
-                write!(f, pretty_fmt!("<r><cyan>{}", false), BStr::new(self.value()))
+                write!(
+                    f,
+                    pretty_fmt!("<r><cyan>{}", false),
+                    BStr::new(self.value())
+                )
             } else {
                 write!(
                     f,
@@ -211,7 +228,12 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let header = self.header;
         if header.value_len > 0 {
-            write!(f, "-H \"{}: {}\"", BStr::new(header.name()), BStr::new(header.value()))
+            write!(
+                f,
+                "-H \"{}: {}\"",
+                BStr::new(header.name()),
+                BStr::new(header.value())
+            )
         } else {
             write!(f, "-H \"{}\"", BStr::new(header.name()))
         }
@@ -381,7 +403,12 @@ impl fmt::Display for Request<'_> {
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
-        write!(f, "> HTTP/1.1 {} {}\n", BStr::new(self.method), BStr::new(self.path))?;
+        write!(
+            f,
+            "> HTTP/1.1 {} {}\n",
+            BStr::new(self.method),
+            BStr::new(self.path)
+        )?;
         for header in self.headers {
             if enable_ansi_colors_stderr() {
                 f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
@@ -457,7 +484,11 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             // Zig: bun.js_printer.writeJSONString — bun_core re-exports the
             // tier-0 minimal impl as `js_printer::write_json_string`; the full
             // encoding-aware printer in bun_js_printer overrides at link time.
-            bun_core::js_printer::write_json_string(self.body, f, bun_core::strings::Encoding::Utf8)?;
+            bun_core::js_printer::write_json_string(
+                self.body,
+                f,
+                bun_core::strings::Encoding::Utf8,
+            )?;
         }
 
         Ok(())
@@ -596,7 +627,10 @@ impl<'a> Response<'a> {
                 // NOTE: `bun_core::debug!` macro is currently broken (it forwards
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug(&format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
+                Output::debug(&format_args!(
+                    "Malformed HTTP response:\n{}",
+                    BStr::new(buf)
+                ));
                 Err(ParseResponseError::Malformed_HTTP_Response)
             }
             -2 => {
@@ -608,7 +642,9 @@ impl<'a> Response<'a> {
                 status_code: u32::try_from(status_code).expect("int cast"),
                 // SAFETY: on success, ptr/len point into `buf`.
                 status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
-                headers: HeaderList { list: &src[0..num_headers.min(src.len())] },
+                headers: HeaderList {
+                    list: &src[0..num_headers.min(src.len())],
+                },
                 bytes_read: rc,
             }),
         }
@@ -630,7 +666,9 @@ impl fmt::Display for Response<'_> {
         write!(
             f,
             "< {} {}\n",
-            StatusCodeFormatter { code: self.status_code as usize },
+            StatusCodeFormatter {
+                code: self.status_code as usize
+            },
             BStr::new(self.status),
         )?;
         for header in self.headers.list {
@@ -679,7 +717,9 @@ impl<'a> Headers<'a> {
         match rc {
             -1 => Err(ParseHeadersError::BadHeaders),
             -2 => Err(ParseHeadersError::ShortRead),
-            _ => Ok(Headers { headers: &src[0..num_headers] }),
+            _ => Ok(Headers {
+                headers: &src[0..num_headers],
+            }),
         }
     }
 }
@@ -687,7 +727,12 @@ impl<'a> Headers<'a> {
 impl fmt::Display for Headers<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for header in self.headers {
-            write!(f, "{}: {}\r\n", BStr::new(header.name()), BStr::new(header.value()))?;
+            write!(
+                f,
+                "{}: {}\r\n",
+                BStr::new(header.name()),
+                BStr::new(header.value())
+            )?;
         }
         Ok(())
     }
@@ -697,14 +742,14 @@ impl fmt::Display for Headers<'_> {
 // Re-exports from picohttp_sys
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use c::phr_header;
 pub use c::phr_chunked_decoder;
-pub use c::struct_phr_header;
-pub use c::struct_phr_chunked_decoder;
-pub use c::phr_parse_request;
-pub use c::phr_parse_response;
-pub use c::phr_parse_headers;
 pub use c::phr_decode_chunked;
 pub use c::phr_decode_chunked_is_in_data;
+pub use c::phr_header;
+pub use c::phr_parse_headers;
+pub use c::phr_parse_request;
+pub use c::phr_parse_response;
+pub use c::struct_phr_chunked_decoder;
+pub use c::struct_phr_header;
 
 // ported from: src/picohttp/picohttp.zig

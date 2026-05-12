@@ -1,9 +1,9 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt as _;
+use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
-use bun_core::strings;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
@@ -205,7 +205,14 @@ impl TextEncoderStreamEncoder {
         let result = unsafe {
             bun_core::vec::fill_spare(&mut buf, 0, |spare| {
                 let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
-                (if r.status == simdutf::Status::SUCCESS { r.count } else { 0 }, r)
+                (
+                    if r.status == simdutf::Status::SUCCESS {
+                        r.count
+                    } else {
+                        0
+                    },
+                    r,
+                )
             })
         };
 
@@ -213,7 +220,8 @@ impl TextEncoderStreamEncoder {
             JSUint8Array::from_bytes(global, buf.into())
         } else {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-            let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain) {
+            let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain)
+            {
                 Ok(v) => v,
                 Err(_) => return global.throw_out_of_memory_value(),
             };

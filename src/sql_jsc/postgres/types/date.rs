@@ -13,7 +13,8 @@ const POSTGRES_EPOCH_DATE: i64 = 946_684_800_000;
 const US_PER_MS: i64 = 1000;
 
 pub fn from_binary(bytes: &[u8]) -> f64 {
-    let microseconds = i64::from_be_bytes(bytes[0..8].try_into().expect("infallible: size matches"));
+    let microseconds =
+        i64::from_be_bytes(bytes[0..8].try_into().expect("infallible: size matches"));
     let double_microseconds: f64 = microseconds as f64;
     (double_microseconds / US_PER_MS as f64) + POSTGRES_EPOCH_DATE as f64
 }

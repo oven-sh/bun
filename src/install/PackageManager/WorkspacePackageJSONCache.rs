@@ -13,9 +13,9 @@ use crate::bun_json::Expr;
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
 use bun_ast::{Log, Source};
-use bun_paths::is_absolute;
 #[cfg(windows)]
 use bun_paths::PathBuffer;
+use bun_paths::is_absolute;
 
 use crate::bun_json as json;
 use crate::initialize_store;

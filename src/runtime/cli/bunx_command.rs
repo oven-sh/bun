@@ -6,27 +6,27 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use crate::cli::{self, Command};
 use crate::cli::command::ContextData;
+use crate::cli::{self, Command};
 use crate::run_command::RunCommand as Run;
 
 use bun_alloc::AllocError;
+use bun_ast::ExprData;
 use bun_bundler::Transpiler;
 use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
-use bun_resolver::fs::RealFS;
-use bun_install::update_request::{self, UpdateRequest};
+use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
+use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_ast::ExprData as ExprData;
-use bun_paths::{self, PathBuffer, DELIMITER};
-use bun_core::{strings, ZStr};
+use bun_paths::{self, DELIMITER, PathBuffer};
+use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 
-use crate::api::bun::process::sync as proc_sync;
 use crate::api::bun::process::Status as SpawnStatus;
+use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
 
@@ -88,7 +88,10 @@ impl Options {
         let mut i: usize = 0;
 
         // SAFETY: `opts` is only ever returned when a package name is found, otherwise the process exits.
-        let mut opts = Options { package_name: b"", ..Default::default() };
+        let mut opts = Options {
+            package_name: b"",
+            ..Default::default()
+        };
         opts.passthrough_list.reserve_exact(argv.len());
 
         while i < argv.len() {
@@ -122,21 +125,30 @@ impl Options {
                         Global::exit(1);
                     }
                     if argv[i].as_bytes().is_empty() {
-                        Output::err_generic("--package requires a non-empty package name", format_args!(""));
+                        Output::err_generic(
+                            "--package requires a non-empty package name",
+                            format_args!(""),
+                        );
                         Global::exit(1);
                     }
                     opts.specified_package = Some(argv[i].as_bytes());
                 } else if positional.starts_with(b"--package=") {
                     let package_value = &positional[b"--package=".len()..];
                     if package_value.is_empty() {
-                        Output::err_generic("--package requires a non-empty package name", format_args!(""));
+                        Output::err_generic(
+                            "--package requires a non-empty package name",
+                            format_args!(""),
+                        );
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
                 } else if positional.starts_with(b"-p=") {
                     let package_value = &positional[b"-p=".len()..];
                     if package_value.is_empty() {
-                        Output::err_generic("--package requires a non-empty package name", format_args!(""));
+                        Output::err_generic(
+                            "--package requires a non-empty package name",
+                            format_args!(""),
+                        );
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
@@ -156,13 +168,23 @@ impl Options {
         if opts.specified_package.is_some() {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
-                    Output::err_generic("When using --package, you must specify the binary to run", format_args!(""));
-                    Output::prettyln(format_args!("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"));
+                    Output::err_generic(
+                        "When using --package, you must specify the binary to run",
+                        format_args!(""),
+                    );
+                    Output::prettyln(format_args!(
+                        "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
+                    ));
                     Global::exit(1);
                 }
             } else {
-                Output::err_generic("When using --package, you must specify the binary to run", format_args!(""));
-                Output::prettyln(format_args!("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"));
+                Output::err_generic(
+                    "When using --package, you must specify the binary to run",
+                    format_args!(""),
+                );
+                Output::prettyln(format_args!(
+                    "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
+                ));
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
@@ -223,7 +245,8 @@ impl BunxCommand {
                 let index = usize::try_from(slash_i + 1).expect("int cast");
                 new_str[0..index].copy_from_slice(&input[0..index]);
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"create-");
-                new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH].copy_from_slice(&input[index..]);
+                new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH]
+                    .copy_from_slice(&input[index..]);
                 return Ok(new_str);
             }
             // @org@v -> @org/create@v
@@ -231,7 +254,8 @@ impl BunxCommand {
                 let index = usize::try_from(at_i + 1).expect("int cast");
                 new_str[0..index].copy_from_slice(&input[0..index]);
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"/create");
-                new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH].copy_from_slice(&input[index..]);
+                new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH]
+                    .copy_from_slice(&input[index..]);
                 return Ok(new_str);
             }
             // @org -> @org/create
@@ -262,7 +286,9 @@ impl BunxCommand {
         // Zig: `defer target_package_json.close()` — bun_sys::File is a non-owning
         // Copy handle (no Drop), so guard the fd explicitly.
         let _close_pkg_json = bun_sys::CloseOnDrop::new(target_package_json_fd);
-        let target_package_json = bun_sys::File { handle: target_package_json_fd };
+        let target_package_json = bun_sys::File {
+            handle: target_package_json_fd,
+        };
 
         // TODO: make this better
         let package_json_bytes = target_package_json.read_to_end()?;
@@ -393,7 +419,9 @@ impl BunxCommand {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("NeedToInstall")),
             };
-            let target_package_json = bun_sys::File { handle: target_package_json_fd };
+            let target_package_json = bun_sys::File {
+                handle: target_package_json_fd,
+            };
 
             let is_stale: bool = 'is_stale: {
                 #[cfg(windows)]
@@ -407,7 +435,8 @@ impl BunxCommand {
                             target_package_json_fd.native(),
                             &mut io_status_block,
                             (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                            u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),
+                            u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
+                                .expect("int cast"),
                             win::FILE_INFORMATION_CLASS::FileBasicInformation,
                         )
                     };
@@ -427,7 +456,8 @@ impl BunxCommand {
                         Ok(s) => s,
                         Err(_) => break 'is_stale true,
                     };
-                    break 'is_stale bun_core::time::timestamp() - bun_sys::stat_mtime(&stat).sec > Self::SECONDS_CACHE_VALID;
+                    break 'is_stale bun_core::time::timestamp() - bun_sys::stat_mtime(&stat).sec
+                        > Self::SECONDS_CACHE_VALID;
                 }
             };
 
@@ -477,7 +507,12 @@ impl BunxCommand {
                     return Err(GetBinNameError::NoBinFound);
                 }
 
-                match Self::get_bin_name_from_temp_directory(transpiler, tempdir_name, package_name, true) {
+                match Self::get_bin_name_from_temp_directory(
+                    transpiler,
+                    tempdir_name,
+                    package_name,
+                    true,
+                ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
                         if err2 == bun_core::err!("NoBinFound") {
@@ -553,7 +588,11 @@ impl BunxCommand {
         } else if &*update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
-            update_request.version.github().repo.slice(update_request.version_buf())
+            update_request
+                .version
+                .github()
+                .repo
+                .slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[usize::try_from(index + 1).expect("int cast")..]
@@ -565,17 +604,11 @@ impl BunxCommand {
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         // PORT NOTE: out-param init — Zig `var this_transpiler: Transpiler = undefined;`.
-        let mut this_transpiler_slot =
-            ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
-        let root_dir_info = Run::configure_env_for_run(
-            ctx,
-            &mut this_transpiler_slot,
-            None,
-            true,
-            true,
-        )?;
+        let root_dir_info =
+            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
@@ -590,9 +623,18 @@ impl BunxCommand {
             force_using_bun,
         )?;
         let env_loader = this_transpiler.env_mut();
-        env_loader.map.put(b"npm_command", b"exec").expect("unreachable");
-        env_loader.map.put(b"npm_lifecycle_event", b"bunx").expect("unreachable");
-        env_loader.map.put(b"npm_lifecycle_script", opts.package_name).expect("unreachable");
+        env_loader
+            .map
+            .put(b"npm_command", b"exec")
+            .expect("unreachable");
+        env_loader
+            .map
+            .put(b"npm_lifecycle_event", b"bunx")
+            .expect("unreachable");
+        env_loader
+            .map
+            .put(b"npm_lifecycle_script", opts.package_name)
+            .expect("unreachable");
 
         if opts.package_name == b"bun-repl" {
             env_loader.map.remove(b"BUN_INSPECT_CONNECT_TO");
@@ -600,7 +642,10 @@ impl BunxCommand {
             env_loader.map.remove(b"BUN_INSPECT");
         }
 
-        let ignore_cwd: Vec<u8> = env_loader.get(b"BUN_WHICH_IGNORE_CWD").unwrap_or(b"").to_vec();
+        let ignore_cwd: Vec<u8> = env_loader
+            .get(b"BUN_WHICH_IGNORE_CWD")
+            .unwrap_or(b"")
+            .to_vec();
         // PORT NOTE: cloned to drop the borrow on `env_loader.map` before mutating it.
 
         if !ignore_cwd.is_empty() {
@@ -617,17 +662,21 @@ impl BunxCommand {
         // names without risking a collision with an unrelated binary in the user's
         // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
         // delimiter so empty segments are ignored.
-        let local_bin_dirs: Vec<u8> = if !original_path.is_empty() && strings::ends_with(&path, &original_path) {
-            path[0..path.len() - original_path.len()].to_vec()
-        } else {
-            path.clone()
-        };
+        let local_bin_dirs: Vec<u8> =
+            if !original_path.is_empty() && strings::ends_with(&path, &original_path) {
+                path[0..path.len() - original_path.len()].to_vec()
+            } else {
+                path.clone()
+            };
         // PORT NOTE: cloned to avoid borrowck overlap when PATH is reassigned below.
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {
-            update_request.version.literal.slice(update_request.version_buf())
+            update_request
+                .version
+                .literal
+                .slice(update_request.version_buf())
         };
 
         // package_fmt is used for the path to install in.
@@ -638,7 +687,8 @@ impl BunxCommand {
             #[cfg(not(windows))]
             const BANNED_PATH_CHARS: &[u8] = b":";
 
-            let has_banned_char = strings::index_of_any(&update_request.name, BANNED_PATH_CHARS).is_some()
+            let has_banned_char = strings::index_of_any(&update_request.name, BANNED_PATH_CHARS)
+                .is_some()
                 || strings::index_of_any(display_version, BANNED_PATH_CHARS).is_some();
 
             let mut v = Vec::new();
@@ -671,32 +721,37 @@ impl BunxCommand {
 
         // install_param -> used in command 'bun install {what}'
         // result_package_name -> used for path 'node_modules/{what}/package.json'
-        let (install_param, result_package_name): (Vec<u8>, &[u8]) = if !update_request.name.is_empty() {
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}@{}",
-                BStr::new(&update_request.name),
-                BStr::new(display_version),
-            )
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-            (v, &update_request.name)
-        } else {
-            // When there is not a clear package name (URL/GitHub/etc), we force the package name
-            // to be the same as the calculated initial bin name. This allows us to have a predictable
-            // node_modules folder structure.
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}@{}",
-                BStr::new(initial_bin_name),
-                BStr::new(display_version),
-            )
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-            (v, initial_bin_name)
-        };
+        let (install_param, result_package_name): (Vec<u8>, &[u8]) =
+            if !update_request.name.is_empty() {
+                let mut v = Vec::new();
+                write!(
+                    &mut v,
+                    "{}@{}",
+                    BStr::new(&update_request.name),
+                    BStr::new(display_version),
+                )
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                (v, &update_request.name)
+            } else {
+                // When there is not a clear package name (URL/GitHub/etc), we force the package name
+                // to be the same as the calculated initial bin name. This allows us to have a predictable
+                // node_modules folder structure.
+                let mut v = Vec::new();
+                write!(
+                    &mut v,
+                    "{}@{}",
+                    BStr::new(initial_bin_name),
+                    BStr::new(display_version),
+                )
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                (v, initial_bin_name)
+            };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
-        bun_output::scoped_log!(bunx, "result_package_name: {}", BStr::new(result_package_name));
+        bun_output::scoped_log!(
+            bunx,
+            "result_package_name: {}",
+            BStr::new(result_package_name)
+        );
 
         let temp_dir = RealFS::platform_temp_dir();
 
@@ -707,7 +762,9 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = path.split(|b| *b == DELIMITER).filter(|s: &&[u8]| !s.is_empty());
+            let mut path_iter = path
+                .split(|b| *b == DELIMITER)
+                .filter(|s: &&[u8]| !s.is_empty());
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
@@ -813,8 +870,8 @@ impl BunxCommand {
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
         let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
-        let look_for_existing_bin =
-            update_request.version.literal.is_empty() || update_request.version.tag != VersionTag::DistTag;
+        let look_for_existing_bin = update_request.version.literal.is_empty()
+            || update_request.version.tag != VersionTag::DistTag;
 
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
@@ -835,8 +892,16 @@ impl BunxCommand {
                         // system binaries. Only search local node_modules/.bin directories.
                         if let Some(d) = bun_which::which(
                             &mut path_buf,
-                            if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
-                            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+                            if initial_bin_name_is_a_guess {
+                                &local_bin_dirs
+                            } else {
+                                &path_for_bin_dirs
+                            },
+                            if !ignore_cwd.is_empty() {
+                                b"".as_slice()
+                            } else {
+                                top_level_dir
+                            },
                             initial_bin_name,
                         ) {
                             break 'find Some(d);
@@ -845,7 +910,11 @@ impl BunxCommand {
                     bun_which::which(
                         &mut path_buf,
                         bunx_cache_dir,
-                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+                        if !ignore_cwd.is_empty() {
+                            b"".as_slice()
+                        } else {
+                            top_level_dir
+                        },
                         absolute_in_cache_dir,
                     )
                 };
@@ -859,7 +928,8 @@ impl BunxCommand {
                             #[cfg(windows)]
                             {
                                 use bun_sys::windows as win;
-                                let fd = match bun_sys::openat(Fd::cwd(), destination, O::RDONLY, 0) {
+                                let fd = match bun_sys::openat(Fd::cwd(), destination, O::RDONLY, 0)
+                                {
                                     Ok(fd) => fd,
                                     Err(_) => {
                                         // if we cant open this, we probably will just fail when we run it
@@ -870,7 +940,8 @@ impl BunxCommand {
                                 // Zig: `defer fd.close()` — closed explicitly below before
                                 // any `break 'is_stale` (no early-return between open & close).
 
-                                let mut io_status_block: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+                                let mut io_status_block: win::IO_STATUS_BLOCK =
+                                    bun_core::ffi::zeroed();
                                 let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
                                 // SAFETY: FFI call with valid out-params
                                 let rc = unsafe {
@@ -878,7 +949,8 @@ impl BunxCommand {
                                         fd.native(),
                                         &mut io_status_block,
                                         (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                                        u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),
+                                        u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
+                                            .expect("int cast"),
                                         win::FILE_INFORMATION_CLASS::FileBasicInformation,
                                     )
                                 };
@@ -899,7 +971,9 @@ impl BunxCommand {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
-                                break 'is_stale bun_core::time::timestamp() - bun_sys::stat_mtime(&stat).sec > Self::SECONDS_CACHE_VALID;
+                                break 'is_stale bun_core::time::timestamp()
+                                    - bun_sys::stat_mtime(&stat).sec
+                                    > Self::SECONDS_CACHE_VALID;
                             }
                         };
 
@@ -917,7 +991,11 @@ impl BunxCommand {
                         }
                     }
 
-                    bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(destination.as_bytes()));
+                    bun_output::scoped_log!(
+                        bunx,
+                        "running existing binary: {}",
+                        BStr::new(destination.as_bytes())
+                    );
                     let stored = fs.dirname_store.append_slice(out)?;
                     Run::run_binary(
                         ctx,
@@ -936,7 +1014,12 @@ impl BunxCommand {
                 let root_dir_fd = root_dir_info.get_file_descriptor();
                 debug_assert!(root_dir_fd.is_valid());
                 if opts.binary_name.is_none() {
-                    match Self::get_bin_name(this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name) {
+                    match Self::get_bin_name(
+                        this_transpiler,
+                        root_dir_fd,
+                        bunx_cache_dir,
+                        result_package_name,
+                    ) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again
                             if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
@@ -953,7 +1036,12 @@ impl BunxCommand {
                                     .expect("unreachable");
                                     let written = buf_total - cursor.len();
                                     // SAFETY: `written` bytes initialized above
-                                    unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+                                    unsafe {
+                                        core::slice::from_raw_parts(
+                                            absolute_in_cache_dir_buf.as_ptr(),
+                                            written,
+                                        )
+                                    }
                                 };
 
                                 // Only use the system-installed version if there is no version specified.
@@ -968,7 +1056,11 @@ impl BunxCommand {
                                         if let Some(d) = bun_which::which(
                                             &mut path_buf,
                                             &local_bin_dirs,
-                                            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+                                            if !ignore_cwd.is_empty() {
+                                                b"".as_slice()
+                                            } else {
+                                                top_level_dir
+                                            },
                                             &package_name_for_bin,
                                         ) {
                                             break 'find2 Some(d);
@@ -977,7 +1069,11 @@ impl BunxCommand {
                                     bun_which::which(
                                         &mut path_buf,
                                         bunx_cache_dir,
-                                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+                                        if !ignore_cwd.is_empty() {
+                                            b"".as_slice()
+                                        } else {
+                                            top_level_dir
+                                        },
                                         absolute_in_cache_dir,
                                     )
                                 };
@@ -1093,7 +1189,10 @@ impl BunxCommand {
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
         );
-        env_loader.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true").expect("oom");
+        env_loader
+            .map
+            .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
+            .expect("oom");
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
@@ -1109,24 +1208,26 @@ impl BunxCommand {
 
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                    // `this_transpiler.env` is the process-lifetime loader
-                    // singleton populated during transpiler init
-                    // (Zig: `initGlobal(this_transpiler.env, null)`).
-                    //
-                    // PORT NOTE (aliasing): do NOT call `this_transpiler.env_mut()` here —
-                    // `env_loader` (line 594) is still live and is used again below at the
-                    // post-install `Run::run_binary` calls. A second `env_mut()` would
-                    // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
-                    // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
-                    // *through* `env_loader` so the new `&mut` is a child of its tag; the
-                    // child is consumed by `init_global` (converted to `NonNull`) before
-                    // `env_loader` is touched again.
-                    // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
-                    // stacked reborrow, not a sibling alias.
-                    Some(unsafe { &mut *(env_loader as *mut _) }),
-                    None,
-                )),
+                loop_: bun_jsc::EventLoopHandle::init_mini(
+                    bun_event_loop::MiniEventLoop::init_global(
+                        // `this_transpiler.env` is the process-lifetime loader
+                        // singleton populated during transpiler init
+                        // (Zig: `initGlobal(this_transpiler.env, null)`).
+                        //
+                        // PORT NOTE (aliasing): do NOT call `this_transpiler.env_mut()` here —
+                        // `env_loader` (line 594) is still live and is used again below at the
+                        // post-install `Run::run_binary` calls. A second `env_mut()` would
+                        // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
+                        // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
+                        // *through* `env_loader` so the new `&mut` is a child of its tag; the
+                        // child is consumed by `init_global` (converted to `NonNull`) before
+                        // `env_loader` is touched again.
+                        // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
+                        // stacked reborrow, not a sibling alias.
+                        Some(unsafe { &mut *(env_loader as *mut _) }),
+                        None,
+                    ),
+                ),
                 ..Default::default()
             },
             ..Default::default()
@@ -1217,7 +1318,11 @@ impl BunxCommand {
         if let Some(destination) = bun_which::which(
             &mut path_buf,
             bunx_cache_dir,
-            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+            if !ignore_cwd.is_empty() {
+                b"".as_slice()
+            } else {
+                top_level_dir
+            },
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
@@ -1237,9 +1342,12 @@ impl BunxCommand {
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         // BUT: Skip this if --package was used, as the user explicitly specified the binary name
         if opts.binary_name.is_none() {
-            if let Ok(package_name_for_bin) =
-                Self::get_bin_name_from_temp_directory(this_transpiler, bunx_cache_dir, result_package_name, false)
-            {
+            if let Ok(package_name_for_bin) = Self::get_bin_name_from_temp_directory(
+                this_transpiler,
+                bunx_cache_dir,
+                result_package_name,
+                false,
+            ) {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
                     absolute_in_cache_dir = {
                         let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
@@ -1253,13 +1361,19 @@ impl BunxCommand {
                         .expect("unreachable");
                         let written = buf_total - cursor.len();
                         // SAFETY: `written` bytes initialized above
-                        unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+                        unsafe {
+                            core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written)
+                        }
                     };
 
                     if let Some(destination) = bun_which::which(
                         &mut path_buf,
                         bunx_cache_dir,
-                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
+                        if !ignore_cwd.is_empty() {
+                            b"".as_slice()
+                        } else {
+                            top_level_dir
+                        },
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();
@@ -1282,7 +1396,10 @@ impl BunxCommand {
         if opts.specified_package.is_some() && opts.binary_name.is_some() {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (BStr::new(&update_request.name), BStr::new(opts.binary_name.unwrap())),
+                (
+                    BStr::new(&update_request.name),
+                    BStr::new(opts.binary_name.unwrap()),
+                ),
             );
             Output::prettyln(format_args!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",

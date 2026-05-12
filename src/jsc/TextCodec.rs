@@ -1,11 +1,14 @@
 use core::ptr::NonNull;
 
-use bun_core::String as BunString;
 use crate::mark_binding;
+use bun_core::String as BunString;
 
 // TODO(port): move to <jsc>_sys
 unsafe extern "C" {
-    fn Bun__createTextCodec(encoding_name: *const u8, encoding_name_len: usize) -> Option<NonNull<TextCodec>>;
+    fn Bun__createTextCodec(
+        encoding_name: *const u8,
+        encoding_name_len: usize,
+    ) -> Option<NonNull<TextCodec>>;
     fn Bun__decodeWithTextCodec(
         codec: *mut TextCodec,
         data: *const u8,
@@ -85,7 +88,9 @@ impl TextCodec {
         mark_binding!();
         let mut len: usize = 0;
         // SAFETY: encoding.ptr is valid for encoding.len bytes; `len` is a valid out-pointer.
-        let name = unsafe { Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len) }?;
+        let name = unsafe {
+            Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len)
+        }?;
         // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
         // and for the lifetime of the program.
         Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })

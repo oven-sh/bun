@@ -8,7 +8,11 @@ bun_opaque::opaque_ffi! {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     // TODO(@paperclover): this can throw
-    fn JSArray__constructArray(global: *const JSGlobalObject, items: *const JSValue, len: usize) -> JSValue;
+    fn JSArray__constructArray(
+        global: *const JSGlobalObject,
+        items: *const JSValue,
+        len: usize,
+    ) -> JSValue;
     safe fn JSArray__constructEmptyArray(global: &JSGlobalObject, len: usize) -> JSValue;
 }
 

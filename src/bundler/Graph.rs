@@ -1,14 +1,14 @@
 use core::ptr::NonNull;
 
-use bun_alloc::Arena as ThreadLocalArena;
-use bun_collections::{VecExt, MultiArrayList};
-use bun_ast::server_component_boundary;
 use crate::BundledAst as JSAst;
+use bun_alloc::Arena as ThreadLocalArena;
+use bun_ast::server_component_boundary;
+use bun_collections::{MultiArrayList, VecExt};
 use enum_map::EnumMap;
 
-use crate::options;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
 use bun_ast::Index;

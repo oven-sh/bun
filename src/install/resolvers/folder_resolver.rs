@@ -2,18 +2,18 @@ use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
+use bun_core::{ZStr, strings};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
-use bun_core::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bun_json::Expr;
 use crate::dependency::{self, Dependency};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
-use crate::lockfile_real::package::ResolverContext;
 use crate::lockfile_real::StringBuilder;
+use crate::lockfile_real::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
@@ -54,25 +54,21 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             .manager
             .lockfile
             .workspace_paths
-            .get(
-                &semver::string::Builder::string_hash(
-                    self.manager.lockfile.str(workspace),
-                ),
-            )
+            .get(&semver::string::Builder::string_hash(
+                self.manager.lockfile.str(workspace),
+            ))
             .unwrap_or(workspace);
 
         // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
-        let joined_path: &mut PathBuffer = unsafe {
-            &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>()
-        };
+        let joined_path: &mut PathBuffer =
+            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
         let mut paths = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
             joined_path,
             self.manager.lockfile.str(str_to_use),
         );
 
-        if !strings::starts_with_char(paths.rel, b'.')
-            && !strings::starts_with_char(paths.rel, SEP)
+        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
         {
             joined[0] = b'.';
             joined[1] = SEP;
@@ -158,10 +154,12 @@ impl ResolverContext for CacheFolderResolver {
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        Ok(ResolutionType::<u64>::init(TaggedValue::Npm(VersionedURLType {
-            version: self.version,
-            url: SemverString::from(b""),
-        })))
+        Ok(ResolutionType::<u64>::init(TaggedValue::Npm(
+            VersionedURLType {
+                version: self.version,
+                url: SemverString::from(b""),
+            },
+        )))
     }
 }
 
@@ -294,9 +292,8 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     let manager_ptr: *mut PackageManager = manager;
 
     if R::IS_WORKSPACE {
-        let _tracer = bun_perf::trace(
-            bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace,
-        );
+        let _tracer =
+            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
@@ -354,21 +351,21 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         }
     }
 
-    let has_scripts = package.scripts.has_any() || 'brk: {
-        let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-        let binding_dot_gyp_path =
-            bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
-                dir,
-                &[b"binding.gyp" as &[u8]],
-            );
-        break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
-    };
+    let has_scripts = package.scripts.has_any()
+        || 'brk: {
+            let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+            let binding_dot_gyp_path = bun_paths::resolve_path::join_abs_string_z::<
+                bun_paths::platform::Auto,
+            >(dir, &[b"binding.gyp" as &[u8]]);
+            break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
+        };
 
     package.meta.set_has_install_script(has_scripts);
 
-    if let Some(existing_id) = manager
-        .lockfile
-        .get_package_id(package.name_hash, Some(version), &package.resolution)
+    if let Some(existing_id) =
+        manager
+            .lockfile
+            .get_package_id(package.name_hash, Some(version), &package.resolution)
     {
         package.meta.id = existing_id;
         manager.lockfile.packages.set(existing_id as usize, package);

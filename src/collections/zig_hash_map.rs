@@ -182,10 +182,20 @@ impl<K, V, C> HashMap<K, V, C> {
     pub fn unlock_pointers(&self) {}
 
     pub fn iter(&self) -> Iter<'_, K, V> {
-        Iter { metadata: &self.metadata, slots: &self.slots, idx: 0, remaining: self.size }
+        Iter {
+            metadata: &self.metadata,
+            slots: &self.slots,
+            idx: 0,
+            remaining: self.size,
+        }
     }
     pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
-        IterMut { metadata: &self.metadata, slots: self.slots.iter_mut(), idx: 0, remaining: self.size }
+        IterMut {
+            metadata: &self.metadata,
+            slots: self.slots.iter_mut(),
+            idx: 0,
+            remaining: self.size,
+        }
     }
     pub fn keys(&self) -> Keys<'_, K, V> {
         Keys { inner: self.iter() }
@@ -194,7 +204,9 @@ impl<K, V, C> HashMap<K, V, C> {
         Values { inner: self.iter() }
     }
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
-        ValuesMut { inner: self.iter_mut() }
+        ValuesMut {
+            inner: self.iter_mut(),
+        }
     }
 }
 
@@ -428,7 +440,10 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             self.slots[idx] = Some((key, V::default()));
         }
         let value_ptr = &mut self.slots[idx].as_mut().unwrap().1;
-        Ok(crate::hash_map::GetOrPutResult { found_existing, value_ptr })
+        Ok(crate::hash_map::GetOrPutResult {
+            found_existing,
+            value_ptr,
+        })
     }
 
     /// Zig `getOrPutContext` — alias kept for call-site parity; the context is
@@ -486,7 +501,8 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         C: HashContext<Q>,
         Q: ?Sized,
     {
-        self.get_index(key).and_then(|i| self.remove_by_index(i).map(|(_, v)| v))
+        self.get_index(key)
+            .and_then(|i| self.remove_by_index(i).map(|(_, v)| v))
     }
 
     /// std `remove_entry`.

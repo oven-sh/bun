@@ -57,13 +57,21 @@ impl<K, V> Entry<K, V> {
         // niche), for which all-zero bytes violate the validity invariant
         // regardless of whether the value is later read. Use `Default` for the
         // unread placeholder instead.
-        Self { hash: EMPTY_HASH, key: K::default(), value: V::default() }
+        Self {
+            hash: EMPTY_HASH,
+            key: K::default(),
+            value: V::default(),
+        }
     }
 }
 
 impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for Entry<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(hash: {}, key: {:?}, value: {:?})", self.hash, self.key, self.value)
+        write!(
+            f,
+            "(hash: {}, key: {:?}, value: {:?})",
+            self.hash, self.key, self.value
+        )
     }
 }
 
@@ -205,11 +213,11 @@ impl<K: 'static, V: 'static, Ctx, const MAX_LOAD_PERCENTAGE: u64> HashMapMixin<K
 }
 
 impl<
-        K: Copy + Default + 'static,
-        V: Copy + Default + 'static,
-        Ctx: HashContext<K>,
-        const MAX_LOAD_PERCENTAGE: u64,
-    > HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
+    K: Copy + Default + 'static,
+    V: Copy + Default + 'static,
+    Ctx: HashContext<K>,
+    const MAX_LOAD_PERCENTAGE: u64,
+> HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
 {
     pub fn init_capacity(capacity: u64) -> Result<Self, AllocError> {
         debug_assert!(capacity.is_power_of_two());
@@ -221,7 +229,12 @@ impl<
         // Zig: gpa.alloc + @memset(.{})
         let entries = vec![Entry::<K, V>::empty(); n].into_boxed_slice();
 
-        Ok(Self { entries, len: 0, shift, _ctx: PhantomData })
+        Ok(Self {
+            entries,
+            len: 0,
+            shift,
+            _ctx: PhantomData,
+        })
     }
 
     // `deinit` → handled by `Drop` on `Box<[Entry]>`; no explicit impl needed.
@@ -256,7 +269,11 @@ impl<
         while src != end {
             let entry = self.entries[src];
 
-            let i = if !entry.is_empty() { to_idx(entry.hash >> map.shift) } else { 0 };
+            let i = if !entry.is_empty() {
+                to_idx(entry.hash >> map.shift)
+            } else {
+                0
+            };
             // Zig: dst = if (@intFromPtr(p) >= @intFromPtr(dst)) p else dst;
             if i >= dst {
                 dst = i;
@@ -371,8 +388,11 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         // PORT NOTE: Zig left `value = undefined` (never read until the caller
         // writes via `value_ptr`). Use `Default` for the placeholder — V may
         // not be zero-valid.
-        let mut it: Entry<K, V> =
-            Entry { hash: Ctx::ctx_hash(&key), key, value: V::default() };
+        let mut it: Entry<K, V> = Entry {
+            hash: Ctx::ctx_hash(&key),
+            key,
+            value: V::default(),
+        };
         let shift = self.shift();
         let mut i = to_idx(it.hash >> shift);
 
@@ -555,7 +575,10 @@ impl<V> SortedEntry<V> {
     {
         // PORT NOTE: value of an empty entry is never read (Zig `undefined`).
         // Use `Default` — V may not be zero-valid (e.g. `&T`).
-        Self { hash: SORTED_EMPTY_HASH, value: V::default() }
+        Self {
+            hash: SORTED_EMPTY_HASH,
+            value: V::default(),
+        }
     }
 }
 
@@ -596,7 +619,11 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
         let n = usize::try_from(capacity + overflow).expect("int cast");
         let entries = vec![SortedEntry::<V>::empty(); n].into_boxed_slice();
 
-        Ok(Self { entries, len: 0, shift })
+        Ok(Self {
+            entries,
+            len: 0,
+            shift,
+        })
     }
 
     // `deinit` → handled by `Drop` on `Box<[SortedEntry]>`.
@@ -609,7 +636,10 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
     pub fn slice(&mut self) -> &mut [SortedEntry<V>] {
         let capacity = 1u64 << (63 - self.shift + 1);
         let overflow = compute_overflow(capacity, self.shift);
-        debug_assert_eq!(self.entries.len(), usize::try_from(capacity + overflow).expect("int cast"));
+        debug_assert_eq!(
+            self.entries.len(),
+            usize::try_from(capacity + overflow).expect("int cast")
+        );
         &mut self.entries[..]
     }
 
@@ -641,7 +671,11 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
         while src != end {
             let entry = self.entries[src];
 
-            let i = if !entry.is_empty() { idx(entry.hash, map.shift) } else { 0 };
+            let i = if !entry.is_empty() {
+                idx(entry.hash, map.shift)
+            } else {
+                0
+            };
             if i >= dst {
                 dst = i;
             }
@@ -680,8 +714,10 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
 
         // PORT NOTE: Zig left `value = undefined` (never read until caller
         // writes via `value_ptr`). Use `Default` — V may not be zero-valid.
-        let mut it: SortedEntry<V> =
-            SortedEntry { hash: key, value: V::default() };
+        let mut it: SortedEntry<V> = SortedEntry {
+            hash: key,
+            value: V::default(),
+        };
         let mut i = idx(key, self.shift);
 
         let mut inserted_at: Option<usize> = None;
@@ -776,26 +812,31 @@ fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
     let msb = u64::from_ne_bytes(b[0..8].try_into().expect("infallible: size matches"));
     if msa != msb {
         // Zig: mem.bigToNative(u64, msa) < mem.bigToNative(u64, msb)
-        return if u64::from_be(msa) < u64::from_be(msb) { Ordering::Less } else { Ordering::Greater };
+        return if u64::from_be(msa) < u64::from_be(msb) {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
     } else if a == b {
         // PERF(port): Zig uses @reduce(.And, @Vector(32,u8) ==) — `[u8;32] == [u8;32]`
         // should vectorize identically; profile in Phase B.
         return Ordering::Equal;
     } else {
-        match u64::from_be_bytes(a[8..16].try_into().expect("infallible: size matches"))
-            .cmp(&u64::from_be_bytes(b[8..16].try_into().expect("infallible: size matches")))
-        {
+        match u64::from_be_bytes(a[8..16].try_into().expect("infallible: size matches")).cmp(
+            &u64::from_be_bytes(b[8..16].try_into().expect("infallible: size matches")),
+        ) {
             Ordering::Equal => {}
             o => return o,
         }
-        match u64::from_be_bytes(a[16..24].try_into().expect("infallible: size matches"))
-            .cmp(&u64::from_be_bytes(b[16..24].try_into().expect("infallible: size matches")))
-        {
+        match u64::from_be_bytes(a[16..24].try_into().expect("infallible: size matches")).cmp(
+            &u64::from_be_bytes(b[16..24].try_into().expect("infallible: size matches")),
+        ) {
             Ordering::Equal => {}
             o => return o,
         }
-        u64::from_be_bytes(a[24..32].try_into().expect("infallible: size matches"))
-            .cmp(&u64::from_be_bytes(b[24..32].try_into().expect("infallible: size matches")))
+        u64::from_be_bytes(a[24..32].try_into().expect("infallible: size matches")).cmp(
+            &u64::from_be_bytes(b[24..32].try_into().expect("infallible: size matches")),
+        )
     }
 }
 
@@ -804,7 +845,10 @@ fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
 /// ascending order.
 #[inline]
 fn idx(a: [u8; 32], shift: u8) -> usize {
-    usize::try_from(u64::from_be_bytes(a[0..8].try_into().expect("infallible: size matches")) >> shift).unwrap()
+    usize::try_from(
+        u64::from_be_bytes(a[0..8].try_into().expect("infallible: size matches")) >> shift,
+    )
+    .unwrap()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

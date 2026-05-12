@@ -1,12 +1,12 @@
 use crate::jsc::JSGlobalObject;
-use bun_sql::mysql::mysql_types as types;
-use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
-use crate::shared::sql_data_cell::SQLDataCell;
-use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
 #[allow(unused_imports)]
 use crate::mysql::my_sql_value::Value;
 use crate::mysql::my_sql_value::{DateTime, Time};
+use crate::shared::sql_data_cell::SQLDataCell;
+use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
+use bun_sql::mysql::mysql_types as types;
+use bun_sql::mysql::mysql_types::FieldType;
+use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
 
 bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 
@@ -40,10 +40,18 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             let val = reader.byte()?;
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: val as u32 }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Uint4,
+                    value: CellValue { uint4: val as u32 },
+                    ..Default::default()
+                });
             }
             let ival: i8 = val as i8;
-            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: ival as i32 }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Int4,
+                value: CellValue { int4: ival as i32 },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_SHORT => {
             if raw {
@@ -51,9 +59,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u16>()? as u32 }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Uint4,
+                    value: CellValue {
+                        uint4: reader.int::<u16>()? as u32,
+                    },
+                    ..Default::default()
+                });
             }
-            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int::<i16>()? as i32 }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Int4,
+                value: CellValue {
+                    int4: reader.int::<i16>()? as i32,
+                },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
@@ -61,9 +81,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int_u24()? }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Uint4,
+                    value: CellValue {
+                        uint4: reader.int_u24()?,
+                    },
+                    ..Default::default()
+                });
             }
-            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int_i24()? }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Int4,
+                value: CellValue {
+                    int4: reader.int_i24()?,
+                },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_LONG => {
             if raw {
@@ -71,9 +103,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u32>()? }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Uint4,
+                    value: CellValue {
+                        uint4: reader.int::<u32>()?,
+                    },
+                    ..Default::default()
+                });
             }
-            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int::<i32>()? }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Int4,
+                value: CellValue {
+                    int4: reader.int::<i32>()?,
+                },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_LONGLONG => {
             if raw {
@@ -82,32 +126,64 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 let val = reader.int::<u64>()?;
                 if val <= u32::MAX as u64 {
-                    return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: u32::try_from(val).expect("int cast") }, ..Default::default() });
+                    return Ok(SQLDataCell {
+                        tag: CellTag::Uint4,
+                        value: CellValue {
+                            uint4: u32::try_from(val).expect("int cast"),
+                        },
+                        ..Default::default()
+                    });
                 }
                 if bigint {
-                    return Ok(SQLDataCell { tag: CellTag::Uint8, value: CellValue { uint8: val }, ..Default::default() });
+                    return Ok(SQLDataCell {
+                        tag: CellTag::Uint8,
+                        value: CellValue { uint8: val },
+                        ..Default::default()
+                    });
                 }
                 let mut buffer = bun_core::fmt::ItoaBuf::new();
                 let slice = bun_core::fmt::itoa(&mut buffer, val);
                 return Ok(SQLDataCell {
                     tag: CellTag::String,
-                    value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                    value: CellValue {
+                        string: if !slice.is_empty() {
+                            clone_utf8_wtf_impl(slice)
+                        } else {
+                            core::ptr::null_mut()
+                        },
+                    },
                     free_value: 1,
                     ..Default::default()
                 });
             }
             let val = reader.int::<i64>()?;
             if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                return Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: i32::try_from(val).expect("int cast") }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Int4,
+                    value: CellValue {
+                        int4: i32::try_from(val).expect("int cast"),
+                    },
+                    ..Default::default()
+                });
             }
             if bigint {
-                return Ok(SQLDataCell { tag: CellTag::Int8, value: CellValue { int8: val }, ..Default::default() });
+                return Ok(SQLDataCell {
+                    tag: CellTag::Int8,
+                    value: CellValue { int8: val },
+                    ..Default::default()
+                });
             }
             let mut buffer = bun_core::fmt::ItoaBuf::new();
             let slice = bun_core::fmt::itoa(&mut buffer, val);
             Ok(SQLDataCell {
                 tag: CellTag::String,
-                value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                value: CellValue {
+                    string: if !slice.is_empty() {
+                        clone_utf8_wtf_impl(slice)
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                },
                 free_value: 1,
                 ..Default::default()
             })
@@ -117,14 +193,26 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 let data = reader.read(4)?;
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
-            Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f32::from_bits(reader.int::<u32>()?) as f64 }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Float8,
+                value: CellValue {
+                    float8: f32::from_bits(reader.int::<u32>()?) as f64,
+                },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {
                 let data = reader.read(8)?;
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
-            Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f64::from_bits(reader.int::<u64>()?) }, ..Default::default() })
+            Ok(SQLDataCell {
+                tag: CellTag::Float8,
+                value: CellValue {
+                    float8: f64::from_bits(reader.int::<u64>()?),
+                },
+                ..Default::default()
+            })
         }
         FieldType::MYSQL_TYPE_TIME => {
             match reader.byte()? {
@@ -132,7 +220,13 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     let slice = b"00:00:00";
                     Ok(SQLDataCell {
                         tag: CellTag::String,
-                        value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                        value: CellValue {
+                            string: if !slice.is_empty() {
+                                clone_utf8_wtf_impl(slice)
+                            } else {
+                                core::ptr::null_mut()
+                            },
+                        },
                         free_value: 1,
                         ..Default::default()
                     })
@@ -150,11 +244,23 @@ pub fn decode_binary_value<Context: ReaderContext>(
                         use std::io::Write;
                         let mut w = &mut buffer[..];
                         if total_hours > 99 {
-                            if write!(w, "{}{:03}:{:02}:{:02}", sign, total_hours, time.minutes, time.seconds).is_err() {
+                            if write!(
+                                w,
+                                "{}{:03}:{:02}:{:02}",
+                                sign, total_hours, time.minutes, time.seconds
+                            )
+                            .is_err()
+                            {
                                 return Err(bun_core::err!("InvalidBinaryValue"));
                             }
                         } else {
-                            if write!(w, "{}{:02}:{:02}:{:02}", sign, total_hours, time.minutes, time.seconds).is_err() {
+                            if write!(
+                                w,
+                                "{}{:02}:{:02}:{:02}",
+                                sign, total_hours, time.minutes, time.seconds
+                            )
+                            .is_err()
+                            {
                                 return Err(bun_core::err!("InvalidBinaryValue"));
                             }
                         }
@@ -164,7 +270,13 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     // PORT NOTE: reshaped for borrowck — compute remaining before re-borrowing buffer
                     Ok(SQLDataCell {
                         tag: CellTag::String,
-                        value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                        value: CellValue {
+                            string: if !slice.is_empty() {
+                                clone_utf8_wtf_impl(slice)
+                            } else {
+                                core::ptr::null_mut()
+                            },
+                        },
                         free_value: 1,
                         ..Default::default()
                     })
@@ -172,10 +284,14 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 _ => Err(bun_core::err!("InvalidBinaryValue")),
             }
         }
-        FieldType::MYSQL_TYPE_DATE | FieldType::MYSQL_TYPE_TIMESTAMP | FieldType::MYSQL_TYPE_DATETIME => match reader.byte()? {
-            0 => {
-                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: 0.0 }, ..Default::default() })
-            }
+        FieldType::MYSQL_TYPE_DATE
+        | FieldType::MYSQL_TYPE_TIMESTAMP
+        | FieldType::MYSQL_TYPE_DATETIME => match reader.byte()? {
+            0 => Ok(SQLDataCell {
+                tag: CellTag::Date,
+                value: CellValue { date: 0.0 },
+                ..Default::default()
+            }),
             l @ (11 | 7 | 4) => {
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
@@ -186,7 +302,11 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     bun_jsc::JsError::Terminated => bun_core::err!("Terminated"),
                     bun_jsc::JsError::Thrown => bun_core::err!("Thrown"),
                 })?;
-                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: ts }, ..Default::default() })
+                Ok(SQLDataCell {
+                    tag: CellTag::Date,
+                    value: CellValue { date: ts },
+                    ..Default::default()
+                })
             }
             _ => Err(bun_core::err!("InvalidBinaryValue")),
         },
@@ -218,7 +338,13 @@ pub fn decode_binary_value<Context: ReaderContext>(
             let slice = string_data.slice();
             Ok(SQLDataCell {
                 tag: CellTag::String,
-                value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                value: CellValue {
+                    string: if !slice.is_empty() {
+                        clone_utf8_wtf_impl(slice)
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                },
                 free_value: 1,
                 ..Default::default()
             })
@@ -233,7 +359,13 @@ pub fn decode_binary_value<Context: ReaderContext>(
             let slice = string_data.slice();
             Ok(SQLDataCell {
                 tag: CellTag::Json,
-                value: CellValue { json: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
+                value: CellValue {
+                    json: if !slice.is_empty() {
+                        clone_utf8_wtf_impl(slice)
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                },
                 free_value: 1,
                 ..Default::default()
             })
@@ -243,7 +375,17 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if column_length == 1 {
                 let data = reader.encode_len_string()?;
                 let slice = data.slice();
-                Ok(SQLDataCell { tag: CellTag::Bool, value: CellValue { bool_: if !slice.is_empty() && slice[0] == 1 { 1 } else { 0 } }, ..Default::default() })
+                Ok(SQLDataCell {
+                    tag: CellTag::Bool,
+                    value: CellValue {
+                        bool_: if !slice.is_empty() && slice[0] == 1 {
+                            1
+                        } else {
+                            0
+                        },
+                    },
+                    ..Default::default()
+                })
             } else {
                 let data = reader.encode_len_string()?;
                 Ok(SQLDataCell::raw(Some(&data)))

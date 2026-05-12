@@ -4,12 +4,12 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 
+use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_output::{declare_scope, scoped_log};
-use bun_core::String as BunString;
 
 use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -206,8 +206,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             // if pipe is empty, we can pipe
             if byte_stream.pipe.get().is_empty() {
                 // equivalent to onStart to get the highWaterMark
-                this_ref.high_water_mark =
-                    byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
+                this_ref.high_water_mark = byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
 
                 if byte_stream.has_received_last_chunk.get() {
                     this_ref.status = Status::Done;
@@ -282,8 +281,9 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let args = callframe.arguments();
 
         if args.len() < 2 {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("ResumableSink.setHandlers requires at least 2 arguments")));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "ResumableSink.setHandlers requires at least 2 arguments"
+            )));
         }
 
         let ondrain = args[0];
@@ -331,14 +331,16 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
 
         if args.len() < 1 {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("ResumableSink.write requires at least 1 argument")));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "ResumableSink.write requires at least 1 argument"
+            )));
         }
 
         let buffer = args[0];
         let Some(sb) = StringOrBuffer::from_js(global_this, buffer)? else {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("ResumableSink.write requires a string or buffer")));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "ResumableSink.write requires a string or buffer"
+            )));
         };
 
         // PORT NOTE: `defer sb.deinit()` deleted — StringOrBuffer impls Drop.
@@ -374,7 +376,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         scoped_log!(ResumableSink, "jsEnd {}", args.len());
         this.status = Status::Done;
 
-        Self::on_end(this.context, if args.len() > 0 { Some(args[0]) } else { None });
+        Self::on_end(
+            this.context,
+            if args.len() > 0 { Some(args[0]) } else { None },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -581,9 +586,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
     }
 }
 
-impl<Js: ResumableSinkJs, Context: ResumableSinkContext> Drop
-    for ResumableSink<Js, Context>
-{
+impl<Js: ResumableSinkJs, Context: ResumableSinkContext> Drop for ResumableSink<Js, Context> {
     fn drop(&mut self) {
         // Zig `deinit`: detachJS + stream.deinit() + bun.destroy(this).
         // `bun.destroy` is the Box free (handled by deref_); stream Drop is automatic.

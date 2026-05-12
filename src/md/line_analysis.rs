@@ -51,7 +51,10 @@ impl Parser<'_> {
     pub fn is_setext_underline(&self, off: OFF) -> SetextResult {
         let c = ch(&self.text, off);
         if c != b'=' && c != b'-' {
-            return SetextResult { is_setext: false, level: 0 };
+            return SetextResult {
+                is_setext: false,
+                level: 0,
+            };
         }
 
         let mut pos = off;
@@ -66,10 +69,16 @@ impl Parser<'_> {
 
         if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
             let level: u32 = if c == b'=' { 1 } else { 2 };
-            return SetextResult { is_setext: true, level };
+            return SetextResult {
+                is_setext: true,
+                level,
+            };
         }
 
-        SetextResult { is_setext: false, level: 0 }
+        SetextResult {
+            is_setext: false,
+            level: 0,
+        }
     }
 
     pub fn is_hr_line(&self, off: OFF) -> bool {
@@ -102,7 +111,11 @@ impl Parser<'_> {
         }
 
         if level == 0 || level > 6 {
-            return AtxResult { is_atx: false, level: 0, content_beg: 0 };
+            return AtxResult {
+                is_atx: false,
+                level: 0,
+                content_beg: 0,
+            };
         }
 
         // Must be followed by space or end of line
@@ -111,7 +124,11 @@ impl Parser<'_> {
             && !helpers::is_newline(ch(&self.text, pos))
         {
             if !self.flags.permissive_atx_headers {
-                return AtxResult { is_atx: false, level: 0, content_beg: 0 };
+                return AtxResult {
+                    is_atx: false,
+                    level: 0,
+                    content_beg: 0,
+                };
             }
         }
 
@@ -120,12 +137,19 @@ impl Parser<'_> {
             pos += 1;
         }
 
-        AtxResult { is_atx: true, level, content_beg: pos }
+        AtxResult {
+            is_atx: true,
+            level,
+            content_beg: pos,
+        }
     }
 
     pub fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
         if off >= self.size {
-            return FenceResult { is_fence: false, fence_data: 0 };
+            return FenceResult {
+                is_fence: false,
+                fence_data: 0,
+            };
         }
         let fence_char = ch(&self.text, off);
         let mut pos = off;
@@ -137,7 +161,10 @@ impl Parser<'_> {
         }
 
         if count < 3 {
-            return FenceResult { is_fence: false, fence_data: 0 };
+            return FenceResult {
+                is_fence: false,
+                fence_data: 0,
+            };
         }
 
         // Backtick fences can't have backticks in info string
@@ -145,7 +172,10 @@ impl Parser<'_> {
             let mut check = pos;
             while check < self.size && !helpers::is_newline(ch(&self.text, check)) {
                 if ch(&self.text, check) == b'`' {
-                    return FenceResult { is_fence: false, fence_data: 0 };
+                    return FenceResult {
+                        is_fence: false,
+                        fence_data: 0,
+                    };
                 }
                 check += 1;
             }
@@ -153,7 +183,10 @@ impl Parser<'_> {
 
         // Encode: fence_char in low byte, count in next bytes
         let data: u32 = (fence_char as u32) | (count << 8);
-        FenceResult { is_fence: true, fence_data: data }
+        FenceResult {
+            is_fence: true,
+            fence_data: data,
+        }
     }
 
     pub fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
@@ -220,8 +253,7 @@ impl Parser<'_> {
         }
 
         // Type 5: <![CDATA[
-        if off + 9 <= self.size
-            && &self.text[(off + 1) as usize..(off + 9) as usize] == b"![CDATA["
+        if off + 9 <= self.size && &self.text[(off + 1) as usize..(off + 9) as usize] == b"![CDATA["
         {
             return 5;
         }
@@ -319,10 +351,7 @@ impl Parser<'_> {
         if (pos as usize) + tag.len() > self.size as usize {
             return false;
         }
-        if !helpers::ascii_case_eql(
-            &self.text[pos as usize..pos as usize + tag.len()],
-            tag,
-        ) {
+        if !helpers::ascii_case_eql(&self.text[pos as usize..pos as usize + tag.len()], tag) {
             return false;
         }
         pos += u32::try_from(tag.len()).expect("int cast");
@@ -336,15 +365,68 @@ impl Parser<'_> {
 
     pub fn is_block_level_html_tag(&self, off: OFF) -> bool {
         const BLOCK_TAGS: &[&[u8]] = &[
-            b"address", b"article",  b"aside",   b"base",     b"basefont", b"blockquote", b"body",
-            b"caption", b"center",   b"col",     b"colgroup", b"dd",       b"details",    b"dialog",
-            b"dir",     b"div",      b"dl",      b"dt",       b"fieldset", b"figcaption", b"figure",
-            b"footer",  b"form",     b"frame",   b"frameset", b"h1",       b"h2",         b"h3",
-            b"h4",      b"h5",       b"h6",      b"head",     b"header",   b"hr",         b"html",
-            b"iframe",  b"legend",   b"li",      b"link",     b"main",     b"menu",       b"menuitem",
-            b"nav",     b"noframes", b"ol",      b"optgroup", b"option",   b"p",          b"param",
-            b"search",  b"section",  b"summary", b"table",    b"tbody",    b"td",         b"tfoot",
-            b"th",      b"thead",    b"title",   b"tr",       b"track",    b"ul",
+            b"address",
+            b"article",
+            b"aside",
+            b"base",
+            b"basefont",
+            b"blockquote",
+            b"body",
+            b"caption",
+            b"center",
+            b"col",
+            b"colgroup",
+            b"dd",
+            b"details",
+            b"dialog",
+            b"dir",
+            b"div",
+            b"dl",
+            b"dt",
+            b"fieldset",
+            b"figcaption",
+            b"figure",
+            b"footer",
+            b"form",
+            b"frame",
+            b"frameset",
+            b"h1",
+            b"h2",
+            b"h3",
+            b"h4",
+            b"h5",
+            b"h6",
+            b"head",
+            b"header",
+            b"hr",
+            b"html",
+            b"iframe",
+            b"legend",
+            b"li",
+            b"link",
+            b"main",
+            b"menu",
+            b"menuitem",
+            b"nav",
+            b"noframes",
+            b"ol",
+            b"optgroup",
+            b"option",
+            b"p",
+            b"param",
+            b"search",
+            b"section",
+            b"summary",
+            b"table",
+            b"tbody",
+            b"td",
+            b"tfoot",
+            b"th",
+            b"thead",
+            b"title",
+            b"tr",
+            b"track",
+            b"ul",
         ];
 
         for tag in BLOCK_TAGS {
@@ -411,9 +493,7 @@ impl Parser<'_> {
                 pos += 1;
                 break;
             }
-            if ch(&self.text, pos) == b'/'
-                && pos + 1 < self.size
-                && ch(&self.text, pos + 1) == b'>'
+            if ch(&self.text, pos) == b'/' && pos + 1 < self.size && ch(&self.text, pos + 1) == b'>'
             {
                 pos += 2;
                 break;
@@ -533,7 +613,10 @@ impl Parser<'_> {
             }
 
             if dash_count == 0 {
-                return TableUnderlineResult { is_underline: false, col_count: 0 };
+                return TableUnderlineResult {
+                    is_underline: false,
+                    col_count: 0,
+                };
             }
 
             let has_right_colon = pos < self.size && ch(&self.text, pos) == b':';
@@ -574,16 +657,25 @@ impl Parser<'_> {
             } else if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
                 break;
             } else {
-                return TableUnderlineResult { is_underline: false, col_count: 0 };
+                return TableUnderlineResult {
+                    is_underline: false,
+                    col_count: 0,
+                };
             }
         }
 
         if col_count == 0 || (!had_pipe && col_count < 2) {
-            return TableUnderlineResult { is_underline: false, col_count: 0 };
+            return TableUnderlineResult {
+                is_underline: false,
+                col_count: 0,
+            };
         }
 
         self.table_col_count = col_count;
-        TableUnderlineResult { is_underline: true, col_count }
+        TableUnderlineResult {
+            is_underline: true,
+            col_count,
+        }
     }
 
     /// Count the number of pipe-delimited columns in a table row.

@@ -4,21 +4,21 @@ use bun_core::Output;
 
 use crate::Dependency;
 use crate::DependencyID;
-use crate::dependency::Behavior;
 use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
+use crate::dependency::Behavior;
 use crate::invalid_package_id;
 // `Task::Id` is a namespaced type in Zig (`PackageManagerTask.Id`); import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
-use crate::package_manager_task as Task;
-use crate::resolution::Tag as ResolutionTag;
 use super::PackageManager;
+use super::enqueue;
 use super::package_manager_options as Options;
 use super::run_tasks::{self, RunTasksCallbacks};
-use super::enqueue;
+use crate::package_manager_task as Task;
+use crate::resolution::Tag as ResolutionTag;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum StartManifestTaskError {
@@ -180,17 +180,15 @@ pub fn populate_manifest_cache(
                 let pkg_name_slice = pkg_name.slice(string_buf);
                 // `options` is not mutated between here and the
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest =
-                    mgr_ref.options.minimum_release_age_ms.is_some();
+                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
 
                 // `scope_for_package_name` borrows only `options` (via the
                 // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
                 // from the same raw provenance root. `by_name`'s `pm`-derived
                 // reads are hoisted into the by-value `cache_ctx`, so the call
                 // holds only `&mut manifests`.
-                let scope = bun_ptr::BackRef::new(
-                    mgr_ref.options.scope_for_package_name(pkg_name_slice),
-                );
+                let scope =
+                    bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
@@ -234,13 +232,11 @@ pub fn populate_manifest_cache(
 
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
                     // note above.
-                    let needs_extended_manifest =
-                        mgr_ref.options.minimum_release_age_ms.is_some();
+                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
-                    let scope = bun_ptr::BackRef::new(
-                        mgr_ref.options.scope_for_package_name(package_name),
-                    );
+                    let scope =
+                        bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
                     // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                     // `manager_ptr` is the SRW root.
                     let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
@@ -307,7 +303,10 @@ pub fn populate_manifest_cache(
         // Derive the raw provenance root first so both `sleep_until` and the
         // closure body's `&mut *run_closure.manager` share the same SRW tag.
         let mgr: *mut PackageManager = manager;
-        let mut run_closure = RunClosure { manager: mgr, err: None };
+        let mut run_closure = RunClosure {
+            manager: mgr,
+            err: None,
+        };
         // SAFETY: `mgr` is derived from the live exclusive `manager` borrow;
         // `sleep_until` is an associated fn taking `*mut PackageManager` and
         // `tick_raw` holds no `&mut event_loop` across `is_done`, so the

@@ -13,15 +13,10 @@
 //!
 //! Subsystem blocks are split by C++ source file so a `git blame` on the
 //! header still lines up.
-#![allow(
-    non_snake_case,
-    dead_code,
-    improper_ctypes,
-    clippy::missing_safety_doc,
-)]
+#![allow(non_snake_case, dead_code, improper_ctypes, clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
 use crate::{CallFrame, JSGlobalObject, JSValue};
+use core::ffi::{c_char, c_int, c_void};
 
 /// Declare an `extern` block with the JSC calling convention (`"sysv64"` on
 /// win-x64, `"C"` elsewhere). Mirrors Zig's single `jsc.conv` constant

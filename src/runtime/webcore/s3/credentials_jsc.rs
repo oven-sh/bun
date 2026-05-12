@@ -4,10 +4,12 @@
 
 use core::sync::atomic::Ordering;
 
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
-use bun_core::{strings, String as BunString, Tag as BunStringTag};
 
-use bun_s3_signing::{MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, ACL, StorageClass};
+use bun_s3_signing::{
+    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
+};
 use bun_url::URL;
 
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
@@ -99,7 +101,9 @@ pub fn get_credentials_with_options(
                 new_credentials._access_key_id_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
             }
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)? {
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
+            {
                 new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
                 new_credentials._secret_access_key_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
@@ -119,7 +123,8 @@ pub fn get_credentials_with_options(
                             let url = URL::parse(endpoint);
                             let normalized_endpoint = url.host_with_path();
                             if !normalized_endpoint.is_empty() {
-                                new_credentials.credentials.endpoint = Box::<[u8]>::from(normalized_endpoint);
+                                new_credentials.credentials.endpoint =
+                                    Box::<[u8]>::from(normalized_endpoint);
 
                                 // Default to https://
                                 // Only use http:// if the endpoint specifically starts with 'http://'
@@ -129,13 +134,21 @@ pub fn get_credentials_with_options(
                             } else if !endpoint.is_empty() {
                                 // endpoint is not a valid URL
                                 str.deref();
-                                return Err(global_object.throw_invalid_argument_type_value(b"endpoint", b"string", js_value));
+                                return Err(global_object.throw_invalid_argument_type_value(
+                                    b"endpoint",
+                                    b"string",
+                                    js_value,
+                                ));
                             }
                             new_credentials._endpoint_slice = Some(utf8);
                         }
                         str.deref();
                     } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"endpoint", b"string", js_value));
+                        return Err(global_object.throw_invalid_argument_type_value(
+                            b"endpoint",
+                            b"string",
+                            js_value,
+                        ));
                     }
                 }
             }
@@ -145,12 +158,15 @@ pub fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(virtual_hosted_style) = opts.get_boolean_strict(global_object, "virtualHostedStyle")? {
+            if let Some(virtual_hosted_style) =
+                opts.get_boolean_strict(global_object, "virtualHostedStyle")?
+            {
                 new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)? {
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
+            {
                 new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
                 new_credentials._session_token_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
@@ -221,17 +237,24 @@ pub fn get_credentials_with_options(
                     new_credentials.options.retry = retry as u8;
                 }
             }
-            if let Some(acl) = opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)? {
+            if let Some(acl) =
+                opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)?
+            {
                 new_credentials.acl = Some(acl);
             }
 
-            if let Some(storage_class) =
-                opts.get_optional_enum_from_map(global_object, "storageClass", &StorageClass::MAP, STORAGE_CLASS_ONE_OF)?
-            {
+            if let Some(storage_class) = opts.get_optional_enum_from_map(
+                global_object,
+                "storageClass",
+                &StorageClass::MAP,
+                STORAGE_CLASS_ONE_OF,
+            )? {
                 new_credentials.storage_class = Some(storage_class);
             }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)? {
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
+            {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentDisposition must not contain newline characters (CR/LF)"
@@ -251,7 +274,9 @@ pub fn get_credentials_with_options(
                 new_credentials._content_type_slice = Some(utf8);
             }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)? {
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
+            {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentEncoding must not contain newline characters (CR/LF)"

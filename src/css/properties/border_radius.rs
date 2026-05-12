@@ -1,15 +1,15 @@
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
-use crate::Printer;
-use crate::PrintErr;
-use crate::css_values::length::LengthPercentage;
-use crate::css_values::size::Size2D;
-use crate::css_values::rect::Rect;
-use crate::css_properties::{Property, PropertyId, PropertyIdTag};
-use crate::VendorPrefix;
-use crate::PropertyCategory;
 use crate::DeclarationList;
+use crate::PrintErr;
+use crate::Printer;
+use crate::PropertyCategory;
 use crate::PropertyHandlerContext;
+use crate::VendorPrefix;
+use crate::css_properties::{Property, PropertyId, PropertyIdTag};
+use crate::css_values::length::LengthPercentage;
+use crate::css_values::rect::Rect;
+use crate::css_values::size::Size2D;
+use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
 // PORT NOTE: `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
@@ -80,10 +80,22 @@ impl BorderRadius {
         };
 
         Ok(BorderRadius {
-            top_left: Size2D { a: widths.top, b: heights.top },
-            top_right: Size2D { a: widths.right, b: heights.right },
-            bottom_right: Size2D { a: widths.bottom, b: heights.bottom },
-            bottom_left: Size2D { a: widths.left, b: heights.left },
+            top_left: Size2D {
+                a: widths.top,
+                b: heights.top,
+            },
+            top_right: Size2D {
+                a: widths.right,
+                b: heights.right,
+            },
+            bottom_right: Size2D {
+                a: widths.bottom,
+                b: heights.bottom,
+            },
+            bottom_left: Size2D {
+                a: widths.left,
+                b: heights.left,
+            },
         })
     }
 
@@ -235,7 +247,9 @@ macro_rules! single_property {
     ($d:expr, $ctx:expr, $variant:ident, $val:expr) => {{
         if let Some(v) = $val {
             if !v.1.is_empty() {
-                let prefix = $ctx.targets.prefixes(v.1, css::prefixes::Feature::BorderRadius);
+                let prefix = $ctx
+                    .targets
+                    .prefixes(v.1, css::prefixes::Feature::BorderRadius);
                 $d.push(Property::$variant((v.0, prefix)));
             }
         }
@@ -263,8 +277,12 @@ macro_rules! logical_property {
                     }
                     Property::Unparsed(unparsed) => {
                         $ctx.add_logical_rule(
-                            Property::Unparsed(unparsed.with_property_id($bump, PropertyId::$ltr(prefix))),
-                            Property::Unparsed(unparsed.with_property_id($bump, PropertyId::$rtl(prefix))),
+                            Property::Unparsed(
+                                unparsed.with_property_id($bump, PropertyId::$ltr(prefix)),
+                            ),
+                            Property::Unparsed(
+                                unparsed.with_property_id($bump, PropertyId::$rtl(prefix)),
+                            ),
                         );
                     }
                     _ => {}
@@ -285,21 +303,53 @@ impl BorderRadiusHandler {
         // PORT NOTE: `Property::deep_clone` is still gated; reconstruct the
         // matched variant directly (Size2D<LP> deep-clones via inherent method).
         match property {
-            Property::BorderTopLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, top_left, val, *vp),
-            Property::BorderTopRightRadius((val, vp)) => property_helper!(self, dest, context, bump, top_right, val, *vp),
-            Property::BorderBottomRightRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_right, val, *vp),
-            Property::BorderBottomLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_left, val, *vp),
+            Property::BorderTopLeftRadius((val, vp)) => {
+                property_helper!(self, dest, context, bump, top_left, val, *vp)
+            }
+            Property::BorderTopRightRadius((val, vp)) => {
+                property_helper!(self, dest, context, bump, top_right, val, *vp)
+            }
+            Property::BorderBottomRightRadius((val, vp)) => {
+                property_helper!(self, dest, context, bump, bottom_right, val, *vp)
+            }
+            Property::BorderBottomLeftRadius((val, vp)) => {
+                property_helper!(self, dest, context, bump, bottom_left, val, *vp)
+            }
             Property::BorderStartStartRadius(r) => {
-                logical_property_helper!(self, dest, context, start_start, Property::BorderStartStartRadius(r.deep_clone(bump)))
+                logical_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    start_start,
+                    Property::BorderStartStartRadius(r.deep_clone(bump))
+                )
             }
             Property::BorderStartEndRadius(r) => {
-                logical_property_helper!(self, dest, context, start_end, Property::BorderStartEndRadius(r.deep_clone(bump)))
+                logical_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    start_end,
+                    Property::BorderStartEndRadius(r.deep_clone(bump))
+                )
             }
             Property::BorderEndEndRadius(r) => {
-                logical_property_helper!(self, dest, context, end_end, Property::BorderEndEndRadius(r.deep_clone(bump)))
+                logical_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    end_end,
+                    Property::BorderEndEndRadius(r.deep_clone(bump))
+                )
             }
             Property::BorderEndStartRadius(r) => {
-                logical_property_helper!(self, dest, context, end_start, Property::BorderEndStartRadius(r.deep_clone(bump)))
+                logical_property_helper!(
+                    self,
+                    dest,
+                    context,
+                    end_start,
+                    Property::BorderEndStartRadius(r.deep_clone(bump))
+                )
             }
             Property::BorderRadius((val, vp)) => {
                 self.start_start = None;
@@ -314,8 +364,24 @@ impl BorderRadiusHandler {
 
                 property_helper!(self, dest, context, bump, top_left, &val.top_left, *vp);
                 property_helper!(self, dest, context, bump, top_right, &val.top_right, *vp);
-                property_helper!(self, dest, context, bump, bottom_right, &val.bottom_right, *vp);
-                property_helper!(self, dest, context, bump, bottom_left, &val.bottom_left, *vp);
+                property_helper!(
+                    self,
+                    dest,
+                    context,
+                    bump,
+                    bottom_right,
+                    &val.bottom_right,
+                    *vp
+                );
+                property_helper!(
+                    self,
+                    dest,
+                    context,
+                    bump,
+                    bottom_left,
+                    &val.bottom_left,
+                    *vp
+                );
             }
             Property::Unparsed(unparsed) => {
                 if is_border_radius_property(unparsed.property_id.tag()) {
@@ -323,22 +389,48 @@ impl BorderRadiusHandler {
                     // we can still add vendor prefixes to the property itself.
                     match unparsed.property_id.tag() {
                         PropertyIdTag::BorderStartStartRadius => {
-                            logical_property_helper!(self, dest, context, start_start, Property::Unparsed(unparsed.deep_clone(bump)))
+                            logical_property_helper!(
+                                self,
+                                dest,
+                                context,
+                                start_start,
+                                Property::Unparsed(unparsed.deep_clone(bump))
+                            )
                         }
                         PropertyIdTag::BorderStartEndRadius => {
-                            logical_property_helper!(self, dest, context, start_end, Property::Unparsed(unparsed.deep_clone(bump)))
+                            logical_property_helper!(
+                                self,
+                                dest,
+                                context,
+                                start_end,
+                                Property::Unparsed(unparsed.deep_clone(bump))
+                            )
                         }
                         PropertyIdTag::BorderEndEndRadius => {
-                            logical_property_helper!(self, dest, context, end_end, Property::Unparsed(unparsed.deep_clone(bump)))
+                            logical_property_helper!(
+                                self,
+                                dest,
+                                context,
+                                end_end,
+                                Property::Unparsed(unparsed.deep_clone(bump))
+                            )
                         }
                         PropertyIdTag::BorderEndStartRadius => {
-                            logical_property_helper!(self, dest, context, end_start, Property::Unparsed(unparsed.deep_clone(bump)))
+                            logical_property_helper!(
+                                self,
+                                dest,
+                                context,
+                                end_start,
+                                Property::Unparsed(unparsed.deep_clone(bump))
+                            )
                         }
                         _ => {
                             self.flush(dest, context);
-                            dest.push(Property::Unparsed(
-                                unparsed.get_prefixed(bump, context.targets, css::prefixes::Feature::BorderRadius),
-                            ));
+                            dest.push(Property::Unparsed(unparsed.get_prefixed(
+                                bump,
+                                context.targets,
+                                css::prefixes::Feature::BorderRadius,
+                            )));
                         }
                     }
                 } else {
@@ -371,9 +463,12 @@ impl BorderRadiusHandler {
         let end_end = self.end_end.take();
         let end_start = self.end_start.take();
 
-        if let (Some(tl), Some(tr), Some(br), Some(bl)) =
-            (&mut top_left, &mut top_right, &mut bottom_right, &mut bottom_left)
-        {
+        if let (Some(tl), Some(tr), Some(br), Some(bl)) = (
+            &mut top_left,
+            &mut top_right,
+            &mut bottom_right,
+            &mut bottom_left,
+        ) {
             let intersection = tl.1 & tr.1 & br.1 & bl.1;
             if !intersection.is_empty() {
                 let prefix = context
@@ -396,7 +491,8 @@ impl BorderRadiusHandler {
             }
         }
 
-        let logical_supported = !context.should_compile_logical(css::compat::Feature::LogicalBorderRadius);
+        let logical_supported =
+            !context.should_compile_logical(css::compat::Feature::LogicalBorderRadius);
         let bump = dest.bump();
 
         single_property!(dest, context, BorderTopLeftRadius, top_left);
@@ -404,10 +500,42 @@ impl BorderRadiusHandler {
         single_property!(dest, context, BorderBottomRightRadius, bottom_right);
         single_property!(dest, context, BorderBottomLeftRadius, bottom_left);
 
-        logical_property!(dest, context, bump, start_start, BorderTopLeftRadius, BorderTopRightRadius, logical_supported);
-        logical_property!(dest, context, bump, start_end, BorderTopRightRadius, BorderTopLeftRadius, logical_supported);
-        logical_property!(dest, context, bump, end_end, BorderBottomRightRadius, BorderBottomLeftRadius, logical_supported);
-        logical_property!(dest, context, bump, end_start, BorderBottomLeftRadius, BorderBottomRightRadius, logical_supported);
+        logical_property!(
+            dest,
+            context,
+            bump,
+            start_start,
+            BorderTopLeftRadius,
+            BorderTopRightRadius,
+            logical_supported
+        );
+        logical_property!(
+            dest,
+            context,
+            bump,
+            start_end,
+            BorderTopRightRadius,
+            BorderTopLeftRadius,
+            logical_supported
+        );
+        logical_property!(
+            dest,
+            context,
+            bump,
+            end_end,
+            BorderBottomRightRadius,
+            BorderBottomLeftRadius,
+            logical_supported
+        );
+        logical_property!(
+            dest,
+            context,
+            bump,
+            end_start,
+            BorderBottomLeftRadius,
+            BorderBottomRightRadius,
+            logical_supported
+        );
     }
 }
 

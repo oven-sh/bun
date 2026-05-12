@@ -38,7 +38,8 @@ bun_core::named_error_set!(RegularExpressionError);
 // query/compile shims are therefore declared `safe fn`; only `deinit` (which
 // frees the allocation) keeps a raw `*mut` and stays `unsafe`.
 unsafe extern "C" {
-    safe fn Yarr__RegularExpression__init(pattern: BunString, flags: u16) -> *mut RegularExpression;
+    safe fn Yarr__RegularExpression__init(pattern: BunString, flags: u16)
+    -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
     safe fn Yarr__RegularExpression__matchedLength(this: &RegularExpression) -> i32;

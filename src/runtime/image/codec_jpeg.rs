@@ -18,8 +18,24 @@ unsafe extern "C" {
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
     pub fn tj3Get(h: tjhandle, param: c_int) -> c_int;
     pub fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
-    fn tj3Decompress8(h: tjhandle, buf: *const u8, len: usize, dst: *mut u8, pitch: c_int, pf: c_int) -> c_int;
-    fn tj3Compress8(h: tjhandle, src: *const u8, w: c_int, pitch: c_int, height: c_int, pf: c_int, out: *mut *mut u8, out_len: *mut usize) -> c_int;
+    fn tj3Decompress8(
+        h: tjhandle,
+        buf: *const u8,
+        len: usize,
+        dst: *mut u8,
+        pitch: c_int,
+        pf: c_int,
+    ) -> c_int;
+    fn tj3Compress8(
+        h: tjhandle,
+        src: *const u8,
+        w: c_int,
+        pitch: c_int,
+        height: c_int,
+        pf: c_int,
+        out: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> c_int;
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
@@ -83,7 +99,10 @@ struct CropRegion {
 #[inline]
 fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
     // @divFloor with positive denom and non-negative numerator == truncating division.
-    u32::try_from((i64::from(dim) * i64::from(sf.num) + i64::from(sf.denom) - 1) / i64::from(sf.denom)).unwrap()
+    u32::try_from(
+        (i64::from(dim) * i64::from(sf.num) + i64::from(sf.denom) - 1) / i64::from(sf.denom),
+    )
+    .unwrap()
 }
 
 // tjparam / tjpf enum values from turbojpeg.h.
@@ -100,7 +119,11 @@ const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
 
-pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result<codecs::Decoded, codecs::Error> {
+pub fn decode(
+    bytes: &[u8],
+    max_pixels: u64,
+    hint: codecs::DecodeHint,
+) -> Result<codecs::Decoded, codecs::Error> {
     // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
     let h = unsafe { tj3Init(1) };
     if h.is_null() {
@@ -138,9 +161,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     // decode time goes, so this is roughly (8/M)² faster AND the RGBA
     // buffer shrinks by the same factor — both speed and RSS win in one
     // place. The subsequent resize pass takes it the rest of the way.
-    if hint.target_w != 0
-        && hint.target_h != 0
-        && (hint.target_w < src_w || hint.target_h < src_h)
+    if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
     {
         let mut n: c_int = 0;
         // SAFETY: FFI — writes a count into `n` and returns a pointer to a
@@ -149,7 +170,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.
-            let sfs = unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
+            let sfs =
+                unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
             for &sf in sfs {
                 // Only consider downscale factors.
                 if sf.num >= sf.denom {
@@ -163,7 +185,9 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
                     continue;
                 }
                 // Pick the smallest output (= largest reduction).
-                if u64::from(sw) * u64::from(sh) < u64::from(scaled(src_w, best)) * u64::from(scaled(src_h, best)) {
+                if u64::from(sw) * u64::from(sh)
+                    < u64::from(scaled(src_w, best)) * u64::from(scaled(src_h, best))
+                {
                     best = sf;
                 }
             }
@@ -193,24 +217,43 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
     // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
     unsafe {
-        tj3Set(h, TJPARAM_MAXPIXELS, c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX));
-        tj3SetCroppingRegion(h, CropRegion {
-            x: 0,
-            y: 0,
-            w: c_int::try_from(w).expect("int cast"),
-            h: c_int::try_from(ht).expect("int cast"),
-        });
+        tj3Set(
+            h,
+            TJPARAM_MAXPIXELS,
+            c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
+        );
+        tj3SetCroppingRegion(
+            h,
+            CropRegion {
+                x: 0,
+                y: 0,
+                w: c_int::try_from(w).expect("int cast"),
+                h: c_int::try_from(ht).expect("int cast"),
+            },
+        );
     }
     // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile in Phase B
     let mut out = vec![0u8; w as usize * ht as usize * 4];
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
     // region above bound libjpeg-turbo's writes to that allocation.
-    if unsafe { tj3Decompress8(h, bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), c_int::try_from(w * 4).expect("int cast"), TJPF_RGBA) } != 0 {
+    if unsafe {
+        tj3Decompress8(
+            h,
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+            c_int::try_from(w * 4).expect("int cast"),
+            TJPF_RGBA,
+        )
+    } != 0
+    {
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh {
+    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
+        || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
+    {
         return Err(codecs::Error::DecodeFailed);
     }
 
@@ -228,7 +271,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0 {
+        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
+        {
             break 'blk None;
         }
         let _free = scopeguard::guard(icc_ptr, |p| {
@@ -245,10 +289,22 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
         break 'blk Some(src.to_vec());
     };
-    Ok(codecs::Decoded { rgba: out, width: w, height: ht, icc_profile: icc })
+    Ok(codecs::Decoded {
+        rgba: out,
+        width: w,
+        height: ht,
+        icc_profile: icc,
+    })
 }
 
-pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
+pub fn encode(
+    rgba: &[u8],
+    w: u32,
+    ht: u32,
+    quality: u8,
+    progressive: bool,
+    icc_profile: Option<&[u8]>,
+) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
     let h = unsafe { tj3Init(0) };
     if h.is_null() {
@@ -312,7 +368,9 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
     // with `tj3Free` as the finalizer instead of duping.
     Ok(codecs::Encoded {
         // SAFETY: tj3Compress8 succeeded; out_ptr is non-null and owns `out_len` bytes.
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len)) },
+        bytes: unsafe {
+            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))
+        },
         free: encoded_wrap_free!(tj3Free),
     })
 }

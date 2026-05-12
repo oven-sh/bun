@@ -10,9 +10,9 @@
 use bun_paths::strings;
 use core::mem::offset_of;
 
-use bun_alloc::AllocError;
-use crate::bake::dev_server::{self, DevServer};
 use crate::bake::Graph as BakeGraph;
+use crate::bake::dev_server::{self, DevServer};
+use bun_alloc::AllocError;
 use bun_ast::Loader;
 use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
@@ -72,7 +72,11 @@ impl DirectoryWatchStore {
         // &mut self is live is unsound under stacked borrows; Phase B may need
         // to return *mut DevServer or restructure access.
         unsafe {
-            &mut *bun_core::from_field_ptr!(DevServer, directory_watchers, std::ptr::from_mut::<Self>(self))
+            &mut *bun_core::from_field_ptr!(
+                DevServer,
+                directory_watchers,
+                std::ptr::from_mut::<Self>(self)
+            )
         }
     }
 
@@ -187,9 +191,9 @@ impl DirectoryWatchStore {
 
         // PORT NOTE: reshaped for borrowck — capturing gop fields before
         // calling self methods that need &mut self.
-        let gop = self
-            .watches
-            .get_or_put(Box::<[u8]>::from(strings::paths::without_trailing_slash_windows_path(dir_name_to_watch)))?;
+        let gop = self.watches.get_or_put(Box::<[u8]>::from(
+            strings::paths::without_trailing_slash_windows_path(dir_name_to_watch),
+        ))?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
@@ -244,7 +248,11 @@ impl DirectoryWatchStore {
                 }
                 let mut zbuf = path_buffer_pool::get();
                 let zpath = path::resolve_path::z(dir_name_to_watch, &mut zbuf);
-                match bun_sys::open(zpath, O::DIRECTORY | bun_watcher::watcher_impl::WATCH_OPEN_FLAGS, 0) {
+                match bun_sys::open(
+                    zpath,
+                    O::DIRECTORY | bun_watcher::watcher_impl::WATCH_OPEN_FLAGS,
+                    0,
+                ) {
                     bun_sys::Result::Ok(fd) => (fd, true),
                     bun_sys::Result::Err(err) => match err.get_errno() {
                         // If this directory doesn't exist, a watcher should be placed
@@ -278,7 +286,11 @@ impl DirectoryWatchStore {
                 DevServer,
                 "-> fd: {} ({})",
                 fd,
-                if owned_fd { "from dir cache" } else { "owned fd" },
+                if owned_fd {
+                    "from dir cache"
+                } else {
+                    "owned fd"
+                },
             );
         }
 
@@ -290,13 +302,16 @@ impl DirectoryWatchStore {
         // With Box<[u8]> keys we instead dupe the trimmed slice as the key and
         // keep `dir_name` separately for addDirectory/getHash. Verify Watcher
         // does not retain `dir_name` beyond this call.
-        let key: Box<[u8]> =
-            Box::<[u8]>::from(strings::paths::without_trailing_slash_windows_path(&dir_name));
+        let key: Box<[u8]> = Box::<[u8]>::from(
+            strings::paths::without_trailing_slash_windows_path(&dir_name),
+        );
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
-        let watch_index = match unsafe { &mut (*dev).bun_watcher }
-            .add_directory::<false>(fd, &dir_name, Watcher::get_hash(&dir_name))
-        {
+        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
+            fd,
+            &dir_name,
+            Watcher::get_hash(&dir_name),
+        ) {
             bun_sys::Result::Err(_) => return Err(InsertError::Ignore),
             bun_sys::Result::Ok(id) => id,
         };
@@ -318,7 +333,8 @@ impl DirectoryWatchStore {
                 self.dependencies[index.get_usize()] = d;
                 index
             } else {
-                let index = DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
+                let index =
+                    DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
                 self.dependencies.push(d);
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
                 index
@@ -365,9 +381,12 @@ impl DirectoryWatchStore {
             entry.dir,
         );
 
-        self.owner()
-            .bun_watcher
-            .remove_at_index(bun_watcher::Kind::File, entry.watch_index, 0, &[]);
+        self.owner().bun_watcher.remove_at_index(
+            bun_watcher::Kind::File,
+            entry.watch_index,
+            0,
+            &[],
+        );
 
         // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
         self.watches.swap_remove_at(entry_index);

@@ -1,15 +1,15 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
+use bun_alloc::ArenaVecExt as _;
 
 use crate::properties::{Property, PropertyId, PropertyIdTag};
-use css::{Printer, PrintErr, VendorPrefix};
-use css::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger};
-use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
+use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
 use css::css_values::length::LengthValue as Length;
-use css::css_properties::align::{AlignItems, JustifyContent, AlignSelf, AlignContent};
+use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
+use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
+use css::{PrintErr, Printer, VendorPrefix};
 // Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
 use css::prefixes::is_flex_2009;
 
@@ -148,7 +148,10 @@ pub struct Flex {
 
 impl Flex {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"none"))
+            .is_ok()
+        {
             return Ok(Flex {
                 grow: 0.0,
                 shrink: 0.0,
@@ -182,14 +185,17 @@ impl Flex {
         Ok(Flex {
             grow: grow.unwrap_or(1.0),
             shrink: shrink.unwrap_or(1.0),
-            basis: basis.unwrap_or(LengthPercentageOrAuto::Length(LengthPercentage::Percentage(
-                css::css_values::percentage::Percentage { v: 0.0 },
-            ))),
+            basis: basis.unwrap_or(LengthPercentageOrAuto::Length(
+                LengthPercentage::Percentage(css::css_values::percentage::Percentage { v: 0.0 }),
+            )),
         })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if self.grow == 0.0 && self.shrink == 0.0 && matches!(self.basis, LengthPercentageOrAuto::Auto) {
+        if self.grow == 0.0
+            && self.shrink == 0.0
+            && matches!(self.basis, LengthPercentageOrAuto::Auto)
+        {
             dest.write_str("none")?;
             return Ok(());
         }
@@ -403,7 +409,9 @@ impl FlexPack {
             JustifyContent::ContentPosition(cp) => {
                 if cp.overflow.is_none() {
                     match cp.value {
-                        ContentPosition::Start | ContentPosition::FlexStart => Some(FlexPack::Start),
+                        ContentPosition::Start | ContentPosition::FlexStart => {
+                            Some(FlexPack::Start)
+                        }
                         ContentPosition::End | ContentPosition::FlexEnd => Some(FlexPack::End),
                         ContentPosition::Center => Some(FlexPack::Center),
                     }
@@ -494,7 +502,9 @@ impl FlexLinePack {
             AlignContent::ContentPosition(cp) => {
                 if cp.overflow.is_none() {
                     match cp.value {
-                        ContentPosition::Start | ContentPosition::FlexStart => Some(FlexLinePack::Start),
+                        ContentPosition::Start | ContentPosition::FlexStart => {
+                            Some(FlexLinePack::Start)
+                        }
                         ContentPosition::End | ContentPosition::FlexEnd => Some(FlexLinePack::End),
                         ContentPosition::Center => Some(FlexLinePack::Center),
                     }
@@ -673,11 +683,19 @@ impl FlexHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut css::DeclarationList, context: &mut css::PropertyHandlerContext) {
+    pub fn finalize(
+        &mut self,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut css::DeclarationList, context: &mut css::PropertyHandlerContext) {
+    fn flush(
+        &mut self,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
+    ) {
         if !self.has_any {
             return;
         }
@@ -731,7 +749,9 @@ impl FlexHandler {
         if let Some(val) = &direction {
             let dir = val.0;
             if let Some(targets) = &context.targets.browsers {
-                let prefixes = context.targets.prefixes(VendorPrefix::NONE, PrefixFeature::FlexDirection);
+                let prefixes = context
+                    .targets
+                    .prefixes(VendorPrefix::NONE, PrefixFeature::FlexDirection);
                 let mut prefixes_2009 = VendorPrefix::empty();
                 if is_flex_2009(*targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
@@ -758,7 +778,9 @@ impl FlexHandler {
 
             let intersection = dir_prefix.intersection(*wrap_prefix);
             if !intersection.is_empty() {
-                let mut prefix = context.targets.prefixes(intersection, PrefixFeature::FlexFlow);
+                let mut prefix = context
+                    .targets
+                    .prefixes(intersection, PrefixFeature::FlexFlow);
                 // Firefox only implemented the 2009 spec prefixed.
                 prefix.remove(VendorPrefix::MOZ);
                 dest.push(Property::FlexFlow((
@@ -859,13 +881,27 @@ impl FlexHandler {
         // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
         // still runs but has no effect. Phase B should verify this matches behavior exactly.
 
-        single_property!(FlexDirection, direction.take(), prop_2012 = None, prop_2009 = None, feature = FlexDirection);
-        single_property!(FlexWrap, wrap.take(), prop_2012 = None, prop_2009 = (BoxLines, BoxLines), feature = FlexWrap);
+        single_property!(
+            FlexDirection,
+            direction.take(),
+            prop_2012 = None,
+            prop_2009 = None,
+            feature = FlexDirection
+        );
+        single_property!(
+            FlexWrap,
+            wrap.take(),
+            prop_2012 = None,
+            prop_2009 = (BoxLines, BoxLines),
+            feature = FlexWrap
+        );
 
         if let Some(targets) = &context.targets.browsers {
             if let Some(val) = &grow {
                 let g = val.0;
-                let prefixes = context.targets.prefixes(VendorPrefix::NONE, PrefixFeature::FlexGrow);
+                let prefixes = context
+                    .targets
+                    .prefixes(VendorPrefix::NONE, PrefixFeature::FlexGrow);
                 let mut prefixes_2009 = VendorPrefix::empty();
                 if is_flex_2009(*targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
@@ -910,10 +946,34 @@ impl FlexHandler {
             }
         }
 
-        single_property!(FlexGrow, grow.take(), prop_2012 = FlexPositive, prop_2009 = None, feature = FlexGrow);
-        single_property!(FlexShrink, shrink.take(), prop_2012 = FlexNegative, prop_2009 = None, feature = FlexShrink);
-        single_property!(FlexBasis, basis.take(), prop_2012 = FlexPreferredSize, prop_2009 = None, feature = FlexBasis);
-        single_property!(Order, order.take(), prop_2012 = FlexOrder, prop_2009 = (BoxOrdinalGroup, BoxOrdinalGroup), feature = Order);
+        single_property!(
+            FlexGrow,
+            grow.take(),
+            prop_2012 = FlexPositive,
+            prop_2009 = None,
+            feature = FlexGrow
+        );
+        single_property!(
+            FlexShrink,
+            shrink.take(),
+            prop_2012 = FlexNegative,
+            prop_2009 = None,
+            feature = FlexShrink
+        );
+        single_property!(
+            FlexBasis,
+            basis.take(),
+            prop_2012 = FlexPreferredSize,
+            prop_2009 = None,
+            feature = FlexBasis
+        );
+        single_property!(
+            Order,
+            order.take(),
+            prop_2012 = FlexOrder,
+            prop_2009 = (BoxOrdinalGroup, BoxOrdinalGroup),
+            feature = Order
+        );
     }
 
     fn is_flex_property(property_id: &PropertyId) -> bool {

@@ -9,8 +9,8 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc, URL};
-use bun_core::{strings, String as BunString, OwnedString, ZStr};
+use bun_core::{OwnedString, String as BunString, ZStr, strings};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
 
@@ -39,7 +39,10 @@ pub struct SocketAddress {
 
 impl Default for SocketAddress {
     fn default() -> Self {
-        Self { _addr: sockaddr::LOOPBACK_V4, _presentation: Cell::new(BunString::dead()) }
+        Self {
+            _addr: sockaddr::LOOPBACK_V4,
+            _presentation: Cell::new(BunString::dead()),
+        }
     }
 }
 
@@ -63,7 +66,12 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { family: AF::INET, address: None, port: 0, flowlabel: None }
+        Self {
+            family: AF::INET,
+            address: None,
+            port: 0,
+            flowlabel: None,
+        }
     }
 }
 
@@ -76,7 +84,11 @@ impl Options {
 
         let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
             if !a.is_string() {
-                return Err(global.throw_invalid_argument_type_value(b"options.address", b"string", a));
+                return Err(global.throw_invalid_argument_type_value(
+                    b"options.address",
+                    b"string",
+                    a,
+                ));
             }
             Some(BunString::from_js(a, global)?)
         } else {
@@ -107,7 +119,11 @@ impl Options {
 
         let _flowlabel = if let Some(fl) = obj.get(global, "flowlabel")? {
             if !fl.is_number() {
-                return Err(global.throw_invalid_argument_type_value(b"options.flowlabel", b"number", fl));
+                return Err(global.throw_invalid_argument_type_value(
+                    b"options.flowlabel",
+                    b"number",
+                    fl,
+                ));
             }
             if !fl.is_uint32_as_any_int() {
                 return Err(global.throw_range_error(
@@ -137,13 +153,18 @@ impl Options {
         // `defer ty.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
-                .err(bun_jsc::ErrorCode::SOCKET_BAD_PORT, format_args!("The \"options.port\" argument must be a valid IP port number."))
+                .err(
+                    bun_jsc::ErrorCode::SOCKET_BAD_PORT,
+                    format_args!("The \"options.port\" argument must be a valid IP port number."),
+                )
                 .throw();
         };
         global
             .err(
                 bun_jsc::ErrorCode::SOCKET_BAD_PORT,
-                format_args!("The \"options.port\" argument must be a valid IP port number. Got {ty}."),
+                format_args!(
+                    "The \"options.port\" argument must be a valid IP port number. Got {ty}."
+                ),
             )
             .throw()
     }
@@ -165,7 +186,9 @@ impl SocketAddress {
         let input: OwnedString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
-                return Err(global.throw_invalid_argument_type_value(b"input", b"string", input_arg));
+                return Err(
+                    global.throw_invalid_argument_type_value(b"input", b"string", input_arg)
+                );
             }
             OwnedString::new(BunString::from_js(input_arg, global)?)
         };
@@ -175,13 +198,15 @@ impl SocketAddress {
         // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
         let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
-            let (str, to_chars) = BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
+            let (str, to_chars) =
+                BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
             to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
             OwnedString::new(str)
         } else {
             let from_chars = input.utf16();
-            let (str, to_chars) = BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
+            let (str, to_chars) =
+                BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
             // bun.strings.literal(u16, "http://")
             to_chars[..PREFIX.len()].copy_from_slice(bun_core::w!("http://"));
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
@@ -201,7 +226,11 @@ impl SocketAddress {
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
-            if port32 > u32::from(u16::MAX) { 0 } else { u16::try_from(port32).expect("int cast") }
+            if port32 > u32::from(u16::MAX) {
+                0
+            } else {
+                u16::try_from(port32).expect("int cast")
+            }
         };
         debug_assert!(host.tag() != bun_core::Tag::Dead);
         debug_assert!(host.length() >= 2);
@@ -240,7 +269,10 @@ impl SocketAddress {
             if !pton_noerr(inet::AF_INET6, inner, (&raw mut sin6.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
-            SocketAddress { _addr: sockaddr { sin6 }, _presentation: Cell::new(BunString::dead()) }
+            SocketAddress {
+                _addr: sockaddr { sin6 },
+                _presentation: Cell::new(BunString::dead()),
+            }
         } else {
             let mut sin = inet::sockaddr_in {
                 family: AF::INET.int(),
@@ -251,7 +283,10 @@ impl SocketAddress {
             if !pton_noerr(inet::AF_INET, paddr, (&raw mut sin.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
-            SocketAddress { _addr: sockaddr { sin }, _presentation: Cell::new(BunString::dead()) }
+            SocketAddress {
+                _addr: sockaddr { sin },
+                _presentation: Cell::new(BunString::dead()),
+            }
         };
 
         Ok(SocketAddress::new(addr).to_js(global))
@@ -263,7 +298,9 @@ impl SocketAddress {
     // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn is_socket_address(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = callframe.argument(0);
-        Ok(JSValue::from(value.is_cell() && SocketAddress::from_js_direct(value).is_some()))
+        Ok(JSValue::from(
+            value.is_cell() && SocketAddress::from_js_direct(value).is_some(),
+        ))
     }
 }
 
@@ -296,7 +333,11 @@ impl SocketAddress {
         let options = Options::from_js(global, options_obj)?;
 
         // fast path for { family: 'ipv6' }
-        if options.family == AF::INET6 && options.address.is_none() && options.flowlabel.is_none() && options.port == 0 {
+        if options.family == AF::INET6
+            && options.address.is_none()
+            && options.flowlabel.is_none()
+            && options.port == 0
+        {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
                 _presentation: Cell::new(BunString::empty()),
@@ -307,17 +348,28 @@ impl SocketAddress {
         SocketAddress::create(global, options)
     }
 
-    pub fn init_from_addr_family(global: &JSGlobalObject, address_js: JSValue, family_js: JSValue) -> JsResult<SocketAddress> {
+    pub fn init_from_addr_family(
+        global: &JSGlobalObject,
+        address_js: JSValue,
+        family_js: JSValue,
+    ) -> JsResult<SocketAddress> {
         if !address_js.is_string() {
-            return Err(global.throw_invalid_argument_type_value(b"options.address", b"string", address_js));
+            return Err(global.throw_invalid_argument_type_value(
+                b"options.address",
+                b"string",
+                address_js,
+            ));
         }
         let address_: BunString = BunString::from_js(address_js, global)?;
         let family_: AF = AF::from_js(global, family_js)?;
-        Self::init_js(global, Options {
-            address: Some(address_),
-            family: family_,
-            ..Default::default()
-        })
+        Self::init_js(
+            global,
+            Options {
+                address: Some(address_),
+                family: family_,
+                ..Default::default()
+            },
+        )
     }
 
     /// Semi-structured JS api for creating a `SocketAddress`. If you have raw
@@ -353,7 +405,12 @@ impl SocketAddress {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
                     // `defer alloc.free(slice)` → Box<ZStr> drops at scope exit
-                    pton(global, inet::AF_INET, &slice, (&raw mut sin.addr).cast::<c_void>())?;
+                    pton(
+                        global,
+                        inet::AF_INET,
+                        &slice,
+                        (&raw mut sin.addr).cast::<c_void>(),
+                    )?;
                 } else {
                     sin.addr = sockaddr::LOOPBACK_V4.as_sin().unwrap().addr;
                 }
@@ -371,7 +428,12 @@ impl SocketAddress {
                 if let Some(address_str) = options.address {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
-                    pton(global, inet::AF_INET6, &slice, (&raw mut sin6.addr).cast::<c_void>())?;
+                    pton(
+                        global,
+                        inet::AF_INET6,
+                        &slice,
+                        (&raw mut sin6.addr).cast::<c_void>(),
+                    )?;
                 } else {
                     sin6.addr = inet::IN6ADDR_ANY_INIT;
                 }
@@ -393,7 +455,9 @@ pub enum AddressError {
     InvalidLength,
 }
 impl From<AddressError> for bun_core::Error {
-    fn from(e: AddressError) -> Self { bun_core::Error::from_name(<&'static str>::from(e)) }
+    fn from(e: AddressError) -> Self {
+        bun_core::Error::from_name(<&'static str>::from(e))
+    }
 }
 
 impl SocketAddress {
@@ -404,8 +468,16 @@ impl SocketAddress {
     /// - If `addr` is not 4 or 16 bytes long.
     pub fn init(addr: &[u8], port_: u16) -> Result<SocketAddress, AddressError> {
         match addr.len() {
-            4 => Ok(Self::init_ipv4(<[u8; 4]>::try_from(&addr[..4]).unwrap(), port_)),
-            16 => Ok(Self::init_ipv6(<[u8; 16]>::try_from(&addr[..16]).unwrap(), port_, 0, 0)),
+            4 => Ok(Self::init_ipv4(
+                <[u8; 4]>::try_from(&addr[..4]).unwrap(),
+                port_,
+            )),
+            16 => Ok(Self::init_ipv6(
+                <[u8; 16]>::try_from(&addr[..16]).unwrap(),
+                port_,
+                0,
+                0,
+            )),
             _ => Err(AddressError::InvalidLength),
         }
     }
@@ -475,7 +547,12 @@ impl SocketAddress {
         let is_v6 = self.family() == AF::INET6;
         // `defer this._presentation = .dead;`
         let _guard = scopeguard::guard(&self._presentation, |p| p.set(BunString::dead()));
-        Ok(JSSocketAddressDTO__create(global, addr_str.transfer_to_js(global)?, port, is_v6))
+        Ok(JSSocketAddressDTO__create(
+            global,
+            addr_str.transfer_to_js(global)?,
+            port,
+            is_v6,
+        ))
     }
 
     /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
@@ -484,18 +561,33 @@ impl SocketAddress {
     ///
     /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
     /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-    pub fn create_dto(global_object: &JSGlobalObject, addr_: &[u8], port_: u16, is_ipv6: bool) -> JsResult<JSValue> {
+    pub fn create_dto(
+        global_object: &JSGlobalObject,
+        addr_: &[u8],
+        port_: u16,
+        is_ipv6: bool,
+    ) -> JsResult<JSValue> {
         if cfg!(debug_assertions) {
             debug_assert!(!addr_.is_empty());
         }
 
-        Ok(JSSocketAddressDTO__create(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?, port_, is_ipv6))
+        Ok(JSSocketAddressDTO__create(
+            global_object,
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
+            port_,
+            is_ipv6,
+        ))
     }
 }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    safe fn JSSocketAddressDTO__create(global_object: &JSGlobalObject, address_: JSValue, port_: u16, is_ipv6: bool) -> JSValue;
+    safe fn JSSocketAddressDTO__create(
+        global_object: &JSGlobalObject,
+        address_: JSValue,
+        port_: u16,
+        is_ipv6: bool,
+    ) -> JSValue;
 }
 
 // =============================================================================
@@ -530,7 +622,10 @@ impl SocketAddress {
         }
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
-        let presentation = crate::webcore::encoding::to_bun_string(formatted.as_bytes(), crate::node::types::Encoding::Latin1);
+        let presentation = crate::webcore::encoding::to_bun_string(
+            formatted.as_bytes(),
+            crate::node::types::Encoding::Latin1,
+        );
         debug_assert!(presentation.tag() != bun_core::Tag::Dead);
         self._presentation.set(presentation);
         presentation
@@ -565,7 +660,11 @@ impl SocketAddress {
         // Windows); widen to u16 and compare. `family` is always one of the
         // AF discriminants we constructed.
         let raw = self._addr.family_raw() as u16;
-        if raw == inet::AF_INET6 as u16 { AF::INET6 } else { AF::INET }
+        if raw == inet::AF_INET6 as u16 {
+            AF::INET6
+        } else {
+            AF::INET
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -644,7 +743,10 @@ fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> Js
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
         0 => Err(global
-            .err(bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS, format_args!("Invalid socket address"))
+            .err(
+                bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                format_args!("Invalid socket address"),
+            )
             .throw()),
 
         // TODO: figure out proper way to convert a c errno into a js exception
@@ -654,7 +756,10 @@ fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> Js
         -1 => {
             let _ = bun_sys::last_errno();
             Err(global
-                .err(bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS, format_args!("Invalid socket address"))
+                .err(
+                    bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                    format_args!("Invalid socket address"),
+                )
                 .throw())
         }
         1 => Ok(()),
@@ -706,7 +811,8 @@ unsafe extern "C" {
 // const ipv6: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv6 } };
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
-#[repr(u16)] // TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
+#[repr(u16)]
+// TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AF {
     INET = inet::AF_INET as u16,
@@ -724,29 +830,57 @@ impl AF {
             // `defer fam_str.deref()` → OwnedString releases the +1 from BunString::from_js
             let fam_str = OwnedString::new(BunString::from_js(value, global)?);
             if fam_str.length() != 4 {
-                return Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value));
+                return Err(global.throw_invalid_argument_property_value(
+                    b"options.family",
+                    Some("'ipv4' or 'ipv6'"),
+                    value,
+                ));
             }
 
             if fam_str.is_8bit() {
                 let slice = fam_str.latin1();
-                if slice[..4].eq_ignore_ascii_case(b"ipv4") { return Ok(AF::INET); }
-                if slice[..4].eq_ignore_ascii_case(b"ipv6") { return Ok(AF::INET6); }
-                Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value))
+                if slice[..4].eq_ignore_ascii_case(b"ipv4") {
+                    return Ok(AF::INET);
+                }
+                if slice[..4].eq_ignore_ascii_case(b"ipv6") {
+                    return Ok(AF::INET6);
+                }
+                Err(global.throw_invalid_argument_property_value(
+                    b"options.family",
+                    Some("'ipv4' or 'ipv6'"),
+                    value,
+                ))
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
-                if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") { return Ok(AF::INET); }
-                if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") { return Ok(AF::INET6); }
-                Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value))
+                if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") {
+                    return Ok(AF::INET);
+                }
+                if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") {
+                    return Ok(AF::INET6);
+                }
+                Err(global.throw_invalid_argument_property_value(
+                    b"options.family",
+                    Some("'ipv4' or 'ipv6'"),
+                    value,
+                ))
             }
         } else if value.is_uint32_as_any_int() {
             match value.to_u32() {
                 v if v == AF::INET.int() as u32 => Ok(AF::INET),
                 v if v == AF::INET6.int() as u32 => Ok(AF::INET6),
-                _ => Err(global.throw_invalid_argument_property_value(b"options.family", Some("AF_INET or AF_INET6"), value)),
+                _ => Err(global.throw_invalid_argument_property_value(
+                    b"options.family",
+                    Some("AF_INET or AF_INET6"),
+                    value,
+                )),
             }
         } else {
-            Err(global.throw_invalid_argument_property_value(b"options.family", Some("a string or number"), value))
+            Err(global.throw_invalid_argument_property_value(
+                b"options.family",
+                Some("a string or number"),
+                value,
+            ))
         }
     }
 
@@ -854,10 +988,18 @@ impl sockaddr {
         }
         if let Some(sin6) = self.as_sin6() {
             let sin6_addr = &sin6.addr;
-            if !sin6_addr[0..10].iter().all(|&b| b == 0) { return None; }
-            if sin6_addr[10] != 255 { return None; }
-            if sin6_addr[11] != 255 { return None; }
-            return Some(u32::from_ne_bytes(<[u8; 4]>::try_from(&sin6_addr[12..16]).unwrap()));
+            if !sin6_addr[0..10].iter().all(|&b| b == 0) {
+                return None;
+            }
+            if sin6_addr[10] != 255 {
+                return None;
+            }
+            if sin6_addr[11] != 255 {
+                return None;
+            }
+            return Some(u32::from_ne_bytes(
+                <[u8; 4]>::try_from(&sin6_addr[12..16]).unwrap(),
+            ));
         }
         None
     }
@@ -879,9 +1021,10 @@ impl sockaddr {
             }
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; addr_src points to in_addr/in6_addr per family().
-        let len = unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
-            .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
-            .len();
+        let len =
+            unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
+                .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
+                .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
         let formatted = ZStr::from_buf(&buf[..], len);
         if cfg!(debug_assertions) {
@@ -965,9 +1108,9 @@ pub mod inet {
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub use bun_sys::net::{sa_family_t, in_port_t, sockaddr_in, sockaddr_in6};
     pub type socklen_t = super::ares::ares_socklen_t;
 }
 
@@ -980,8 +1123,8 @@ pub mod inet {
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-    pub use bun_sys::net::{sa_family_t, in_port_t, sockaddr_in, sockaddr_in6};
     pub type socklen_t = super::ares::ares_socklen_t;
 }
 

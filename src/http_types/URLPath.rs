@@ -145,8 +145,8 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     let extname: &[u8] = 'brk: {
         if question_mark_i > -1 && period_i > -1 {
             period_i += 1;
-            break 'brk &decoded_pathname
-                [usize::try_from(period_i).expect("int cast")..usize::try_from(question_mark_i).expect("int cast")];
+            break 'brk &decoded_pathname[usize::try_from(period_i).expect("int cast")
+                ..usize::try_from(question_mark_i).expect("int cast")];
         } else if period_i > -1 {
             period_i += 1;
             break 'brk &decoded_pathname[usize::try_from(period_i).expect("int cast")..];
@@ -161,8 +161,8 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         &decoded_pathname[1..usize::try_from(question_mark_i).expect("int cast")]
     };
 
-    let first_segment =
-        &decoded_pathname[1..(usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len())];
+    let first_segment = &decoded_pathname
+        [1..(usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len())];
     let is_source_map = extname == b"map";
     let mut backup_extname: &[u8] = extname;
     if is_source_map && path.len() > b".map".len() {
@@ -188,7 +188,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     }
 
     Ok(URLPath {
-        extname: extend(if !is_source_map { extname } else { backup_extname }),
+        extname: extend(if !is_source_map {
+            extname
+        } else {
+            backup_extname
+        }),
         is_source_map,
         pathname: extend(decoded_pathname),
         first_segment: extend(first_segment),
@@ -198,7 +202,8 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
             path
         }),
         query_string: extend(if question_mark_i > -1 {
-            &decoded_pathname[usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
+            &decoded_pathname
+                [usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
         } else {
             b""
         }),

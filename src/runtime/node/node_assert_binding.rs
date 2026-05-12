@@ -1,5 +1,5 @@
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 use bun_core as bstring;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::assert::myers_diff::DiffList;
 use super::node_assert;
@@ -90,7 +90,13 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
     exports.put(
         global,
         bstring::String::static_(b"myersDiff"),
-        JSFunction::create(global, "myersDiff", __jsc_host_myers_diff, 2, Default::default()),
+        JSFunction::create(
+            global,
+            "myersDiff",
+            __jsc_host_myers_diff,
+            2,
+            Default::default(),
+        ),
     );
 
     exports

@@ -151,7 +151,11 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
 
     let mut y: u32 = 0;
     while y < h.height {
-        let src_y: usize = if h.top_down { y as usize } else { (h.height - 1 - y) as usize };
+        let src_y: usize = if h.top_down {
+            y as usize
+        } else {
+            (h.height - 1 - y) as usize
+        };
         let row = &bytes[h.pix_off as usize + src_y * stride..];
         let dst = &mut out[y as usize * h.width as usize * 4..];
         let mut x: u32 = 0;
@@ -162,7 +166,11 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             let pix: u32 = if bpp_bytes == 3 {
                 row[xs * 3] as u32 | (row[xs * 3 + 1] as u32) << 8 | (row[xs * 3 + 2] as u32) << 16
             } else {
-                u32::from_le_bytes(row[xs * 4..xs * 4 + 4].try_into().expect("infallible: size matches"))
+                u32::from_le_bytes(
+                    row[xs * 4..xs * 4 + 4]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                )
             };
             dst[xs * 4 + 0] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
             dst[xs * 4 + 1] = to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw);
@@ -176,7 +184,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         }
         y += 1;
     }
-    Ok(codecs::Decoded { rgba: out, width: h.width, height: h.height, icc_profile: None })
+    Ok(codecs::Decoded {
+        rgba: out,
+        width: h.width,
+        height: h.height,
+        icc_profile: None,
+    })
 }
 
 // ported from: src/runtime/image/codec_bmp.zig

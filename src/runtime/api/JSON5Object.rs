@@ -1,19 +1,20 @@
-use bun_collections::VecExt;
+use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::HashMap;
+use bun_collections::VecExt;
 use bun_core::StackCheck;
-use bun_parsers::json5;
-use bun_jsc::{
-    self as jsc, wtf, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
-};
-use bun_js_parser::{self as ast, lexer};
-use bun_ast::{expr::Data as ExprData, E, Expr};
 use bun_core::{String as BunString, ZigString};
+use bun_js_parser::{self as ast, lexer};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
+use bun_parsers::json5;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(global, &[
-        ("parse", __jsc_host_parse, 1),
-        ("stringify", __jsc_host_stringify, 3),
-    ])
+    jsc::create_host_function_object(
+        global,
+        &[
+            ("parse", __jsc_host_parse, 1),
+            ("stringify", __jsc_host_stringify, 3),
+        ],
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -46,27 +47,38 @@ pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
 #[bun_jsc::host_fn]
 pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(global, frame, b"input.json5", true, true, |bump, log, source| {
-        let root = match json5::JSON5Parser::parse(source, log, bump) {
-            Ok(r) => r,
-            Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
-            Err(json5::ExternalError::StackOverflow) => return Err(global.throw_stack_overflow()),
-            Err(json5::ExternalError::SyntaxError) => {
-                if !log.msgs.is_empty() {
-                    let first_msg = &log.msgs[0];
-                    return Err(global.throw_value(global.create_syntax_error_instance(format_args!(
-                        "JSON5 Parse error: {}",
-                        bstr::BStr::new(&first_msg.data.text),
-                    ))));
+    super::with_text_format_source(
+        global,
+        frame,
+        b"input.json5",
+        true,
+        true,
+        |bump, log, source| {
+            let root = match json5::JSON5Parser::parse(source, log, bump) {
+                Ok(r) => r,
+                Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
+                Err(json5::ExternalError::StackOverflow) => {
+                    return Err(global.throw_stack_overflow());
                 }
-                return Err(global.throw_value(global.create_syntax_error_instance(format_args!(
-                    "JSON5 Parse error: Unable to parse JSON5 string",
-                ))));
-            }
-        };
+                Err(json5::ExternalError::SyntaxError) => {
+                    if !log.msgs.is_empty() {
+                        let first_msg = &log.msgs[0];
+                        return Err(global.throw_value(global.create_syntax_error_instance(
+                            format_args!(
+                                "JSON5 Parse error: {}",
+                                bstr::BStr::new(&first_msg.data.text),
+                            ),
+                        )));
+                    }
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("JSON5 Parse error: Unable to parse JSON5 string",),
+                    )));
+                }
+            };
 
-        expr_to_js(root, global)
-    })
+            expr_to_js(root, global)
+        },
+    )
 }
 
 struct Stringifier {
@@ -182,8 +194,11 @@ impl Stringifier {
         }
 
         if unwrapped.is_boolean() {
-            self.builder
-                .append_latin1(if unwrapped.as_boolean() { b"true" } else { b"false" });
+            self.builder.append_latin1(if unwrapped.as_boolean() {
+                b"true"
+            } else {
+                b"false"
+            });
             return Ok(());
         }
 
@@ -214,11 +229,7 @@ impl Stringifier {
         result
     }
 
-    fn stringify_array(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn stringify_array(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let mut iter = value.array_iterator(global)?;
 
         if iter.len == 0 {
@@ -269,11 +280,7 @@ impl Stringifier {
         Ok(())
     }
 
-    fn stringify_object(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         // TODO(port): JSPropertyIterator comptime options
         // (`.{ .skip_empty_name = false, .include_value = true }`). Phase B:
         // wire to whatever const-generic / config-struct API `bun_jsc` exposes.
@@ -387,8 +394,10 @@ impl Stringifier {
                 0x01..=0x07 | 0x0e..=0x1f | 0x7f => {
                     // Other control chars → \xHH
                     self.builder.append_latin1(b"\\x");
-                    self.builder.append_lchar(bun_core::fmt::hex_char_lower((c >> 4) as u8));
-                    self.builder.append_lchar(bun_core::fmt::hex_char_lower(c as u8));
+                    self.builder
+                        .append_lchar(bun_core::fmt::hex_char_lower((c >> 4) as u8));
+                    self.builder
+                        .append_lchar(bun_core::fmt::hex_char_lower(c as u8));
                 }
                 _ => self.builder.append_uchar(c),
             }
@@ -419,7 +428,6 @@ impl Stringifier {
         }
     }
 }
-
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
     // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in

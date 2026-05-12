@@ -1,6 +1,5 @@
 #![allow(unused)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 
@@ -147,9 +146,20 @@ pub mod c {
         pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
         pub safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
         pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
-        pub fn ZSTD_CCtx_setPledgedSrcSize(cctx: *mut ZSTD_CCtx, pledged_src_size: c_ulonglong) -> usize;
-        pub fn ZSTD_CCtx_setParameter(cctx: *mut ZSTD_CCtx, param: ZSTD_cParameter, value: c_int) -> usize;
-        pub fn ZSTD_DCtx_setParameter(dctx: *mut ZSTD_DCtx, param: ZSTD_dParameter, value: c_int) -> usize;
+        pub fn ZSTD_CCtx_setPledgedSrcSize(
+            cctx: *mut ZSTD_CCtx,
+            pledged_src_size: c_ulonglong,
+        ) -> usize;
+        pub fn ZSTD_CCtx_setParameter(
+            cctx: *mut ZSTD_CCtx,
+            param: ZSTD_cParameter,
+            value: c_int,
+        ) -> usize;
+        pub fn ZSTD_DCtx_setParameter(
+            dctx: *mut ZSTD_DCtx,
+            param: ZSTD_dParameter,
+            value: c_int,
+        ) -> usize;
         pub fn ZSTD_CCtx_reset(cctx: *mut ZSTD_CCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_DCtx_reset(dctx: *mut ZSTD_DCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_compressStream2(
@@ -393,7 +403,8 @@ impl<'a> ZstdReaderArrayList<'a> {
 
             // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
             // into live slices with correct sizes.
-            let rc = unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
+            let rc =
+                unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
             if c::ZSTD_isError(rc) != 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);

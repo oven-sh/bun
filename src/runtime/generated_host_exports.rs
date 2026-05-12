@@ -40,4 +40,7 @@
 #[allow(unused_imports)]
 use bun_core as bun_string;
 
-include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_host_exports.rs"));
+include!(concat!(
+    env!("BUN_CODEGEN_DIR"),
+    "/generated_host_exports.rs"
+));

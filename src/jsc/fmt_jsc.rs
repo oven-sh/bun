@@ -4,8 +4,8 @@
 
 use std::io::Write as _;
 
-use bun_core::fmt;
 use crate::{JSGlobalObject, JsResult};
+use bun_core::fmt;
 use bun_core::{MutableString, String};
 
 pub mod js_bindings {
@@ -42,8 +42,7 @@ pub mod js_bindings {
                         ..Default::default()
                     },
                 );
-                write!(writer, "{}", formatter)
-                    .map_err(|_| global.throw_out_of_memory())?;
+                write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
             }
             Formatter::EscapePowershell => {
                 write!(writer, "{}", fmt::escape_powershell(code))

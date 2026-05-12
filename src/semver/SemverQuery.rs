@@ -6,7 +6,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::strings;
 
 use crate::range::{Comparator, Op as RangeOp};
-use crate::{version, Range, SlicedString, Version};
+use crate::{Range, SlicedString, Version, version};
 
 // Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
 // `crate::query::token::Wildcard` resolves for sibling modules.
@@ -59,7 +59,10 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 
 impl Query {
     pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
-        QueryFormatter { query: self, buffer: buf }
+        QueryFormatter {
+            query: self,
+            buffer: buf,
+        }
     }
 
     pub fn eql(&self, rhs: &Query) -> bool {
@@ -152,7 +155,10 @@ impl<'a> fmt::Display for ListFormatter<'a> {
 
 impl List {
     pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
-        ListFormatter { list: self, buffer: buf }
+        ListFormatter {
+            list: self,
+            buffer: buf,
+        }
     }
 
     pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
@@ -483,7 +489,9 @@ impl Token {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L302-L353
                 let mut range = Range::default();
                 'done: {
-                    let Some(major) = version.major else { break 'done };
+                    let Some(major) = version.major else {
+                        break 'done;
+                    };
                     range.left = Comparator {
                         op: RangeOp::Gte,
                         version: Version {
@@ -521,7 +529,9 @@ impl Token {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L261-L287
                 let mut range = Range::default();
                 'done: {
-                    let Some(major) = version.major else { break 'done };
+                    let Some(major) = version.major else {
+                        break 'done;
+                    };
                     range.left = Comparator {
                         op: RangeOp::Gte,
                         version: Version {
@@ -835,35 +845,34 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             let maybe_hyphenate = i < input.len() && (input[i] == b' ' || input[i] == b'-');
 
             // TODO: can we do this without rolling back?
-            let hyphenate: bool = maybe_hyphenate && 'possibly_hyphenate: {
-                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
-                if !(i < input.len() && input[i] == b'-') {
-                    break 'possibly_hyphenate false;
-                }
-                i += 1;
-                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
-                if i == input.len() {
-                    break 'possibly_hyphenate false;
-                }
-                if input[i] == b'v' || input[i] == b'=' {
+            let hyphenate: bool = maybe_hyphenate
+                && 'possibly_hyphenate: {
+                    i += strings::length_of_leading_whitespace_ascii(&input[i..]);
+                    if !(i < input.len() && input[i] == b'-') {
+                        break 'possibly_hyphenate false;
+                    }
                     i += 1;
-                }
-                if i == input.len() {
-                    break 'possibly_hyphenate false;
-                }
-                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
-                if i == input.len() {
-                    break 'possibly_hyphenate false;
-                }
+                    i += strings::length_of_leading_whitespace_ascii(&input[i..]);
+                    if i == input.len() {
+                        break 'possibly_hyphenate false;
+                    }
+                    if input[i] == b'v' || input[i] == b'=' {
+                        i += 1;
+                    }
+                    if i == input.len() {
+                        break 'possibly_hyphenate false;
+                    }
+                    i += strings::length_of_leading_whitespace_ascii(&input[i..]);
+                    if i == input.len() {
+                        break 'possibly_hyphenate false;
+                    }
 
-                if !(i < input.len()
-                    && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*'))
-                {
-                    break 'possibly_hyphenate false;
-                }
+                    if !(i < input.len() && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*')) {
+                        break 'possibly_hyphenate false;
+                    }
 
-                true
-            };
+                    true
+                };
 
             if !hyphenate {
                 i = rollback;

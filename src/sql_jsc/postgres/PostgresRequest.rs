@@ -1,6 +1,6 @@
-use bun_core::fmt as bun_fmt;
 use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
 use bun_core::String as BunString;
+use bun_core::fmt as bun_fmt;
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
@@ -92,16 +92,17 @@ pub fn write_bind<Context: WriterContext>(
         };
 
         let force_text = is_custom_type
-            || (tag.is_binary_format_supported() && 'brk: {
-                iter.to(i as u32);
-                if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                    break 'brk value.is_string();
-                }
-                if iter.any_failed() {
-                    return Err(AnyPostgresError::InvalidQueryBinding);
-                }
-                break 'brk false;
-            });
+            || (tag.is_binary_format_supported()
+                && 'brk: {
+                    iter.to(i as u32);
+                    if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
+                        break 'brk value.is_string();
+                    }
+                    if iter.any_failed() {
+                        return Err(AnyPostgresError::InvalidQueryBinding);
+                    }
+                    break 'brk false;
+                });
 
         if force_text {
             // If they pass a value as a string, let's avoid attempting to
@@ -167,7 +168,9 @@ pub fn write_bind<Context: WriterContext>(
             types::Tag::jsonb | types::Tag::json => {
                 let mut str = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
+                value
+                    .json_stringify_fast(global, &mut str)
+                    .map_err(js_error_to_postgres)?;
                 let slice = str.to_utf8_without_ref();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
@@ -288,7 +291,12 @@ pub fn prepare_and_query_with_signature<Context: WriterContext>(
     mut writer: protocol::NewWriter<Context>,
     signature: &mut Signature,
 ) -> Result<(), AnyPostgresError> {
-    write_query(query, &signature.prepared_statement_name, &signature.fields, writer)?;
+    write_query(
+        query,
+        &signature.prepared_statement_name,
+        &signature.fields,
+        writer,
+    )?;
     write_bind(
         &signature.prepared_statement_name,
         BunString::empty(),
@@ -300,7 +308,9 @@ pub fn prepare_and_query_with_signature<Context: WriterContext>(
         writer,
     )?;
     let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(&signature.prepared_statement_name),
+        p: protocol::PortalOrPreparedStatement::PreparedStatement(
+            &signature.prepared_statement_name,
+        ),
         ..Default::default()
     };
     exec.write_internal(&mut writer)?;

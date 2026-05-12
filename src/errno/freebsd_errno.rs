@@ -1,10 +1,12 @@
 // posix types live in `crate::posix` (moved from bun_sys).
-pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
+pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,

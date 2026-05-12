@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
 use bun_collections::ArrayHashMap;
+use bun_collections::VecExt;
 
-use bun_ast::Index;
 /// `Index.Int` in Zig — the underlying integer repr.
 pub(crate) use crate::IndexInt;
+use bun_ast::Index;
 
 #[derive(Default)]
 pub struct IndexStringMap {
@@ -18,7 +18,11 @@ impl IndexStringMap {
         self.map.get(&index).map(|v| v.as_ref())
     }
 
-    pub fn put(&mut self, index: IndexInt, value: impl AsRef<[u8]>) -> Result<(), bun_alloc::AllocError> {
+    pub fn put(
+        &mut self,
+        index: IndexInt,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), bun_alloc::AllocError> {
         let duped = Box::<[u8]>::from(value.as_ref());
         // errdefer arena.free(duped) — deleted: `duped` is Drop, `?` handles cleanup.
         self.map.insert(index, duped);

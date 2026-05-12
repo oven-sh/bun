@@ -1,12 +1,12 @@
 use core::cell::UnsafeCell;
 
-use crate::{
-    is_absolute_posix, is_absolute_windows, is_absolute_windows_t, disk_designator_windows,
-    PathBuffer, MAX_PATH_BYTES, SEP, SEP_POSIX, SEP_WINDOWS,
-};
-use bun_core::{strings, ZStr, WStr};
-use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
 use crate::fs as Fs;
+use crate::{
+    MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, disk_designator_windows,
+    is_absolute_posix, is_absolute_windows, is_absolute_windows_t,
+};
+use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
+use bun_core::{WStr, ZStr, strings};
 
 // PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
@@ -567,9 +567,8 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     let mut out_len: usize = 0;
 
     if !normalized_from.is_empty() {
-        let mut i: usize = (P::P.is_separator(normalized_from[0]) as usize)
-            + 1
-            + last_common_separator;
+        let mut i: usize =
+            (P::P.is_separator(normalized_from[0]) as usize) + 1 + last_common_separator;
 
         while i <= normalized_from.len() {
             if i == normalized_from.len()
@@ -600,9 +599,8 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
         }
 
         // avoid making non-absolute paths absolute
-        let insert_leading_slash = !P::P.is_separator(tail[0])
-            && out_len > 0
-            && !P::P.is_separator(buf[out_len - 1]);
+        let insert_leading_slash =
+            !P::P.is_separator(tail[0]) && out_len > 0 && !P::P.is_separator(buf[out_len - 1]);
 
         if insert_leading_slash {
             buf[out_len] = separator;
@@ -651,7 +649,11 @@ pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     to: &'a [u8],
 ) -> &'a [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_normalized_buf::<P, ALWAYS_COPY>(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
+    relative_normalized_buf::<P, ALWAYS_COPY>(
+        RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf),
+        from,
+        to,
+    )
 }
 
 pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
@@ -756,8 +758,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // and output (join target). Reshape: normalize into relative_to_buf scratch,
         // then join into relative_from_buf. Safe because normalized_to is computed
         // afterwards (overwrites relative_to_buf anyway).
-        let norm_len =
-            normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
+        let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
             relative_from_buf,
@@ -805,7 +806,11 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     to: &[u8],
 ) -> &'static [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_platform_buf::<P, ALWAYS_COPY>(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
+    relative_platform_buf::<P, ALWAYS_COPY>(
+        RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf),
+        from,
+        to,
+    )
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
@@ -906,7 +911,9 @@ pub fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 
 // path.relative lets you do relative across different share drives
 pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
-    if path.is_empty() { return &path[..0]; }
+    if path.is_empty() {
+        return &path[..0];
+    }
     // minimum: `C:`
     if path.len() < 2 {
         return if is_sep_any_t::<T>(path[0]) {
@@ -956,7 +963,8 @@ pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
 
 // This function is based on Go's filepath.Clean function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
-pub fn normalize_string_generic<'a,
+pub fn normalize_string_generic<
+    'a,
     const ALLOW_ABOVE_ROOT: bool,
     const SEPARATOR: u8,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -976,7 +984,8 @@ pub fn normalize_string_generic<'a,
 // TODO(port): `separatorAdapter(T, func)` wrapped a `fn(comptime T, char) bool`
 // into `fn(T) bool`. In Rust we pass closures directly; no adapter needed.
 
-pub fn normalize_string_generic_t<'a,
+pub fn normalize_string_generic_t<
+    'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -1030,7 +1039,8 @@ impl<T: PathChar> Default for NormalizeOptions<T> {
 // Rust cannot vary the return type on a const-generic bool without specialization;
 // we always return `&mut [T]` and write the NUL when `ZERO_TERMINATE`. Callers
 // that need `&ZStr`/`&WStr` re-wrap with `from_raw`.
-pub fn normalize_string_generic_tz<'a,
+pub fn normalize_string_generic_tz<
+    'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -1244,15 +1254,20 @@ pub enum Platform {
 // form for new code. The `PlatformT` sealed-trait shim below is kept for
 // existing call sites that haven't been migrated yet — both monomorphize
 // identically (`P::P` is a true `const Platform`).
-mod sealed { pub trait Sealed {} }
+mod sealed {
+    pub trait Sealed {}
+}
 pub trait PlatformT: Copy + sealed::Sealed + 'static {
     const P: Platform;
 }
 macro_rules! platform_variant {
     ($name:ident => $variant:ident) => {
-        #[derive(Copy, Clone)] pub struct $name;
+        #[derive(Copy, Clone)]
+        pub struct $name;
         impl sealed::Sealed for $name {}
-        impl PlatformT for $name { const P: Platform = Platform::$variant; }
+        impl PlatformT for $name {
+            const P: Platform = Platform::$variant;
+        }
     };
 }
 pub mod platform {
@@ -1261,9 +1276,12 @@ pub mod platform {
     platform_variant!(Windows => Windows);
     platform_variant!(Posix   => Posix);
     platform_variant!(Nt      => Nt);
-    #[cfg(windows)]                       pub type Auto = Windows;
-    #[cfg(unix)]                          pub type Auto = Posix;
-    #[cfg(all(not(windows), not(unix)))]  pub type Auto = Loose;
+    #[cfg(windows)]
+    pub type Auto = Windows;
+    #[cfg(unix)]
+    pub type Auto = Posix;
+    #[cfg(all(not(windows), not(unix)))]
+    pub type Auto = Loose;
 }
 
 impl Platform {
@@ -1402,17 +1420,13 @@ impl Platform {
     }
 }
 
-pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
-    str: &[u8],
-) -> &mut [u8] {
+pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut [u8] {
     // PORT NOTE: returns slice into thread-local PARSER_BUFFER; valid until the
     // next call on this thread (Zig threadlocal-var semantics).
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
-pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
-    str: &[u8],
-) -> &mut ZStr {
+pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut ZStr {
     PARSER_BUFFER.with(|b| {
         let buf = tl_buf_mut(b);
         let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
@@ -1435,10 +1449,7 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
-pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(
-    str: &[T],
-    buf: &'a mut [T],
-) -> &'a mut [T] {
+pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
     if str.is_empty() {
         buf[0] = T::from_u8(b'.');
         return &mut buf[0..1];
@@ -1465,7 +1476,8 @@ pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(
     normalize_string_buf_t::<T, false, P, true>(str, buf)
 }
 
-pub fn normalize_string_buf<'a,
+pub fn normalize_string_buf<
+    'a,
     const ALLOW_ABOVE_ROOT: bool,
     P: PlatformT,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -1476,7 +1488,8 @@ pub fn normalize_string_buf<'a,
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_buf_t<'a,
+pub fn normalize_string_buf_t<
+    'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     P: PlatformT,
@@ -1487,9 +1500,15 @@ pub fn normalize_string_buf_t<'a,
 ) -> &'a mut [T] {
     match P::P {
         Platform::Nt => unreachable!("not implemented"),
-        Platform::Windows => normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),
-        Platform::Posix => normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),
-        Platform::Loose => normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),
+        Platform::Windows => {
+            normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
+        }
+        Platform::Posix => {
+            normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
+        }
+        Platform::Loose => {
+            normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
+        }
     }
 }
 
@@ -1552,7 +1571,10 @@ pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a Z
     let buf_len = buf.len();
     let (start_offset, len) = {
         let joined = join_string_buf::<P>(&mut buf[..buf_len - 1], parts);
-        ((joined.as_ptr() as usize) - (buf_base as usize), joined.len())
+        (
+            (joined.as_ptr() as usize) - (buf_base as usize),
+            joined.len(),
+        )
     };
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
@@ -1572,10 +1594,7 @@ pub fn join_string_buf_w<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) 
 
 /// `joinStringBufW` overload for u16 parts (no transcode). Covers the
 /// `T == u16 && Elem == u16` arm of Zig's `joinStringBufT` `anytype` dispatch.
-pub fn join_string_buf_w_same<'a, P: PlatformT>(
-    buf: &'a mut [u16],
-    parts: &[&[u16]],
-) -> &'a [u16] {
+pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u16]]) -> &'a [u16] {
     join_string_buf_t_same::<u16, P>(buf, parts)
 }
 
@@ -1652,7 +1671,10 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     let buf_len = buf.len();
     let (start_offset, len) = {
         let joined = join_string_buf_t::<u8, P>(&mut buf[..buf_len - 1], parts);
-        ((joined.as_ptr() as usize) - (buf_base as usize), joined.len())
+        (
+            (joined.as_ptr() as usize) - (buf_base as usize),
+            joined.len(),
+        )
     };
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
@@ -1920,18 +1942,18 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
     // temp_buf across the normalize call below.
     let mut leading_buf = [0u8; 8];
-    let leading_len: usize =
-        if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out]) {
-            let outdir = &mut temp_buf[0..i + 1];
-            if P::P == Platform::Loose {
-                slashes_to_posix_in_place(outdir);
-            }
-            leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
-            i + 1
-        } else {
-            leading_buf[0] = b'/';
-            1
-        };
+    let leading_len: usize = if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out])
+    {
+        let outdir = &mut temp_buf[0..i + 1];
+        if P::P == Platform::Loose {
+            slashes_to_posix_in_place(outdir);
+        }
+        leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
+        i + 1
+    } else {
+        leading_buf[0] = b'/';
+        1
+    };
     // Copy leading separator into buf (Zig does this after normalize; order-
     // independent since normalize writes into buf[leading_len..]).
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
@@ -2052,8 +2074,7 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     //     out += 1;
     // }
 
-    let result =
-        normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
+    let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
 
     if IS_SENTINEL {
@@ -2094,7 +2115,11 @@ pub fn is_sep_any_t<T: PathChar>(char: T) -> bool {
 
 #[inline(always)]
 pub fn is_sep_native_t<T: PathChar>(char: T) -> bool {
-    if cfg!(windows) { is_sep_any_t::<T>(char) } else { is_sep_posix_t::<T>(char) }
+    if cfg!(windows) {
+        is_sep_any_t::<T>(char)
+    } else {
+        is_sep_posix_t::<T>(char)
+    }
 }
 
 pub fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
@@ -2133,7 +2158,8 @@ pub fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize
     last_index_of_sep_t::<T>(slice)
 }
 
-pub fn normalize_string_loose_buf<'a,
+pub fn normalize_string_loose_buf<
+    'a,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
@@ -2143,7 +2169,8 @@ pub fn normalize_string_loose_buf<'a,
     normalize_string_loose_buf_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_loose_buf_t<'a,
+pub fn normalize_string_loose_buf_t<
+    'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -2159,7 +2186,8 @@ pub fn normalize_string_loose_buf_t<'a,
     )
 }
 
-pub fn normalize_string_windows<'a,
+pub fn normalize_string_windows<
+    'a,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
@@ -2169,7 +2197,8 @@ pub fn normalize_string_windows<'a,
     normalize_string_windows_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_windows_t<'a,
+pub fn normalize_string_windows_t<
+    'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -2210,11 +2239,21 @@ pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     let is_sep_fn = |c: T| P::P.is_separator_t::<T>(c);
 
     let out_len = if !is_absolute {
-        normalize_string_generic_t::<T, true, false>(str, &mut buf[buf_off..], separator_t, is_sep_fn)
-            .len()
+        normalize_string_generic_t::<T, true, false>(
+            str,
+            &mut buf[buf_off..],
+            separator_t,
+            is_sep_fn,
+        )
+        .len()
     } else {
-        normalize_string_generic_t::<T, false, false>(str, &mut buf[buf_off..], separator_t, is_sep_fn)
-            .len()
+        normalize_string_generic_t::<T, false, false>(
+            str,
+            &mut buf[buf_off..],
+            separator_t,
+            is_sep_fn,
+        )
+        .len()
     };
     let mut out_len = out_len;
 
@@ -2391,7 +2430,9 @@ impl Default for PosixToWinNormalizer {
     fn default() -> Self {
         #[cfg(windows)]
         {
-            Self { _raw_bytes: PathBuffer::uninit() }
+            Self {
+                _raw_bytes: PathBuffer::uninit(),
+            }
         }
         #[cfg(not(windows))]
         {
@@ -2409,11 +2450,7 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_z<'a>(
-        &'a mut self,
-        source_dir: &[u8],
-        maybe_posix_path: &'a ZStr,
-    ) -> &'a ZStr {
+    pub fn resolve_z<'a>(&'a mut self, source_dir: &[u8], maybe_posix_path: &'a ZStr) -> &'a ZStr {
         Self::resolve_with_external_buf_z(&mut self._raw_bytes, source_dir, maybe_posix_path)
     }
 
@@ -2456,14 +2493,16 @@ impl PosixToWinNormalizer {
                     buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..source_root.len() + maybe_posix_path.len() - 1];
-                    debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(res));
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                    );
                     debug_assert!(crate::is_absolute_windows(res));
                     return res;
                 }
             }
-            debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                maybe_posix_path
-            ));
+            debug_assert!(
+                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
+            );
         }
         let _ = (buf, source_dir);
         maybe_posix_path
@@ -2490,9 +2529,11 @@ impl PosixToWinNormalizer {
                     let len = source_root.len() + mp.len() - 1;
                     // SAFETY: NUL written at buf[len]
                     let res = ZStr::from_buf(&buf[..], len);
-                    debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                        res.as_bytes()
-                    ));
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            res.as_bytes()
+                        )
+                    );
                     debug_assert!(crate::is_absolute_windows(res.as_bytes()));
                     return res;
                 }
@@ -2525,14 +2566,16 @@ impl PosixToWinNormalizer {
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
-                    debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(res));
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                    );
                     debug_assert!(crate::is_absolute_windows(res));
                     return Ok(res);
                 }
             }
-            debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                maybe_posix_path
-            ));
+            debug_assert!(
+                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
+            );
         }
 
         let _ = buf;
@@ -2562,16 +2605,18 @@ impl PosixToWinNormalizer {
                     let len = sr_len + maybe_posix_path.len() - 1;
                     // SAFETY: NUL at buf[len]
                     let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
-                    debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                        res.as_bytes()
-                    ));
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            res.as_bytes()
+                        )
+                    );
                     debug_assert!(crate::is_absolute_windows(res.as_bytes()));
                     return Ok(res);
                 }
             }
-            debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                maybe_posix_path
-            ));
+            debug_assert!(
+                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
+            );
         }
 
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
@@ -2608,7 +2653,9 @@ pub fn slashes_to_posix_in_place<T: PathChar>(path: &mut [T]) {
     let bslash = T::from_u8(b'\\');
     let fslash = T::from_u8(b'/');
     for c in path.iter_mut() {
-        if *c == bslash { *c = fslash; }
+        if *c == bslash {
+            *c = fslash;
+        }
     }
 }
 
@@ -2618,13 +2665,17 @@ pub fn slashes_to_windows_in_place<T: PathChar>(path: &mut [T]) {
     let fslash = T::from_u8(b'/');
     let bslash = T::from_u8(b'\\');
     for c in path.iter_mut() {
-        if *c == fslash { *c = bslash; }
+        if *c == fslash {
+            *c = bslash;
+        }
     }
 }
 
 #[inline]
 pub fn platform_to_posix_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if SEP == b'/' { return; }
+    if SEP == b'/' {
+        return;
+    }
     slashes_to_posix_in_place(path_buffer);
 }
 
@@ -2683,7 +2734,9 @@ pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -
 
 #[inline]
 pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if SEP == b'/' { return; }
+    if SEP == b'/' {
+        return;
+    }
     slashes_to_windows_in_place(path_buffer);
 }
 

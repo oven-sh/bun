@@ -13,18 +13,17 @@
 //!   - Sunday as 7: weekday field accepts 7 as alias for 0
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
-
-use bun_jsc::{JSGlobalObject, JsResult};
 use bun_core::strings;
+use bun_jsc::{JSGlobalObject, JsResult};
 use phf::phf_map;
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {
-    pub minutes: u64, // bits 0-59
-    pub hours: u32,   // bits 0-23
-    pub days: u32,    // bits 1-31
-    pub months: u16,  // bits 1-12
-    pub weekdays: u8, // bits 0-6 (0=Sunday)
+    pub minutes: u64,               // bits 0-59
+    pub hours: u32,                 // bits 0-23
+    pub days: u32,                  // bits 1-31
+    pub months: u16,                // bits 1-12
+    pub weekdays: u8,               // bits 0-6 (0=Sunday)
     pub days_is_wildcard: bool,     // true if day-of-month field was *
     pub weekdays_is_wildcard: bool, // true if weekday field was *
 }
@@ -133,8 +132,9 @@ impl CronExpression {
         while dt.year - start_year <= 8 {
             // Normalize overflow + recompute weekday via a UTC round-trip.
             dt = global_object.ms_to_gregorian_date_time_utc(
-                global_object
-                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0)?,
+                global_object.gregorian_date_time_to_ms_utc(
+                    dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0,
+                )?,
             );
 
             if !bit_set(self.months, u32::try_from(dt.month).expect("int cast")) {
@@ -169,10 +169,9 @@ impl CronExpression {
                 continue;
             }
 
-            return Ok(Some(
-                global_object
-                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0)?,
-            ));
+            return Ok(Some(global_object.gregorian_date_time_to_ms_utc(
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
+            )?));
         }
         Ok(None)
     }
@@ -190,19 +189,59 @@ pub const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
 fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
     use bun_core::strings::eql_case_insensitive_asciii_check_length as eql;
     if eql(expr, b"@yearly") || eql(expr, b"@annually") {
-        return Some(CronExpression { minutes: 1, hours: 1, days: 1 << 1, months: 1 << 1, weekdays: ALL_WEEKDAYS, days_is_wildcard: false, weekdays_is_wildcard: true });
+        return Some(CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: 1 << 1,
+            months: 1 << 1,
+            weekdays: ALL_WEEKDAYS,
+            days_is_wildcard: false,
+            weekdays_is_wildcard: true,
+        });
     }
     if eql(expr, b"@monthly") {
-        return Some(CronExpression { minutes: 1, hours: 1, days: 1 << 1, months: ALL_MONTHS, weekdays: ALL_WEEKDAYS, days_is_wildcard: false, weekdays_is_wildcard: true });
+        return Some(CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: 1 << 1,
+            months: ALL_MONTHS,
+            weekdays: ALL_WEEKDAYS,
+            days_is_wildcard: false,
+            weekdays_is_wildcard: true,
+        });
     }
     if eql(expr, b"@weekly") {
-        return Some(CronExpression { minutes: 1, hours: 1, days: ALL_DAYS, months: ALL_MONTHS, weekdays: 1, days_is_wildcard: true, weekdays_is_wildcard: false });
+        return Some(CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: ALL_DAYS,
+            months: ALL_MONTHS,
+            weekdays: 1,
+            days_is_wildcard: true,
+            weekdays_is_wildcard: false,
+        });
     }
     if eql(expr, b"@daily") || eql(expr, b"@midnight") {
-        return Some(CronExpression { minutes: 1, hours: 1, days: ALL_DAYS, months: ALL_MONTHS, weekdays: ALL_WEEKDAYS, days_is_wildcard: true, weekdays_is_wildcard: true });
+        return Some(CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: ALL_DAYS,
+            months: ALL_MONTHS,
+            weekdays: ALL_WEEKDAYS,
+            days_is_wildcard: true,
+            weekdays_is_wildcard: true,
+        });
     }
     if eql(expr, b"@hourly") {
-        return Some(CronExpression { minutes: 1, hours: ALL_HOURS, days: ALL_DAYS, months: ALL_MONTHS, weekdays: ALL_WEEKDAYS, days_is_wildcard: true, weekdays_is_wildcard: true });
+        return Some(CronExpression {
+            minutes: 1,
+            hours: ALL_HOURS,
+            days: ALL_DAYS,
+            months: ALL_MONTHS,
+            weekdays: ALL_WEEKDAYS,
+            days_is_wildcard: true,
+            weekdays_is_wildcard: true,
+        });
     }
     None
 }
@@ -276,8 +315,10 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
             range_min = min;
             range_max = max;
         } else if let Some(range_parts) = split_range(base) {
-            let lo = parse_value(range_parts[0], min, max, kind).map_err(|_| CronError::InvalidNumber)?;
-            let hi = parse_value(range_parts[1], min, max, kind).map_err(|_| CronError::InvalidNumber)?;
+            let lo = parse_value(range_parts[0], min, max, kind)
+                .map_err(|_| CronError::InvalidNumber)?;
+            let hi = parse_value(range_parts[1], min, max, kind)
+                .map_err(|_| CronError::InvalidNumber)?;
             if lo > hi {
                 return Err(CronError::InvalidRange);
             }

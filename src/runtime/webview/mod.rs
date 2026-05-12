@@ -4,10 +4,10 @@
 //! ChromeBackend.cpp) own the usockets client and frame protocol; this module
 //! only spawns/watches the child.
 
-#[path = "HostProcess.rs"]
-pub mod host_process;
 #[path = "ChromeProcess.rs"]
 pub mod chrome_process;
+#[path = "HostProcess.rs"]
+pub mod host_process;
 
-pub use host_process::HostProcess;
 pub use chrome_process::ChromeProcess;
+pub use host_process::HostProcess;

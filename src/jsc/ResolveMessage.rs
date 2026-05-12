@@ -5,7 +5,9 @@ use bun_ast::ImportKind;
 use bun_core::strings;
 
 use crate::zig_string::ZigString;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
+use crate::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
+};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -26,7 +28,11 @@ pub struct ResolveMessage {
 
 impl Default for ResolveMessage {
     fn default() -> Self {
-        Self { msg: bun_ast::Msg::default(), referrer: None, logged: Cell::new(false) }
+        Self {
+            msg: bun_ast::Msg::default(),
+            referrer: None,
+            logged: Cell::new(false),
+        }
     }
 }
 
@@ -53,7 +59,10 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
 
 impl ResolveMessage {
     // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut ResolveMessage> {
+    pub fn constructor(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<*mut ResolveMessage> {
         Err(global.throw(format_args!("ResolveMessage is not constructable")))
     }
 
@@ -132,7 +141,12 @@ impl ResolveMessage {
         let mut out = Vec::new();
         if import_kind != ImportKind::RequireResolve && specifier.starts_with(b"node:") {
             // This matches Node.js exactly.
-            write!(&mut out, "No such built-in module: {}", BStr::new(specifier)).ok();
+            write!(
+                &mut out,
+                "No such built-in module: {}",
+                BStr::new(specifier)
+            )
+            .ok();
             return out;
         }
         // PORT NOTE: matching against interned bun_core::Error consts (Zig: `switch (err)`).
@@ -206,7 +220,13 @@ impl ResolveMessage {
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
-        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(&self.msg.data.text)).is_err() {
+        if write!(
+            &mut text,
+            "ResolveMessage: {}",
+            bstr::BStr::new(&self.msg.data.text)
+        )
+        .is_err()
+        {
             return global.throw_out_of_memory_value();
         }
         let mut str = ZigString::init(&text);
@@ -258,13 +278,13 @@ impl ResolveMessage {
     }
 
     #[crate::host_fn(method)]
-    pub fn to_json(
-        this: &Self,
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 7);
-        object.put(global, b"name", bun_core::String::static_str(b"ResolveMessage").to_js(global)?);
+        object.put(
+            global,
+            b"name",
+            bun_core::String::static_str(b"ResolveMessage").to_js(global)?,
+        );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);
         object.put(global, b"level", Self::get_level(this, global)?);
@@ -294,7 +314,9 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_position(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::BuildMessage::generate_position_object(&this.msg, global))
+        Ok(crate::BuildMessage::generate_position_object(
+            &this.msg, global,
+        ))
     }
 
     #[crate::host_fn(getter)]

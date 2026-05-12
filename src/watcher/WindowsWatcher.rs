@@ -3,12 +3,12 @@
 use core::mem::size_of;
 use core::ptr;
 
-use bun_paths::{self as path, PathBuffer, WPathBuffer};
-use bun_paths::resolve_path::{is_parent_or_equal, ParentEqual};
+use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
+use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
 use bun_threading::Mutex;
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
@@ -129,11 +129,7 @@ impl DirWatcher {
         } == 0
         {
             let err = w::Win32Error::get();
-            bun_core::scoped_log!(
-                watcher,
-                "failed to start watching directory: {}",
-                err.0
-            );
+            bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
             // TODO(b2-blocked): bun_sys::Tag::watch — full syscall enum not yet in subset.
             return Err(bun_sys::Error {
                 // Route the raw code through the `u32` `SystemErrnoInit` impl
@@ -181,8 +177,11 @@ impl EventIterator {
         // FILE_NOTIFY_INFORMATION records; `offset` is advanced only by
         // NextEntryOffset values returned by the kernel, so each cast targets a
         // properly-aligned record header.
-        let info: &w::FILE_NOTIFY_INFORMATION =
-            unsafe { &*(buf_ptr.add(self.offset).cast::<w::FILE_NOTIFY_INFORMATION>()) };
+        let info: &w::FILE_NOTIFY_INFORMATION = unsafe {
+            &*(buf_ptr
+                .add(self.offset)
+                .cast::<w::FILE_NOTIFY_INFORMATION>())
+        };
         // The variable-length filename begins at the `FileName` field of the
         // record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
         // bytes which lie wholly inside `buf`. Safe bounds-checked sub-slice of
@@ -268,11 +267,7 @@ impl WindowsWatcher {
 
         if rc != w::NTSTATUS::SUCCESS {
             let err = w::Win32Error::from_nt_status(rc);
-            bun_core::scoped_log!(
-                watcher,
-                "failed to open directory for watching: {}",
-                err.0
-            );
+            bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
             return Err(Error::CreateFileFailed.into());
         }
         let handle_guard = scopeguard::guard(handle, |h| unsafe {
@@ -301,7 +296,11 @@ impl WindowsWatcher {
         if needs_slash {
             self.buf[root.len()] = b'\\';
         }
-        self.base_idx = if needs_slash { root.len() + 1 } else { root.len() };
+        self.base_idx = if needs_slash {
+            root.len() + 1
+        } else {
+            root.len()
+        };
 
         // disarm errdefer guards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
@@ -336,11 +335,7 @@ impl WindowsWatcher {
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
                     return Ok(None);
                 } else {
-                    bun_core::scoped_log!(
-                        watcher,
-                        "GetQueuedCompletionStatus failed: {}",
-                        err.0
-                    );
+                    bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     // TODO(b2-blocked): bun_sys::Tag::watch
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)

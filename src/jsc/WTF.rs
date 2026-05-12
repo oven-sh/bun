@@ -24,12 +24,12 @@ pub use bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread;
 
 // `WTF.parseDouble` canonical lives in bun_core::fmt (tier-0); re-exported here
 // to keep the Zig namespace shape (`bun_jsc::wtf::parse_double`).
-pub use bun_core::fmt::{parse_double, InvalidCharacter};
+pub use bun_core::fmt::{InvalidCharacter, parse_double};
 /// Back-compat alias for the Zig `error{InvalidCharacter}` set name.
 pub type ParseDoubleError = bun_core::fmt::InvalidCharacter;
 
 // Canonical lives in bun_core (tier-0) so install/ can call it without bun_jsc.
-pub use bun_core::wtf::{parse_es5_date, parse_es5_date_raw, InvalidDate};
+pub use bun_core::wtf::{InvalidDate, parse_es5_date, parse_es5_date_raw};
 /// Back-compat alias for the Zig namespace shape.
 pub type ParseDateError = bun_core::wtf::InvalidDate;
 

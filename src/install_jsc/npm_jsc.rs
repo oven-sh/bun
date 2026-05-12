@@ -24,7 +24,9 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
         return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
-        operating_system.combine().is_match(npm::OperatingSystem::CURRENT),
+        operating_system
+            .combine()
+            .is_match(npm::OperatingSystem::CURRENT),
     ))
 }
 
@@ -46,7 +48,9 @@ pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     if global.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    Ok(JSValue::js_boolean(libc.combine().is_match(npm::Libc::CURRENT)))
+    Ok(JSValue::js_boolean(
+        libc.combine().is_match(npm::Libc::CURRENT),
+    ))
 }
 
 pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -105,11 +109,11 @@ impl ManifestBindings {
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
 pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use std::io::Write as _;
     use bstr::BStr;
-    use bun_jsc::JsError;
-    use bun_core::{strings, String as BunString};
+    use bun_core::{String as BunString, strings};
     use bun_install::npm;
+    use bun_jsc::JsError;
+    use std::io::Write as _;
 
     let args = frame.arguments_old::<2>();
     let args = args.slice();
@@ -121,8 +125,7 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
     // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
     // returned by `toBunString`; `bun_core::String` has no `Drop` impl.
-    let manifest_filename_str =
-        scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
+    let manifest_filename_str = scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
     let manifest_filename = manifest_filename_str.to_utf8();
 
     // `defer registry_str.deref()` — see above.

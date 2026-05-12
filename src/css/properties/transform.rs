@@ -1,7 +1,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
 use bun_core::strings;
 
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
@@ -11,8 +11,8 @@ use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::prefixes;
 use crate::{
-    DeclarationList, Parser, PrintErr, Printer, PrinterOptions,
-    PropertyHandlerContext, Result, Token, VendorPrefix,
+    DeclarationList, Parser, PrintErr, Printer, PrinterOptions, PropertyHandlerContext, Result,
+    Token, VendorPrefix,
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
@@ -343,7 +343,11 @@ impl Transform {
                 dest.write_char(b')')?;
             }
             Transform::TranslateX(x) => {
-                dest.write_str(if dest.minify { "translate(" } else { "translateX(" })?;
+                dest.write_str(if dest.minify {
+                    "translate("
+                } else {
+                    "translateX("
+                })?;
                 x.to_css(dest)?;
                 dest.write_char(b')')?;
             }
@@ -416,7 +420,11 @@ impl Transform {
                 CSSNumberFns::to_css(&z.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
-            Transform::Scale3d { x: sx, y: sy, z: sz } => {
+            Transform::Scale3d {
+                x: sx,
+                y: sy,
+                z: sz,
+            } => {
                 let x: f32 = sx.into_f32();
                 let y: f32 = sy.into_f32();
                 let z: f32 = sz.into_f32();
@@ -750,7 +758,6 @@ impl Translate {
         }
         Ok(())
     }
-
 }
 
 // PORT NOTE: split out of the gated parse/to_css `impl Translate` above (B-2
@@ -835,7 +842,11 @@ impl Rotate {
                     let z = CSSNumberFns::parse(i)?;
                     Ok(Xyz { x, y, z })
                 })
-                .unwrap_or(Xyz { x: 0.0, y: 0.0, z: 1.0 }),
+                .unwrap_or(Xyz {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 1.0,
+                }),
         };
 
         let final_angle = match angle {
@@ -872,7 +883,6 @@ impl Rotate {
 
         self.angle.to_css(dest)
     }
-
 }
 
 // PORT NOTE: split out of the gated parse/to_css `impl Rotate` above (B-2
@@ -935,7 +945,11 @@ impl Scale {
         Ok(Scale::Xyz {
             x: x.clone(),
             y: if let Ok(val) = y { val } else { x },
-            z: if let Some(val) = z { val } else { NumberOrPercentage::Number(1.0) },
+            z: if let Some(val) = z {
+                val
+            } else {
+                NumberOrPercentage::Number(1.0)
+            },
         })
     }
 
@@ -957,7 +971,6 @@ impl Scale {
         }
         Ok(())
     }
-
 }
 
 // PORT NOTE: split out of the gated parse/to_css `impl Scale` above (B-2
@@ -1091,11 +1104,7 @@ impl TransformHandler {
         self.flush(dest, context);
     }
 
-    fn flush(
-        &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }

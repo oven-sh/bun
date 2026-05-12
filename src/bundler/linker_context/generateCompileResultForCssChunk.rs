@@ -2,8 +2,8 @@ use crate::mal_prelude::*;
 use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
-use bun_collections::VecExt;
 use bun_ast::ImportRecord;
+use bun_collections::VecExt;
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
@@ -30,7 +30,8 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     let _prev_action_guard = {
         // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
         // borrows for the crash-trace vtable only.
-        let (c, chunk): (&LinkerContext, &Chunk) = (part_range.ctx.c.get(), part_range.ctx.chunk.get());
+        let (c, chunk): (&LinkerContext, &Chunk) =
+            (part_range.ctx.c.get(), part_range.ctx.chunk.get());
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
@@ -88,9 +89,8 @@ fn generate_compile_result_for_css_chunk_impl(
     // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.
-    let symbols: &bun_ast::symbol::Map = unsafe {
-        &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
-    };
+    let symbols: &bun_ast::symbol::Map =
+        unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &c.mangled_props;
@@ -99,7 +99,9 @@ fn generate_compile_result_for_css_chunk_impl(
     // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
     let unique_keys: &[&[u8]] = unsafe {
         bun_ptr::boxed_slices_as_borrowed(
-            parse_graph.input_files.items_unique_key_for_additional_file(),
+            parse_graph
+                .input_files
+                .items_unique_key_for_additional_file(),
         )
     };
 

@@ -24,8 +24,16 @@ impl Counters {
         // (builds an object with one property per struct field). Phase B: hand-roll the two
         // `put` calls or add a small derive.
         let obj = JSValue::create_empty_object(global, 2);
-        obj.put(global, b"spawnSync_blocking", JSValue::js_number_from_int32(self.spawn_sync_blocking));
-        obj.put(global, b"spawn_memfd", JSValue::js_number_from_int32(self.spawn_memfd));
+        obj.put(
+            global,
+            b"spawnSync_blocking",
+            JSValue::js_number_from_int32(self.spawn_sync_blocking),
+        );
+        obj.put(
+            global,
+            b"spawn_memfd",
+            JSValue::js_number_from_int32(self.spawn_memfd),
+        );
         Ok(obj)
     }
 }

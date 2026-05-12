@@ -32,9 +32,11 @@ impl NegotiateProtocolVersion {
             unrecognized_options: Vec::new(),
         };
 
-        let unrecognized_options_count: u32 = u32::try_from(reader.int4()?.max(0)).expect("int cast");
-        this.unrecognized_options
-            .reserve((unrecognized_options_count as usize).saturating_sub(this.unrecognized_options.len()));
+        let unrecognized_options_count: u32 =
+            u32::try_from(reader.int4()?.max(0)).expect("int cast");
+        this.unrecognized_options.reserve(
+            (unrecognized_options_count as usize).saturating_sub(this.unrecognized_options.len()),
+        );
         // errdefer { for ... option.deinit(); list.deinit(allocator) } — deleted:
         // Vec<bun_core::String> drops each element on the `?` error path automatically.
         for _ in 0..unrecognized_options_count {

@@ -2,7 +2,7 @@
 
 use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
 
-use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
+use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
 // Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
 // (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
@@ -23,8 +23,8 @@ use super::links as links_mod;
 use super::ref_defs as ref_defs_mod;
 use super::render_blocks as render_blocks_mod;
 use super::types::{
-    self, Align, BlockType, Container, Flags, Mark, OpenerStack, Renderer, VerbatimLine, OFF,
-    NUM_OPENER_STACKS, TABLE_MAXCOLCOUNT,
+    self, Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
+    TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
 
@@ -114,7 +114,13 @@ pub struct BlockHeader {
 
 impl Default for BlockHeader {
     fn default() -> Self {
-        Self { block_type: BlockType::Doc, _pad: [0, 0, 0], flags: 0, data: 0, n_lines: 0 }
+        Self {
+            block_type: BlockType::Doc,
+            _pad: [0, 0, 0],
+            flags: 0,
+            data: 0,
+            n_lines: 0,
+        }
     }
 }
 
@@ -165,7 +171,11 @@ impl<'a> Parser<'a> {
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,
-            code_indent_offset: if flags.no_indented_code_blocks { u32::MAX } else { 4 },
+            code_indent_offset: if flags.no_indented_code_blocks {
+                u32::MAX
+            } else {
+                4
+            },
             doc_ends_with_newline: size > 0 && helpers::is_newline(text[(size - 1) as usize]),
             mark_char_map: MarkCharMap::init_empty(),
             marks: Vec::new(),
@@ -297,8 +307,8 @@ impl<'a> Parser<'a> {
 // the doc-comment above; Phase B removes once `impl Parser` blocks land.
 #[allow(unused_imports)]
 use {
-    blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _,
-    links_mod as _, ref_defs_mod as _, render_blocks_mod as _, types as _,
+    blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,
+    ref_defs_mod as _, render_blocks_mod as _, types as _,
 };
 
 // ========================================

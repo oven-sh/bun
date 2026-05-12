@@ -124,7 +124,13 @@ impl Seq {
                 let me = Self::state_mut(interp, cmd);
                 me.start = int1;
                 me.end = int2;
-                me.increment = if me.start < me.end { 1.0 } else if me.start > me.end { -1.0 } else { me.increment };
+                me.increment = if me.start < me.end {
+                    1.0
+                } else if me.start > me.end {
+                    -1.0
+                } else {
+                    me.increment
+                };
             }
             if idx < argc {
                 let int3 = parse_num!(idx);
@@ -166,7 +172,11 @@ impl Seq {
         };
         let mut out = Vec::new();
         let mut current = start;
-        while if incr > 0.0 { current <= end } else { current >= end } {
+        while if incr > 0.0 {
+            current <= end
+        } else {
+            current >= end
+        } {
             // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
             let _ = write!(&mut out, "{}", current);
             out.extend_from_slice(sep.slice());
@@ -203,12 +213,16 @@ impl Seq {
         match Self::state_mut(interp, cmd).state {
             State::Done => Builtin::done(interp, cmd, 0),
             State::Err => Builtin::done(interp, cmd, 1),
-            State::Idle => crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle"),
+            State::Idle => {
+                crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle")
+            }
         }
     }
 }
 
 #[inline]
-fn parse_f32(bytes: &[u8]) -> Option<f32> { bun_core::fmt::parse_f32(bytes) }
+fn parse_f32(bytes: &[u8]) -> Option<f32> {
+    bun_core::fmt::parse_f32(bytes)
+}
 
 // ported from: src/shell/builtin/seq.zig

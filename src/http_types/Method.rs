@@ -105,7 +105,10 @@ impl Method {
     }
 
     pub fn has_request_body(self) -> bool {
-        !matches!(self, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
+        !matches!(
+            self,
+            Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
+        )
     }
 
     /// Per RFC 7231 §4.2.2, idempotent methods are safe to retry on
@@ -226,8 +229,12 @@ impl Optional {
             return true;
         }
 
-        let Optional::Method(this_set) = self else { unreachable!() };
-        let Optional::Method(other_set) = other else { unreachable!() };
+        let Optional::Method(this_set) = self else {
+            unreachable!()
+        };
+        let Optional::Method(other_set) = other else {
+            unreachable!()
+        };
         this_set.intersection(*other_set).len() > 0
     }
 
@@ -252,7 +259,9 @@ pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
     // outlive this stack frame.
     let slice = unsafe { core::slice::from_raw_parts(str, len) };
-    let Some(method) = Method::find(slice) else { return -1 };
+    let Some(method) = Method::find(slice) else {
+        return -1;
+    };
     method as i16
 }
 

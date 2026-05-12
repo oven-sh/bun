@@ -2,17 +2,17 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_core::output;
-use bun_jsc::{self as jsc, event_loop::EventLoop, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
 
+use crate::api::bun_spawn::stdio::Stdio;
+use crate::webcore::ReadableStream;
+use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
-use crate::api::bun_spawn::stdio::Stdio;
-use crate::webcore::blob::SizeType as BlobSizeType;
-use crate::webcore::ReadableStream;
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
@@ -165,7 +165,9 @@ impl Readable {
                     Readable::Fd(dup2.out.to_fd())
                 }
             }
-            Stdio::Pipe => Readable::Pipe(PipeReader::create(event_loop, process, result, max_size)),
+            Stdio::Pipe => {
+                Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
+            }
             Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
                 panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
             }

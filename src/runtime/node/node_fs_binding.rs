@@ -3,11 +3,13 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult, SysErrorJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult, SysErrorJsc as _,
+};
 
 use crate::node::fs::{
-    self, args, async_, ret, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn,
-    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 /// Signature of every generated NodeFS host function.
@@ -55,8 +57,9 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    let mut result =
-        this.node_fs.with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
+    let mut result = this
+        .node_fs
+        .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
         Err(ref err) => Err(global.throw_value(err.to_js(global))),
         Ok(ref mut res) => res.fs_to_js(global),
@@ -108,10 +111,11 @@ fn run_async<A: FsArgument>(
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
             if let Some(reason) = signal.reason_if_aborted(global) {
-                let promise = JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global,
-                    reason.to_js(global),
-                );
+                let promise =
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global,
+                        reason.to_js(global),
+                    );
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
@@ -281,7 +285,10 @@ impl Binding {
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
-        match this.node_fs.with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync)) {
+        match this
+            .node_fs
+            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
+        {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
         }
@@ -303,7 +310,10 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.with_mut(|nfs| nfs.watch_file(wf_args, Flavor::Sync)) {
+        match this
+            .node_fs
+            .with_mut(|nfs| nfs.watch_file(wf_args, Flavor::Sync))
+        {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
         }
@@ -323,7 +333,10 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync)) {
+        match this
+            .node_fs
+            .with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync))
+        {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
         }

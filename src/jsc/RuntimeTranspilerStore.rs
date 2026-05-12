@@ -1,53 +1,59 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_return)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    clippy::needless_return
+)]
 #![warn(unused_must_use)]
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
-use bun_io::{AllocatorType, KeepAlive};
-use bun_io::posix_event_loop::get_vm_ctx;
-use bun_ptr::BackRef;
 use bun_alloc::Arena;
-use bun_bundler::analyze_transpiled_module;
 use bun_ast::Loader;
+use bun_ast::{self as js_ast, ASTMemoryAllocator, ExportsKind};
+use bun_ast::{ImportRecord, ImportRecordFlags};
+use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, ModuleType};
 use bun_bundler::transpiler::{
     self as transpiler, AlreadyBundled, ParseOptions, ParseResult, Transpiler,
 };
 use bun_collections::HiveArrayFallback;
-use bun_event_loop::{task_tag, TaskTag, Taskable};
-use bun_ast::{self as js_ast, ASTMemoryAllocator, ExportsKind};
+use bun_core::{MutableString, String, strings};
+use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_io::posix_event_loop::get_vm_ctx;
+use bun_io::{AllocatorType, KeepAlive};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
-use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_paths;
+use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_core::{strings, MutableString, String};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
-use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::Guarded;
+use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::{WatchItemColumns, Watcher};
 
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
-use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::resolved_source::OwnedResolvedSource;
-use bun_core::OwnedString;
+use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{create_if_different, SourceMapHandlerGetter, VirtualMachine};
+use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, create_if_different};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource};
+use bun_core::OwnedString;
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
 // lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
@@ -91,7 +97,10 @@ pub fn dump_source_string_failiable(
     if !cfg!(debug_assertions) {
         return Ok(());
     }
-    if bun_core::env_var::feature_flag::BUN_DEBUG_NO_DUMP.get().unwrap_or(false) {
+    if bun_core::env_var::feature_flag::BUN_DEBUG_NO_DUMP
+        .get()
+        .unwrap_or(false)
+    {
         return Ok(());
     }
 
@@ -148,8 +157,16 @@ pub fn dump_source_string_failiable(
             map_path.extend_from_slice(base);
             map_path.extend_from_slice(b".map");
             let map_path_z = bun_paths::resolve_path::z(&map_path, &mut path_buf);
-            let file = parent.create_file_z(map_path_z, bun_sys::CreateFlags { truncate: true, read: false })?;
-            let _close_file = scopeguard::guard(file.handle, |fd| { let _ = bun_sys::close(fd); });
+            let file = parent.create_file_z(
+                map_path_z,
+                bun_sys::CreateFlags {
+                    truncate: true,
+                    read: false,
+                },
+            )?;
+            let _close_file = scopeguard::guard(file.handle, |fd| {
+                let _ = bun_sys::close(fd);
+            });
 
             // `parent.readFileAlloc(allocator, specifier, maxInt) catch ""`
             let source_file = File::read_from(parent.fd, specifier).unwrap_or_default();
@@ -324,7 +341,9 @@ impl RuntimeTranspilerStore {
                     resolved_source.as_mut().tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
                     resolved_source.as_mut().is_commonjs_module = true;
                 }
-                ModuleType::Esm => resolved_source.as_mut().tag = ResolvedSourceTag::PackageJsonTypeModule,
+                ModuleType::Esm => {
+                    resolved_source.as_mut().tag = ResolvedSourceTag::PackageJsonTypeModule
+                }
                 ModuleType::Unknown => {}
             }
         }
@@ -497,9 +516,7 @@ impl TranspilerJob {
             // SAFETY: `text` is exactly the `&[u8]` view of the `Box<[u8]>`
             // produced by `heap::into_raw` in `transpile()`; the fat-pointer
             // cast preserves length, and this is the unique owner.
-            drop(unsafe {
-                bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut())
-            });
+            drop(unsafe { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });
         }
 
         self.poll_ref.disable();
@@ -514,7 +531,10 @@ impl TranspilerJob {
         // self.log.deinit() → Drop via take
         drop(core::mem::take(&mut self.log));
         // self.promise.deinit() → Drop via replace
-        drop(core::mem::replace(&mut self.promise, StrongOptional::empty()));
+        drop(core::mem::replace(
+            &mut self.promise,
+            StrongOptional::empty(),
+        ));
         // self.globalThis = undefined; — no-op in Rust
     }
 
@@ -524,11 +544,16 @@ impl TranspilerJob {
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
-        unsafe { (*transpiler_store).queue.push(std::ptr::from_mut::<TranspilerJob>(self)) };
+        unsafe {
+            (*transpiler_store)
+                .queue
+                .push(std::ptr::from_mut::<TranspilerJob>(self))
+        };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
         unsafe {
-            (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+            (*(*vm).event_loop())
+                .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
         }
     }
 
@@ -554,8 +579,7 @@ impl TranspilerJob {
                 break 'brk String::clone_utf8(self.path.text);
             }
 
-            let out =
-                core::mem::take(&mut self.non_threadsafe_input_specifier).into_inner();
+            let out = core::mem::take(&mut self.non_threadsafe_input_specifier).into_inner();
 
             debug_assert!(resolved_source.source_url.is_empty());
             debug_assert!(resolved_source.specifier.is_empty());
@@ -570,7 +594,12 @@ impl TranspilerJob {
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
-        unsafe { (*vm).transpiler_store.store.put(std::ptr::from_mut::<TranspilerJob>(self)) };
+        unsafe {
+            (*vm)
+                .transpiler_store
+                .store
+                .put(std::ptr::from_mut::<TranspilerJob>(self))
+        };
 
         let mut resolved_source = owned_resolved_source.into_ffi();
         AsyncModule::fulfill(
@@ -597,9 +626,7 @@ impl TranspilerJob {
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
-        let this = unsafe {
-            &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task)
-        };
+        let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
         this.run();
     }
 
@@ -660,14 +687,20 @@ impl TranspilerJob {
         let vm: *mut VirtualMachine = self.vm;
 
         if self.generation_number
-            != unsafe { (*vm).transpiler_store.generation_number.load(Ordering::Relaxed) }
+            != unsafe {
+                (*vm)
+                    .transpiler_store
+                    .generation_number
+                    .load(Ordering::Relaxed)
+            }
         {
             self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
             return;
         }
 
-        let ast_memory_store =
-            tls_get_or_leak(&AST_MEMORY_STORE, || Box::new(ASTMemoryAllocator::new(arena_ref)));
+        let ast_memory_store = tls_get_or_leak(&AST_MEMORY_STORE, || {
+            Box::new(ASTMemoryAllocator::new(arena_ref))
+        });
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
         // PORT NOTE: Zig passed `allocator` to `enter()`; Rust signature folds the arena
         // into `ASTMemoryAllocator::new`. `Scope` restores the previous
@@ -694,10 +727,7 @@ impl TranspilerJob {
         let mut log = bun_ast::Log::init();
         // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
         let _log_clone_guard = scopeguard::guard(
-            (
-                ptr::addr_of_mut!(self.log),
-                ptr::addr_of_mut!(log),
-            ),
+            (ptr::addr_of_mut!(self.log), ptr::addr_of_mut!(log)),
             |(dst, src)| {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
@@ -715,18 +745,16 @@ impl TranspilerJob {
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
         // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
-        let mut transpiler_storage = core::mem::ManuallyDrop::new(unsafe {
-            ptr::read(ptr::addr_of!((*vm).transpiler))
-        });
+        let mut transpiler_storage =
+            core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
         // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
         // `allocator` field (and resolver opts that share it), which we
         // immediately overwrite below via `set_arena(arena_ref)` to the
         // thread-local `PARSE_ARENA` (`'static`). The bytewise copy is never
         // dropped (ManuallyDrop), so no borrow tied to the shortened `'a`
         // outlives the arena.
-        let transpiler: &mut Transpiler<'_> = unsafe {
-            &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>()
-        };
+        let transpiler: &mut Transpiler<'_> =
+            unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(arena_ref);
         transpiler.set_log(&raw mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
@@ -746,9 +774,8 @@ impl TranspilerJob {
         // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
         // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
         // small `Box`.
-        let _macro_ctx_guard = scopeguard::guard(
-            ptr::addr_of_mut!(transpiler.macro_context),
-            |slot| {
+        let _macro_ctx_guard =
+            scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into `transpiler_storage`, which is
                 // declared before this guard and so outlives it; no other
                 // borrow of `macro_context` is live at drop time (the parser's
@@ -756,8 +783,7 @@ impl TranspilerJob {
                 if let Some(ctx) = unsafe { (*slot).take() } {
                     ctx.deinit();
                 }
-            },
-        );
+            });
         // Zig: `transpiler.linker.resolver = &transpiler.resolver` — the bytewise copy left
         // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
         // it at the local copy so `print_with_source_map` resolves through the arena-backed
@@ -888,7 +914,10 @@ impl TranspilerJob {
 
         // `defer { if should_close && input_file_fd.isValid() { close } }`
         let _close_fd_guard = scopeguard::guard(
-            (&should_close_input_file_fd, ptr::addr_of_mut!(input_file_fd)),
+            (
+                &should_close_input_file_fd,
+                ptr::addr_of_mut!(input_file_fd),
+            ),
             |(should, fd_ptr)| {
                 // SAFETY: `input_file_fd` outlives this guard (declared earlier
                 // in fn scope); no `&mut` alias is live at drop time.
@@ -912,7 +941,8 @@ impl TranspilerJob {
                 // SAFETY: `fallback_source` outlives `parse_options` (declared
                 // earlier in fn scope); raw-ptr borrow avoids tying
                 // `parse_options`'s `'static` source lifetime to this stack slot.
-                parse_options.virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(src) });
+                parse_options.virtual_source =
+                    Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(src) });
             }
         }
 
@@ -993,7 +1023,9 @@ impl TranspilerJob {
             // `SavedSourceMap` takes its own internal mutex.
             let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
                 &parse_result.source,
-                MutableString { list: core::mem::take(&mut entry.sourcemap).into_vec() },
+                MutableString {
+                    list: core::mem::take(&mut entry.sourcemap).into_vec(),
+                },
             );
 
             if bun_core::env::DUMP_SOURCE {
@@ -1131,9 +1163,7 @@ impl TranspilerJob {
             // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper = unsafe {
-                SourceMapHandlerGetter::from_raw(vm, &raw mut printer)
-            };
+            let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
             let _writeback = scopeguard::guard(
                 (
                     std::ptr::from_mut::<BufferPrinter>(source_code_printer),
@@ -1142,7 +1172,8 @@ impl TranspilerJob {
                 |(dst, src)| {
                     // SAFETY: both pointees outlive this scope; no aliases at drop.
                     unsafe {
-                        *dst = core::mem::replace(&mut *src, BufferPrinter::init(BufferWriter::init()))
+                        *dst =
+                            core::mem::replace(&mut *src, BufferPrinter::init(BufferWriter::init()))
                     };
                 },
             );

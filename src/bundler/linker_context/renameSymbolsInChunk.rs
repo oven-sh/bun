@@ -2,9 +2,9 @@ use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
-use crate::bundled_ast::{Flags as AstFlags};
-use bun_ast::symbol;
+use crate::bundled_ast::Flags as AstFlags;
 use bun_ast::StmtData;
+use bun_ast::symbol;
 use bun_ast::{Part, SlotCounts};
 
 use crate::bun_renamer as renamer;
@@ -180,8 +180,11 @@ pub unsafe fn rename_symbols_in_chunk(
             slots
         };
 
-        let mut minify_renamer =
-            MinifyRenamer::init(make_symbols_view(symbols), first_top_level_slots, reserved_names)?;
+        let mut minify_renamer = MinifyRenamer::init(
+            make_symbols_view(symbols),
+            first_top_level_slots,
+            reserved_names,
+        )?;
 
         let mut top_level_symbols: Vec<StableSymbolCount> = Vec::new();
         let mut top_level_symbols_all: Vec<StableSymbolCount> = Vec::new();

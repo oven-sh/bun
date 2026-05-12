@@ -15,7 +15,7 @@ use bun_uws::NewSocketHandler;
 // `bun_uws` crate defines its own (distinct) mirrors of both; mixing them is a
 // type error.
 use bun_uws_sys::socket_group::VTable;
-use bun_uws_sys::{us_bun_verify_error_t, us_socket_t, vtable, ConnectingSocket, SocketKind};
+use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
 
 use super::uws_handlers as handlers;
 
@@ -47,16 +47,20 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         // Bun.connect / Bun.listen
         t[SocketKind::BunSocketTcp as usize] = Some(vtable::make::<handlers::BunSocket<false>>());
         t[SocketKind::BunSocketTls as usize] = Some(vtable::make::<handlers::BunSocket<true>>());
-        t[SocketKind::BunListenerTcp as usize] = Some(vtable::make::<handlers::BunListener<false>>());
-        t[SocketKind::BunListenerTls as usize] = Some(vtable::make::<handlers::BunListener<true>>());
+        t[SocketKind::BunListenerTcp as usize] =
+            Some(vtable::make::<handlers::BunListener<false>>());
+        t[SocketKind::BunListenerTls as usize] =
+            Some(vtable::make::<handlers::BunListener<true>>());
 
         // HTTP client thread
         t[SocketKind::HttpClient as usize] = Some(vtable::make::<handlers::HTTPClient<false>>());
         t[SocketKind::HttpClientTls as usize] = Some(vtable::make::<handlers::HTTPClient<true>>());
 
         // WebSocket client
-        t[SocketKind::WsClientUpgrade as usize] = Some(vtable::make::<handlers::WSUpgrade<false>>());
-        t[SocketKind::WsClientUpgradeTls as usize] = Some(vtable::make::<handlers::WSUpgrade<true>>());
+        t[SocketKind::WsClientUpgrade as usize] =
+            Some(vtable::make::<handlers::WSUpgrade<false>>());
+        t[SocketKind::WsClientUpgradeTls as usize] =
+            Some(vtable::make::<handlers::WSUpgrade<true>>());
         t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
         t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
 
@@ -129,7 +133,11 @@ pub extern "C" fn us_dispatch_open(
     ip: *mut u8,
     ip_len: c_int,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_open { unsafe { f(s, is_client, ip, ip_len) } } else { s }
+    if let Some(f) = vt(s).on_open {
+        unsafe { f(s, is_client, ip, ip_len) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -138,17 +146,29 @@ pub extern "C" fn us_dispatch_data(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_data { unsafe { f(s, data, len) } } else { s }
+    if let Some(f) = vt(s).on_data {
+        unsafe { f(s, data, len) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_fd { unsafe { f(s, fd) } } else { s }
+    if let Some(f) = vt(s).on_fd {
+        unsafe { f(s, fd) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_writable(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_writable { unsafe { f(s) } } else { s }
+    if let Some(f) = vt(s).on_writable {
+        unsafe { f(s) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -157,27 +177,47 @@ pub extern "C" fn us_dispatch_close(
     code: c_int,
     reason: *mut c_void,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_close { unsafe { f(s, code, reason) } } else { s }
+    if let Some(f) = vt(s).on_close {
+        unsafe { f(s, code, reason) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_timeout { unsafe { f(s) } } else { s }
+    if let Some(f) = vt(s).on_timeout {
+        unsafe { f(s) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_long_timeout { unsafe { f(s) } } else { s }
+    if let Some(f) = vt(s).on_long_timeout {
+        unsafe { f(s) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_end { unsafe { f(s) } } else { s }
+    if let Some(f) = vt(s).on_end {
+        unsafe { f(s) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_connect_error { unsafe { f(s, code) } } else { s }
+    if let Some(f) = vt(s).on_connect_error {
+        unsafe { f(s, code) }
+    } else {
+        s
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -185,7 +225,11 @@ pub extern "C" fn us_dispatch_connecting_error(
     c: *mut ConnectingSocket,
     code: c_int,
 ) -> *mut ConnectingSocket {
-    if let Some(f) = vtc(c).on_connecting_error { unsafe { f(c, code) } } else { c }
+    if let Some(f) = vtc(c).on_connecting_error {
+        unsafe { f(c, code) }
+    } else {
+        c
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -225,9 +269,8 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         let raw: *mut TLSSocket = raw.as_ptr();
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
-        let slice = unsafe {
-            core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0"))
-        };
+        let slice =
+            unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
         // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing

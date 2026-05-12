@@ -4,14 +4,16 @@ use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr};
-use bun_paths::resolve_path::{self, platform, Platform};
-use bun_sys::{dir_iterator, FdExt, E};
+use bun_paths::resolve_path::{self, Platform, platform};
+use bun_sys::{E, FdExt, dir_iterator};
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
-use crate::shell::interpreter::{shell_openat, EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask};
+use crate::shell::interpreter::{
+    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_openat,
+};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Rm {
@@ -29,7 +31,9 @@ pub enum RmState {
     },
     /// Spec rm.zig `.exec`.
     Exec(ExecState),
-    Done { exit_code: ExitCode },
+    Done {
+        exit_code: ExitCode,
+    },
     WaitingWriteErr,
     Err(ExitCode),
 }
@@ -110,12 +114,20 @@ impl Rm {
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
-            enum Tag { Idle, ParseOpts(u32, bool), Exec, Done(ExitCode), Err(ExitCode), WaitErr }
+            enum Tag {
+                Idle,
+                ParseOpts(u32, bool),
+                Exec,
+                Done(ExitCode),
+                Err(ExitCode),
+                WaitErr,
+            }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
-                RmState::ParseOpts { idx, wait_write_err } => {
-                    Tag::ParseOpts(*idx, *wait_write_err)
-                }
+                RmState::ParseOpts {
+                    idx,
+                    wait_write_err,
+                } => Tag::ParseOpts(*idx, *wait_write_err),
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
                 RmState::Err(c) => Tag::Err(*c),
@@ -124,8 +136,10 @@ impl Rm {
             match tag {
                 Tag::WaitErr => return Yield::suspended(),
                 Tag::Idle => {
-                    Self::state_mut(interp, cmd).state =
-                        RmState::ParseOpts { idx: 0, wait_write_err: false };
+                    Self::state_mut(interp, cmd).state = RmState::ParseOpts {
+                        idx: 0,
+                        wait_write_err: false,
+                    };
                     continue;
                 }
                 Tag::ParseOpts(idx, wait_write_err) => {
@@ -173,10 +187,10 @@ impl Rm {
                                 let cwd = match bun_sys::getcwd_z(&mut buf) {
                                     Ok(c) => c.as_bytes().to_vec(),
                                     Err(err) => {
-                                        let msg = err
-                                            .msg()
-                                            .map(bstr::BStr::new)
-                                            .unwrap_or_else(|| bstr::BStr::new(b"failed to get cwd"));
+                                        let msg =
+                                            err.msg().map(bstr::BStr::new).unwrap_or_else(|| {
+                                                bstr::BStr::new(b"failed to get cwd")
+                                            });
                                         let buf = Builtin::fmt_error_arena(
                                             interp,
                                             cmd,
@@ -190,14 +204,17 @@ impl Rm {
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    let resolved: &[u8] =
-                                        if Platform::AUTO.is_absolute(path) {
-                                            path
-                                        } else {
-                                            resolve_path::join::<platform::Auto>(&[&cwd, path])
-                                        };
-                                    let normalized = resolve_path::normalize_string::<false, platform::Auto>(resolved);
-                                    let dirname = resolve_path::dirname::<platform::Auto>(normalized);
+                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
+                                        path
+                                    } else {
+                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
+                                    };
+                                    let normalized = resolve_path::normalize_string::<
+                                        false,
+                                        platform::Auto,
+                                    >(resolved);
+                                    let dirname =
+                                        resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {
                                         // PORT NOTE: reshaped for borrowck — copy resolved before
                                         // re-borrowing `interp` mutably.
@@ -206,17 +223,22 @@ impl Rm {
                                             Builtin::of(interp, cmd).stderr.needs_io()
                                         {
                                             Self::state_mut(interp, cmd).state =
-                                                RmState::ParseOpts { idx, wait_write_err: true };
+                                                RmState::ParseOpts {
+                                                    idx,
+                                                    wait_write_err: true,
+                                                };
                                             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
-                                                child,
-                                                Some(Kind::Rm),
-                                                format_args!(
-                                                    "\"{}\" may not be removed\n",
-                                                    bstr::BStr::new(&resolved_owned)
-                                                ),
-                                                safeguard,
-                                            );
+                                            return Builtin::of_mut(interp, cmd)
+                                                .stderr
+                                                .enqueue_fmt(
+                                                    child,
+                                                    Some(Kind::Rm),
+                                                    format_args!(
+                                                        "\"{}\" may not be removed\n",
+                                                        bstr::BStr::new(&resolved_owned)
+                                                    ),
+                                                    safeguard,
+                                                );
                                         }
                                         let buf = Builtin::fmt_error_arena(
                                             interp,
@@ -228,7 +250,8 @@ impl Rm {
                                             ),
                                         )
                                         .to_vec();
-                                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
+                                        let _ =
+                                            Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                                         return Builtin::done(interp, cmd, 1);
                                     }
                                 }
@@ -257,8 +280,10 @@ impl Rm {
                         }
                         RmParseFlag::IllegalOptionWithFlag => {
                             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-                                Self::state_mut(interp, cmd).state =
-                                    RmState::ParseOpts { idx, wait_write_err: true };
+                                Self::state_mut(interp, cmd).state = RmState::ParseOpts {
+                                    idx,
+                                    wait_write_err: true,
+                                };
                                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                                 return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
                                     child,
@@ -274,10 +299,7 @@ impl Rm {
                                 interp,
                                 cmd,
                                 Some(Kind::Rm),
-                                format_args!(
-                                    "illegal option -- {}\n",
-                                    bstr::BStr::new(&arg[1..])
-                                ),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
                             )
                             .to_vec();
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
@@ -297,7 +319,9 @@ impl Rm {
                         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
                             let me = Self::state_mut(interp, cmd);
-                            let RmState::Exec(e) = &mut me.state else { unreachable!() };
+                            let RmState::Exec(e) = &mut me.state else {
+                                unreachable!()
+                            };
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
@@ -312,7 +336,14 @@ impl Rm {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let is_absolute = Platform::AUTO.is_absolute(root);
                             let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, is_absolute, evtloop,
+                                cmd,
+                                opts,
+                                root,
+                                cwd,
+                                sig,
+                                out_count,
+                                is_absolute,
+                                evtloop,
                                 interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
@@ -327,15 +358,12 @@ impl Rm {
         }
     }
 
-    fn write_err_literal(
-        interp: &Interpreter,
-        cmd: NodeId,
-        idx: u32,
-        buf: &[u8],
-    ) -> Yield {
+    fn write_err_literal(interp: &Interpreter, cmd: NodeId, idx: u32, buf: &[u8]) -> Yield {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state =
-                RmState::ParseOpts { idx, wait_write_err: true };
+            Self::state_mut(interp, cmd).state = RmState::ParseOpts {
+                idx,
+                wait_write_err: true,
+            };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stderr
@@ -399,11 +427,7 @@ impl Rm {
     }
 
     /// Spec: rm.zig `onShellRmTaskDone`.
-    pub fn on_shell_rm_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellRmTask,
-    ) {
+    pub fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
@@ -454,7 +478,11 @@ impl Rm {
         if tasks_done >= total && all_out {
             let code = match &Self::state_mut(interp, cmd).state {
                 RmState::Exec(exec) => {
-                    if exec.err.is_some() { 1 } else { 0 }
+                    if exec.err.is_some() {
+                        1
+                    } else {
+                        0
+                    }
                 }
                 _ => 0,
             };
@@ -504,7 +532,13 @@ impl Rm {
         };
         if done {
             let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => if exec.err.is_some() { 1 } else { 0 },
+                RmState::Exec(exec) => {
+                    if exec.err.is_some() {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 _ => 0,
             };
             return Builtin::done(interp, cmd, code);
@@ -601,7 +635,11 @@ impl JoinStyle {
         }
         let backslash = p.iter().position(|&c| c == b'\\').unwrap_or(usize::MAX);
         let forwardslash = p.iter().position(|&c| c == b'/').unwrap_or(usize::MAX);
-        if forwardslash <= backslash { JoinStyle::Posix } else { JoinStyle::Windows }
+        if forwardslash <= backslash {
+            JoinStyle::Posix
+        } else {
+            JoinStyle::Windows
+        }
     }
 }
 
@@ -790,7 +828,11 @@ impl ShellRmTask {
     pub unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
         // SAFETY: caller contract; paired with `heap::alloc` in `create`.
         unsafe {
-            if (*this).pending_main_callbacks.fetch_sub(1, Ordering::SeqCst) == 1 {
+            if (*this)
+                .pending_main_callbacks
+                .fetch_sub(1, Ordering::SeqCst)
+                == 1
+            {
                 drop(bun_core::heap::take(this));
             }
         }
@@ -916,7 +958,11 @@ impl ShellRmTask {
                     if !matches!(out.last(), Some(&c) if is_sep(c)) {
                         out.push(bun_paths::SEP);
                     }
-                    let p = if matches!(p.first(), Some(&c) if is_sep(c)) { &p[1..] } else { p };
+                    let p = if matches!(p.first(), Some(&c) if is_sep(c)) {
+                        &p[1..]
+                    } else {
+                        p
+                    };
                     out.extend_from_slice(p);
                 }
             }
@@ -1016,8 +1062,9 @@ impl ShellRmTask {
         }
 
         if !self.opts.recursive {
-            return Err(bun_sys::Error::from_code(E::EISDIR, bun_sys::Tag::TODO)
-                .with_path(path.as_bytes()));
+            return Err(
+                bun_sys::Error::from_code(E::EISDIR, bun_sys::Tag::TODO).with_path(path.as_bytes())
+            );
         }
 
         let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY;
@@ -1073,7 +1120,12 @@ impl ShellRmTask {
             i += 1;
             match current.kind {
                 bun_sys::EntryKind::Directory => {
-                    self.enqueue(dir_task, current.name.slice_u8(), is_absolute, EntryKindHint::Dir);
+                    self.enqueue(
+                        dir_task,
+                        current.name.slice_u8(),
+                        is_absolute,
+                        EntryKindHint::Dir,
+                    );
                 }
                 _ => {
                     let name = current.name.slice_u8();
@@ -1123,7 +1175,9 @@ impl ShellRmTask {
         #[cfg(windows)]
         {
             // Close BEFORE deleting on Windows.
-            if let Some(f) = close_fd.take() { f.close(); }
+            if let Some(f) = close_fd.take() {
+                f.close();
+            }
         }
 
         match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
@@ -1241,8 +1295,12 @@ impl ShellRmTask {
                                 Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
                                 Err(e2) => match e2.get_errno() {
                                     // not empty, process directory as we would normally
-                                    E::ENOTEMPTY => vtable
-                                        .on_dir_not_empty(parent_dir_task, path, is_absolute, buf),
+                                    E::ENOTEMPTY => vtable.on_dir_not_empty(
+                                        parent_dir_task,
+                                        path,
+                                        is_absolute,
+                                        buf,
+                                    ),
                                     // actually a file, the error is a permissions error
                                     E::ENOTDIR => Err(self.error_with_path(e, path.as_bytes())),
                                     _ => Err(self.error_with_path(e2, path.as_bytes())),
@@ -1286,7 +1344,9 @@ impl DirTask {
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `work_task` is at a fixed offset within DirTask; `this` is a
         // live DirTask owned by this worker thread.
-        unsafe { Self::run_from_thread_pool_impl(bun_core::from_field_ptr!(DirTask, work_task, task)) };
+        unsafe {
+            Self::run_from_thread_pool_impl(bun_core::from_field_ptr!(DirTask, work_task, task))
+        };
     }
 
     /// Spec: rm.zig `DirTask.runFromThreadPoolImpl`.
@@ -1405,8 +1465,7 @@ impl DirTask {
                     // (Acquire suffices) so observing `true` establishes the
                     // ownership hand-off and makes the parent's
                     // `deleted_entries` writes visible.
-                    let parent_still_in_remove_entry_dir =
-                        !p.need_to_wait.load(Ordering::SeqCst);
+                    let parent_still_in_remove_entry_dir = !p.need_to_wait.load(Ordering::SeqCst);
                     if !parent_still_in_remove_entry_dir && tasks_left == 2 {
                         Self::delete_after_waiting_for_children(me.parent_task);
                     }
@@ -1445,7 +1504,9 @@ impl DirTask {
         // does not overlap any DirTask borrow.
         unsafe {
             // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
-            (*this).deleting_after_waiting_for_children.store(true, Ordering::SeqCst);
+            (*this)
+                .deleting_after_waiting_for_children
+                .store(true, Ordering::SeqCst);
             (*this).need_to_wait.store(false, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;
@@ -1497,7 +1558,9 @@ impl DirTask {
         let task_ptr = match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                EventLoopTaskPtr { js: std::ptr::from_mut(ct) }
+                EventLoopTaskPtr {
+                    js: std::ptr::from_mut(ct),
+                }
             }
             EventLoopTask::Mini(at) => EventLoopTaskPtr {
                 mini: at.from(this, dir_task_run_from_main_thread_mini),
@@ -1562,10 +1625,22 @@ trait RemoveFileHandler {
 
 struct DummyRemoveFile;
 impl RemoveFileHandler for DummyRemoveFile {
-    fn on_is_dir(&mut self, _: *mut DirTask, _: &ZStr, _: bool, _: &mut bun_paths::PathBuffer) -> bun_sys::Maybe<()> {
+    fn on_is_dir(
+        &mut self,
+        _: *mut DirTask,
+        _: &ZStr,
+        _: bool,
+        _: &mut bun_paths::PathBuffer,
+    ) -> bun_sys::Maybe<()> {
         Ok(())
     }
-    fn on_dir_not_empty(&mut self, _: *mut DirTask, _: &ZStr, _: bool, _: &mut bun_paths::PathBuffer) -> bun_sys::Maybe<()> {
+    fn on_dir_not_empty(
+        &mut self,
+        _: *mut DirTask,
+        _: &ZStr,
+        _: bool,
+        _: &mut bun_paths::PathBuffer,
+    ) -> bun_sys::Maybe<()> {
         Ok(())
     }
 }
@@ -1589,8 +1664,11 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
-            self.task
-                .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
+            self.task.enqueue_no_join(
+                parent,
+                ZBox::from_bytes(path.as_bytes()),
+                EntryKindHint::Dir,
+            );
             return Ok(());
         }
         // `child_of_dir == false` is only constructed in `remove_entry`, which
@@ -1609,8 +1687,11 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
-            self.task
-                .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
+            self.task.enqueue_no_join(
+                parent,
+                ZBox::from_bytes(path.as_bytes()),
+                EntryKindHint::Dir,
+            );
             return Ok(());
         }
         // See `on_is_dir`.
@@ -1629,7 +1710,13 @@ struct RemoveFileParent<'a> {
     enqueued: bool,
 }
 impl RemoveFileHandler for RemoveFileParent<'_> {
-    fn on_is_dir(&mut self, _: *mut DirTask, _: &ZStr, _: bool, _: &mut bun_paths::PathBuffer) -> bun_sys::Maybe<()> {
+    fn on_is_dir(
+        &mut self,
+        _: *mut DirTask,
+        _: &ZStr,
+        _: bool,
+        _: &mut bun_paths::PathBuffer,
+    ) -> bun_sys::Maybe<()> {
         self.treat_as_dir = true;
         Ok(())
     }
@@ -1642,8 +1729,11 @@ impl RemoveFileHandler for RemoveFileParent<'_> {
     ) -> bun_sys::Maybe<()> {
         self.treat_as_dir = true;
         if self.allow_enqueue {
-            self.task
-                .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
+            self.task.enqueue_no_join(
+                parent,
+                ZBox::from_bytes(path.as_bytes()),
+                EntryKindHint::Dir,
+            );
             self.enqueued = true;
         }
         Ok(())

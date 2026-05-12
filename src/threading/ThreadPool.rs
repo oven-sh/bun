@@ -28,12 +28,10 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{
-    AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
-};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use bun_core::Output;
 use crate::{Futex, WaitGroup};
+use bun_core::Output;
 
 /// Debug instrumentation: when `BUN_THREADPOOL_STATS=1`, each pool records
 /// aggregate worker idle/busy nanoseconds and dumps them on drop. Zero-cost
@@ -116,8 +114,7 @@ impl Sync {
     }
     #[inline]
     fn set_spawned(&mut self, v: u16) {
-        self.0 = (self.0 & !Self::SPAWNED_MASK)
-            | ((v as u32 & 0x3FFF) << Self::SPAWNED_SHIFT);
+        self.0 = (self.0 & !Self::SPAWNED_MASK) | ((v as u32 & 0x3FFF) << Self::SPAWNED_SHIFT);
     }
     #[inline]
     fn notified(self) -> bool {
@@ -270,14 +267,22 @@ impl ThreadPool {
         let last = self.stats.last_dump_ns.swap(now, Ordering::Relaxed);
         let spawned = self.sync.load(Ordering::Relaxed).spawned();
         let total = idle + busy;
-        let util = if total > 0 { (busy as f64 / total as f64) * 100.0 } else { 0.0 };
+        let util = if total > 0 {
+            (busy as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
         // Effective parallelism over the wall-clock window: how many CPUs the
         // pool kept busy on average. This is the number to compare against
         // `perf stat`'s "CPUs utilized" — `util` alone is misleading because
         // a worker that is futex-asleep while the orchestrator does serial
         // work is correctly counted as 100% idle.
         let wall = if last == 0 { 0 } else { now.wrapping_sub(last) };
-        let eff = if wall > 0 { busy as f64 / wall as f64 } else { 0.0 };
+        let eff = if wall > 0 {
+            busy as f64 / wall as f64
+        } else {
+            0.0
+        };
         eprintln!(
             "[threadpool {}] workers={} tasks={} wall={:.3}s busy={:.3}s idle={:.3}s util={:.1}% eff_cpus={:.2} sleeps={}",
             label,
@@ -343,7 +348,10 @@ impl Default for Task {
         fn unreachable_cb(_: *mut Task) {
             unreachable!("ThreadPool.Task scheduled with default() callback");
         }
-        Task { node: Node::default(), callback: unreachable_cb }
+        Task {
+            node: Node::default(),
+            callback: unreachable_cb,
+        }
     }
 }
 
@@ -378,9 +386,7 @@ impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check; the
         // atomic load mirrors Zig's `@atomicLoad(usize, &this.len, .monotonic)`.
-        let len = unsafe {
-            (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed)
-        };
+        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
         if len == 0 {
             return None;
         }
@@ -424,7 +430,9 @@ impl Batch {
             *self = batch;
         } else {
             let tail_node = Task::node_of(self.tail.unwrap());
-            let new_next = batch.head.map_or(ptr::null_mut(), |h| Task::node_of(h).as_ptr());
+            let new_next = batch
+                .head
+                .map_or(ptr::null_mut(), |h| Task::node_of(h).as_ptr());
             // SAFETY: self.len != 0 implies tail is Some; intrusive list link assignment.
             unsafe { (*tail_node.as_ptr()).next = new_next };
             self.tail = batch.tail;
@@ -527,9 +535,8 @@ impl ThreadPool {
         // which encodes the `comptime as_ptr` branch (ByValue vs ByPtr).
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
-            let runner_task = unsafe {
-                &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task)
-            };
+            let runner_task =
+                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
             // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
@@ -614,7 +621,10 @@ impl ThreadPool {
             // `current` is the calling worker's own stack-local `Thread` (set in
             // `ThreadRegistration::new`); BackRef invariant — pointee outlives
             // this read — holds for the `thread_pool` field load.
-            if bun_ptr::BackRef::from(current).thread_pool.as_ptr().cast_const()
+            if bun_ptr::BackRef::from(current)
+                .thread_pool
+                .as_ptr()
+                .cast_const()
                 == std::ptr::from_ref::<ThreadPool>(self)
             {
                 current.as_ptr()
@@ -720,7 +730,10 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
         let size = DEFAULT - (DEFAULT % PAGE_SIZE_MAX);
         // stack size must be a multiple of page_size
         // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-        assert!(size % PAGE_SIZE_MAX == 0, "Thread stack size is not a multiple of page size");
+        assert!(
+            size % PAGE_SIZE_MAX == 0,
+            "Thread stack size is not a multiple of page size"
+        );
         size
     }
 };
@@ -743,12 +756,10 @@ impl ThreadPool {
         while sync.spawned() < target {
             let mut new_sync = sync;
             new_sync.set_spawned(new_sync.spawned() + 1);
-            if let Some(current) = self.sync.cmpxchg_weak(
-                sync,
-                new_sync,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
+            if let Some(current) =
+                self.sync
+                    .cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed)
+            {
                 sync = current;
                 continue;
             }
@@ -798,40 +809,41 @@ impl ThreadPool {
 
             // Release barrier synchronizes with Acquire in wait()
             // to ensure pushes to run queues happen before observing a posted notification.
-            sync = match self.sync.cmpxchg_weak(
-                sync,
-                new_sync,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Some(cur) => cur,
-                None => {
-                    // We signaled to notify an idle thread
-                    if can_wake && sync.idle() > 0 {
-                        return self.idle_event.notify();
-                    }
-
-                    // We signaled to spawn a new thread
-                    if can_wake && (sync.spawned() as u32) < self.max_threads {
-                        let stack_size = self.stack_size as usize;
-                        // `BackRef<ThreadPool>: Send`; see `warm()`.
-                        let pool = bun_ptr::BackRef::new(self);
-                        match std::thread::Builder::new()
-                            .stack_size(stack_size)
-                            .spawn(move || Thread::run(pool))
-                        {
-                            Ok(_handle) => {
-                                // detach by dropping
-                            }
-                            Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
+            sync =
+                match self
+                    .sync
+                    .cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed)
+                {
+                    Some(cur) => cur,
+                    None => {
+                        // We signaled to notify an idle thread
+                        if can_wake && sync.idle() > 0 {
+                            return self.idle_event.notify();
                         }
-                        // if (self.name.len > 0) thread.setName(self.name) catch {};
+
+                        // We signaled to spawn a new thread
+                        if can_wake && (sync.spawned() as u32) < self.max_threads {
+                            let stack_size = self.stack_size as usize;
+                            // `BackRef<ThreadPool>: Send`; see `warm()`.
+                            let pool = bun_ptr::BackRef::new(self);
+                            match std::thread::Builder::new()
+                                .stack_size(stack_size)
+                                .spawn(move || Thread::run(pool))
+                            {
+                                Ok(_handle) => {
+                                    // detach by dropping
+                                }
+                                Err(_) => {
+                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                                }
+                            }
+                            // if (self.name.len > 0) thread.setName(self.name) catch {};
+                            return;
+                        }
+
                         return;
                     }
-
-                    return;
-                }
-            };
+                };
         }
     }
 
@@ -921,12 +933,10 @@ impl ThreadPool {
             new_sync.set_idle(0);
 
             // Full barrier to synchronize with both wait() and notify()
-            sync = match self.sync.cmpxchg_weak(
-                sync,
-                new_sync,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
+            sync = match self
+                .sync
+                .cmpxchg_weak(sync, new_sync, Ordering::AcqRel, Ordering::Relaxed)
+            {
                 Some(cur) => cur,
                 None => {
                     // Wake up any threads sleeping on the idle_event.
@@ -1022,7 +1032,8 @@ impl ThreadPool {
         // Use swap (not load) so join() is idempotent: a second call (e.g., from
         // wait_and_deinit() followed by Drop) sees null and returns instead of
         // touching freed worker stack memory.
-        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire)) else {
+        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
+        else {
             return;
         };
         // `thread` is a registered worker blocked in `join_event.wait()`;
@@ -1068,7 +1079,10 @@ impl ThreadRegistration {
     unsafe fn new(pool: &ThreadPool, thread: *mut Thread) -> Self {
         CURRENT.with(|c| c.set(thread));
         pool.register(thread);
-        Self { pool: bun_ptr::BackRef::new(pool), thread }
+        Self {
+            pool: bun_ptr::BackRef::new(pool),
+            thread,
+        }
     }
 }
 
@@ -1094,11 +1108,19 @@ fn now_ns() -> u64 {
         // the only pointer-validity precondition, so `safe fn` discharges the
         // link-time proof and the call needs no `unsafe` block.
         unsafe extern "C" {
-            safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+            safe fn clock_gettime(
+                clk_id: libc::clockid_t,
+                tp: &mut libc::timespec,
+            ) -> core::ffi::c_int;
         }
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
-        (ts.tv_sec as u64).wrapping_mul(1_000_000_000).wrapping_add(ts.tv_nsec as u64)
+        (ts.tv_sec as u64)
+            .wrapping_mul(1_000_000_000)
+            .wrapping_add(ts.tv_nsec as u64)
     }
     #[cfg(not(unix))]
     {
@@ -1128,7 +1150,9 @@ impl Thread {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
-        unsafe extern "C" { safe fn mi_thread_set_in_threadpool(); }
+        unsafe extern "C" {
+            safe fn mi_thread_set_in_threadpool();
+        }
         mi_thread_set_in_threadpool();
 
         {
@@ -1193,7 +1217,9 @@ impl Thread {
                 Err(_) => return,
             };
             if stats {
-                pool.stats.idle_ns.fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
+                pool.stats
+                    .idle_ns
+                    .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
             // SAFETY: self_ptr is our own stack-local Thread.
@@ -1209,7 +1235,9 @@ impl Thread {
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
                 if stats {
-                    pool.stats.busy_ns.fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
+                    pool.stats
+                        .busy_ns
+                        .fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
                     pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
                 pool.wait_group.finish();
@@ -1476,9 +1504,8 @@ pub mod node {
         const IS_CONSUMING: usize = 0b10;
         const PTR_MASK: usize = !(Self::HAS_CACHE | Self::IS_CONSUMING);
 
-        const _ALIGN_CHECK: () = assert!(
-            core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1)
-        );
+        const _ALIGN_CHECK: () =
+            assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
 
         pub(super) fn push(&self, list: List) {
             let mut stack = self.stack.load(Ordering::Relaxed);
@@ -1614,7 +1641,10 @@ pub mod node {
 
     // `Buffer` is auto-`Send + Sync`: every field is an atomic
     // (`AtomicU32`/`AtomicPtr<Node>`). No `unsafe impl` needed.
-    const _: fn() = || { fn assert<T: Send + core::marker::Sync>() {} assert::<Buffer>(); };
+    const _: fn() = || {
+        fn assert<T: Send + core::marker::Sync>() {}
+        assert::<Buffer>();
+    };
 
     impl Default for Buffer {
         fn default() -> Self {
@@ -1666,8 +1696,7 @@ pub mod node {
 
                         // Array written atomically with weakest ordering since it could be getting atomically read by steal().
                         // PORT NOTE: Zig .unordered → Relaxed (Rust has no Unordered).
-                        self.array[(tail as usize) % CAPACITY]
-                            .store(node, Ordering::Relaxed);
+                        self.array[(tail as usize) % CAPACITY].store(node, Ordering::Relaxed);
                         tail = tail.wrapping_add(1);
                         size += 1;
                     }
@@ -1710,8 +1739,7 @@ pub mod node {
                         }
 
                         // Append the list that was supposed to be pushed to the end of the migrated Nodes
-                        let last =
-                            self.array_raw((head.wrapping_sub(1) as usize) % CAPACITY);
+                        let last = self.array_raw((head.wrapping_sub(1) as usize) % CAPACITY);
                         // SAFETY: last is the last migrated node; list.head/tail are caller-owned.
                         unsafe {
                             (*last).next = list.head.as_ptr();
@@ -1795,15 +1823,15 @@ pub mod node {
                         return None;
                     }
                     pushed -= 1;
-                    break 'blk self
-                        .array_raw((tail.wrapping_add(pushed) as usize) % CAPACITY);
+                    break 'blk self.array_raw((tail.wrapping_add(pushed) as usize) % CAPACITY);
                 }
             };
 
             // Update the array tail with the nodes we pushed to it.
             // Release barrier to synchronize with Acquire barrier in steal()'s to see the written array Nodes.
             if pushed > 0 {
-                self.tail.store(tail.wrapping_add(pushed), Ordering::Release);
+                self.tail
+                    .store(tail.wrapping_add(pushed), Ordering::Release);
             }
             Some(Stole {
                 // SAFETY: node is non-null (from queue.pop or array slot we wrote).
@@ -1843,8 +1871,7 @@ pub mod node {
                 // Atomic store to our array as other steal() threads may be atomically loading from it as above.
                 for i in 0..steal_size {
                     // PORT NOTE: Zig .unordered → Relaxed.
-                    let node = buffer.array
-                        [(buffer_head.wrapping_add(i) as usize) % CAPACITY]
+                    let node = buffer.array[(buffer_head.wrapping_add(i) as usize) % CAPACITY]
                         .load(Ordering::Relaxed);
                     self.array[(tail.wrapping_add(i) as usize) % CAPACITY]
                         .store(node, Ordering::Relaxed);
@@ -1866,8 +1893,7 @@ pub mod node {
                     Ok(_) => {
                         // Pop one from the nodes we stole as we'll be returning it
                         let pushed = steal_size - 1;
-                        let node = self
-                            .array_raw((tail.wrapping_add(pushed) as usize) % CAPACITY);
+                        let node = self.array_raw((tail.wrapping_add(pushed) as usize) % CAPACITY);
 
                         // Update the array tail with the nodes we pushed to it.
                         // Release barrier to synchronize with Acquire barrier in steal()'s to see the written array Nodes.

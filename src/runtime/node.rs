@@ -22,9 +22,9 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    js_assert_encoding_valid, mode_from_js, BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding,
-    FileSystemFlags, PathLike, PathOrBlob, PathOrBuffer, PathOrFileDescriptor, StringOrBuffer,
-    Valid, VectorArrayBuffer,
+    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
+    PathOrBuffer, PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer,
+    js_assert_encoding_valid, mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -64,7 +64,7 @@ pub use statfs::{StatFS, StatFSBig, StatFSSmall};
 
 #[path = "node/time_like.rs"]
 pub mod time_like;
-pub use time_like::{from_js as time_like_from_js, TimeLike};
+pub use time_like::{TimeLike, from_js as time_like_from_js};
 
 #[path = "node/dir_iterator.rs"]
 pub mod dir_iterator;
@@ -72,16 +72,16 @@ pub mod dir_iterator;
 #[path = "node/node_fs_constant.rs"]
 pub mod node_fs_constant;
 
-#[path = "node/util/validators.rs"]
-pub mod validators_impl;
-#[path = "node/util/parse_args_utils.rs"]
-pub mod parse_args_utils;
 #[path = "node/util/parse_args.rs"]
 pub mod parse_args_impl;
+#[path = "node/util/parse_args_utils.rs"]
+pub mod parse_args_utils;
+#[path = "node/util/validators.rs"]
+pub mod validators_impl;
 pub mod util {
-    pub use super::validators_impl as validators;
     pub use super::parse_args_impl as parse_args;
     pub use super::parse_args_utils;
+    pub use super::validators_impl as validators;
 }
 pub use util::validators;
 
@@ -113,15 +113,15 @@ pub mod win_watcher;
 // — force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
 // for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
 // `#[no_mangle]` exports are never compiled into the binary.
+#[path = "node/node_fs_binding.rs"]
+pub mod node_fs_binding;
+#[path = "node/node_fs_stat_watcher.rs"]
+pub mod node_fs_stat_watcher;
+#[path = "node/node_fs_watcher.rs"]
+pub mod node_fs_watcher;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;
-#[path = "node/node_fs_watcher.rs"]
-pub mod node_fs_watcher;
-#[path = "node/node_fs_stat_watcher.rs"]
-pub mod node_fs_stat_watcher;
-#[path = "node/node_fs_binding.rs"]
-pub mod node_fs_binding;
 
 // ─── un-gated in B-2 round 3 (net/zlib/buffer; JSC bodies re-gated inside) ───
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
@@ -160,18 +160,18 @@ pub mod net {
     pub use super::block_list_impl as block_list;
 }
 
-#[path = "node/zlib/NativeZlib.rs"]
-pub mod native_zlib_impl;
 #[path = "node/zlib/NativeBrotli.rs"]
 pub mod native_brotli_impl;
+#[path = "node/zlib/NativeZlib.rs"]
+pub mod native_zlib_impl;
 #[path = "node/zlib/NativeZstd.rs"]
 pub mod native_zstd_impl;
 pub mod zlib {
     // Re-export so `super::NodeMode` resolves inside the gated NativeZstd body.
-    pub use bun_zlib::NodeMode;
-    pub use super::native_zlib_impl as native_zlib;
     pub use super::native_brotli_impl as native_brotli;
+    pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;
+    pub use bun_zlib::NodeMode;
     // PORT NOTE: the `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct*
     // re-exports were dropped — those structs live inside each file's private
     // `mod _impl { ... }` (JSC-gated) and are not reachable from here. The only
@@ -356,11 +356,7 @@ pub trait MaybeSysExt<R>: Sized {
         R: Into<Vec<u8>>;
     fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self;
     fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self>;
-    fn errno_sys_fd<Rc: SyscallRc>(
-        rc: Rc,
-        syscall: bun_sys::Tag,
-        fd: bun_sys::Fd,
-    ) -> Option<Self>;
+    fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self>;
     fn errno_sys_p<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
@@ -585,10 +581,7 @@ impl<R> MaybeCssExt<R> for Maybe<R, bun_css::BasicParseError> {
 
 /// `Maybe::to_js` — extension trait now that `Maybe` is a `Result` alias.
 pub trait MaybeToJsExt {
-    fn to_js(
-        self,
-        global_object: &bun_jsc::JSGlobalObject,
-    ) -> bun_jsc::JsResult<bun_jsc::JSValue>;
+    fn to_js(self, global_object: &bun_jsc::JSGlobalObject) -> bun_jsc::JsResult<bun_jsc::JSValue>;
 }
 
 impl<R, E> MaybeToJsExt for Maybe<R, E>
@@ -596,10 +589,7 @@ where
     R: MaybeToJs,
     E: MaybeToJs,
 {
-    fn to_js(
-        self,
-        global_object: &bun_jsc::JSGlobalObject,
-    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    fn to_js(self, global_object: &bun_jsc::JSGlobalObject) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         match self {
             Ok(r) => r.maybe_to_js(global_object),
             Err(e) => e.maybe_to_js(global_object),

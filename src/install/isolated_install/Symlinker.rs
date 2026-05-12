@@ -1,5 +1,5 @@
-use bun_paths;
 use bun_core::strings;
+use bun_paths;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {
@@ -109,12 +109,13 @@ impl Symlinker {
                                         false
                                     };
                                     #[cfg(not(windows))]
-                                    let is_dir =
-                                        if let Some(st) = bun_sys::lstat(self.dest.slice_z()).ok() {
-                                            bun_sys::posix::s_isdir(st.st_mode as u32)
-                                        } else {
-                                            false
-                                        };
+                                    let is_dir = if let Some(st) =
+                                        bun_sys::lstat(self.dest.slice_z()).ok()
+                                    {
+                                        bun_sys::posix::s_isdir(st.st_mode as u32)
+                                    } else {
+                                        false
+                                    };
                                     if is_dir {
                                         return Ok(());
                                     }

@@ -42,8 +42,7 @@ impl FieldDescription {
         // errdefer name.deinit() — deleted: `name` drops on `?` automatically.
 
         // Field name (null-terminated string)
-        let field_name =
-            ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
+        let field_name = ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
         // Table OID (4 bytes)
         // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
         let table_oid = reader.int4()?;

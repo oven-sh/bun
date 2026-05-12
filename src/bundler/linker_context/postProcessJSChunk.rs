@@ -1,24 +1,29 @@
-use crate::mal_prelude::*;
-use bun_alloc::Arena;
-use crate::ungate_support::DeclInfoKind;
-use crate::analyze_transpiled_module::{self, ModuleInfo};
-use bun_js_printer::{self as js_printer, PrintResult};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::LinkerContext;
+use crate::analyze_transpiled_module::{self, ModuleInfo};
+use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::{LoaderExt as _, TargetExt as _};
-use crate::bundle_v2::bake_types::{get_hmr_runtime, HmrRuntimeSide};
+use crate::ungate_support::DeclInfoKind;
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
     ResolvedExports, ThreadPool,
 };
-use bun_collections::VecExt;
+use bun_alloc::Arena;
+use bun_ast::{
+    self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr,
+};
+use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
+use bun_collections::VecExt;
 use bun_core::perf;
-use bun_ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
-use bun_ast::{ImportRecord, ImportRecordTag, ImportRecordFlags};
+use bun_core::{
+    MutableString, immutable as strings,
+    string_joiner::{StringJoiner, Watcher},
+};
+use bun_js_printer::{self as js_printer, PrintResult};
 use bun_sourcemap as SourceMap;
-use bun_core::{immutable as strings, MutableString, string_joiner::{StringJoiner, Watcher}};
 
 use crate::IndexInt;
 
@@ -46,7 +51,10 @@ pub fn post_process_js_chunk(
 
     let _ = chunk_index;
     let c: &mut LinkerContext = ctx.c();
-    debug_assert!(matches!(chunk.content, crate::chunk::Content::Javascript(_)));
+    debug_assert!(matches!(
+        chunk.content,
+        crate::chunk::Content::Javascript(_)
+    ));
 
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
@@ -68,22 +76,32 @@ pub fn post_process_js_chunk(
 
     let runtime_input_file =
         c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope =
-        &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
+    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
     let runtime_members = &mut runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(&b"__toCommonJS"[..]).unwrap().ref_);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
+    let to_common_js_ref = c
+        .graph
+        .symbols
+        .follow(runtime_members.get(&b"__toCommonJS"[..]).unwrap().ref_);
+    let to_esm_ref = c
+        .graph
+        .symbols
+        .follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(&b"__require"[..]).unwrap().ref_))
+        Some(
+            c.graph
+                .symbols
+                .follow(runtime_members.get(&b"__require"[..]).unwrap().ref_),
+        )
     };
 
     // Create ModuleInfo for ESM bytecode in --compile builds
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
-    let loader = c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
+    let loader =
+        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
@@ -128,7 +146,9 @@ pub fn post_process_js_chunk(
                 kind: import_record.import_kind,
                 // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
                 // in-bounds (produced by the linker for this chunks slice).
-                path: bun_paths::fs::Path::init(ctx.chunks[import_record.chunk_index as usize].unique_key),
+                path: bun_paths::fs::Path::init(
+                    ctx.chunks[import_record.chunk_index as usize].unique_key,
+                ),
                 range: bun_ast::Range::NONE,
                 // Remaining fields take their Zig defaults (no Default impl):
                 tag: ImportRecordTag::None,
@@ -156,10 +176,20 @@ pub fn post_process_js_chunk(
 
         // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
-        let prefix_stmts =
-            bun_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
-        let suffix_stmts =
-            bun_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
+        let prefix_stmts = bun_ast::StoreSlice::new_mut(
+            chunk
+                .content
+                .javascript_mut()
+                .cross_chunk_prefix_stmts
+                .slice_mut(),
+        );
+        let suffix_stmts = bun_ast::StoreSlice::new_mut(
+            chunk
+                .content
+                .javascript_mut()
+                .cross_chunk_suffix_stmts
+                .slice_mut(),
+        );
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -224,7 +254,9 @@ pub fn post_process_js_chunk(
         {
             let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get() as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META) {
+                if all_ast_flags[part_range.source_index.get() as usize]
+                    .contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+                {
                     mi.flags.contains_import_meta = true;
                     break;
                 }
@@ -270,7 +302,8 @@ pub fn post_process_js_chunk(
                 continue;
             }
             let source_parts = all_parts[part_range.source_index.get() as usize].slice();
-            let source_import_records = all_import_records[part_range.source_index.get() as usize].slice();
+            let source_import_records =
+                all_import_records[part_range.source_index.get() as usize].slice();
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
                 // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
@@ -299,7 +332,10 @@ pub fn post_process_js_chunk(
 
                             let import_path = record.path.text;
                             let irp_id = mi.str(import_path);
-                            mi.request_module(irp_id, analyze_transpiled_module::ImportAttributes::None);
+                            mi.request_module(
+                                irp_id,
+                                analyze_transpiled_module::ImportAttributes::None,
+                            );
 
                             if let Some(name) = &s.default_name {
                                 if let Some(name_ref) = name.ref_ {
@@ -307,9 +343,17 @@ pub fn post_process_js_chunk(
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
                                     };
-                                    mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                    mi.add_var(
+                                        local_name_id,
+                                        analyze_transpiled_module::VarKind::Lexical,
+                                    );
                                     let default_id = mi.str(b"default");
-                                    mi.add_import_info_single(irp_id, default_id, local_name_id, false);
+                                    mi.add_import_info_single(
+                                        irp_id,
+                                        default_id,
+                                        local_name_id,
+                                        false,
+                                    );
                                 }
                             }
 
@@ -320,19 +364,33 @@ pub fn post_process_js_chunk(
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
                                     };
-                                    mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                    mi.add_var(
+                                        local_name_id,
+                                        analyze_transpiled_module::VarKind::Lexical,
+                                    );
                                     // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
                                     let alias_id = mi.str(item.alias.slice());
-                                    mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
+                                    mi.add_import_info_single(
+                                        irp_id,
+                                        alias_id,
+                                        local_name_id,
+                                        false,
+                                    );
                                 }
                             }
 
-                            if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
+                            if record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                            {
                                 let local_name_id = {
                                     let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
                                     mi.str(local_name)
                                 };
-                                mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                mi.add_var(
+                                    local_name_id,
+                                    analyze_transpiled_module::VarKind::Lexical,
+                                );
                                 mi.add_import_info_namespace(irp_id, local_name_id);
                             }
                         }
@@ -353,7 +411,9 @@ pub fn post_process_js_chunk(
                 if !wrapper_ref.is_empty() {
                     let string_id = {
                         let name = chunk.renamer.name_for_symbol(wrapper_ref);
-                        if name.is_empty() { continue; }
+                        if name.is_empty() {
+                            continue;
+                        }
                         mi.str(name)
                     };
                     mi.add_var(string_id, analyze_transpiled_module::VarKind::Declared);
@@ -420,7 +480,8 @@ pub fn post_process_js_chunk(
     // Extract hashbang and banner for entry points
     let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
         'brk: {
-            let source_hashbang = c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
+            let source_hashbang =
+                c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
 
             // If source file has a hashbang, use it
             if !source_hashbang.is_empty() {
@@ -561,11 +622,10 @@ pub fn post_process_js_chunk(
     let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     // bun.handleOom dropped — Rust aborts on OOM
 
-    let show_comments =
-        c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
+    let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
-    let emit_targets_in_commands = show_comments
-        && c.framework.is_some_and(|fw| fw.server_components.is_some());
+    let emit_targets_in_commands =
+        show_comments && c.framework.is_some_and(|fw| fw.server_components.is_some());
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
@@ -576,7 +636,10 @@ pub fn post_process_js_chunk(
         // TODO: extracated legal comments
 
         // Add a comment with the file path before the file contents
-        if show_comments && source_index != prev_filename_comment && !compile_result.code().is_empty() {
+        if show_comments
+            && source_index != prev_filename_comment
+            && !compile_result.code().is_empty()
+        {
             prev_filename_comment = source_index;
 
             if newline_before_comment {
@@ -719,8 +782,9 @@ pub fn post_process_js_chunk(
                 line_offset.advance(str);
             }
             {
-                let input =
-                    &c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path;
+                let input = &c.parse_graph().input_files.items_source()
+                    [chunk.entry_point.source_index() as usize]
+                    .path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.arena is an arena in Zig
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
@@ -770,10 +834,15 @@ pub fn post_process_js_chunk(
     // TODO: meta contents
 
     chunk.isolated_hash = c.generate_isolated_hash(chunk);
-    chunk.flags.set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
+    chunk
+        .flags
+        .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
 
     if c.options.source_maps != options::SourceMapOption::None {
-        let can_have_shifts = matches!(chunk.intermediate_output, crate::chunk::IntermediateOutput::Pieces(_));
+        let can_have_shifts = matches!(
+            chunk.intermediate_output,
+            crate::chunk::IntermediateOutput::Pieces(_)
+        );
         // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
         // local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)`.
@@ -858,7 +927,10 @@ pub fn generate_entry_point_tail_js<'a>(
                             },
                             value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
+                                    target: Expr::init_identifier(
+                                        ast.wrapper_ref,
+                                        bun_ast::Loc::EMPTY,
+                                    ),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -914,7 +986,8 @@ pub fn generate_entry_point_tail_js<'a>(
                     }
 
                     let sorted_and_filtered_export_aliases =
-                        &c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize];
+                        &c.graph.meta.items_sorted_and_filtered_export_aliases()
+                            [source_index as usize];
 
                     if !sorted_and_filtered_export_aliases.is_empty() {
                         let resolved_exports: &ResolvedExports =
@@ -938,7 +1011,8 @@ pub fn generate_entry_point_tail_js<'a>(
                             // PORT NOTE: Zig `resolved_exports.get(alias).?` returns a by-value
                             // copy of `ExportData`; only `.data` (an `ImportTracker`, `Copy`) is
                             // read/mutated below, so copy that field instead of the whole struct.
-                            let mut resolved_export_data = resolved_exports.get(alias).unwrap().data;
+                            let mut resolved_export_data =
+                                resolved_exports.get(alias).unwrap().data;
 
                             had_default_export = had_default_export || **alias == *b"default";
 
@@ -946,7 +1020,9 @@ pub fn generate_entry_point_tail_js<'a>(
                             // was eventually resolved to. We need to do this because imports have
                             // already been resolved by this point, so we can't generate a new import
                             // and have that be resolved later.
-                            if let Some(import_data) = imports_to_bind.get(&resolved_export_data.import_ref) {
+                            if let Some(import_data) =
+                                imports_to_bind.get(&resolved_export_data.import_ref)
+                            {
                                 resolved_export_data.import_ref = import_data.data.import_ref;
                                 resolved_export_data.source_index = import_data.data.source_index;
                             }
@@ -1001,22 +1077,20 @@ pub fn generate_entry_point_tail_js<'a>(
                                 //
                                 stmts.push(Stmt::alloc(
                                     S::Local {
-                                        decls: G::DeclList::from_slice(
-                                            &[G::Decl {
-                                                binding: Binding::alloc(
-                                                    temp_arena,
-                                                    B::Identifier { r#ref: temp_ref },
-                                                    bun_ast::Loc::EMPTY,
-                                                ),
-                                                value: Some(Expr::init(
-                                                    E::ImportIdentifier {
-                                                        ref_: resolved_export_data.import_ref,
-                                                        ..Default::default()
-                                                    },
-                                                    bun_ast::Loc::EMPTY,
-                                                )),
-                                            }],
-                                        ),
+                                        decls: G::DeclList::from_slice(&[G::Decl {
+                                            binding: Binding::alloc(
+                                                temp_arena,
+                                                B::Identifier { r#ref: temp_ref },
+                                                bun_ast::Loc::EMPTY,
+                                            ),
+                                            value: Some(Expr::init(
+                                                E::ImportIdentifier {
+                                                    ref_: resolved_export_data.import_ref,
+                                                    ..Default::default()
+                                                },
+                                                bun_ast::Loc::EMPTY,
+                                            )),
+                                        }]),
                                         ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
@@ -1082,8 +1156,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         ));
 
                         if flags.needs_synthetic_default_export && !had_default_export {
-                            let mut properties =
-                                G::PropertyList::init_capacity(items.len());
+                            let mut properties = G::PropertyList::init_capacity(items.len());
                             // PERF(port): was initCapacity catch unreachable
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());
@@ -1096,7 +1169,10 @@ pub fn generate_entry_point_tail_js<'a>(
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
-                                                ref_: export_item.name.ref_.expect("infallible: ref bound"),
+                                                ref_: export_item
+                                                    .name
+                                                    .ref_
+                                                    .expect("infallible: ref bound"),
                                                 ..Default::default()
                                             },
                                             export_item.name.loc,
@@ -1105,32 +1181,37 @@ pub fn generate_entry_point_tail_js<'a>(
                                     bun_ast::Loc::EMPTY,
                                 );
                                 // PERF(port): was appendAssumeCapacity
-                                VecExt::append(&mut properties, G::Property {
-                                    key: Some(Expr::init(
-                                        E::String {
-                                            // SAFETY: alias is an arena `*const [u8]`; never null.
-                                            data: export_item.alias.slice().into(),
-                                            is_utf16: false,
-                                            ..Default::default()
-                                        },
-                                        export_item.alias_loc,
-                                    )),
-                                    value: Some(Expr::init(
-                                        E::Function {
-                                            func: G::Fn {
-                                                body: G::FnBody {
-                                                    loc: bun_ast::Loc::EMPTY,
-                                                    stmts: bun_ast::StoreSlice::new_mut(fn_body),
-                                                },
+                                VecExt::append(
+                                    &mut properties,
+                                    G::Property {
+                                        key: Some(Expr::init(
+                                            E::String {
+                                                // SAFETY: alias is an arena `*const [u8]`; never null.
+                                                data: export_item.alias.slice().into(),
+                                                is_utf16: false,
                                                 ..Default::default()
                                             },
-                                        },
-                                        export_item.alias_loc,
-                                    )),
-                                    kind: G::PropertyKind::Get,
-                                    flags: bun_ast::Flags::Property::IsMethod.into(),
-                                    ..Default::default()
-                                });
+                                            export_item.alias_loc,
+                                        )),
+                                        value: Some(Expr::init(
+                                            E::Function {
+                                                func: G::Fn {
+                                                    body: G::FnBody {
+                                                        loc: bun_ast::Loc::EMPTY,
+                                                        stmts: bun_ast::StoreSlice::new_mut(
+                                                            fn_body,
+                                                        ),
+                                                    },
+                                                    ..Default::default()
+                                                },
+                                            },
+                                            export_item.alias_loc,
+                                        )),
+                                        kind: G::PropertyKind::Get,
+                                        flags: bun_ast::Flags::Property::IsMethod.into(),
+                                        ..Default::default()
+                                    },
+                                );
                             }
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
@@ -1169,7 +1250,10 @@ pub fn generate_entry_point_tail_js<'a>(
                     stmts.push(Stmt::assign(
                         Expr::init(
                             E::Dot {
-                                target: Expr::init_identifier(c.unbound_module_ref, bun_ast::Loc::EMPTY),
+                                target: Expr::init_identifier(
+                                    c.unbound_module_ref,
+                                    bun_ast::Loc::EMPTY,
+                                ),
                                 name: b"exports".into(),
                                 name_loc: bun_ast::Loc::EMPTY,
                                 ..Default::default()
@@ -1191,7 +1275,10 @@ pub fn generate_entry_point_tail_js<'a>(
                         S::SExpr {
                             value: Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
+                                    target: Expr::init_identifier(
+                                        ast.wrapper_ref,
+                                        bun_ast::Loc::EMPTY,
+                                    ),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -1228,7 +1315,13 @@ pub fn generate_entry_point_tail_js<'a>(
                         analyze_transpiled_module::VarKind::Lexical
                     };
                     for decl in s.decls.slice() {
-                        add_binding_vars_to_module_info(mi, decl.binding, var_kind, &mut r, &c.graph.symbols);
+                        add_binding_vars_to_module_info(
+                            mi,
+                            decl.binding,
+                            var_kind,
+                            &mut r,
+                            &c.graph.symbols,
+                        );
                     }
                 }
                 _ => {}
@@ -1254,8 +1347,9 @@ pub fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback:
-            js_printer::RequireOrImportMetaCallback::init::<LinkerContext>(c),
+        require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
+            LinkerContext,
+        >(c),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
@@ -1266,8 +1360,7 @@ pub fn generate_entry_point_tail_js<'a>(
         ..Default::default()
     };
 
-    let ast_view =
-        core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
+    let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
     // SAFETY: `import_records` is a `Vec` pointing into the bundler arena,
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.

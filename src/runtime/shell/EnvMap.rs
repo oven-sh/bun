@@ -38,7 +38,10 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
         {
             // Zig: `bun.CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
-            return bun_core::strings::eql_case_insensitive_asciii_check_length(a.slice(), b.slice());
+            return bun_core::strings::eql_case_insensitive_asciii_check_length(
+                a.slice(),
+                b.slice(),
+            );
         }
         #[cfg(not(windows))]
         {
@@ -49,7 +52,9 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
 
 impl EnvMap {
     pub fn init() -> EnvMap {
-        EnvMap { map: EnvMapInner::new() }
+        EnvMap {
+            map: EnvMapInner::new(),
+        }
     }
 
     pub fn memory_cost(&self) -> usize {

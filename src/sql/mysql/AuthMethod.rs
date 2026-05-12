@@ -23,13 +23,16 @@ impl AuthMethod {
         use crate::mysql::protocol::auth;
         match self {
             AuthMethod::MysqlNativePassword => {
-                buf[..len].copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
+                buf[..len]
+                    .copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
             }
             AuthMethod::CachingSha2Password => {
-                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+                buf[..len]
+                    .copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
             }
             AuthMethod::Sha256Password => {
-                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+                buf[..len]
+                    .copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
             }
         }
 

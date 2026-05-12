@@ -98,7 +98,10 @@ mod dom_call_slowpath {
     ) -> JSValue {
         // SAFETY: see `dom_call_slowpath!` above.
         let (global, arguments) = unsafe {
-            (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
+            (
+                &*global,
+                core::slice::from_raw_parts(arguments_ptr, arguments_len),
+            )
         };
         ffi_object::ptr(global, this_value, arguments)
     }
@@ -288,10 +291,7 @@ impl Source {
     pub fn first(&self) -> &ZStr {
         match self {
             Source::File(f) => f,
-            Source::Files(files) => files
-                .first()
-                .map(|b| b.as_zstr())
-                .unwrap_or(ZStr::EMPTY),
+            Source::Files(files) => files.first().map(|b| b.as_zstr()).unwrap_or(ZStr::EMPTY),
         }
     }
 }
@@ -470,7 +470,7 @@ unsafe extern "C" {
 // ABIType — single source of truth lives in abi_type.rs
 // ═════════════════════════════════════════════════════════════════════════════
 mod abi_type;
-pub use abi_type::{ABIType, ABI_TYPE_LABEL, EnumMapFormatter, ToCFormatter, ToJSFormatter};
+pub use abi_type::{ABI_TYPE_LABEL, ABIType, EnumMapFormatter, ToCFormatter, ToJSFormatter};
 
 // ─── CompilerRT (pure C-ABI helpers + embedded sources) ──────────────────────
 

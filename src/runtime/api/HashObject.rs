@@ -1,6 +1,6 @@
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigStringSlice;
 use crate::webcore::Blob;
+use bun_core::ZigStringSlice;
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hash algorithm abstraction
@@ -250,8 +250,9 @@ pub fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     // `Bun.hash` is itself callable (wyhash); the named algorithms hang off it.
-    JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default())
-        .put_host_functions(global, &[
+    JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default()).put_host_functions(
+        global,
+        &[
             ("wyhash", __jsc_host_wyhash, 1),
             ("adler32", __jsc_host_adler32, 1),
             ("crc32", __jsc_host_crc32, 1),
@@ -264,7 +265,8 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
             ("murmur32v3", __jsc_host_murmur32v3, 1),
             ("murmur64v2", __jsc_host_murmur64v2, 1),
             ("rapidhash", __jsc_host_rapidhash, 1),
-        ])
+        ],
+    )
 }
 
 fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -301,8 +303,9 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     array_buffer = match arg.as_array_buffer(global) {
                         Some(ab) => ab,
                         None => {
-                            return Err(global
-                                .throw_invalid_arguments(format_args!("ArrayBuffer conversion error")));
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "ArrayBuffer conversion error"
+                            )));
                         }
                     };
                     input = array_buffer.byte_slice();

@@ -10,7 +10,11 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 /// types (concurrent B-2), so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
-fn semver_string_to_js(s: &bun_semver::String, buf: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
+fn semver_string_to_js(
+    s: &bun_semver::String,
+    buf: &[u8],
+    global: &JSGlobalObject,
+) -> JsResult<JSValue> {
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.slice(buf))
 }
 
@@ -44,21 +48,36 @@ pub fn version_to_js(
         }
         Tag::Git => {
             let v = dep.git();
-            object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
+            object.put(
+                global,
+                b"owner",
+                semver_string_to_js(&v.owner, buf, global)?,
+            );
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
-            object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
+            object.put(
+                global,
+                b"ref",
+                semver_string_to_js(&v.committish, buf, global)?,
+            );
         }
         Tag::Github => {
             let v = dep.github();
-            object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
+            object.put(
+                global,
+                b"owner",
+                semver_string_to_js(&v.owner, buf, global)?,
+            );
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
-            object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
+            object.put(
+                global,
+                b"ref",
+                semver_string_to_js(&v.committish, buf, global)?,
+            );
         }
         Tag::Npm => {
             let v = dep.npm();
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
-            let mut version_str =
-                BunString::create_format(format_args!("{}", v.version.fmt(buf)));
+            let mut version_str = BunString::create_format(format_args!("{}", v.version.fmt(buf)));
             object.put(global, b"version", version_str.transfer_to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
@@ -72,7 +91,11 @@ pub fn version_to_js(
         }
         Tag::Tarball => {
             let v = dep.tarball();
-            object.put(global, b"name", semver_string_to_js(&v.package_name, buf, global)?);
+            object.put(
+                global,
+                b"name",
+                semver_string_to_js(&v.package_name, buf, global)?,
+            );
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {
                     object.put(global, b"path", semver_string_to_js(local, buf, global)?);
@@ -93,7 +116,7 @@ pub fn version_to_js(
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_core::String as BunString;
-    use bun_install::dependency::{version::Tag, TagExt};
+    use bun_install::dependency::{TagExt, version::Tag};
 
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
@@ -111,15 +134,19 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 /// Local helper for `log.toJS(global, msg)` — thin re-export now that
 /// `bun_logger_jsc` is typed against the real `bun_jsc` surface.
 #[inline]
-pub(crate) fn log_to_js(log: &bun_ast::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
+pub(crate) fn log_to_js(
+    log: &bun_ast::Log,
+    global: &JSGlobalObject,
+    msg: &[u8],
+) -> JsResult<JSValue> {
     bun_ast_jsc::log_to_js(log, global, msg)
 }
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Log;
-    use bun_semver::SlicedString;
     use bun_install::dependency;
+    use bun_semver::SlicedString;
 
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
@@ -185,8 +212,11 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         Some(d) => d,
         None => {
             if !log.msgs.is_empty() {
-                return Err(global
-                    .throw_value(log_to_js(&log, global, b"Failed to parse dependency")?));
+                return Err(global.throw_value(log_to_js(
+                    &log,
+                    global,
+                    b"Failed to parse dependency",
+                )?));
             }
 
             return Ok(JSValue::UNDEFINED);

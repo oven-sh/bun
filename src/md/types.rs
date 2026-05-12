@@ -1,4 +1,3 @@
-
 // TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
@@ -335,10 +334,22 @@ pub struct Container {
 pub struct BlockFlags(pub u32);
 
 impl BlockFlags {
-    #[inline] pub const fn container_closer(self) -> bool { self.0 & 0x01 != 0 }
-    #[inline] pub const fn container_opener(self) -> bool { self.0 & 0x02 != 0 }
-    #[inline] pub const fn loose_list(self) -> bool { self.0 & 0x04 != 0 }
-    #[inline] pub const fn setext_header(self) -> bool { self.0 & 0x08 != 0 }
+    #[inline]
+    pub const fn container_closer(self) -> bool {
+        self.0 & 0x01 != 0
+    }
+    #[inline]
+    pub const fn container_opener(self) -> bool {
+        self.0 & 0x02 != 0
+    }
+    #[inline]
+    pub const fn loose_list(self) -> bool {
+        self.0 & 0x04 != 0
+    }
+    #[inline]
+    pub const fn setext_header(self) -> bool {
+        self.0 & 0x08 != 0
+    }
 }
 
 pub const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
@@ -389,7 +400,14 @@ pub struct Mark {
 
 impl Default for Mark {
     fn default() -> Self {
-        Self { beg: 0, end: 0, prev: -1, next: -1, ch: 0, flags: 0 }
+        Self {
+            beg: 0,
+            end: 0,
+            prev: -1,
+            next: -1,
+            ch: 0,
+            flags: 0,
+        }
     }
 }
 
@@ -452,7 +470,9 @@ impl Flags {
     };
 
     pub fn permissive_autolinks(self) -> bool {
-        self.permissive_url_autolinks || self.permissive_www_autolinks || self.permissive_email_autolinks
+        self.permissive_url_autolinks
+            || self.permissive_www_autolinks
+            || self.permissive_email_autolinks
     }
 }
 

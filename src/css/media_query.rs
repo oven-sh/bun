@@ -90,10 +90,7 @@ pub trait QueryCondition: Sized + ToCss {
     /// Serialize the leaf feature. Not defaulted: `Property::to_css` takes an
     /// extra `is_custom_property` flag, and `QueryFeature::to_css` is inherent
     /// (not the `ToCss` trait), so callers must spell the dispatch.
-    fn feature_to_css(
-        f: &Self::Feature,
-        dest: &mut Printer,
-    ) -> core::result::Result<(), PrintErr>;
+    fn feature_to_css(f: &Self::Feature, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
 
     /// Serialize a variant that isn't `Feature`/`Not`/`Operation`
     /// (e.g. `ContainerCondition::Style`). Implementors with no extra
@@ -396,7 +393,10 @@ impl MediaFeatureType {
     /// Zig: `MediaFeatureType.allowsRanges`.
     pub fn allows_ranges(self) -> bool {
         use MediaFeatureType as T;
-        matches!(self, T::Length | T::Number | T::Integer | T::Resolution | T::Ratio | T::Unknown)
+        matches!(
+            self,
+            T::Length | T::Number | T::Integer | T::Resolution | T::Ratio | T::Unknown
+        )
     }
 }
 
@@ -549,12 +549,34 @@ impl MediaFeatureId {
         match self {
             Width | Height | DeviceWidth | DeviceHeight => T::Length,
             AspectRatio | DeviceAspectRatio => T::Ratio,
-            Orientation | OverflowBlock | OverflowInline | DisplayMode | Scan | Update
-            | EnvironmentBlending | ColorGamut | DynamicRange | InvertedColors | Pointer
-            | Hover | AnyPointer | AnyHover | NavControls | VideoColorGamut | VideoDynamicRange
-            | Scripting | PrefersReducedMotion | PrefersReducedTransparency | PrefersContrast
-            | ForcedColors | PrefersColorScheme | PrefersReducedData => T::Ident,
-            HorizontalViewportSegments | VerticalViewportSegments | Color | ColorIndex
+            Orientation
+            | OverflowBlock
+            | OverflowInline
+            | DisplayMode
+            | Scan
+            | Update
+            | EnvironmentBlending
+            | ColorGamut
+            | DynamicRange
+            | InvertedColors
+            | Pointer
+            | Hover
+            | AnyPointer
+            | AnyHover
+            | NavControls
+            | VideoColorGamut
+            | VideoDynamicRange
+            | Scripting
+            | PrefersReducedMotion
+            | PrefersReducedTransparency
+            | PrefersContrast
+            | ForcedColors
+            | PrefersColorScheme
+            | PrefersReducedData => T::Ident,
+            HorizontalViewportSegments
+            | VerticalViewportSegments
+            | Color
+            | ColorIndex
             | Monochrome => T::Integer,
             Resolution => T::Resolution,
             Grid => T::Boolean,
@@ -646,14 +668,12 @@ impl MediaList {
     /// Returns whether the media query list always matches.
     pub fn always_matches(&self) -> bool {
         // If the media list is empty, it always matches.
-        self.media_queries.is_empty()
-            || self.media_queries.iter().all(MediaQuery::always_matches)
+        self.media_queries.is_empty() || self.media_queries.iter().all(MediaQuery::always_matches)
     }
 
     /// Returns whether the media query list never matches.
     pub fn never_matches(&self) -> bool {
-        !self.media_queries.is_empty()
-            && self.media_queries.iter().all(MediaQuery::never_matches)
+        !self.media_queries.is_empty() && self.media_queries.iter().all(MediaQuery::never_matches)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -711,7 +731,9 @@ impl MediaQuery {
             }
         }
 
-        let Some(condition) = &self.condition else { return Ok(()) };
+        let Some(condition) = &self.condition else {
+            return Ok(());
+        };
 
         let needs_parens = if !matches!(self.media_type, MediaType::All) || self.qualifier.is_some()
         {
@@ -764,11 +786,7 @@ pub fn operation_to_css<C: QueryCondition>(
         dest.write_char(b' ')?;
         operator.to_css(dest)?;
         dest.write_char(b' ')?;
-        to_css_with_parens_if_needed(
-            item,
-            dest,
-            item.needs_parens(Some(operator), &dest.targets),
-        )?;
+        to_css_with_parens_if_needed(item, dest, item.needs_parens(Some(operator), &dest.targets))?;
     }
     Ok(())
 }
@@ -783,13 +801,29 @@ impl QueryCondition for MediaCondition {
     type Feature = MediaFeature;
 
     fn as_feature(&self) -> Option<&MediaFeature> {
-        if let Self::Feature(f) = self { Some(f) } else { None }
+        if let Self::Feature(f) = self {
+            Some(f)
+        } else {
+            None
+        }
     }
     fn as_not(&self) -> Option<&Self> {
-        if let Self::Not(c) = self { Some(c) } else { None }
+        if let Self::Not(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
     fn as_operation(&self) -> Option<(Operator, &[Self])> {
-        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+        if let Self::Operation {
+            operator,
+            conditions,
+        } = self
+        {
+            Some((*operator, conditions))
+        } else {
+            None
+        }
     }
     fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
@@ -810,7 +844,10 @@ impl QueryCondition for MediaCondition {
         MediaCondition::Not(condition)
     }
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
-        MediaCondition::Operation { operator, conditions }
+        MediaCondition::Operation {
+            operator,
+            conditions,
+        }
     }
     fn parse_style_query(input: &mut Parser) -> Result<Self> {
         // Zig: `return .{ .err = input.newErrorForNextToken() }`
@@ -852,7 +889,11 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 dest.delim(b':', false)?;
                 value.to_css(dest)?;
             }
-            QueryFeature::Range { name, operator, value } => {
+            QueryFeature::Range {
+                name,
+                operator,
+                value,
+            } => {
                 // If range syntax is unsupported, use min/max prefix if possible.
                 if dest
                     .targets
@@ -1035,7 +1076,11 @@ impl MediaFeatureValue {
             MediaFeatureValue::Number(num) => css::to_css::float32(*num, dest),
             MediaFeatureValue::Integer(int) => css::to_css::integer(*int, dest),
             MediaFeatureValue::Boolean(b) => {
-                if *b { dest.write_char(b'1') } else { dest.write_char(b'0') }
+                if *b {
+                    dest.write_char(b'1')
+                } else {
+                    dest.write_char(b'0')
+                }
             }
             MediaFeatureValue::Resolution(res) => res.to_css(dest),
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
@@ -1278,7 +1323,10 @@ impl MediaCondition {
             MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
             // Zig: `bun.create(arena, MediaCondition, c.deepClone(arena))`
             MediaCondition::Not(c) => MediaCondition::Not(Box::new(c.deep_clone(bump))),
-            MediaCondition::Operation { operator, conditions } => MediaCondition::Operation {
+            MediaCondition::Operation {
+                operator,
+                conditions,
+            } => MediaCondition::Operation {
                 operator: *operator,
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
@@ -1307,7 +1355,11 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             QueryFeature::Boolean { name } => QueryFeature::Boolean {
                 name: name.deep_clone(bump),
             },
-            QueryFeature::Range { name, operator, value } => QueryFeature::Range {
+            QueryFeature::Range {
+                name,
+                operator,
+                value,
+            } => QueryFeature::Range {
                 name: name.deep_clone(bump),
                 operator: *operator,
                 value: value.deep_clone(bump),
@@ -1366,9 +1418,15 @@ impl MediaType {
 
     pub fn from_str(name: &[u8]) -> MediaType {
         use bun_core::eql_case_insensitive_ascii_check_length as eq;
-        if eq(name, b"all") { return MediaType::All; }
-        if eq(name, b"print") { return MediaType::Print; }
-        if eq(name, b"screen") { return MediaType::Screen; }
+        if eq(name, b"all") {
+            return MediaType::All;
+        }
+        if eq(name, b"print") {
+            return MediaType::Print;
+        }
+        if eq(name, b"screen") {
+            return MediaType::Screen;
+        }
         MediaType::Custom(std::ptr::from_ref::<[u8]>(name))
     }
 }
@@ -1386,9 +1444,7 @@ impl MediaList {
                 Err(e) => {
                     if matches!(
                         e.kind,
-                        css::error::ParserErrorKind::basic(
-                            css::BasicParseErrorKind::end_of_input
-                        )
+                        css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
                     ) {
                         break;
                     }
@@ -1430,10 +1486,7 @@ impl MediaQuery {
                 QueryConditionFlags::ALLOW_OR,
                 options,
             )?)
-        } else if input
-            .try_parse(|i| i.expect_ident_matching(b"and"))
-            .is_ok()
-        {
+        } else if input.try_parse(|i| i.expect_ident_matching(b"and")).is_ok() {
             Some(MediaCondition::parse_with_flags(
                 input,
                 QueryConditionFlags::empty(),
@@ -1445,7 +1498,11 @@ impl MediaQuery {
 
         let media_type = explicit_media_type.unwrap_or(MediaType::All);
 
-        Ok(MediaQuery { qualifier, media_type, condition })
+        Ok(MediaQuery {
+            qualifier,
+            media_type,
+            condition,
+        })
     }
 }
 
@@ -1555,8 +1612,7 @@ pub fn parse_parens_or_function<C: QueryCondition>(
     match &t {
         css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
         css::Token::Function(f) => {
-            if flags.allow_style()
-                && strings::eql_case_insensitive_ascii_check_length(f, b"style")
+            if flags.allow_style() && strings::eql_case_insensitive_ascii_check_length(f, b"style")
             {
                 return C::parse_style_query_with_options(input, options);
             }
@@ -1635,7 +1691,11 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 return Err(input.new_custom_error(css::ParserError::invalid_media_query));
             }
 
-            Ok(QueryFeature::Range { name, operator: op, value })
+            Ok(QueryFeature::Range {
+                name,
+                operator: op,
+                value,
+            })
         } else {
             Ok(QueryFeature::Plain { name, value })
         }
@@ -1651,9 +1711,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         // (matching lightningcss) is to *skip* tokens until the name is
         // found; advance one token per failed attempt.
         let name: MediaFeatureName<FeatureId> = loop {
-            if let Ok((name, legacy_op)) =
-                input.try_parse(MediaFeatureName::<FeatureId>::parse)
-            {
+            if let Ok((name, legacy_op)) = input.try_parse(MediaFeatureName::<FeatureId>::parse) {
                 if legacy_op.is_some() {
                     return Err(input.new_custom_error(css::ParserError::invalid_media_query));
                 }
@@ -1718,7 +1776,11 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             })
         } else {
             let final_operator = operator.unwrap().opposite();
-            Ok(QueryFeature::Range { name, operator: final_operator, value })
+            Ok(QueryFeature::Range {
+                name,
+                operator: final_operator,
+                value,
+            })
         }
     }
 }

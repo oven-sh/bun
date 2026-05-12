@@ -85,8 +85,14 @@ impl<R> ScopeRule<R> {
         // deep_clone()` intentionally drops the `&Arena` (selectors/parser.rs
         // — every payload is arena-static); routed via `dc::selector_list`.
         Self {
-            scope_start: self.scope_start.as_ref().map(|s| super::dc::selector_list(s, bump)),
-            scope_end: self.scope_end.as_ref().map(|s| super::dc::selector_list(s, bump)),
+            scope_start: self
+                .scope_start
+                .as_ref()
+                .map(|s| super::dc::selector_list(s, bump)),
+            scope_end: self
+                .scope_end
+                .as_ref()
+                .map(|s| super::dc::selector_list(s, bump)),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

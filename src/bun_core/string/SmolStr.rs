@@ -237,7 +237,11 @@ impl Drop for SmolStr {
             // SAFETY: ptr/len/cap describe a Vec<u8> allocation we own; reconstruct to free.
             // TODO(port): verify Vec<u8> Drop frees; else dealloc via global allocator directly.
             let list = unsafe {
-                Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
+                Vec::<u8>::from_raw_parts(
+                    self.ptr(),
+                    self.raw_len() as usize,
+                    self.raw_cap() as usize,
+                )
             };
             drop(list);
         }

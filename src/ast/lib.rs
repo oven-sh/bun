@@ -33,15 +33,21 @@ use bun_core::Output;
 pub struct StringBuilder;
 #[allow(unused_variables)]
 impl StringBuilder {
-    pub fn count(&mut self, s: &[u8]) { let _ = s; }
-    pub fn append(&mut self, s: &'static [u8]) -> &'static [u8] { s }
+    pub fn count(&mut self, s: &[u8]) {
+        let _ = s;
+    }
+    pub fn append(&mut self, s: &'static [u8]) -> &'static [u8] {
+        s
+    }
     pub fn allocate(&mut self) {}
 }
 
 // Variants mirror src/options_types/import_record.zig:1-25 exactly
 // (discriminants are wire-stable for serialization).
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, enum_map::Enum, strum::IntoStaticStr)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, Debug, Default, enum_map::Enum, strum::IntoStaticStr,
+)]
 pub enum ImportKind {
     /// An entry point provided to `bun run` or `bun`
     #[strum(serialize = "entry_point_run")]
@@ -144,7 +150,10 @@ impl ImportKind {
     }
 
     pub fn is_from_css(self) -> bool {
-        self == Self::AtConditional || self == Self::At || self == Self::Url || self == Self::Composes
+        self == Self::AtConditional
+            || self == Self::At
+            || self == Self::Url
+            || self == Self::Composes
     }
 
     // `to_api()` lives in `bun_ast::ImportKindExt` — depends on
@@ -536,31 +545,45 @@ pub trait IntoText {
 }
 impl IntoText for Cow<'static, [u8]> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { self }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        self
+    }
 }
 impl IntoText for &'static [u8] {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Borrowed(self)
+    }
 }
 impl<const N: usize> IntoText for &'static [u8; N] {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Borrowed(self)
+    }
 }
 impl IntoText for &'static str {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self.as_bytes()) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Borrowed(self.as_bytes())
+    }
 }
 impl IntoText for Vec<u8> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Owned(self)
+    }
 }
 impl IntoText for String {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self.into_bytes()) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Owned(self.into_bytes())
+    }
 }
 impl IntoText for Box<[u8]> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self.into_vec()) }
+    fn into_text(self) -> Cow<'static, [u8]> {
+        Cow::Owned(self.into_vec())
+    }
 }
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
@@ -573,7 +596,9 @@ pub trait IntoLogWrite {
 impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
     type W = &'a mut W;
     #[inline]
-    fn into_log_write(self) -> &'a mut W { self }
+    fn into_log_write(self) -> &'a mut W {
+        self
+    }
 }
 /// `fmt::Write` view over a `*mut bun_core::io::Writer`.
 pub struct IoWriterAdapter(*mut bun_core::io::Writer);
@@ -591,7 +616,9 @@ impl fmt::Write for IoWriterAdapter {
 impl IntoLogWrite for *mut bun_core::io::Writer {
     type W = IoWriterAdapter;
     #[inline]
-    fn into_log_write(self) -> IoWriterAdapter { IoWriterAdapter(self) }
+    fn into_log_write(self) -> IoWriterAdapter {
+        IoWriterAdapter(self)
+    }
 }
 // NOTE: a `&mut *mut Writer` blanket can't coexist with the generic
 // `&mut W: fmt::Write` impl above (coherence reservation). Callers holding a
@@ -904,9 +931,7 @@ impl Location {
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
                 // instead. `full_line` is bounded (≤ ~120 bytes) and only
                 // materialized on diagnostic paths.
-                line_text: Some(Cow::Owned(
-                    bun_core::trim_left(full_line, b"\n\r").to_vec(),
-                )),
+                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
@@ -926,7 +951,10 @@ pub struct Data {
 
 impl Default for Data {
     fn default() -> Self {
-        Data { text: Cow::Borrowed(b""), location: None }
+        Data {
+            text: Cow::Borrowed(b""),
+            location: None,
+        }
     }
 }
 
@@ -952,8 +980,14 @@ impl Data {
         }
 
         // Zig (logger.zig:217): `allocator.dupe(u8, this.location.?.line_text.?)`.
-        let new_line_text =
-            self.location.as_ref().unwrap().line_text.as_deref().unwrap().to_vec();
+        let new_line_text = self
+            .location
+            .as_ref()
+            .unwrap()
+            .line_text
+            .as_deref()
+            .unwrap()
+            .to_vec();
         let mut new_location = self.location.clone().unwrap();
         new_location.line_text = Some(Cow::Owned(new_line_text));
         Data {
@@ -991,7 +1025,10 @@ impl Data {
             } else {
                 Cow::Borrowed(b"")
             },
-            location: self.location.as_ref().map(|l| l.clone_with_builder(builder)),
+            location: self
+                .location
+                .as_ref()
+                .map(|l| l.clone_with_builder(builder)),
         }
     }
 
@@ -1055,10 +1092,8 @@ impl Data {
 
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text.as_deref() {
-                let line_text_right_trimmed =
-                    bun_core::trim_right(line_text_, b" \r\n\t");
-                let line_text =
-                    bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+                let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
+                let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1).expect("int cast");
@@ -1124,11 +1159,7 @@ impl Data {
         if let Some(location) = &self.location {
             if !location.file.is_empty() {
                 to.write_str("\n")?;
-                write_n_bytes(
-                    to,
-                    b' ',
-                    (kind.string().len() + ": ".len()) - "at ".len(),
-                )?;
+                write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
 
                 pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(&location.file))?;
 
@@ -1425,7 +1456,10 @@ pub struct Range {
 
 impl Default for Range {
     fn default() -> Self {
-        Range { loc: Loc::EMPTY, len: 0 }
+        Range {
+            loc: Loc::EMPTY,
+            len: 0,
+        }
     }
 }
 
@@ -1451,14 +1485,20 @@ pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
             i += 1;
         }
     }
-    Range { loc, len: i32::try_from(i).expect("int cast") }
+    Range {
+        loc,
+        len: i32::try_from(i).expect("int cast"),
+    }
 }
 
 impl Range {
     /// Deprecated: use `NONE`
     #[allow(non_upper_case_globals)]
     pub const None: Range = Self::NONE;
-    pub const NONE: Range = Range { loc: Loc::EMPTY, len: 0 };
+    pub const NONE: Range = Range {
+        loc: Loc::EMPTY,
+        len: 0,
+    };
 
     pub fn r#in<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         if self.loc.start < 0 || self.len <= 0 {
@@ -1477,7 +1517,9 @@ impl Range {
     }
 
     pub fn end(&self) -> Loc {
-        Loc { start: self.loc.start + self.len }
+        Loc {
+            start: self.loc.start + self.len,
+        }
     }
 
     pub fn end_i(&self) -> usize {
@@ -1520,7 +1562,11 @@ impl Default for Log {
             warnings: 0,
             errors: 0,
             msgs: Vec::new(),
-            level: if cfg!(debug_assertions) { Level::Info } else { Level::Warn },
+            level: if cfg!(debug_assertions) {
+                Level::Info
+            } else {
+                Level::Warn
+            },
             clone_line_text: false,
             owned_strings: Vec::new(),
         }
@@ -1597,8 +1643,7 @@ impl Level {
 // PORTING.md §Global mutable state: written by CLI startup, read by every
 // `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
 // — Acquire/Release, no `unsafe` at call sites.
-pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> =
-    bun_core::AtomicCell::new(Level::Warn);
+pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
 
 impl Log {
     pub fn memory_cost(&self) -> usize {
@@ -1663,12 +1708,7 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_debug_fmt(
-        &mut self,
-        source: Option<&Source>,
-        l: Loc,
-        args: fmt::Arguments<'_>,
-    ) {
+    pub fn add_debug_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
@@ -1676,7 +1716,10 @@ impl Log {
         self.add_formatted_msg(
             Kind::Debug,
             source,
-            Range { loc: l, ..Default::default() },
+            Range {
+                loc: l,
+                ..Default::default()
+            },
             text,
             Box::default(),
             true,
@@ -1685,16 +1728,18 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_verbose(
-        &mut self,
-        source: Option<&Source>,
-        loc: Loc,
-        text: Str,
-    ) {
+    pub fn add_verbose(&mut self, source: Option<&Source>, loc: Loc, text: Str) {
         if Kind::Verbose.should_print(self.level) {
             self.add_msg(Msg {
                 kind: Kind::Verbose,
-                data: range_data(source, Range { loc, ..Default::default() }, text),
+                data: range_data(
+                    source,
+                    Range {
+                        loc,
+                        ..Default::default()
+                    },
+                    text,
+                ),
                 ..Default::default()
             });
         }
@@ -1738,11 +1783,7 @@ impl Log {
         other.owned_strings.append(&mut self.owned_strings);
     }
 
-    pub fn clone_to_with_recycled(
-        &mut self,
-        other: &mut Log,
-        recycled: bool,
-    ) {
+    pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
         let dest_start = other.msgs.len();
         other.msgs.extend(self.msgs.iter().map(Msg::clone));
         other.warnings += self.warnings;
@@ -1771,11 +1812,7 @@ impl Log {
         }
     }
 
-    pub fn append_to_with_recycled(
-        &mut self,
-        other: &mut Log,
-        recycled: bool,
-    ) {
+    pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
         self.clone_to_with_recycled(other, recycled);
         self.msgs.clear();
         self.msgs.shrink_to_fit();
@@ -1783,11 +1820,7 @@ impl Log {
         other.owned_strings.append(&mut self.owned_strings);
     }
 
-    pub fn append_to_maybe_recycled(
-        &mut self,
-        other: &mut Log,
-        source: &Source,
-    ) {
+    pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
         self.append_to_with_recycled(other, source.contents_is_recycled)
     }
 
@@ -1819,7 +1852,14 @@ impl Log {
 
         self.add_msg(Msg {
             kind: Kind::Verbose,
-            data: range_data(source, Range { loc, ..Default::default() }, text),
+            data: range_data(
+                source,
+                Range {
+                    loc,
+                    ..Default::default()
+                },
+                text,
+            ),
             notes,
             ..Default::default()
         })
@@ -1925,7 +1965,12 @@ impl Log {
         // Always dupe the line_text from the source to ensure the Location data
         // outlives the source's backing memory (which may be arena-allocated).
         self.add_resolve_error_with_level::<true, true>(
-            source, r, args, specifier_arg, import_kind, err,
+            source,
+            r,
+            args,
+            specifier_arg,
+            import_kind,
+            err,
         )
     }
 
@@ -1949,12 +1994,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_error(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: Str,
-    ) {
+    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -1997,7 +2037,10 @@ impl Log {
         self.add_formatted_msg(
             Kind::Err,
             source.into(),
-            Range { loc: l, ..Default::default() },
+            Range {
+                loc: l,
+                ..Default::default()
+            },
             text,
             Box::default(),
             true,
@@ -2007,16 +2050,15 @@ impl Log {
 
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     #[inline]
-    pub fn add_error_fmt_opts(
-        &mut self,
-        args: fmt::Arguments<'_>,
-        opts: AddErrorOptions<'_>,
-    ) {
+    pub fn add_error_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
         let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
             opts.source,
-            Range { loc: opts.loc, len: opts.len },
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
             text,
             Box::default(),
             true,
@@ -2025,11 +2067,7 @@ impl Log {
     }
 
     /// Use a bun.sys.Error's message in addition to some extra context.
-    pub fn add_sys_error(
-        &mut self,
-        e: &bun_sys::Error,
-        args: fmt::Arguments<'_>,
-    ) {
+    pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
@@ -2037,23 +2075,14 @@ impl Log {
         // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
         // value level instead.
         let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
-        self.add_error_fmt(
-            None,
-            Loc::EMPTY,
-            format_args!("{}: {}", prefix, args),
-        )
+        self.add_error_fmt(None, Loc::EMPTY, format_args!("{}: {}", prefix, args))
     }
 
     #[cold]
-    pub fn add_zig_error_with_note(
-        &mut self,
-        err: bun_core::Error,
-        note_args: fmt::Arguments<'_>,
-    ) {
+    pub fn add_zig_error_with_note(&mut self, err: bun_core::Error, note_args: fmt::Arguments<'_>) {
         self.errors += 1;
 
-        let notes: Box<[Data]> =
-            Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2064,12 +2093,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_warning(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: Str,
-    ) {
+    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: Str) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -2082,12 +2106,7 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_warning_fmt(
-        &mut self,
-        source: Option<&Source>,
-        l: Loc,
-        args: fmt::Arguments<'_>,
-    ) {
+    pub fn add_warning_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -2095,7 +2114,10 @@ impl Log {
         self.add_formatted_msg(
             Kind::Warn,
             source,
-            Range { loc: l, ..Default::default() },
+            Range {
+                loc: l,
+                ..Default::default()
+            },
             text,
             Box::default(),
             true,
@@ -2181,8 +2203,7 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> =
-            Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Warn,
@@ -2218,8 +2239,7 @@ impl Log {
         }
         self.errors += 1;
 
-        let notes: Box<[Data]> =
-            Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2230,19 +2250,21 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_warning(
-        &mut self,
-        source: Option<&Source>,
-        l: Loc,
-        text: Str,
-    ) {
+    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: Str) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         self.warnings += 1;
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, Range { loc: l, ..Default::default() }, text),
+            data: range_data(
+                source,
+                Range {
+                    loc: l,
+                    ..Default::default()
+                },
+                text,
+            ),
             ..Default::default()
         })
     }
@@ -2262,7 +2284,10 @@ impl Log {
 
         let notes: Box<[Data]> = Box::new([range_data(
             source,
-            Range { loc: l, ..Default::default() },
+            Range {
+                loc: l,
+                ..Default::default()
+            },
             alloc_print(note_args),
         )]);
 
@@ -2275,12 +2300,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_debug(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: Str,
-    ) {
+    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: Str) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
@@ -2355,31 +2375,36 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_error(
-        &mut self,
-        _source: Option<&Source>,
-        loc: Loc,
-        text: impl IntoText,
-    ) {
+    pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(_source, Range { loc, ..Default::default() }, text),
+            data: range_data(
+                _source,
+                Range {
+                    loc,
+                    ..Default::default()
+                },
+                text,
+            ),
             ..Default::default()
         })
     }
 
     // TODO(dylan-conway): rename and replace `addError`
     #[cold]
-    pub fn add_error_opts(
-        &mut self,
-        text: Str,
-        opts: AddErrorOptions<'_>,
-    ) {
+    pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(opts.source, Range { loc: opts.loc, len: opts.len }, text),
+            data: range_data(
+                opts.source,
+                Range {
+                    loc: opts.loc,
+                    len: opts.len,
+                },
+                text,
+            ),
             redact_sensitive_information: opts.redact_sensitive_information,
             ..Default::default()
         })
@@ -2587,7 +2612,9 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
 
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
-    Loc { start: i32::try_from(loc).expect("int cast") }
+    Loc {
+        start: i32::try_from(loc).expect("int cast"),
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2684,13 +2711,21 @@ impl Source {
             return false;
         }
 
-        let bytes = u32::from_ne_bytes(self.contents[0..4].try_into().expect("infallible: size matches"));
+        let bytes = u32::from_ne_bytes(
+            self.contents[0..4]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         bytes == 0x6d73_6100 // "\0asm"
     }
 
     pub fn init_empty_file(filepath: impl IntoStr) -> Source {
         let path = bun_paths::fs::Path::init(filepath.into_str());
-        Source { path, contents: Cow::Borrowed(b""), ..Default::default() }
+        Source {
+            path,
+            contents: Cow::Borrowed(b""),
+            ..Default::default()
+        }
     }
 
     pub fn init_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
@@ -2716,14 +2751,22 @@ impl Source {
 
     pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
         let path = bun_paths::fs::Path::init(path_string.into_str());
-        Source { path, contents: Cow::Borrowed(contents.into_str()), ..Default::default() }
+        Source {
+            path,
+            contents: Cow::Borrowed(contents.into_str()),
+            ..Default::default()
+        }
     }
 
     /// `init_path_string` with heap-owned contents — used by `source_from_file`
     /// so the read buffer is dropped with the `Source` instead of leaked.
     pub fn init_path_string_owned(path_string: impl IntoStr, contents: Vec<u8>) -> Source {
         let path = bun_paths::fs::Path::init(path_string.into_str());
-        Source { path, contents: Cow::Owned(contents), ..Default::default() }
+        Source {
+            path,
+            contents: Cow::Owned(contents),
+            ..Default::default()
+        }
     }
 
     pub fn text_for_range(&self, r: Range) -> &[u8] {
@@ -2735,12 +2778,17 @@ impl Source {
         let index = bun_core::immutable::index(text, op);
         if index >= 0 {
             return Range {
-                loc: Loc { start: loc.start + index },
+                loc: Loc {
+                    start: loc.start + index,
+                },
                 len: i32::try_from(op.len()).expect("int cast"),
             };
         }
 
-        Range { loc, ..Default::default() }
+        Range {
+            loc,
+            ..Default::default()
+        }
     }
 
     pub fn range_of_string(&self, loc: Loc) -> Range {
@@ -2763,7 +2811,10 @@ impl Source {
                 c = text[i];
 
                 if c == quote {
-                    return Range { loc, len: i32::try_from(i + 1).expect("int cast") };
+                    return Range {
+                        loc,
+                        len: i32::try_from(i + 1).expect("int cast"),
+                    };
                 } else if c == b'\\' {
                     i += 1;
                 }
@@ -2779,20 +2830,25 @@ impl Source {
         let index = bun_core::immutable::index(text, op);
         if index >= 0 {
             return Range {
-                loc: Loc { start: loc.start + index },
+                loc: Loc {
+                    start: loc.start + index,
+                },
                 len: i32::try_from(op.len()).expect("int cast"),
             };
         }
 
-        Range { loc, ..Default::default() }
+        Range {
+            loc,
+            ..Default::default()
+        }
     }
 
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
         use bun_core::immutable::{CodepointIterator, Cursor};
         debug_assert!(!offset_loc.is_empty());
         let mut prev_code_point: i32 = 0;
-        let offset: usize =
-            (usize::try_from(offset_loc.start).expect("int cast")).min(self.contents.len().max(1) - 1);
+        let offset: usize = (usize::try_from(offset_loc.start).expect("int cast"))
+            .min(self.contents.len().max(1) - 1);
 
         let contents: &[u8] = &self.contents;
 
@@ -2849,7 +2905,11 @@ impl Source {
         }
 
         ErrorPosition {
-            line_start: if line_start > 0 { line_start - 1 } else { line_start },
+            line_start: if line_start > 0 {
+                line_start - 1
+            } else {
+                line_start
+            },
             line_end,
             line_count,
             column_count: column_number,
@@ -2910,12 +2970,11 @@ impl Source {
     }
 }
 
-pub fn range_data(
-    source: Option<&Source>,
-    r: Range,
-    text: impl IntoText,
-) -> Data {
-    Data { text: text.into_text(), location: Location::init_or_null(source, r) }
+pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
+    Data {
+        text: text.into_text(),
+        location: Location::init_or_null(source, r),
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2936,10 +2995,7 @@ pub type ToSourceOpts = ToSourceOptions;
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
 /// `src/sys/File.zig:toSource`.
-pub fn source_from_file(
-    path: &bun_core::ZStr,
-    opts: ToSourceOptions,
-) -> bun_sys::Maybe<Source> {
+pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Maybe<Source> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
@@ -2987,44 +3043,45 @@ pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Resul
 // all consume these.
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod base;
-pub mod op;
-pub mod use_directive;
-pub mod char_freq;
-pub mod symbol;
-pub mod scope;
-pub mod ts;
-pub mod g;
-pub mod b;
-pub mod binding;
-pub mod new_store;
 pub mod ast_memory_allocator;
-pub mod s;
+pub mod b;
+pub mod base;
+pub mod binding;
+pub mod char_freq;
 pub mod e;
-pub mod stmt;
 pub mod expr;
-pub mod server_component_boundary;
 pub mod fold_string_addition;
+pub mod g;
 pub mod known_global;
+pub mod new_store;
+pub mod op;
+pub mod s;
+pub mod scope;
+pub mod server_component_boundary;
+pub mod stmt;
+pub mod symbol;
+pub mod ts;
+pub mod use_directive;
 
 pub mod lexer_tables;
 pub mod nodes;
 pub mod runtime;
 
+pub mod ast_result;
+pub mod import_record;
 pub mod loader;
 pub mod target;
-pub mod import_record;
-pub mod ast_result;
 
-pub use loader::{Loader, LoaderOptional, LoaderHashTable, SideEffects};
-pub use target::Target;
-pub use import_record::{
-    ImportRecord, Flags as ImportRecordFlags, Tag as ImportRecordTag, PrintMode as ImportRecordPrintMode,
-};
 pub use ast_result::{
-    Ast, CommonJSNamedExport, CommonJSNamedExports, NamedImports, NamedExports, ConstValuesMap,
-    TsEnumsMap, TopLevelSymbolToParts,
+    Ast, CommonJSNamedExport, CommonJSNamedExports, ConstValuesMap, NamedExports, NamedImports,
+    TopLevelSymbolToParts, TsEnumsMap,
 };
+pub use import_record::{
+    Flags as ImportRecordFlags, ImportRecord, PrintMode as ImportRecordPrintMode,
+    Tag as ImportRecordTag,
+};
+pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};
+pub use target::Target;
 pub mod transpiler_cache;
 // Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that
 // the `link_impl_*!` macro addresses as `$crate::__TranspilerCacheImpl__*`.
@@ -3039,8 +3096,8 @@ pub use char_freq::CharFreq;
 pub use e as E;
 pub use e::CallUnwrap as CanBeUnwrapped;
 pub use expr::{
-    Data as ExprData, Expr, IntoExprData, IntoExprData as ExprInit, PrimitiveType as KnownPrimitive,
-    Tag as ExprTag,
+    Data as ExprData, Expr, IntoExprData, IntoExprData as ExprInit,
+    PrimitiveType as KnownPrimitive, Tag as ExprTag,
 };
 pub use g as G;
 pub use g::NamespaceAlias;
@@ -3126,7 +3183,11 @@ pub struct Indentation {
 
 impl Default for Indentation {
     fn default() -> Self {
-        Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
+        Self {
+            scalar: 2,
+            count: 0,
+            character: IndentationCharacter::Space,
+        }
     }
 }
 

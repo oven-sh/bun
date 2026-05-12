@@ -16,12 +16,24 @@ unsafe extern "C" {
     fn spng_ctx_free(ctx: *mut spng_ctx);
     fn spng_set_png_buffer(ctx: *mut spng_ctx, buf: *const u8, len: usize) -> c_int;
     fn spng_decoded_image_size(ctx: *mut spng_ctx, fmt: c_int, out: *mut usize) -> c_int;
-    fn spng_decode_image(ctx: *mut spng_ctx, out: *mut u8, len: usize, fmt: c_int, flags: c_int) -> c_int;
+    fn spng_decode_image(
+        ctx: *mut spng_ctx,
+        out: *mut u8,
+        len: usize,
+        fmt: c_int,
+        flags: c_int,
+    ) -> c_int;
     fn spng_get_ihdr(ctx: *mut spng_ctx, ihdr: *mut Ihdr) -> c_int;
     fn spng_set_ihdr(ctx: *mut spng_ctx, ihdr: *const Ihdr) -> c_int;
     fn spng_set_plte(ctx: *mut spng_ctx, plte: *const Plte) -> c_int;
     fn spng_set_trns(ctx: *mut spng_ctx, trns: *const Trns) -> c_int;
-    fn spng_encode_image(ctx: *mut spng_ctx, img: *const u8, len: usize, fmt: c_int, flags: c_int) -> c_int;
+    fn spng_encode_image(
+        ctx: *mut spng_ctx,
+        img: *const u8,
+        len: usize,
+        fmt: c_int,
+        flags: c_int,
+    ) -> c_int;
     fn spng_get_png_buffer(ctx: *mut spng_ctx, len: *mut usize, err: *mut c_int) -> *mut u8;
     fn spng_set_option(ctx: *mut spng_ctx, opt: c_int, value: c_int) -> c_int;
     /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
@@ -127,7 +139,16 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     }
     let mut out = vec![0u8; size];
     // SAFETY: ctx is valid; out is a valid mutable buffer of `size` bytes.
-    if unsafe { spng_decode_image(ctx, out.as_mut_ptr(), out.len(), SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) } != 0 {
+    if unsafe {
+        spng_decode_image(
+            ctx,
+            out.as_mut_ptr(),
+            out.len(),
+            SPNG_FMT_RGBA8,
+            SPNG_DECODE_TRNS,
+        )
+    } != 0
+    {
         return Err(codecs::Error::DecodeFailed);
     }
 
@@ -151,7 +172,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     } else {
         None
     };
-    Ok(codecs::Decoded { rgba: out, width: ihdr.width, height: ihdr.height, icc_profile: icc })
+    Ok(codecs::Decoded {
+        rgba: out,
+        width: ihdr.width,
+        height: ihdr.height,
+        icc_profile: icc,
+    })
 }
 
 /// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires
@@ -184,7 +210,13 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
-pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
+pub fn encode(
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+    level: i8,
+    icc_profile: Option<&[u8]>,
+) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {
@@ -199,7 +231,8 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
     let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
     if level >= 0 {
         // SAFETY: ctx is valid.
-        let _ = unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+        let _ =
+            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
     }
     let ihdr = Ihdr {
         width: w,
@@ -214,7 +247,16 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
     }
     embed_iccp(ctx, icc_profile);
     // SAFETY: ctx is valid; rgba is a valid readable buffer.
-    if unsafe { spng_encode_image(ctx, rgba.as_ptr(), rgba.len(), SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) } != 0 {
+    if unsafe {
+        spng_encode_image(
+            ctx,
+            rgba.as_ptr(),
+            rgba.len(),
+            SPNG_FMT_PNG,
+            SPNG_ENCODE_FINALIZE,
+        )
+    } != 0
+    {
         return Err(codecs::Error::EncodeFailed);
     }
     let mut len: usize = 0;
@@ -248,8 +290,16 @@ pub fn encode_indexed(
     dither: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let q = quantize::quantize(rgba, w, h, quantize::Options { max_colors: colors, dither })
-        .map_err(|_| codecs::Error::OutOfMemory)?;
+    let q = quantize::quantize(
+        rgba,
+        w,
+        h,
+        quantize::Options {
+            max_colors: colors,
+            dither,
+        },
+    )
+    .map_err(|_| codecs::Error::OutOfMemory)?;
 
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
@@ -265,7 +315,8 @@ pub fn encode_indexed(
     let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
     if level >= 0 {
         // SAFETY: ctx is valid.
-        let _ = unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+        let _ =
+            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
     }
 
     let ihdr = Ihdr {
@@ -281,7 +332,10 @@ pub fn encode_indexed(
     }
     embed_iccp(ctx, icc_profile);
 
-    let mut plte = Plte { n_entries: u32::from(q.colors), entries: [[0u8; 4]; 256] };
+    let mut plte = Plte {
+        n_entries: u32::from(q.colors),
+        entries: [[0u8; 4]; 256],
+    };
     let mut trns = Trns {
         gray: 0,
         red: 0,
@@ -291,7 +345,12 @@ pub fn encode_indexed(
         type3_alpha: [0u8; 256],
     };
     for i in 0..(q.colors as usize) {
-        plte.entries[i] = [q.palette[i * 4], q.palette[i * 4 + 1], q.palette[i * 4 + 2], 255];
+        plte.entries[i] = [
+            q.palette[i * 4],
+            q.palette[i * 4 + 1],
+            q.palette[i * 4 + 2],
+            255,
+        ];
         trns.type3_alpha[i] = q.palette[i * 4 + 3];
     }
     // SAFETY: ctx is valid; plte is fully initialised.
@@ -304,7 +363,16 @@ pub fn encode_indexed(
     }
 
     // SAFETY: ctx is valid; q.indices is a valid readable buffer.
-    if unsafe { spng_encode_image(ctx, q.indices.as_ptr(), q.indices.len(), SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) } != 0 {
+    if unsafe {
+        spng_encode_image(
+            ctx,
+            q.indices.as_ptr(),
+            q.indices.len(),
+            SPNG_FMT_PNG,
+            SPNG_ENCODE_FINALIZE,
+        )
+    } != 0
+    {
         return Err(codecs::Error::EncodeFailed);
     }
 

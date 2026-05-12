@@ -23,9 +23,9 @@
 
 use core::ffi::c_void;
 
+use crate::webcore::BlobExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
-use crate::webcore::BlobExt as _;
 
 // ─── VirtualMachine.zig ──────────────────────────────────────────────────────
 //
@@ -57,7 +57,9 @@ pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSV
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
 // HOST_EXPORT(Bun__logUnhandledException, c)
 pub fn log_unhandled_exception(exception: JSValue) {
-    VirtualMachine::get().as_mut().run_error_handler(exception, None);
+    VirtualMachine::get()
+        .as_mut()
+        .run_error_handler(exception, None);
 }
 
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
@@ -127,8 +129,7 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
         // followed by `defer specifier_str.deref()`. `bun_core::String` is
         // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
         let specifier_str = bun_core::OwnedString::new(
-            bun_jsc::bun_string_jsc::from_js(specifier, global)
-                .expect("unexpected exception"),
+            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
         );
         return specifier_str.eql_utf8(&eval_source.path.text);
     }
@@ -202,9 +203,10 @@ pub(crate) mod sql_hooks {
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> *mut bun_uws::SslCtx {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache =
-            unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache.get_or_create_opts(*opts, err).unwrap_or(core::ptr::null_mut())
+        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
+        cache
+            .get_or_create_opts(*opts, err)
+            .unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
@@ -227,8 +229,7 @@ pub(crate) mod sql_hooks {
         this: *const c_void,
     ) -> bun_uws::us_bun_socket_context_options_t {
         // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }
-            .as_usockets_for_client_verification()
+        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
     }
     unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
         // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
@@ -523,7 +524,11 @@ pub fn bindgen_node_os_dispatch_get_priority(
     out: *mut i32,
 ) -> bool {
     // SAFETY: `arg_pid`/`out` are valid C++ stack locals.
-    bindgen_out(global, out, node_os::get_priority(global, unsafe { *arg_pid }))
+    bindgen_out(
+        global,
+        out,
+        node_os::get_priority(global, unsafe { *arg_pid }),
+    )
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchHomedir1, c)
@@ -644,7 +649,14 @@ bun_jsc::jsc_abi_extern! {
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
 pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
     let name = bun_core::ZigString::init_utf8(b"fmtString");
-    bun_jsc::host_fn::new_runtime_function(global, Some(&name), 3, bindgen_Fmt_jsc_jsFmtString, false, None)
+    bun_jsc::host_fn::new_runtime_function(
+        global,
+        Some(&name),
+        3,
+        bindgen_Fmt_jsc_jsFmtString,
+        false,
+        None,
+    )
 }
 
 // HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)

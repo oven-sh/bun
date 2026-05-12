@@ -14,7 +14,7 @@ use bun_core::strings;
 // `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
 // is intentionally folded into that to avoid duplicate-import errors.
 
-use crate::{options, Index, IndexInt};
+use crate::{Index, IndexInt, options};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate-name shims for Phase-A draft modules. These map the names the draft
@@ -24,12 +24,12 @@ use crate::{options, Index, IndexInt};
 // modules import from here via `use crate::ungate_support::… as …`.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core as bun_str;
-pub use bun_resolver::fs as bun_fs;
-pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
 /// workspace member yet; alias `bun_core` (which exports `declare_scope!` /
 /// `scoped_log!` at its root) so `bun_output::declare_scope!(…)` resolves.
 pub use bun_core as bun_output;
+pub use bun_resolver::fs as bun_fs;
+pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun.perf.trace(...)` lives in `bun_perf`; the drafts wrote
 /// `bun_core::perf::…`, so re-export under that name.
 ///
@@ -57,8 +57,8 @@ pub mod perf {
 pub mod bun_css {
     // `bun_css` is an UNCONDITIONAL dep (`bun_js_parser` already pulls it in
     // for `BundledAst.css`'s field type). Glob-re-export always.
-    pub use ::bun_css::*;
     pub use ::bun_css::css_modules::Config as CssModuleConfig;
+    pub use ::bun_css::*;
 
     /// `LayerName` for `Chunk::Layers`. The real `bun_css::css_parser::LayerName`
     /// (its `'bump` lifetime is already laundered to `'static` in
@@ -250,33 +250,41 @@ impl CompileResult {
 impl Clone for CompileResult {
     fn clone(&self) -> Self {
         match self {
-            CompileResult::Javascript { source_index, result, decls } => {
-                CompileResult::Javascript {
-                    source_index: *source_index,
-                    result: match result {
-                        bun_js_printer::PrintResult::Result(r) => bun_js_printer::PrintResult::Result(
-                            bun_js_printer::PrintResultSuccess {
-                                code: r.code.clone(),
-                                source_map: r.source_map.clone(),
-                            },
-                        ),
-                        bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
-                    },
-                    decls: decls.clone(),
-                }
-            }
-            CompileResult::Css { result, source_index, source_map } => CompileResult::Css {
+            CompileResult::Javascript {
+                source_index,
+                result,
+                decls,
+            } => CompileResult::Javascript {
+                source_index: *source_index,
+                result: match result {
+                    bun_js_printer::PrintResult::Result(r) => {
+                        bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
+                            code: r.code.clone(),
+                            source_map: r.source_map.clone(),
+                        })
+                    }
+                    bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
+                },
+                decls: decls.clone(),
+            },
+            CompileResult::Css {
+                result,
+                source_index,
+                source_map,
+            } => CompileResult::Css {
                 result: result.clone(),
                 source_index: *source_index,
                 source_map: source_map.clone(),
             },
-            CompileResult::Html { source_index, code, script_injection_offset } => {
-                CompileResult::Html {
-                    source_index: *source_index,
-                    code: code.clone(),
-                    script_injection_offset: *script_injection_offset,
-                }
-            }
+            CompileResult::Html {
+                source_index,
+                code,
+                script_injection_offset,
+            } => CompileResult::Html {
+                source_index: *source_index,
+                code: code.clone(),
+                script_injection_offset: *script_injection_offset,
+            },
         }
     }
 }
@@ -310,8 +318,8 @@ pub fn generic_path_with_pretty_initialized(
     top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
 ) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
-    use bun_io::Write as _;
     use bun_fs::PathResolverExt as _;
+    use bun_io::Write as _;
 
     let mut buf = bun_paths::path_buffer_pool::get();
 
@@ -356,7 +364,11 @@ pub fn generic_path_with_pretty_initialized(
         let _ = write!(
             fbs,
             "{}{}:{}",
-            if target == options::Target::BakeServerComponentsSsr { "ssr:" } else { "" },
+            if target == options::Target::BakeServerComponentsSsr {
+                "ssr:"
+            } else {
+                ""
+            },
             // make sure that a namespace including a colon wont collide with anything
             EscapedNamespace(path_clone.namespace),
             bstr::BStr::new(path_clone.text),
@@ -408,7 +420,12 @@ pub struct ContentHasher {
 bun_core::declare_scope!(ContentHasher, hidden);
 impl ContentHasher {
     pub fn write(&mut self, bytes: &[u8]) {
-        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE {}:\n{}\n----------\n", bytes.len(), bstr::BStr::new(bytes));
+        bun_core::scoped_log!(
+            ContentHasher,
+            "HASH_UPDATE {}:\n{}\n----------\n",
+            bytes.len(),
+            bstr::BStr::new(bytes)
+        );
         self.hasher.update(&(bytes.len() as u64).to_ne_bytes());
         self.hasher.update(bytes);
     }
@@ -492,8 +509,8 @@ pub mod bun_renamer {
 /// `std.io.fixedBufferStream`).
 pub mod html_import_manifest {
     use crate::Graph::Graph;
-    use crate::{chunk::Chunk, LinkerGraph};
     use crate::HTMLImportManifest as real;
+    use crate::{LinkerGraph, chunk::Chunk};
 
     pub use real::{EscapedJson, HTMLImportManifest};
 
@@ -508,7 +525,13 @@ pub mod html_import_manifest {
         chunks: &'a [Chunk],
         linker_graph: &'a LinkerGraph,
     ) -> real::EscapedJson<'a> {
-        real::HTMLImportManifest { index, graph, chunks, linker_graph }.format_escaped_json()
+        real::HTMLImportManifest {
+            index,
+            graph,
+            chunks,
+            linker_graph,
+        }
+        .format_escaped_json()
     }
 
     /// HTMLImportManifest.zig:98 `writeEscapedJSON` — fixed-buffer variant.
@@ -550,9 +573,9 @@ pub enum WrapKind {
     Esm,
 }
 
-pub(crate) use bun_ast::UseDirective;
-pub(crate) use bun_ast::ServerComponentBoundary;
 pub use crate::options_impl::PathTemplate;
+pub(crate) use bun_ast::ServerComponentBoundary;
+pub(crate) use bun_ast::UseDirective;
 
 /// `bundle_v2.zig:MangledProps`.
 pub use bun_js_printer::MangledProps;
@@ -578,7 +601,6 @@ pub use bun_js_printer::MangledProps;
 /// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
 pub type JSAst = crate::BundledAst<'static>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
-
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
 /// below) a namespace for `Kind`. Rust keeps types and modules in separate
@@ -658,8 +680,8 @@ pub mod entry_point {
 /// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
-    use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
     use bun_ast::{Dependency, Ref};
+    use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 
     use crate::{ImportTracker, Index, WrapKind};
 

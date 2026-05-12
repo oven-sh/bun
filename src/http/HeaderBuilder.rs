@@ -1,7 +1,7 @@
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 
-use crate::headers::{api, Entry, EntryList};
+use crate::headers::{Entry, EntryList, api};
 
 #[derive(Default)]
 pub struct HeaderBuilder {
@@ -20,7 +20,8 @@ impl HeaderBuilder {
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         self.content.allocate()?;
         // TODO(port): narrow error set
-        self.entries.ensure_total_capacity(self.header_count as usize)?;
+        self.entries
+            .ensure_total_capacity(self.header_count as usize)?;
         Ok(())
     }
 
@@ -40,7 +41,10 @@ impl HeaderBuilder {
         };
         let _ = self.content.append(value);
         // PERF(port): was assume_capacity
-        self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
+        self.entries.append_assume_capacity(Entry {
+            name: name_ptr,
+            value: value_ptr,
+        });
     }
 
     pub fn append_fmt(&mut self, name: impl AsRef<[u8]>, args: core::fmt::Arguments<'_>) {
@@ -62,7 +66,10 @@ impl HeaderBuilder {
         };
 
         // PERF(port): was assume_capacity
-        self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
+        self.entries.append_assume_capacity(Entry {
+            name: name_ptr,
+            value: value_ptr,
+        });
     }
 
     pub fn apply(&mut self, client: &mut crate::HTTPClient) {
@@ -73,9 +80,8 @@ impl HeaderBuilder {
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
         // holds it past this call); the lifetime is intentionally unbound.
-        client.header_buf = unsafe {
-            bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len)
-        };
+        client.header_buf =
+            unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
     }
 }
 

@@ -5,17 +5,17 @@
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicU32;
 
+use bun_core::{self as bstring, PathString, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
-use bun_core::{self as bstring, strings, PathString};
 
 // PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
 // `File` is re-exported at the crate root.
-use bun_standalone_graph::{File, StandaloneModuleGraph};
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
+use bun_standalone_graph::{File, StandaloneModuleGraph};
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
 pub trait FileJsc {
@@ -69,7 +69,8 @@ impl FileJsc for File {
                 // guarantees liveness for the process lifetime.
                 let store = unsafe { &mut *store_ptr };
                 store.mime_type = mime;
-                b.content_type.set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
+                b.content_type
+                    .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
                 b.content_type_was_set.set(true);
                 b.content_type_allocated.set(false);
             }
@@ -83,7 +84,8 @@ impl FileJsc for File {
             // The pretty name goes here:
             let prefix = StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
             if self.name.starts_with(prefix) {
-                b.name.set(bstring::String::clone_utf8(&self.name[prefix.len()..]));
+                b.name
+                    .set(bstring::String::clone_utf8(&self.name[prefix.len()..]));
             } else if !self.name.is_empty() {
                 b.name.set(bstring::String::clone_utf8(self.name));
             }
@@ -93,7 +95,11 @@ impl FileJsc for File {
             // `cached_blob` is typed against the lower crate's opaque `Blob`
             // newtype (it cannot name `webcore::Blob` without a dep cycle), so
             // erase via `.cast()` here and back below.
-            self.cached_blob = Some(NonNull::new(Blob::new(b)).expect("Blob::new returned null").cast());
+            self.cached_blob = Some(
+                NonNull::new(Blob::new(b))
+                    .expect("Blob::new returned null")
+                    .cast(),
+            );
         }
 
         // SAFETY: populated above; pointer originates from `Blob::new` and is

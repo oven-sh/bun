@@ -18,29 +18,29 @@
 //! with µWebSockets, bridging the gap between libuv's pipe handling and uSockets'
 //! unified socket interface.
 
-use core::ffi::{c_uint, c_void, CStr};
+use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 
-use bun_io::Loop as AsyncLoop;
 use bun_boringssl_sys as boringssl;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::timespec;
-use bun_io::{StreamingWriter, WriteStatus};
+use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -114,14 +114,38 @@ bitflags::bitflags! {
 }
 
 impl Flags {
-    #[inline] pub fn disconnected(self) -> bool { self.contains(Self::DISCONNECTED) }
-    #[inline] pub fn set_disconnected(&mut self, v: bool) { self.set(Self::DISCONNECTED, v) }
-    #[inline] pub fn is_closed(self) -> bool { self.contains(Self::IS_CLOSED) }
-    #[inline] pub fn set_is_closed(&mut self, v: bool) { self.set(Self::IS_CLOSED, v) }
-    #[inline] pub fn is_client(self) -> bool { self.contains(Self::IS_CLIENT) }
-    #[inline] pub fn set_is_client(&mut self, v: bool) { self.set(Self::IS_CLIENT, v) }
-    #[inline] pub fn is_ssl(self) -> bool { self.contains(Self::IS_SSL) }
-    #[inline] pub fn set_is_ssl(&mut self, v: bool) { self.set(Self::IS_SSL, v) }
+    #[inline]
+    pub fn disconnected(self) -> bool {
+        self.contains(Self::DISCONNECTED)
+    }
+    #[inline]
+    pub fn set_disconnected(&mut self, v: bool) {
+        self.set(Self::DISCONNECTED, v)
+    }
+    #[inline]
+    pub fn is_closed(self) -> bool {
+        self.contains(Self::IS_CLOSED)
+    }
+    #[inline]
+    pub fn set_is_closed(&mut self, v: bool) {
+        self.set(Self::IS_CLOSED, v)
+    }
+    #[inline]
+    pub fn is_client(self) -> bool {
+        self.contains(Self::IS_CLIENT)
+    }
+    #[inline]
+    pub fn set_is_client(&mut self, v: bool) {
+        self.set(Self::IS_CLIENT, v)
+    }
+    #[inline]
+    pub fn is_ssl(self) -> bool {
+        self.contains(Self::IS_SSL)
+    }
+    #[inline]
+    pub fn set_is_ssl(&mut self, v: bool) {
+        self.set(Self::IS_SSL, v)
+    }
 }
 
 pub struct Handlers {
@@ -367,21 +391,35 @@ impl WindowsNamedPipe {
     // method receivers above are `&mut self`, so adapt at the FFI boundary.
     // SAFETY (all): `this` is the `ctx` we set to `self as *mut _` when building
     // the wrapper; SSLWrapper never holds a competing `&mut WindowsNamedPipe`.
-    fn ssl_on_open(this: *mut Self) { unsafe { (*this).on_open() } }
+    fn ssl_on_open(this: *mut Self) {
+        unsafe { (*this).on_open() }
+    }
     fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
         unsafe { (*this).on_handshake(ok, e) }
     }
-    fn ssl_on_data(this: *mut Self, d: &[u8]) { unsafe { (*this).on_data(d) } }
-    fn ssl_on_close(this: *mut Self) { unsafe { (*this).on_close() } }
-    fn ssl_write(this: *mut Self, d: &[u8]) { unsafe { (*this).internal_write(d) } }
+    fn ssl_on_data(this: *mut Self, d: &[u8]) {
+        unsafe { (*this).on_data(d) }
+    }
+    fn ssl_on_close(this: *mut Self) {
+        unsafe { (*this).on_close() }
+    }
+    fn ssl_write(this: *mut Self, d: &[u8]) {
+        unsafe { (*this).internal_write(d) }
+    }
 
     fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
 
         self.ssl_error = CertError {
             error_no: ssl_error.error_no,
-            code: ssl_error.code().filter(|_| ssl_error.error_no != 0).map(Into::into),
-            reason: ssl_error.reason().filter(|_| ssl_error.error_no != 0).map(Into::into),
+            code: ssl_error
+                .code()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
+            reason: ssl_error
+                .reason()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
         };
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
     }
@@ -449,7 +487,9 @@ impl WindowsNamedPipe {
                 self.flags.insert(Flags::WRAPPER_BUSY);
                 // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
                 // bytes at `*w` valid for the call's duration.
-                unsafe { let _ = (*w).shutdown(false); }
+                unsafe {
+                    let _ = (*w).shutdown(false);
+                }
                 if !was_busy {
                     self.flags.remove(Flags::WRAPPER_BUSY);
                     if self.flags.is_closed() {
@@ -482,8 +522,8 @@ impl WindowsNamedPipe {
             // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
             // (returned by `writer.get_stream()`); the `StreamReader` impl
             // below routes the trampolines back to `self`.
-            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
-                .to_result(bun_sys::Tag::listen);
+            let read_start_result =
+                unsafe { (*stream).read_start_ctx::<Self>(self) }.to_result(bun_sys::Tag::listen);
             if read_start_result.is_err() {
                 return false;
             }
@@ -529,7 +569,9 @@ impl WindowsNamedPipe {
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
-            unsafe { let _ = (*w).flush(); }
+            unsafe {
+                let _ = (*w).flush();
+            }
             if !was_busy {
                 self.flags.remove(Flags::WRAPPER_BUSY);
                 if self.flags.is_closed() {
@@ -1054,8 +1096,8 @@ impl WindowsNamedPipe {
             // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
             // (returned by `writer.get_stream()`); the `StreamReader` impl
             // below routes the trampolines back to `self`.
-            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
-                .to_result(bun_sys::Tag::listen);
+            let read_start_result =
+                unsafe { (*stream).read_start_ctx::<Self>(self) }.to_result(bun_sys::Tag::listen);
             if let bun_sys::Result::Err(err) = read_start_result {
                 self.on_error(err);
                 return false;
@@ -1149,7 +1191,9 @@ impl WindowsNamedPipe {
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
-            unsafe { let _ = (*w).shutdown(false); }
+            unsafe {
+                let _ = (*w).shutdown(false);
+            }
             if !was_busy {
                 // SAFETY: `this` is still the live payload (re-entry only
                 // toggles flags / defers wrapper drop while WRAPPER_BUSY).
@@ -1182,7 +1226,9 @@ impl WindowsNamedPipe {
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
-            unsafe { let _ = (*w).shutdown(false); }
+            unsafe {
+                let _ = (*w).shutdown(false);
+            }
             if !was_busy {
                 // SAFETY: `this` is still live (re-entry only toggles flags /
                 // defers wrapper drop while WRAPPER_BUSY).
@@ -1274,7 +1320,10 @@ impl WindowsNamedPipe {
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
-        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        self.event_loop_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
         timer_all().insert(&raw mut self.event_loop_timer);
     }
 
@@ -1370,7 +1419,11 @@ impl Drop for WindowsNamedPipe {
 #[unsafe(no_mangle)]
 pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
     // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe { (*this.cast::<WindowsNamedPipe>()).ssl().unwrap_or(core::ptr::null_mut()) }
+    unsafe {
+        (*this.cast::<WindowsNamedPipe>())
+            .ssl()
+            .unwrap_or(core::ptr::null_mut())
+    }
 }
 
 // Windows-only at runtime; the POSIX impl exists purely so the

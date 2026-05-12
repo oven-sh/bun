@@ -1,4 +1,10 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
 //! Bun's cross-platform filesystem watcher.
@@ -40,13 +46,12 @@ pub mod watcher_impl;
 
 // ─── public re-exports ────────────────────────────────────────────────────
 
-pub use watcher_impl::{
-    AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, Op, PackageJSON,
-    WatchEvent, WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind,
-    WatchList, Watcher, WatcherContext, MAX_COUNT, MAX_EVICTION_COUNT, REQUIRES_FILE_DESCRIPTORS,
-    WATCH_OPEN_FLAGS,
-};
 pub use WatchItemKind as Kind;
+pub use watcher_impl::{
+    AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT,
+    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
+    WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+};
 
 // ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────
 //

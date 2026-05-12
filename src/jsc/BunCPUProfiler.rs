@@ -2,10 +2,10 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
+use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
 use bun_paths::PathBuffer;
-use bun_core::{OwnedString, String as BunString};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -122,7 +122,8 @@ fn write_profile_to_file(
     let output_path_os = path_buf.slice_z();
 
     // Write the profile to disk using bun.sys.File.writeFile
-    let result = bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result =
+        bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
@@ -130,8 +131,11 @@ fn write_profile_to_file(
             if !config.dir.is_empty() {
                 let _ = Fd::cwd().make_path(config.dir);
                 // Retry write
-                let retry_result =
-                    bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+                let retry_result = bun_sys::File::write_file_os_path(
+                    Fd::cwd(),
+                    output_path_os,
+                    profile_slice.slice(),
+                );
                 if retry_result.is_err() {
                     return Err(ProfilerError::WriteFailed);
                 }

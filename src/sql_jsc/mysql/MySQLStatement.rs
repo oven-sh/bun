@@ -1,11 +1,11 @@
 use core::cell::Cell;
 
-use bun_collections::StringHashMap;
 use crate::jsc::{JSGlobalObject, JSValue};
+use bun_collections::StringHashMap;
 
+use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
 use crate::shared::sql_data_cell::Flags as DataCellFlags;
-use crate::mysql::protocol::Signature;
 
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::protocol::column_definition41::{ColumnDefinition41, ColumnFlags};
@@ -114,10 +114,14 @@ impl MySQLStatement {
     }
 
     pub fn check_for_duplicate_fields(&mut self) {
-        if !self.execution_flags.contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK) {
+        if !self
+            .execution_flags
+            .contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK)
+        {
             return;
         }
-        self.execution_flags.remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+        self.execution_flags
+            .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
 
         let mut seen_numbers: Vec<u32> = Vec::new();
         // TODO(port): StringHashMap key lifetime — Zig stores borrowed `name.slice()` pointers
@@ -171,7 +175,11 @@ impl MySQLStatement {
     // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
     // here to avoid moving out of `self`; callers in Phase B may need `.clone()` if they require
     // an owned copy.
-    pub fn structure(&mut self, owner: JSValue, global_object: &JSGlobalObject) -> &CachedStructure {
+    pub fn structure(
+        &mut self,
+        owner: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> &CachedStructure {
         if self.cached_structure.has() {
             return &self.cached_structure;
         }

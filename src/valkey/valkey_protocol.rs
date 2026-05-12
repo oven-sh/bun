@@ -150,7 +150,12 @@ impl fmt::Display for RESPValue {
             RESPValue::Boolean(b) => write!(writer, "{}", b),
             RESPValue::BlobError(str) => write!(writer, "Error: {}", BStr::new(str)),
             RESPValue::VerbatimString(verbatim) => {
-                write!(writer, "{}:{}", BStr::new(&verbatim.format), BStr::new(&verbatim.content))
+                write!(
+                    writer,
+                    "{}:{}",
+                    BStr::new(&verbatim.format),
+                    BStr::new(&verbatim.content)
+                )
             }
             RESPValue::Map(entries) => {
                 writer.write_str("{")?;
@@ -410,9 +415,7 @@ impl<'a> ValkeyReader<'a> {
                 let owned = Box::<[u8]>::from(str);
                 Ok(RESPValue::BlobError(owned))
             }
-            RESPType::VerbatimString => {
-                Ok(RESPValue::VerbatimString(self.read_verbatim_string()?))
-            }
+            RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);

@@ -1,10 +1,10 @@
 //! Implements prompt, alert, and confirm Web API
 
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
+use bun_jsc::zig_string::ZigString;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
@@ -35,7 +35,11 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     if output
-        .write_all(if has_message { b" [Enter] " as &[u8] } else { b"Alert [Enter] " })
+        .write_all(if has_message {
+            b" [Enter] " as &[u8]
+        } else {
+            b"Alert [Enter] "
+        })
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
@@ -88,7 +92,11 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     //    and ask the user to respond with a positive or negative
     //    response.
     if output
-        .write_all(if has_message { b" [y/N] " as &[u8] } else { b"Confirm [y/N] " })
+        .write_all(if has_message {
+            b" [y/N] " as &[u8]
+        } else {
+            b"Confirm [y/N] "
+        })
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
@@ -238,7 +246,11 @@ pub mod prompt {
         let has_default = arguments.len() >= 2;
         // 4. Set default to the result of optionally truncating default.
         // *  We don't really need to do this.
-        let default = if has_default { arguments[1] } else { JSValue::NULL };
+        let default = if has_default {
+            arguments[1]
+        } else {
+            JSValue::NULL
+        };
 
         if has_message {
             // 2. Set message to the result of normalizing newlines given message.
@@ -261,7 +273,11 @@ pub mod prompt {
         //    abort. The response must be defaulted to the value given by
         //    default.
         if output
-            .write_all(if has_message { b" " as &[u8] } else { b"Prompt " })
+            .write_all(if has_message {
+                b" " as &[u8]
+            } else {
+                b"Prompt "
+            })
             .is_err()
         {
             // 1. If we cannot show simple dialogs for this, then return false.
@@ -272,7 +288,10 @@ pub mod prompt {
             let default_string = arguments[1].to_slice(global)?;
 
             if output
-                .print(format_args!("[{}] ", bstr::BStr::new(default_string.slice())))
+                .print(format_args!(
+                    "[{}] ",
+                    bstr::BStr::new(default_string.slice())
+                ))
                 .is_err()
             {
                 // 1. If we cannot show simple dialogs for this, then return false.
@@ -287,10 +306,11 @@ pub mod prompt {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-            unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-            ..Default::default()
-        });
+        let _restore =
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                ..Default::default()
+            });
 
         // 7. Pause while waiting for the user's response.
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
@@ -334,9 +354,12 @@ pub mod prompt {
         // buffer of size 2048. If that is too small, then increase the buffer
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
-        if let Err(e) =
-            read_until_delimiter_array_list_append_assume_capacity(&mut *reader, &mut input, b'\n', 2048)
-        {
+        if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
+            &mut *reader,
+            &mut input,
+            b'\n',
+            2048,
+        ) {
             if !matches!(e, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
@@ -346,16 +369,21 @@ pub mod prompt {
             input.ensure_total_capacity(4096);
             // Note: Zig returned `.null` on OOM here; Rust `reserve` aborts on OOM.
 
-            if let Err(e2) =
-                read_until_delimiter_array_list_append_assume_capacity(&mut *reader, &mut input, b'\n', 4096)
-            {
+            if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
+                &mut *reader,
+                &mut input,
+                b'\n',
+                4096,
+            ) {
                 if !matches!(e2, ReadError::StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
                     return Ok(JSValue::NULL);
                 }
 
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n').is_err() {
+                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
+                    .is_err()
+                {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
                     return Ok(JSValue::NULL);

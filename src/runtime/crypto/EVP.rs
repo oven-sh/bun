@@ -1,8 +1,8 @@
-use core::ffi::{c_uint, CStr};
+use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{self as bstr, strings, String as BunString, ZigString};
+use bun_core::{self as bstr, String as BunString, ZigString, strings};
 
 use crate::jsc::JSGlobalObject;
 
@@ -34,7 +34,6 @@ pub trait AlgorithmExt: Copy + Sized {
     /// `EnumArray(Algorithm, bun.String)` table; returned as a flat slice since
     /// the enum is foreign and cannot derive `enum_map::Enum`.
     fn names() -> &'static [BunString];
-
 }
 
 impl AlgorithmExt for Algorithm {
@@ -70,7 +69,9 @@ impl AlgorithmExt for Algorithm {
     fn names() -> &'static [BunString] {
         static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
         NAMES
-            .get_or_init(|| core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes())))
+            .get_or_init(|| {
+                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
+            })
             .as_slice()
     }
 }
@@ -198,7 +199,11 @@ pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
-    pub fn init(algorithm: Algorithm, md: *const boringssl::EVP_MD, engine: *mut boringssl::ENGINE) -> EVP {
+    pub fn init(
+        algorithm: Algorithm,
+        md: *const boringssl::EVP_MD,
+        engine: *mut boringssl::ENGINE,
+    ) -> EVP {
         bun_boringssl::load();
 
         let mut ctx: boringssl::EVP_MD_CTX = bun_core::ffi::zeroed();
@@ -221,7 +226,12 @@ impl EVP {
         }
     }
 
-    pub fn hash(&mut self, engine: *mut boringssl::ENGINE, input: &[u8], output: &mut [u8]) -> Option<u32> {
+    pub fn hash(
+        &mut self,
+        engine: *mut boringssl::ENGINE,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Option<u32> {
         boringssl::ERR_clear_error();
         let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
         // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
@@ -242,11 +252,18 @@ impl EVP {
         Some(outsize)
     }
 
-    pub fn r#final<'a>(&mut self, engine: *mut boringssl::ENGINE, output: &'a mut [u8]) -> &'a mut [u8] {
+    pub fn r#final<'a>(
+        &mut self,
+        engine: *mut boringssl::ENGINE,
+        output: &'a mut [u8],
+    ) -> &'a mut [u8] {
         boringssl::ERR_clear_error();
         let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
         // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
-        if unsafe { boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize) } != 1 {
+        if unsafe {
+            boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize)
+        } != 1
+        {
             return &mut output[..0];
         }
 
@@ -260,7 +277,8 @@ impl EVP {
         // initialized; input.as_ptr() is valid for input.len() bytes.
         unsafe {
             boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len());
+            let _ =
+                boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len());
         }
     }
 
@@ -312,7 +330,9 @@ impl EVP {
         // struct, so cast to the real bindgen type for the FFI call.
         // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
         // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-        let engine = global.bun_vm().as_mut()
+        let engine = global
+            .bun_vm()
+            .as_mut()
             .rare_data()
             .boring_engine()
             .cast::<boringssl::ENGINE>();

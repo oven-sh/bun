@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
-use bun_core::{self, feature_flags, Global, Output, ZStr};
-use bun_parsers::json_parser;
-use bun_js_parser as js_parser;
 use bun_ast as js_ast;
+use bun_core::{self, Global, Output, ZStr, feature_flags};
+use bun_core::{MutableString, strings};
+use bun_js_parser as js_parser;
+use bun_parsers::json_parser;
 use bun_resolver::fs as fs_mod;
-use bun_core::{strings, MutableString};
 use bun_sys::{self, Fd};
 
 // B-3 UNIFIED: `Define` is now the single canonical `bun_js_parser::defines::Define`
@@ -276,24 +276,35 @@ impl Fs {
         let fd = file_handle.handle();
         let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
 
-        let contents =
-            match fs_mod::read_file_contents(&file_handle, path.as_bytes(), true, shared, self.stream).map(Contents::from) {
-                Ok(c) => c,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path.as_bytes()),
-                            bstr::BStr::new(err.name()),
-                        ));
-                    }
-                    return Err(err);
+        let contents = match fs_mod::read_file_contents(
+            &file_handle,
+            path.as_bytes(),
+            true,
+            shared,
+            self.stream,
+        )
+        .map(Contents::from)
+        {
+            Ok(c) => c,
+            Err(err) => {
+                if cfg!(debug_assertions) {
+                    Output::print_error(format_args!(
+                        "{}: readFile error -- {}",
+                        bstr::BStr::new(path.as_bytes()),
+                        bstr::BStr::new(err.name()),
+                    ));
                 }
-            };
+                return Err(err);
+            }
+        };
 
         Ok(Entry {
             contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS { fd } else { Fd::INVALID },
+            fd: if feature_flags::STORE_FILE_DESCRIPTORS {
+                fd
+            } else {
+                Fd::INVALID
+            },
             external_free_function: ExternalFreeFunction::NONE,
         })
     }
@@ -340,7 +351,12 @@ impl Fs {
             f.seek_to(0).map_err(bun_core::Error::from)?;
             f
         } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-            match bun_sys::File::openat(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0) {
+            match bun_sys::File::openat(
+                dirname_fd,
+                bun_paths::basename(path),
+                bun_sys::O::RDONLY,
+                0,
+            ) {
                 Ok(f) => f,
                 Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                     let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
@@ -362,7 +378,13 @@ impl Fs {
         let fd = file_handle.handle();
 
         #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
-        bun_core::scoped_log!(fs, "openat({}, {}) = {}", dirname_fd, bstr::BStr::new(path), fd);
+        bun_core::scoped_log!(
+            fs,
+            "openat({}, {}) = {}",
+            dirname_fd,
+            bstr::BStr::new(path),
+            fd
+        );
 
         let will_close = rfs.need_to_close_files() && _file_handle.is_none();
         let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
@@ -373,7 +395,9 @@ impl Fs {
         let shared = self.shared_buffer();
 
         let contents =
-            match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream).map(Contents::from) {
+            match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream)
+                .map(Contents::from)
+            {
                 Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
@@ -389,7 +413,11 @@ impl Fs {
 
         Ok(Entry {
             contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close { fd } else { Fd::INVALID },
+            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
+                fd
+            } else {
+                Fd::INVALID
+            },
             external_free_function: ExternalFreeFunction::NONE,
         })
     }
@@ -405,7 +433,11 @@ pub struct CssResult {
 }
 
 impl Css {
-    pub fn parse(&mut self, _log: &mut bun_ast::Log, _source: bun_ast::Source) -> Result<CssResult, bun_core::Error> {
+    pub fn parse(
+        &mut self,
+        _log: &mut bun_ast::Log,
+        _source: bun_ast::Source,
+    ) -> Result<CssResult, bun_core::Error> {
         Global::notimpl();
     }
 }

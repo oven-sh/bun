@@ -39,7 +39,11 @@ impl PageSelector {
         // `Copy`.
         Self {
             name: self.name,
-            pseudo_classes: self.pseudo_classes.iter().map(|p| p.deep_clone(bump)).collect(),
+            pseudo_classes: self
+                .pseudo_classes
+                .iter()
+                .map(|p| p.deep_clone(bump))
+                .collect(),
         }
     }
 }
@@ -47,9 +51,7 @@ impl PageSelector {
 // ─── PageSelector parse ───────────────────────────────────────────────────
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
-        let name: Option<&'static [u8]> = input
-            .try_parse(|i| i.expect_ident_cloned())
-            .ok();
+        let name: Option<&'static [u8]> = input.try_parse(|i| i.expect_ident_cloned()).ok();
         let mut pseudo_classes: ArrayList<PagePseudoClass> = ArrayList::new();
 
         loop {
@@ -72,7 +74,10 @@ impl PageSelector {
             return Err(input.new_custom_error(css::ParserError::invalid_page_selector));
         }
 
-        Ok(PageSelector { name, pseudo_classes })
+        Ok(PageSelector {
+            name,
+            pseudo_classes,
+        })
     }
 }
 
@@ -227,7 +232,12 @@ impl PageRule {
             }
         }
 
-        Ok(PageRule { selectors, declarations, rules, loc })
+        Ok(PageRule {
+            selectors,
+            declarations,
+            rules,
+            loc,
+        })
     }
 }
 
@@ -316,7 +326,11 @@ const _: () = {
     impl<'a> DeclarationParser for PageRuleParser<'a> {
         type Declaration = ();
 
-        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(
+            this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
             css::declaration::parse_declaration(
                 name,
                 input,
@@ -341,11 +355,17 @@ const _: () = {
         type Prelude = PageMarginBox;
         type AtRule = ();
 
-        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
+        fn parse_prelude(
+            _this: &mut Self,
+            name: &[u8],
+            input: &mut Parser,
+        ) -> Result<Self::Prelude> {
             let loc = input.current_source_location();
             match css::parse_utility::parse_string(input.arena(), name, PageMarginBox::parse) {
                 Ok(v) => Ok(v),
-                Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(std::ptr::from_ref::<[u8]>(name)))),
+                Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(
+                    std::ptr::from_ref::<[u8]>(name),
+                ))),
             }
         }
 

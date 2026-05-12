@@ -112,11 +112,10 @@ mod strings {
             }
         }
     }
-
 }
 
 use super::entity as entity_mod;
-use super::types::{TextType, OFF};
+use super::types::{OFF, TextType};
 
 /// Check if a byte is ASCII whitespace (space, tab, LF, CR, FF, VT).
 #[inline]
@@ -183,10 +182,37 @@ pub fn is_unicode_punctuation(codepoint: u32) -> bool {
 pub fn is_ascii_punctuation(c: u8) -> bool {
     matches!(
         c,
-        b'!' | b'"' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b'-' | b'.' | b'/'
-        | b':' | b';' | b'<' | b'=' | b'>' | b'?' | b'@'
-        | b'[' | b'\\' | b']' | b'^' | b'_' | b'`'
-        | b'{' | b'|' | b'}' | b'~'
+        b'!' | b'"'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b'-'
+            | b'.'
+            | b'/'
+            | b':'
+            | b';'
+            | b'<'
+            | b'='
+            | b'>'
+            | b'?'
+            | b'@'
+            | b'['
+            | b'\\'
+            | b']'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'{'
+            | b'|'
+            | b'}'
+            | b'~'
     )
 }
 
@@ -249,20 +275,32 @@ pub struct Utf8DecodeResult {
 /// Returns the codepoint and the number of bytes consumed.
 pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off >= text.len() {
-        return Utf8DecodeResult { codepoint: 0, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: 0,
+            len: 1,
+        };
     }
     let b0 = text[off];
     if b0 < 0x80 {
-        return Utf8DecodeResult { codepoint: b0 as u32, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: b0 as u32,
+            len: 1,
+        };
     }
 
     let seq_len = strings::codepoint_size::<u8>(b0);
     if seq_len == 0 {
-        return Utf8DecodeResult { codepoint: 0xFFFD, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: 0xFFFD,
+            len: 1,
+        };
     }
     let remaining = text.len() - off;
     if remaining < seq_len as usize {
-        return Utf8DecodeResult { codepoint: 0xFFFD, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: 0xFFFD,
+            len: 1,
+        };
     }
 
     let mut buf: [u8; 4] = [0, 0, 0, 0];
@@ -270,7 +308,10 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     buf[..n].copy_from_slice(&text[off..][..n]);
 
     let cp = strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
-    Utf8DecodeResult { codepoint: cp, len: u8::try_from(seq_len).expect("int cast") }
+    Utf8DecodeResult {
+        codepoint: cp,
+        len: u8::try_from(seq_len).expect("int cast"),
+    }
 }
 
 /// Decode the UTF-8 codepoint ending just before position `off` (i.e. the
@@ -278,11 +319,17 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
 /// Returns the codepoint and the number of bytes it occupies.
 pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off == 0 || off > text.len() {
-        return Utf8DecodeResult { codepoint: 0, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: 0,
+            len: 1,
+        };
     }
     let last = text[off - 1];
     if last < 0x80 {
-        return Utf8DecodeResult { codepoint: last as u32, len: 1 };
+        return Utf8DecodeResult {
+            codepoint: last as u32,
+            len: 1,
+        };
     }
     // Walk back over continuation bytes (10xxxxxx)
     let mut start: usize = off - 1;
@@ -290,7 +337,10 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
         start -= 1;
     }
     let r = decode_utf8(text, start);
-    Utf8DecodeResult { codepoint: r.codepoint, len: r.len }
+    Utf8DecodeResult {
+        codepoint: r.codepoint,
+        len: r.len,
+    }
 }
 
 /// Encode a Unicode codepoint as UTF-8.
@@ -459,7 +509,9 @@ pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
                 break;
             }
             // md4c is lenient on bad hex (`_ => 0`) — preserve via .unwrap_or(0).
-            cp = cp.wrapping_mul(16).wrapping_add(u32::from(bun_core::fmt::hex_digit_value(ec).unwrap_or(0)));
+            cp = cp
+                .wrapping_mul(16)
+                .wrapping_add(u32::from(bun_core::fmt::hex_digit_value(ec).unwrap_or(0)));
         }
     } else {
         for &ec in &entity_text[2..] {
@@ -479,11 +531,21 @@ pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
 /// Returns decoded bytes as a slice of `out`, or null for unknown entities.
 pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Option<&'a [u8]> {
     if let Some(cp) = parse_entity_codepoint(entity_text) {
-        let len = encode_utf8(cp, (&mut out[0..4]).try_into().expect("infallible: size matches"));
+        let len = encode_utf8(
+            cp,
+            (&mut out[0..4])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         return Some(&out[..len as usize]);
     }
     if let Some(codepoints) = entity_mod::lookup(entity_text) {
-        let len1 = encode_utf8(codepoints[0], (&mut out[0..4]).try_into().expect("infallible: size matches")) as usize;
+        let len1 = encode_utf8(
+            codepoints[0],
+            (&mut out[0..4])
+                .try_into()
+                .expect("infallible: size matches"),
+        ) as usize;
         if codepoints[1] != 0 {
             let mut tmp: [u8; 4] = [0; 4];
             let len2 = encode_utf8(codepoints[1], &mut tmp) as usize;
@@ -565,7 +627,10 @@ pub struct HeadingIdTracker {
 
 impl HeadingIdTracker {
     pub fn init(enabled: bool) -> HeadingIdTracker {
-        HeadingIdTracker { enabled, ..Default::default() }
+        HeadingIdTracker {
+            enabled,
+            ..Default::default()
+        }
     }
 
     // deinit → Drop: text_buf (Vec) and slug_counts (owns its Box<[u8]> keys) free automatically.

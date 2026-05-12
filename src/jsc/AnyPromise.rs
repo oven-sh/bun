@@ -25,8 +25,14 @@ pub enum AnyPromise {
 macro_rules! any_promise_dispatch {
     ($self:expr, |$p:ident| $body:expr) => {
         match $self {
-            Self::Normal(ptr) => { let $p = JSPromise::opaque_mut(ptr); $body }
-            Self::Internal(ptr) => { let $p = JSInternalPromise::opaque_mut(ptr); $body }
+            Self::Normal(ptr) => {
+                let $p = JSPromise::opaque_mut(ptr);
+                $body
+            }
+            Self::Internal(ptr) => {
+                let $p = JSInternalPromise::opaque_mut(ptr);
+                $body
+            }
         }
     };
 }
@@ -80,7 +86,10 @@ impl AnyPromise {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
-        value.attach_async_stack_from_promise(global_this, JSPromise::opaque_ref(self.as_js_promise()));
+        value.attach_async_stack_from_promise(
+            global_this,
+            JSPromise::opaque_ref(self.as_js_promise()),
+        );
         self.reject(global_this, value)
     }
 
@@ -161,7 +170,8 @@ impl AnyPromise {
         );
         // C++ converts any thrown exception into a rejection, so a pending non-termination
         // exception here indicates a bug; surface termination as JsTerminated.
-        scope.assert_no_exception_except_termination()
+        scope
+            .assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)
     }
 }

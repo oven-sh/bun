@@ -1,6 +1,6 @@
-use crate::values::ident::{DashedIdent, DashedIdentFns};
-use crate::media_query::MediaList;
 use crate::css_rules::Location;
+use crate::media_query::MediaList;
+use crate::values::ident::{DashedIdent, DashedIdentFns};
 use crate::{PrintErr, Printer};
 use bun_alloc::Arena;
 

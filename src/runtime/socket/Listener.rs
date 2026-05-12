@@ -5,33 +5,37 @@ use core::ffi::{c_char, c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
+use bun_core::{self as strings_mod, strings};
+use bun_io::KeepAlive;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::{
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult,
+};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer};
-use bun_core::{self as strings_mod, strings};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::node::path as node_path;
-use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
+use crate::socket::{
+    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
@@ -41,7 +45,10 @@ bun_output::define_scoped_log!(log, Listener, visible);
 #[inline]
 fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
     let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "runtime_state() before init_runtime_state");
+    debug_assert!(
+        !state.is_null(),
+        "runtime_state() before init_runtime_state"
+    );
     // SAFETY: `state` is the per-thread `RuntimeState` boxed in
     // `init_runtime_state`; address-stable until VM teardown.
     unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
@@ -157,7 +164,11 @@ impl Listener {
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
 
-        let handlers = Handlers::from_js(global, socket_obj, this.handlers.get().mode == SocketMode::Server)?;
+        let handlers = Handlers::from_js(
+            global,
+            socket_obj,
+            this.handlers.get().mode == SocketMode::Server,
+        )?;
         // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
         // `markActive`. Without this, closing any of them after reload would underflow the
@@ -242,7 +253,9 @@ impl Listener {
                 // SAFETY: just allocated, non-null, exclusive
                 let this_ref = unsafe { &mut *this };
                 if !default_data.is_empty() {
-                    this_ref.strong_data.set(Strong::create(default_data, global));
+                    this_ref
+                        .strong_data
+                        .set(Strong::create(default_data, global));
                 }
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
@@ -258,7 +271,8 @@ impl Listener {
                 ) {
                     Ok(named_pipe) => {
                         this_ref.listener.set(ListenerType::NamedPipe(
-                            NonNull::new(named_pipe).expect("listen returns a non-null heap pointer"),
+                            NonNull::new(named_pipe)
+                                .expect("listen returns a non-null heap pointer"),
                         ));
                     }
                     Err(_) => {
@@ -299,7 +313,8 @@ impl Listener {
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
-        let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
+        let handlers_moved: Handlers =
+            unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
         // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
@@ -328,7 +343,9 @@ impl Listener {
         }));
         // SAFETY: just allocated, non-null, exclusive
         let this_ref = unsafe { &mut *this };
-        this_ref.group.with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
+        this_ref
+            .group
+            .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
         // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
         // this.group → head_sockets → us_socket_t` once the only pointer into the
         // group lives inside a mimalloc page. Registering the embedded group as a
@@ -377,7 +394,10 @@ impl Listener {
 
         // errdefer bun.default_allocator.free(hostname) — Box<[u8]> drops on error path automatically
         let mut connection: UnixOrHost = if let Some(port_) = port {
-            UnixOrHost::Host { host: hostname_owned, port: port_ }
+            UnixOrHost::Host {
+                host: hostname_owned,
+                port: port_,
+            }
         } else if let Some(fd) = fd_opt {
             // PORT NOTE: hostname is dropped here (Zig leaked it on this arm — same behavior not preserved)
             drop(hostname_owned);
@@ -386,8 +406,9 @@ impl Listener {
             UnixOrHost::Unix(hostname_owned)
         };
 
-        let secure_ctx_ptr: Option<*mut uws::SslCtx> =
-            this_ref.secure_ctx.map(|p| p.as_ptr().cast::<uws::SslCtx>());
+        let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
+            .secure_ctx
+            .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
@@ -396,29 +417,34 @@ impl Listener {
                 let mut hostz = host.to_vec();
                 hostz.push(0);
                 let host_cstr = bun_core::ZStr::from_slice_with_nul(&hostz).as_cstr();
-                let ls = this_ref.group.with_mut(|g| g.listen(
-                    kind,
-                    secure_ctx_ptr,
-                    Some(host_cstr),
-                    *port as c_int,
-                    socket_flags,
-                    size_of::<*mut c_void>() as c_int,
-                    &mut errno,
-                ));
+                let ls = this_ref.group.with_mut(|g| {
+                    g.listen(
+                        kind,
+                        secure_ctx_ptr,
+                        Some(host_cstr),
+                        *port as c_int,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                        &mut errno,
+                    )
+                });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port()).expect("int cast");
+                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
+                        .expect("int cast");
                 }
                 ls
             }
-            UnixOrHost::Unix(u) => this_ref.group.with_mut(|g| g.listen_unix(
-                kind,
-                secure_ctx_ptr,
-                u,
-                socket_flags,
-                size_of::<*mut c_void>() as c_int,
-                &mut errno,
-            )),
+            UnixOrHost::Unix(u) => this_ref.group.with_mut(|g| {
+                g.listen_unix(
+                    kind,
+                    secure_ctx_ptr,
+                    u,
+                    socket_flags,
+                    size_of::<*mut c_void>() as c_int,
+                    &mut errno,
+                )
+            }),
             UnixOrHost::Fd(fd) => {
                 let err = jsc::SystemError {
                     errno: bun_sys::SystemErrno::EINVAL as c_int,
@@ -448,9 +474,17 @@ impl Listener {
             ));
             log!("Failed to listen {}", errno);
             if errno != 0 {
-                err.put(global, b"syscall", jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?);
+                err.put(
+                    global,
+                    b"syscall",
+                    jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?,
+                );
                 err.put(global, b"errno", JSValue::js_number(errno as f64));
-                err.put(global, b"address", ZigString::init_utf8(hostname_bytes).to_js(global));
+                err.put(
+                    global,
+                    b"address",
+                    ZigString::init_utf8(hostname_bytes).to_js(global),
+                );
                 if let Some(p) = port {
                     err.put(global, b"port", JSValue::js_number(p as f64));
                 }
@@ -468,7 +502,9 @@ impl Listener {
         this_ref.connection = connection;
         this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
-            this_ref.strong_data.set(Strong::create(default_data, global));
+            this_ref
+                .strong_data
+                .set(Strong::create(default_data, global));
         }
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
@@ -533,11 +569,7 @@ impl Listener {
         s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.get().global_object;
-            NewSocket::<SSL>::data_set_cached(
-                s.get_this_value(&global),
-                &global,
-                default_data,
-            );
+            NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         this_socket
     }
@@ -580,11 +612,7 @@ impl Listener {
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.get().global_object;
-            NewSocket::<SSL>::data_set_cached(
-                s.get_this_value(&global),
-                &global,
-                default_data,
-            );
+            NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
@@ -609,15 +637,21 @@ impl Listener {
         tls: JSValue,
     ) -> JsResult<JSValue> {
         if !this.ssl {
-            return Err(global.throw_invalid_arguments(format_args!("addServerName requires SSL support")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
+            );
         }
         if !hostname.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!("hostname pattern expects a string")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("hostname pattern expects a string"))
+            );
         }
         let host_str = hostname.to_slice(global)?;
         let server_name_bytes = host_str.slice();
         if server_name_bytes.is_empty() {
-            return Err(global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
+            );
         }
         // NUL-terminate for the C `&CStr` parameter.
         let mut server_name_buf = server_name_bytes.to_vec();
@@ -648,13 +682,15 @@ impl Listener {
                 None => {
                     if create_err != uws::create_bun_socket_error_t::none {
                         return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                create_err, global,
+                            ),
                         ));
                     }
                     let code = boring_sys::ERR_get_error();
-                    return Err(global.throw_value(
-                        crate::crypto::boringssl_jsc::err_to_js(global, code),
-                    ));
+                    return Err(
+                        global.throw_value(crate::crypto::boringssl_jsc::err_to_js(global, code))
+                    );
                 }
             }
         } else {
@@ -724,8 +760,10 @@ impl Listener {
 
         if this.handlers.get().active_connections.get() == 0 {
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-            this.strong_self.with_mut(|s| s.clear_without_deallocation());
-            this.strong_data.with_mut(|s| s.clear_without_deallocation());
+            this.strong_self
+                .with_mut(|s| s.clear_without_deallocation());
+            this.strong_data
+                .with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
             this.group.with_mut(|g| g.close_all());
         }
@@ -737,7 +775,9 @@ impl Listener {
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
                 // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
+                unsafe {
+                    WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
+                };
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
@@ -758,7 +798,9 @@ impl Listener {
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
                 // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
+                unsafe {
+                    WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
+                };
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
@@ -885,7 +927,8 @@ impl Listener {
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.get().active_connections.get() == 0 {
-            this.strong_self.with_mut(|s| s.clear_without_deallocation());
+            this.strong_self
+                .with_mut(|s| s.clear_without_deallocation());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -974,8 +1017,8 @@ impl Listener {
 
         #[cfg(windows)]
         {
-            use bun_sys::FdExt as _;
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
+            use bun_sys::FdExt as _;
 
             let mut buf = PathBuffer::uninit();
             // PORT NOTE: reshaped for borrowck — `normalize_pipe_name` borrows
@@ -984,15 +1027,13 @@ impl Listener {
             let mut pipe_name_len: Option<usize> = None;
             let is_named_pipe = match &mut connection {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                UnixOrHost::Unix(slice) => {
-                    match normalize_pipe_name(slice, buf.as_mut_slice()) {
-                        Some(name) => {
-                            pipe_name_len = Some(name.len());
-                            true
-                        }
-                        None => false,
+                UnixOrHost::Unix(slice) => match normalize_pipe_name(slice, buf.as_mut_slice()) {
+                    Some(name) => {
+                        pipe_name_len = Some(name.len());
+                        true
                     }
-                }
+                    None => false,
+                },
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);
@@ -1031,7 +1072,9 @@ impl Listener {
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
                 // Set on the `Box` before `into_raw` so no raw-deref is needed.
-                handlers_box.promise.with_mut(|p| p.set(global, promise_value));
+                handlers_box
+                    .promise
+                    .with_mut(|p| p.set(global, promise_value));
                 let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
                 if ssl_enabled {
@@ -1044,15 +1087,20 @@ impl Listener {
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
-                        debug_assert!(matches!(prev.socket.get().socket, uws::InternalSocket::Detached));
+                        debug_assert!(matches!(
+                            prev.socket.get().socket,
+                            uws::InternalSocket::Detached
+                        ));
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
-                        prev.protos.set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
-                        prev.server_name.set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
+                        prev.protos
+                            .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
+                        prev.server_name
+                            .set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
                         prev_ptr
                     } else {
                         TLSSocket::new(TLSSocket {
@@ -1061,7 +1109,9 @@ impl Listener {
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
                             protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
-                            server_name: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_server_name())),
+                            server_name: JsCell::new(
+                                ssl_taken.as_mut().and_then(|s| s.take_server_name()),
+                            ),
                             owned_ssl_ctx: Cell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
@@ -1075,7 +1125,11 @@ impl Listener {
                     };
                     // SAFETY: tls is a valid heap pointer
                     let tls_ref = unsafe { &*tls };
-                    TLSSocket::data_set_cached(tls_ref.get_this_value(global), global, default_data);
+                    TLSSocket::data_set_cached(
+                        tls_ref.get_this_value(global),
+                        global,
+                        default_data,
+                    );
                     tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                     tls_ref.ref_();
 
@@ -1121,7 +1175,10 @@ impl Listener {
                             unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
-                        debug_assert!(matches!(prev.socket.get().socket, uws::InternalSocket::Detached));
+                        debug_assert!(matches!(
+                            prev.socket.get().socket,
+                            uws::InternalSocket::Detached
+                        ));
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
                         // non-pipe arm below. Previously `.connection = null`
@@ -1152,7 +1209,11 @@ impl Listener {
                     // SAFETY: tcp is a valid heap pointer
                     let tcp_ref = unsafe { &*tcp };
                     tcp_ref.ref_();
-                    TCPSocket::data_set_cached(tcp_ref.get_this_value(global), global, default_data);
+                    TCPSocket::data_set_cached(
+                        tcp_ref.get_this_value(global),
+                        global,
+                        default_data,
+                    );
                     tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 
                     let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
@@ -1205,7 +1266,9 @@ impl Listener {
                     }
                     None => {
                         return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                create_err, global,
+                            ),
                         ));
                     }
                 }
@@ -1218,7 +1281,8 @@ impl Listener {
 
         // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
-        let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
+        let handlers_moved: Handlers =
+            unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
         core::mem::forget(socket_config);
@@ -1229,7 +1293,9 @@ impl Listener {
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
         // Set on the `Box` before `into_raw` so no raw-deref is needed.
-        handlers_box.promise.with_mut(|p| p.set(global, promise_value));
+        handlers_box
+            .promise
+            .with_mut(|p| p.set(global, promise_value));
         let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
@@ -1267,7 +1333,11 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn getsockname(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn getsockname(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let ListenerType::Uws(socket) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1355,7 +1425,8 @@ fn connect_finish<const IS_SSL: bool>(
             prev.protos.set(None); // drop old Box
         }
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
-        prev.server_name.set(ssl.as_mut().and_then(|s| s.take_server_name()));
+        prev.server_name
+            .set(ssl.as_mut().and_then(|s| s.take_server_name()));
         if let Some(old) = prev.owned_ssl_ctx.get() {
             // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
             unsafe { boring_sys::SSL_CTX_free(old) };
@@ -1431,7 +1502,9 @@ fn connect_finish<const IS_SSL: bool>(
     // if this is from node:net there's surface where the user can .ref() and .deref()
     // before the connection starts. make sure we honor that here.
     if socket_ref.ref_pollref_on_connect.get() {
-        socket_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        socket_ref
+            .poll_ref
+            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     }
 
     Ok(promise_value)
@@ -1449,7 +1522,12 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if let Some(this) = Listener::from_js(listener) {
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
         // R-2: deref as shared (`&*`) — `add_server_name` takes `&Self`.
-        return Listener::add_server_name(unsafe { &*this }, global, arguments.ptr[1], arguments.ptr[2]);
+        return Listener::add_server_name(
+            unsafe { &*this },
+            global,
+            arguments.ptr[1],
+            arguments.ptr[2],
+        );
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
@@ -1642,9 +1720,7 @@ impl WindowsNamedPipeListeningContext {
             }
         }
 
-        let init_result = this_ref
-            .uv_pipe
-            .init(this_ref.vm.uv_loop().cast(), false);
+        let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
             return Err(bun_core::err!("FailedToInitPipe"));
         }

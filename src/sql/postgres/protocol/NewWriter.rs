@@ -1,5 +1,5 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
-use crate::postgres::types::int_types::{int32, PostgresInt32, PostgresInt64};
+use crate::postgres::types::int_types::{PostgresInt32, PostgresInt64, int32};
 
 /// Trait expressing the structural requirements that Zig's `NewWriterWrap`
 /// took as comptime fn-pointer params (`offsetFn_`, `writeFunction_`,

@@ -7,7 +7,7 @@
 
 use core::cell::Cell;
 
-use crate::shell::interpreter::{log, Interpreter, NodeId, StateKind};
+use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
 use crate::shell::states::pipeline::Pipeline;
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
@@ -42,13 +42,21 @@ pub enum Yield {
 
 impl Yield {
     #[inline]
-    pub const fn suspended() -> Yield { Yield::Suspended }
+    pub const fn suspended() -> Yield {
+        Yield::Suspended
+    }
     #[inline]
-    pub const fn done() -> Yield { Yield::Done }
+    pub const fn done() -> Yield {
+        Yield::Done
+    }
     #[inline]
-    pub const fn failed() -> Yield { Yield::Failed }
+    pub const fn failed() -> Yield {
+        Yield::Failed
+    }
 
-    pub fn is_done(&self) -> bool { matches!(self, Yield::Done) }
+    pub fn is_done(&self) -> bool {
+        matches!(self, Yield::Done)
+    }
 }
 
 thread_local! {
@@ -122,9 +130,11 @@ impl Yield {
                     interp.next_node(id)
                 }
                 Yield::Start(id) => interp.start_node(id),
-                Yield::OnIoWriterChunk { child, written, err } => {
-                    crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err)
-                }
+                Yield::OnIoWriterChunk {
+                    child,
+                    written,
+                    err,
+                } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
                 Yield::Suspended | Yield::Failed | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
@@ -136,10 +146,7 @@ impl Yield {
         }
     }
 
-    fn drain_pipelines(
-        interp: &Interpreter,
-        pipeline_stack: &mut Vec<NodeId>,
-    ) -> Option<Yield> {
+    fn drain_pipelines(interp: &Interpreter, pipeline_stack: &mut Vec<NodeId>) -> Option<Yield> {
         while let Some(&id) = pipeline_stack.last() {
             if Pipeline::is_starting_cmds(interp, id) {
                 return Some(interp.next_node(id));

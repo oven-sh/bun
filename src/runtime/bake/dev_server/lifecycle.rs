@@ -43,7 +43,6 @@ impl bun_watcher::WatcherContext for DevServer {
     }
 }
 
-
 impl WatcherAtomics {
     /// DevServer.zig `WatcherAtomics.init`.
     pub(crate) fn init(owner: *mut DevServer) -> Self {
@@ -60,7 +59,6 @@ impl WatcherAtomics {
         }
     }
 }
-
 
 /// Parse a 16-char hex slice into a `u64` via native-endian byte
 /// reinterpretation. Mirrors DevServer.zig:961-965 exactly:

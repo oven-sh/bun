@@ -1,5 +1,5 @@
-use bun_collections::VecExt;
 use bun_alloc::Arena as Bump;
+use bun_collections::VecExt;
 
 use crate as js_ast;
 use crate::E;

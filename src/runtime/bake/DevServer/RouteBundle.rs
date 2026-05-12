@@ -3,10 +3,10 @@ use std::sync::Arc;
 use bun_jsc::StrongOptional;
 use bun_ptr::RefPtr;
 
-use super::{incremental_graph, source_map_store, DevServer, SerializedFailure};
+use super::{DevServer, SerializedFailure, incremental_graph, source_map_store};
+use crate::api::server::StaticRoute;
 use crate::bake::framework_router;
 use crate::server::html_bundle::HTMLBundleRoute;
-use crate::api::server::StaticRoute;
 
 // Zig: `pub const Index = bun.GenericIndex(u30, RouteBundle);`
 pub use crate::bake::dev_server::route_bundle::{Index, IndexOptional};

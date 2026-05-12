@@ -14,15 +14,15 @@
 
 #![allow(dead_code)]
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 
-use bun_sys::{self as sys, Fd, E};
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter as _;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+#[cfg(not(windows))]
+use bun_io::pipe_writer::PosixPipeWriter as _;
+use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
@@ -59,14 +59,22 @@ impl ChildPtr {
 
     #[inline]
     pub const fn new(node: NodeId, tag: WriterTag) -> ChildPtr {
-        ChildPtr { node, tag, raw: core::ptr::null_mut() }
+        ChildPtr {
+            node,
+            tag,
+            raw: core::ptr::null_mut(),
+        }
     }
 
     /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
     /// outside the NodeId arena, recovered via `container_of` in the Zig).
     #[inline]
     pub fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
-        ChildPtr { node: NodeId::NONE, tag: WriterTag::Subproc, raw: cw }
+        ChildPtr {
+            node: NodeId::NONE,
+            tag: WriterTag::Subproc,
+            raw: cw,
+        }
     }
 
     #[inline]
@@ -681,7 +689,11 @@ impl IOWriter {
         }
 
         if !is_dead {
-            return Yield::OnIoWriterChunk { child: child_ptr, written, err: None };
+            return Yield::OnIoWriterChunk {
+                child: child_ptr,
+                written,
+                err: None,
+            };
         }
         Yield::done()
     }
@@ -835,7 +847,11 @@ impl IOWriter {
         }
         for ptr in targets {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            self.run_yield(Yield::OnIoWriterChunk { child: ptr, written: 0, err: Some(err) });
+            self.run_yield(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                err: Some(err),
+            });
             self.cancel_chunks(ptr);
         }
         let s = self.state();
@@ -874,7 +890,11 @@ impl IOWriter {
             // so re-derive a fresh one per callee instead of cloning the stored
             // error.
             let ee = err.to_shell_system_error();
-            self.run_yield(Yield::OnIoWriterChunk { child: ptr, written: 0, err: Some(ee) });
+            self.run_yield(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                err: Some(ee),
+            });
         }
         let s = self.state();
         s.total_bytes_written = 0;
@@ -910,7 +930,11 @@ impl IOWriter {
     fn handle_broken_pipe(&self, ptr: ChildPtr) -> Option<Yield> {
         if self.state().flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Some(Yield::OnIoWriterChunk { child: ptr, written: 0, err: Some(err) });
+            return Some(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                err: Some(err),
+            });
         }
         None
     }
@@ -950,21 +974,25 @@ impl IOWriter {
 
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires. Spec: IOWriter.zig `enqueue`.
-    pub fn enqueue(
-        &self,
-        child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
-        buf: &[u8],
-    ) -> Yield {
+    pub fn enqueue(&self, child: ChildPtr, bytelist: Option<*mut Vec<u8>>, buf: &[u8]) -> Yield {
         if let Some(y) = self.handle_broken_pipe(child) {
             return y;
         }
         if buf.is_empty() {
-            return Yield::OnIoWriterChunk { child, written: 0, err: None };
+            return Yield::OnIoWriterChunk {
+                child,
+                written: 0,
+                err: None,
+            };
         }
         let s = self.state();
         s.buf.extend_from_slice(buf);
-        s.writers.push(Writer { ptr: child, len: buf.len(), written: 0, bytelist });
+        s.writers.push(Writer {
+            ptr: child,
+            len: buf.len(),
+            written: 0,
+            bytelist,
+        });
         self.enqueue_internal()
     }
 
@@ -991,10 +1019,19 @@ impl IOWriter {
         // simultaneous `&mut State` (UB under Stacked Borrows).
         if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Yield::OnIoWriterChunk { child, written: 0, err: Some(err) };
+            return Yield::OnIoWriterChunk {
+                child,
+                written: 0,
+                err: Some(err),
+            };
         }
         let end = s.buf.len();
-        s.writers.push(Writer { ptr: child, len: end - start, written: 0, bytelist });
+        s.writers.push(Writer {
+            ptr: child,
+            len: end - start,
+            written: 0,
+            bytelist,
+        });
         self.enqueue_internal()
     }
 
@@ -1076,7 +1113,11 @@ fn try_write_with_write_fn(
 /// TODO: This function and `try_write_with_write_fn` are copy-pastes from
 /// PipeWriter; it would be nice to not have to do that.
 #[cfg(not(windows))]
-fn drain_buffered_data(parent: &IOWriter, buf: &[u8], max_write_size: usize) -> bun_io::WriteResult {
+fn drain_buffered_data(
+    parent: &IOWriter,
+    buf: &[u8],
+    max_write_size: usize,
+) -> bun_io::WriteResult {
     let trimmed = if max_write_size < buf.len() && max_write_size > 0 {
         &buf[..max_write_size]
     } else {
@@ -1139,7 +1180,8 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
-        s.writer.disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
+        s.writer
+            .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
     }
 }
 
@@ -1172,10 +1214,9 @@ pub fn on_io_writer_chunk(
         }
         // `Interpreter.If` is not in the spec's `ChildPtrRaw` union (IOWriter.zig
         // :765-793) — it never enqueues to an IOWriter.
-        WriterTag::If => crate::shell::interpreter::unreachable_state(
-            "IOWriter.onIOWriterChunk",
-            "If",
-        ),
+        WriterTag::If => {
+            crate::shell::interpreter::unreachable_state("IOWriter.onIOWriterChunk", "If")
+        }
         // Spec dispatches to `subproc.PipeReader.CapturedWriter`; that lives
         // outside the NodeId arena (heap-allocated PipeReader), so the target
         // is carried in `child.raw` instead of `child.node`.
@@ -1187,9 +1228,7 @@ pub fn on_io_writer_chunk(
             // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
             // the owning ShellSubprocess until `on_close_io` runs, which only
             // happens after the writer has finished draining. Single-threaded.
-            let cw = unsafe {
-                &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>()
-            };
+            let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
             cw.on_iowriter_chunk(written, err)
         }
     }

@@ -23,12 +23,12 @@ pub struct IniTestingAPIs;
 impl IniTestingAPIs {
     pub fn load_npmrc_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use bun_api::BunInstall;
+        use bun_ast::{Log, Source};
+        use bun_core::String as BunString;
         use bun_core::ZStr;
         use bun_dotenv as dotenv;
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
-        use bun_ast::{Log, Source};
-        use bun_core::String as BunString;
 
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_bun_string(global)?;
@@ -61,8 +61,7 @@ impl IniTestingAPIs {
                 global,
                 envobj,
                 bun_jsc::JSPropertyIteratorOptions::new(
-                    /* skip_empty_name */ false,
-                    /* include_value   */ true,
+                    /* skip_empty_name */ false, /* include_value   */ true,
                 ),
             )?;
 
@@ -163,11 +162,26 @@ impl IniTestingAPIs {
                 global: &JSGlobalObject,
                 mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
             ) -> JsResult<()> {
-                put(b"default_registry_url", self.default_registry_url.to_js(global)?)?;
-                put(b"default_registry_token", self.default_registry_token.to_js(global)?)?;
-                put(b"default_registry_username", self.default_registry_username.to_js(global)?)?;
-                put(b"default_registry_password", self.default_registry_password.to_js(global)?)?;
-                put(b"default_registry_email", self.default_registry_email.to_js(global)?)?;
+                put(
+                    b"default_registry_url",
+                    self.default_registry_url.to_js(global)?,
+                )?;
+                put(
+                    b"default_registry_token",
+                    self.default_registry_token.to_js(global)?,
+                )?;
+                put(
+                    b"default_registry_username",
+                    self.default_registry_username.to_js(global)?,
+                )?;
+                put(
+                    b"default_registry_password",
+                    self.default_registry_password.to_js(global)?,
+                )?;
+                put(
+                    b"default_registry_email",
+                    self.default_registry_email.to_js(global)?,
+                )?;
                 Ok(())
             }
         }

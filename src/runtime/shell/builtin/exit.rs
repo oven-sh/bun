@@ -25,11 +25,7 @@ impl Exit {
                 match parse_exit_code(s) {
                     Some(c) => c,
                     None => {
-                        return Self::fail(
-                            interp,
-                            cmd,
-                            b"exit: numeric argument required\n",
-                        );
+                        return Self::fail(interp, cmd, b"exit: numeric argument required\n");
                     }
                 }
             }

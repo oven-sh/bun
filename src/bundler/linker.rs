@@ -4,20 +4,20 @@
 
 use std::io::Write as _;
 
-use bun_collections::VecExt;
-use bun_collections::HashMap;
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_collections::HashMap;
+use bun_collections::VecExt;
 use bun_paths::{self, SEP};
 // PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
 // Both port `src/resolver/fs.zig`; B-3 collapses them. Until then, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
-use bun_resolver::fs as Fs;
-use bun_paths::fs as PFs;
-use bun_resolver::{self as resolver, Resolver};
 use bun_core::strings;
+use bun_paths::fs as PFs;
+use bun_resolver::fs as Fs;
+use bun_resolver::{self as resolver, Resolver};
 use bun_sys::Fd;
 use bun_url::URL;
 
@@ -134,9 +134,14 @@ mod hardcoded_module {
         bun_resolve_builtins::Alias::get(
             name,
             target,
-            bun_resolve_builtins::Cfg { rewrite_jest_for_tests: opts.rewrite_jest_for_tests },
+            bun_resolve_builtins::Cfg {
+                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
+            },
         )
-        .map(|a| Alias { path: a.path.as_bytes(), tag: a.tag })
+        .map(|a| Alias {
+            path: a.path.as_bytes(),
+            tag: a.tag,
+        })
     }
 }
 
@@ -198,7 +203,10 @@ impl Linker {
     /// `configure_linker` has run.
     #[inline]
     pub fn options(&self) -> &BundleOptions<'static> {
-        debug_assert!(!self.options.is_null(), "Linker.options used before configure_linker");
+        debug_assert!(
+            !self.options.is_null(),
+            "Linker.options used before configure_linker"
+        );
         unsafe { &*self.options }
     }
 
@@ -235,7 +243,10 @@ impl Linker {
     /// `configure_linker`.
     #[inline]
     pub fn resolve_results_mut(&mut self) -> &mut ResolveResults {
-        debug_assert!(!self.resolve_results.is_null(), "Linker.resolve_results used before configure_linker");
+        debug_assert!(
+            !self.resolve_results.is_null(),
+            "Linker.resolve_results used before configure_linker"
+        );
         unsafe { &mut *self.resolve_results }
     }
 
@@ -247,7 +258,10 @@ impl Linker {
     /// null after `configure_linker`.
     #[inline]
     pub fn resolve_queue_mut(&mut self) -> &mut ResolveQueue {
-        debug_assert!(!self.resolve_queue.is_null(), "Linker.resolve_queue used before configure_linker");
+        debug_assert!(
+            !self.resolve_queue.is_null(),
+            "Linker.resolve_queue used before configure_linker"
+        );
         unsafe { &mut *self.resolve_queue }
     }
 
@@ -413,18 +427,15 @@ impl Linker {
                 for record_i in 0..len {
                     let record_index = u32::try_from(record_i).expect("int cast");
 
-                    let skip_deferred = IS_BUN
-                        && is_deferred
-                        && !result.is_pending_import(record_index);
+                    let skip_deferred =
+                        IS_BUN && is_deferred && !result.is_pending_import(record_index);
 
                     // Field-split borrow: `source` ⟂ `ast`.
                     let source = &result.source;
                     let ast = &mut result.ast;
                     let import_record = &mut ast.import_records.slice_mut()[record_i];
 
-                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                        || skip_deferred
-                    {
+                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
                         continue;
                     }
 
@@ -432,9 +443,13 @@ impl Linker {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = PFs::Path::init_with_namespace(
-                                    intern_box(
-                                        origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?,
-                                    ),
+                                    intern_box(origin.join_alloc(
+                                        b"",
+                                        b"",
+                                        b"bun:wrap",
+                                        b"",
+                                        b"",
+                                    )?),
                                     b"bun",
                                 );
                             } else {
@@ -506,8 +521,7 @@ impl Linker {
                     }
 
                     if let Some(runner) = self.plugin_runner {
-                        let import_record =
-                            &mut result.ast.import_records.slice_mut()[record_i];
+                        let import_record = &mut result.ast.import_records.slice_mut()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
                             // SAFETY: `plugin_runner` is `Some` only when set
                             // by the owning `Transpiler` to a live JSC-heap
@@ -585,11 +599,9 @@ impl Linker {
             }
         }
 
-        if !import_record.path.text.is_empty()
-            && resolver::is_package_path(import_record.path.text)
+        if !import_record.path.text.is_empty() && resolver::is_package_path(import_record.path.text)
         {
-            if target == BundleTarget::Browser
-                && options::is_node_builtin(import_record.path.text)
+            if target == BundleTarget::Browser && options::is_node_builtin(import_record.path.text)
             {
                 log.add_resolve_error(
                     Some(source),
@@ -660,8 +672,7 @@ impl Linker {
                 }
             }
             ImportPathFormat::Relative => {
-                let relative_name =
-                    bun_paths::resolve_path::relative(source_dir, source_path);
+                let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
 
                 let pretty: &'static [u8];
                 let relative_name_out: &'static [u8];
@@ -669,9 +680,8 @@ impl Linker {
                     let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
                     let dir = basepath.name.dir_with_trailing_slash();
-                    let mut _pretty: Vec<u8> = Vec::with_capacity(
-                        dir.len() + basename.len() + basepath.name.ext.len(),
-                    );
+                    let mut _pretty: Vec<u8> =
+                        Vec::with_capacity(dir.len() + basename.len() + basepath.name.ext.len());
                     _pretty.extend_from_slice(dir);
                     _pretty.extend_from_slice(basename);
                     _pretty.extend_from_slice(basepath.name.ext);

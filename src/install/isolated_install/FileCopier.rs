@@ -2,17 +2,22 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
+use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
-use bun_sys::{self as sys, walker_skippable, walker_skippable::Walker, Dir, EntryKind, Fd, E};
+use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 // `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
 // comptime-configured path-builder types. `.unit = .os` means u8 on POSIX,
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
 // the platform-native width. `.sep = .auto` normalizes `/` → `\` on Windows
 // during `from`/`append`, which is load-bearing for the Win32 calls below.
-type AbsPathAutoOs = bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
-type PathAutoOs = bun_paths::Path<OSPathChar, { bun_paths::path_options::Kind::ANY }, { bun_paths::path_options::PathSeparators::AUTO }>;
+type AbsPathAutoOs =
+    bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
+type PathAutoOs = bun_paths::Path<
+    OSPathChar,
+    { bun_paths::path_options::Kind::ANY },
+    { bun_paths::path_options::PathSeparators::AUTO },
+>;
 
 pub struct FileCopier {
     pub src_path: AbsPathAutoOs,
@@ -58,11 +63,9 @@ impl FileCopier {
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
-        let dest_subpath_u8: &[u8] = bun_paths::string_paths::from_w_path(
-            &mut dest_u8_buf[..],
-            self.dest_subpath.slice(),
-        )
-        .as_bytes();
+        let dest_subpath_u8: &[u8] =
+            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest_subpath.slice())
+                .as_bytes();
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
         let dest_dir = match bun_sys::make_path::make_open_path(
@@ -232,12 +235,13 @@ impl FileCopier {
                     continue;
                 }
 
-                let src: Fd = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
-                    sys::Result::Ok(fd) => fd,
-                    sys::Result::Err(err) => {
-                        return sys::Result::Err(err);
-                    }
-                };
+                let src: Fd =
+                    match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
+                        sys::Result::Ok(fd) => fd,
+                        sys::Result::Err(err) => {
+                            return sys::Result::Err(err);
+                        }
+                    };
                 // `defer src.close()` → handled by Drop on `src`.
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {

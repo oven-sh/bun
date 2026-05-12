@@ -11,8 +11,8 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, VM};
 
-use bun_bundler::analyze_transpiled_module as analyze;
 use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
+use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
@@ -95,10 +95,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         res.flags.has_tla(),
     );
 
-    debug_assert_eq!(
-        requested_modules_keys.len(),
-        requested_modules_values.len()
-    );
+    debug_assert_eq!(requested_modules_keys.len(), requested_modules_values.len());
     for (&reqk, &reqv) in requested_modules_keys
         .iter()
         .zip(requested_modules_values.iter())
@@ -119,11 +116,9 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))` —
             // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
             // is a bitcast of the raw discriminant back into the interned-string index.
-            uv => module_record.add_requested_module_host_defined(
-                identifiers,
-                reqk,
-                StringID(uv.0),
-            ),
+            uv => {
+                module_record.add_requested_module_host_defined(identifiers, reqk, StringID(uv.0))
+            }
         }
     }
 
@@ -176,9 +171,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 RecordKind::ExportInfoNamespace => {
                     module_record.add_namespace_export(identifiers, buffer[i], buffer[i + 1])
                 }
-                RecordKind::ExportInfoStar => {
-                    module_record.add_star_export(identifiers, buffer[i])
-                }
+                RecordKind::ExportInfoStar => module_record.add_star_export(identifiers, buffer[i]),
                 _ => unreachable!(), // handled above
             }
             i += k.len().expect("unreachable"); // handled above
@@ -202,7 +195,12 @@ unsafe extern "C" {
 }
 impl VariableEnvironment {
     #[inline]
-    pub fn add(&mut self, vm: &VM, identifier_array: *mut IdentifierArray, identifier_index: StringID) {
+    pub fn add(
+        &mut self,
+        vm: &VM,
+        identifier_array: *mut IdentifierArray,
+        identifier_index: StringID,
+    ) {
         // SAFETY: self is a valid &mut VariableEnvironment from C++; identifier_array is live (scopeguard).
         unsafe { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
     }
@@ -257,8 +255,12 @@ unsafe extern "C" {
         has_tla: bool,
     ) -> *mut JSModuleRecord;
 
-    fn JSC_JSModuleRecord__declaredVariables(module_record: *mut JSModuleRecord) -> *mut VariableEnvironment;
-    fn JSC_JSModuleRecord__lexicalVariables(module_record: *mut JSModuleRecord) -> *mut VariableEnvironment;
+    fn JSC_JSModuleRecord__declaredVariables(
+        module_record: *mut JSModuleRecord,
+    ) -> *mut VariableEnvironment;
+    fn JSC_JSModuleRecord__lexicalVariables(
+        module_record: *mut JSModuleRecord,
+    ) -> *mut VariableEnvironment;
 
     fn JSC_JSModuleRecord__addIndirectExport(
         module_record: *mut JSModuleRecord,
@@ -380,32 +382,93 @@ impl JSModuleRecord {
 // These take `*mut Self` because the Zig side calls them as `module_record.addX(...)`
 // on a raw pointer; we keep raw-ptr receivers to avoid materializing `&mut` aliases.
 trait JSModuleRecordExt {
-    fn add_indirect_export(self, ia: *mut IdentifierArray, export_name: StringID, import_name: StringID, module_name: StringID);
-    fn add_local_export(self, ia: *mut IdentifierArray, export_name: StringID, local_name: StringID);
-    fn add_namespace_export(self, ia: *mut IdentifierArray, export_name: StringID, module_name: StringID);
+    fn add_indirect_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        import_name: StringID,
+        module_name: StringID,
+    );
+    fn add_local_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        local_name: StringID,
+    );
+    fn add_namespace_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        module_name: StringID,
+    );
     fn add_star_export(self, ia: *mut IdentifierArray, module_name: StringID);
-    fn add_requested_module_null_attributes_ptr(self, ia: *mut IdentifierArray, module_name: StringID);
+    fn add_requested_module_null_attributes_ptr(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+    );
     fn add_requested_module_java_script(self, ia: *mut IdentifierArray, module_name: StringID);
     fn add_requested_module_web_assembly(self, ia: *mut IdentifierArray, module_name: StringID);
     fn add_requested_module_json(self, ia: *mut IdentifierArray, module_name: StringID);
-    fn add_requested_module_host_defined(self, ia: *mut IdentifierArray, module_name: StringID, host_defined_import_type: StringID);
-    fn add_import_entry_single(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID);
-    fn add_import_entry_single_type_script(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID);
-    fn add_import_entry_namespace(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID);
+    fn add_requested_module_host_defined(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        host_defined_import_type: StringID,
+    );
+    fn add_import_entry_single(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn add_import_entry_single_type_script(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn add_import_entry_namespace(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
     // SAFETY (all below): `self` is the non-null pointer returned by JSC_JSModuleRecord__create;
     // `ia` is the live IdentifierArray guarded by scopeguard for the duration of the caller.
     #[inline]
-    fn add_indirect_export(self, ia: *mut IdentifierArray, export_name: StringID, import_name: StringID, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addIndirectExport(self, ia, export_name, import_name, module_name) }
+    fn add_indirect_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        import_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addIndirectExport(self, ia, export_name, import_name, module_name)
+        }
     }
     #[inline]
-    fn add_local_export(self, ia: *mut IdentifierArray, export_name: StringID, local_name: StringID) {
+    fn add_local_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        local_name: StringID,
+    ) {
         unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
     }
     #[inline]
-    fn add_namespace_export(self, ia: *mut IdentifierArray, export_name: StringID, module_name: StringID) {
+    fn add_namespace_export(
+        self,
+        ia: *mut IdentifierArray,
+        export_name: StringID,
+        module_name: StringID,
+    ) {
         unsafe { JSC_JSModuleRecord__addNamespaceExport(self, ia, export_name, module_name) }
     }
     #[inline]
@@ -413,7 +476,11 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name) }
     }
     #[inline]
-    fn add_requested_module_null_attributes_ptr(self, ia: *mut IdentifierArray, module_name: StringID) {
+    fn add_requested_module_null_attributes_ptr(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+    ) {
         unsafe { JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(self, ia, module_name) }
     }
     #[inline]
@@ -429,20 +496,68 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name) }
     }
     #[inline]
-    fn add_requested_module_host_defined(self, ia: *mut IdentifierArray, module_name: StringID, host_defined_import_type: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleHostDefined(self, ia, module_name, host_defined_import_type) }
+    fn add_requested_module_host_defined(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        host_defined_import_type: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addRequestedModuleHostDefined(
+                self,
+                ia,
+                module_name,
+                host_defined_import_type,
+            )
+        }
     }
     #[inline]
-    fn add_import_entry_single(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name) }
+    fn add_import_entry_single(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name)
+        }
     }
     #[inline]
-    fn add_import_entry_single_type_script(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addImportEntrySingleTypeScript(self, ia, import_name, local_name, module_name) }
+    fn add_import_entry_single_type_script(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addImportEntrySingleTypeScript(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+            )
+        }
     }
     #[inline]
-    fn add_import_entry_namespace(self, ia: *mut IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addImportEntryNamespace(self, ia, import_name, local_name, module_name) }
+    fn add_import_entry_namespace(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addImportEntryNamespace(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+            )
+        }
     }
 }
 

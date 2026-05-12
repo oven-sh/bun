@@ -324,8 +324,14 @@ mod tests {
     fn murmur2_32_uint() {
         let v0: u32 = 0x12345678;
         let v1: u64 = 0x1234567812345678;
-        assert_eq!(Murmur2_32::hash(&v0.to_le_bytes()), Murmur2_32::hash_uint32(v0));
-        assert_eq!(Murmur2_32::hash(&v1.to_le_bytes()), Murmur2_32::hash_uint64(v1));
+        assert_eq!(
+            Murmur2_32::hash(&v0.to_le_bytes()),
+            Murmur2_32::hash_uint32(v0)
+        );
+        assert_eq!(
+            Murmur2_32::hash(&v1.to_le_bytes()),
+            Murmur2_32::hash_uint64(v1)
+        );
     }
 
     #[test]
@@ -337,8 +343,14 @@ mod tests {
     fn murmur2_64_uint() {
         let v0: u32 = 0x12345678;
         let v1: u64 = 0x1234567812345678;
-        assert_eq!(Murmur2_64::hash(&v0.to_le_bytes()), Murmur2_64::hash_uint32(v0));
-        assert_eq!(Murmur2_64::hash(&v1.to_le_bytes()), Murmur2_64::hash_uint64(v1));
+        assert_eq!(
+            Murmur2_64::hash(&v0.to_le_bytes()),
+            Murmur2_64::hash_uint32(v0)
+        );
+        assert_eq!(
+            Murmur2_64::hash(&v1.to_le_bytes()),
+            Murmur2_64::hash_uint64(v1)
+        );
     }
 
     #[test]
@@ -350,8 +362,14 @@ mod tests {
     fn murmur3_32_uint() {
         let v0: u32 = 0x12345678;
         let v1: u64 = 0x1234567812345678;
-        assert_eq!(Murmur3_32::hash(&v0.to_le_bytes()), Murmur3_32::hash_uint32(v0));
-        assert_eq!(Murmur3_32::hash(&v1.to_le_bytes()), Murmur3_32::hash_uint64(v1));
+        assert_eq!(
+            Murmur3_32::hash(&v0.to_le_bytes()),
+            Murmur3_32::hash_uint32(v0)
+        );
+        assert_eq!(
+            Murmur3_32::hash(&v1.to_le_bytes()),
+            Murmur3_32::hash_uint64(v1)
+        );
     }
 
     #[test]

@@ -36,7 +36,10 @@ impl FileRange {
             return None;
         }
         let mid = self.lo + self.len() / 2;
-        let stolen = FileRange { lo: mid, hi: self.hi };
+        let stolen = FileRange {
+            lo: mid,
+            hi: self.hi,
+        };
         self.hi = mid;
         Some(stolen)
     }

@@ -10,13 +10,11 @@ use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
-use bun_core::strings;
 use bun_core::ZigString;
+use bun_core::strings;
 
+use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
-use crate::{
-    Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef,
-};
 
 // In Zig: `const string = []const u8;`
 // AST string fields are arena-owned (bulk-freed via Store/arena reset; never
@@ -38,7 +36,10 @@ pub struct NameOfSymbol {
 }
 impl Default for NameOfSymbol {
     fn default() -> Self {
-        Self { ref_: Ref::NONE, has_property_key_comment: false }
+        Self {
+            ref_: Ref::NONE,
+            has_property_key_comment: false,
+        }
     }
 }
 
@@ -386,7 +387,10 @@ impl Arrow {
     // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
-        body: G::FnBody { loc: crate::Loc::EMPTY, stmts: crate::StoreSlice::EMPTY },
+        body: G::FnBody {
+            loc: crate::Loc::EMPTY,
+            stmts: crate::StoreSlice::EMPTY,
+        },
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
@@ -396,7 +400,10 @@ impl Default for Arrow {
     fn default() -> Self {
         Self {
             args: crate::StoreSlice::EMPTY,
-            body: G::FnBody { loc: crate::Loc::EMPTY, stmts: crate::StoreSlice::EMPTY },
+            body: G::FnBody {
+                loc: crate::Loc::EMPTY,
+                stmts: crate::StoreSlice::EMPTY,
+            },
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
@@ -481,15 +488,21 @@ impl Identifier {
     // struct-init pattern at the handful of sites that set flags up front.
     #[inline]
     pub const fn with_must_keep_due_to_with_stmt(self, v: bool) -> Self {
-        Self { ref_: self.ref_.with_user_bit(0, v) }
+        Self {
+            ref_: self.ref_.with_user_bit(0, v),
+        }
     }
     #[inline]
     pub const fn with_can_be_removed_if_unused(self, v: bool) -> Self {
-        Self { ref_: self.ref_.with_user_bit(1, v) }
+        Self {
+            ref_: self.ref_.with_user_bit(1, v),
+        }
     }
     #[inline]
     pub const fn with_call_can_be_unwrapped_if_unused(self, v: bool) -> Self {
-        Self { ref_: self.ref_.with_user_bit(2, v) }
+        Self {
+            ref_: self.ref_.with_user_bit(2, v),
+        }
     }
 }
 
@@ -530,7 +543,11 @@ impl ImportIdentifier {
         // Strip any incoming user bits (the caller may pass an
         // `E::Identifier.ref_` carrying its own flags in bits 1/2) before
         // applying ours, so foreign flags can't leak into this node.
-        Self { ref_: ref_.without_user_bits().with_user_bit(0, was_originally_identifier) }
+        Self {
+            ref_: ref_
+                .without_user_bits()
+                .with_user_bit(0, was_originally_identifier),
+        }
     }
 
     /// If true, this was originally an identifier expression such as "foo". If
@@ -749,7 +766,8 @@ impl Number {
             // std.fmt.allocPrint(arena, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
             // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
             let mut stack = [0u8; 16];
-            let Ok(s) = bun_core::fmt::buf_print(&mut stack, format_args!("{}", int_value as i32)) else {
+            let Ok(s) = bun_core::fmt::buf_print(&mut stack, format_args!("{}", int_value as i32))
+            else {
                 return None;
             };
             return Some(Str::new(bump.alloc_slice_copy(s)));
@@ -808,7 +826,10 @@ impl Number {
         T::from_f64(clamped)
     }
 
-    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(&self.value)
     }
 
@@ -840,7 +861,10 @@ pub struct BigInt {
 impl BigInt {
     pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
 
-    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(&self.value)
     }
 
@@ -886,7 +910,10 @@ impl Rope {
             // arena-backed handle whose deref is centralised in `nodes.rs`).
             return next.append(expr, bump);
         }
-        let rope: *mut Rope = bump.alloc(Rope { head: expr, next: core::ptr::null_mut() });
+        let rope: *mut Rope = bump.alloc(Rope {
+            head: expr,
+            next: core::ptr::null_mut(),
+        });
         self.next = rope;
         Ok(rope)
     }
@@ -947,9 +974,15 @@ impl Object {
         for (i, prop) in self.properties.slice().iter().enumerate() {
             let Some(value) = prop.value else { continue };
             let Some(key) = &prop.key else { continue };
-            let crate::expr::Data::EString(key_str) = &key.data else { continue };
+            let crate::expr::Data::EString(key_str) = &key.data else {
+                continue;
+            };
             if key_str.eql_bytes(name) {
-                return Some(crate::expr::Query { expr: value, loc: key.loc, i: i as u32 });
+                return Some(crate::expr::Query {
+                    expr: value,
+                    loc: key.loc,
+                    i: i as u32,
+                });
             }
         }
         None
@@ -958,7 +991,9 @@ impl Object {
     pub fn has_property(&self, name: &[u8]) -> bool {
         for prop in self.properties.slice() {
             let Some(key) = &prop.key else { continue };
-            let crate::expr::Data::EString(key_str) = &key.data else { continue };
+            let crate::expr::Data::EString(key_str) = &key.data else {
+                continue;
+            };
             if key_str.eql_bytes(name) {
                 return true;
             }
@@ -970,26 +1005,29 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            VecExt::append(&mut self.properties, G::Property {
-                key: Some(Expr::init(EString::init(key), expr.loc)),
-                value: Some(expr),
-                ..G::Property::default()
-            });
+            VecExt::append(
+                &mut self.properties,
+                G::Property {
+                    key: Some(Expr::init(EString::init(key), expr.loc)),
+                    value: Some(expr),
+                    ..G::Property::default()
+                },
+            );
         }
         Ok(())
     }
 
     pub fn put_string(&mut self, bump: &Bump, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        self.put(bump, key, Expr::init(EString::init(value), crate::Loc::EMPTY))
+        self.put(
+            bump,
+            key,
+            Expr::init(EString::init(value), crate::Loc::EMPTY),
+        )
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression (Zig: `getOrPutObject`).
-    pub fn get_or_put_object(
-        &mut self,
-        rope: &Rope,
-        _bump: &Bump,
-    ) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1021,29 +1059,32 @@ impl Object {
         if let Some(next) = rope.next_ref() {
             let obj = Expr::init(Object::default(), rope.head.loc);
             let out = match obj.data {
-                crate::expr::Data::EObject(mut o) => {
-                    o.get_or_put_object(next, _bump)?
-                }
+                crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
                 _ => unreachable!(),
             };
-            VecExt::append(&mut self.properties, G::Property {
-                key: Some(rope.head),
-                value: Some(obj),
-                ..G::Property::default()
-            });
+            VecExt::append(
+                &mut self.properties,
+                G::Property {
+                    key: Some(rope.head),
+                    value: Some(obj),
+                    ..G::Property::default()
+                },
+            );
             return Ok(out);
         }
 
         let out = Expr::init(Object::default(), rope.head.loc);
-        VecExt::append(&mut self.properties, G::Property {
-            key: Some(rope.head),
-            value: Some(out),
-            ..G::Property::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            G::Property {
+                key: Some(rope.head),
+                value: Some(out),
+                ..G::Property::default()
+            },
+        );
         Ok(out)
     }
 }
-
 
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
@@ -1057,21 +1098,19 @@ impl Object {
         }
         // Zig takes `*const Object` here and mutates through Vec's interior pointer;
         // in Rust we require `&mut self` so the borrow checker tracks the write.
-        VecExt::append(&mut self.properties, G::Property {
-            key: Some(key),
-            value: Some(value),
-            ..G::Property::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..G::Property::default()
+            },
+        );
         Ok(())
     }
 
     // this is terribly, shamefully slow
-    pub fn set_rope(
-        &mut self,
-        rope: &Rope,
-        bump: &Bump,
-        value: Expr,
-    ) -> Result<(), SetError> {
+    pub fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1122,19 +1161,18 @@ impl Object {
             value_ = obj;
         }
 
-        VecExt::append(&mut self.properties, G::Property {
-            key: Some(rope.head),
-            value: Some(value_),
-            ..G::Property::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            G::Property {
+                key: Some(rope.head),
+                value: Some(value_),
+                ..G::Property::default()
+            },
+        );
         Ok(())
     }
 
-    pub fn get_or_put_array(
-        &mut self,
-        rope: &Rope,
-        bump: &Bump,
-    ) -> Result<Expr, SetError> {
+    pub fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1178,37 +1216,49 @@ impl Object {
                 .e_object_mut()
                 .unwrap()
                 .get_or_put_array(next, bump)?;
-            VecExt::append(&mut self.properties, G::Property {
-                key: Some(rope.head),
-                value: Some(obj),
-                ..G::Property::default()
-            });
+            VecExt::append(
+                &mut self.properties,
+                G::Property {
+                    key: Some(rope.head),
+                    value: Some(obj),
+                    ..G::Property::default()
+                },
+            );
             return Ok(out);
         }
 
         let out = Expr::init(Array::default(), rope.head.loc);
-        VecExt::append(&mut self.properties, G::Property {
-            key: Some(rope.head),
-            value: Some(out),
-            ..G::Property::default()
-        });
+        VecExt::append(
+            &mut self.properties,
+            G::Property {
+                key: Some(rope.head),
+                value: Some(out),
+                ..G::Property::default()
+            },
+        );
         Ok(out)
     }
-
 
     /// Assumes each key in the property is a string
     pub fn alphabetize_properties(&mut self) {
         #[cfg(debug_assertions)]
         {
             for prop in self.properties.slice() {
-                debug_assert!(matches!(prop.key.as_ref().expect("infallible: prop has key").data, crate::expr::Data::EString(_)));
+                debug_assert!(matches!(
+                    prop.key.as_ref().expect("infallible: prop has key").data,
+                    crate::expr::Data::EString(_)
+                ));
             }
         }
-        self.properties.slice_mut().sort_by(object_sorter_is_less_than);
+        self.properties
+            .slice_mut()
+            .sort_by(object_sorter_is_less_than);
     }
 
     pub fn package_json_sort(&mut self) {
-        self.properties.slice_mut().sort_by(package_json_sort_is_less_than);
+        self.properties
+            .slice_mut()
+            .sort_by(package_json_sort_is_less_than);
     }
 }
 
@@ -1251,15 +1301,17 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 
     if let Some(k) = &lhs.key {
         if let crate::expr::Data::EString(s) = &k.data {
-            lhs_key_size =
-                *PACKAGE_JSON_SORT_MAP.get(&s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
+            lhs_key_size = *PACKAGE_JSON_SORT_MAP
+                .get(&s.data)
+                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
     }
 
     if let Some(k) = &rhs.key {
         if let crate::expr::Data::EString(s) = &k.data {
-            rhs_key_size =
-                *PACKAGE_JSON_SORT_MAP.get(&s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
+            rhs_key_size = *PACKAGE_JSON_SORT_MAP
+                .get(&s.data)
+                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
     }
 
@@ -1267,8 +1319,22 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
         Ordering::Equal => {
             // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
             // a full `Ordering` so this is usable with `sort_by`.
-            let a = lhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
-            let b = rhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
+            let a = lhs
+                .key
+                .as_ref()
+                .unwrap()
+                .data
+                .e_string()
+                .expect("infallible: variant checked")
+                .data;
+            let b = rhs
+                .key
+                .as_ref()
+                .unwrap()
+                .data
+                .e_string()
+                .expect("infallible: variant checked")
+                .data;
             a.cmp(&b)
         }
         ord => ord,
@@ -1276,8 +1342,22 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 }
 
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
-    let a = lhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
-    let b = rhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
+    let a = lhs
+        .key
+        .as_ref()
+        .unwrap()
+        .data
+        .e_string()
+        .expect("infallible: variant checked")
+        .data;
+    let b = rhs
+        .key
+        .as_ref()
+        .unwrap()
+        .data
+        .e_string()
+        .expect("infallible: variant checked")
+        .data;
     a.cmp(&b)
 }
 
@@ -1345,12 +1425,22 @@ impl EString {
     }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {
-        Self { data: Str::new(data), prefer_template: false, next: None, end: None, rope_len: 0, is_utf16: false }
+        Self {
+            data: Str::new(data),
+            prefer_template: false,
+            next: None,
+            end: None,
+            rope_len: 0,
+            is_utf16: false,
+        }
     }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
     /// and bulk-freed; `StoreStr` records it under the `StoreRef` contract.
     pub fn init(data: &[u8]) -> Self {
-        Self { data: Str::new(data), ..Default::default() }
+        Self {
+            data: Str::new(data),
+            ..Default::default()
+        }
     }
     /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
     /// stores the **u16 element count** (not byte count) — Zig:
@@ -1364,7 +1454,11 @@ impl EString {
         // `unsafe` block. Consumers must check `is_utf16` and re-slice via
         // `slice16`.
         let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
-        Self { data: Str::new(bytes), is_utf16: true, ..Default::default() }
+        Self {
+            data: Str::new(bytes),
+            is_utf16: true,
+            ..Default::default()
+        }
     }
     /// E.String containing non-ascii characters may not fully work.
     /// https://github.com/oven-sh/bun/issues/11963
@@ -1375,8 +1469,7 @@ impl EString {
         } else {
             // PERF(port): Zig allocated directly in arena; here we transcode to a
             // heap Vec then copy into the bump arena — profile.
-            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false)
-                .expect("unreachable"); // fail_if_invalid=false → never errors
+            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }
@@ -1402,7 +1495,11 @@ impl EString {
 impl EString {
     #[inline]
     pub fn len(&self) -> usize {
-        if self.rope_len > 0 { self.rope_len as usize } else { self.data.len() }
+        if self.rope_len > 0 {
+            self.rope_len as usize
+        } else {
+            self.data.len()
+        }
     }
     #[inline]
     pub fn is_blank(&self) -> bool {
@@ -1466,8 +1563,7 @@ impl EString {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
-        let mut bytes =
-            bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
+        let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
@@ -1578,7 +1674,7 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long(&self.data,&other.data, true)
+                strings::eql_long(&self.data, &other.data, true)
             } else {
                 strings::utf16_eql_string(other.slice16(), &self.data)
             }
@@ -1684,10 +1780,12 @@ impl EString {
 }
 
 fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
-    lhs.data
-        .e_string()
-        .unwrap()
-        .order(rhs.data.e_string().expect("infallible: variant checked").get())
+    lhs.data.e_string().unwrap().order(
+        rhs.data
+            .e_string()
+            .expect("infallible: variant checked")
+            .get(),
+    )
 }
 
 impl EString {
@@ -1793,7 +1891,9 @@ impl Template {
     }
 
     #[inline]
-    pub fn parts(&self) -> &[TemplatePart] { self.parts.slice() }
+    pub fn parts(&self) -> &[TemplatePart] {
+        self.parts.slice()
+    }
 
     #[inline]
     pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
@@ -1812,7 +1912,6 @@ impl TemplateContents {
 
     bun_core::enum_unwrap!(pub TemplateContents, Cooked => fn cooked / cooked_mut -> EString);
 }
-
 
 impl TemplateContents {
     /// Field-wise copy (Zig: `var part = part.*`). `EString` is structurally
@@ -1888,28 +1987,50 @@ impl Template {
 
             if matches!(part.value.data, crate::expr::Data::EString(_))
                 && part.tail.cooked().is_utf8()
-                && part.value.data.e_string().expect("infallible: variant checked").is_utf8()
+                && part
+                    .value
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .is_utf8()
             {
                 if parts.is_empty() {
-                    if part.value.data.e_string().expect("infallible: variant checked").len() > 0 {
-                        head.data.e_string_mut().expect("infallible: variant checked").push(
-                            Expr::init(
-                                part.value.data.e_string().expect("infallible: variant checked").shallow_clone(),
-                                crate::Loc::EMPTY,
-                            )
-                            .data
+                    if part
+                        .value
+                        .data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .len()
+                        > 0
+                    {
+                        head.data
                             .e_string_mut()
-                            .unwrap(),
-                        );
-                    }
-
-                    if part.tail.cooked().len() > 0 {
-                        head.data.e_string_mut().expect("infallible: variant checked").push(
-                            Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
+                            .expect("infallible: variant checked")
+                            .push(
+                                Expr::init(
+                                    part.value
+                                        .data
+                                        .e_string()
+                                        .expect("infallible: variant checked")
+                                        .shallow_clone(),
+                                    crate::Loc::EMPTY,
+                                )
                                 .data
                                 .e_string_mut()
                                 .unwrap(),
-                        );
+                            );
+                    }
+
+                    if part.tail.cooked().len() > 0 {
+                        head.data
+                            .e_string_mut()
+                            .expect("infallible: variant checked")
+                            .push(
+                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
+                                    .data
+                                    .e_string_mut()
+                                    .unwrap(),
+                            );
                     }
 
                     continue;
@@ -1918,10 +2039,21 @@ impl Template {
                     debug_assert!(matches!(prev_part.tail, TemplateContents::Cooked(_)));
 
                     if prev_part.tail.cooked().is_utf8() {
-                        if part.value.data.e_string().expect("infallible: variant checked").len() > 0 {
+                        if part
+                            .value
+                            .data
+                            .e_string()
+                            .expect("infallible: variant checked")
+                            .len()
+                            > 0
+                        {
                             prev_part.tail.cooked_mut().push(
                                 Expr::init(
-                                    part.value.data.e_string().expect("infallible: variant checked").shallow_clone(),
+                                    part.value
+                                        .data
+                                        .e_string()
+                                        .expect("infallible: variant checked")
+                                        .shallow_clone(),
                                     crate::Loc::EMPTY,
                                 )
                                 .data
@@ -1951,7 +2083,10 @@ impl Template {
 
         if parts.is_empty() {
             // parts.deinit() — drop is implicit
-            head.data.e_string_mut().expect("infallible: variant checked").resolve_rope_if_needed(bump);
+            head.data
+                .e_string_mut()
+                .expect("infallible: variant checked")
+                .resolve_rope_if_needed(bump);
             return head;
         }
 
@@ -1961,7 +2096,12 @@ impl Template {
             Template {
                 tag: None,
                 parts: crate::StoreSlice::from_bump(parts),
-                head: TemplateContents::Cooked(head.data.e_string().expect("infallible: variant checked").shallow_clone()),
+                head: TemplateContents::Cooked(
+                    head.data
+                        .e_string()
+                        .expect("infallible: variant checked")
+                        .shallow_clone(),
+                ),
             },
             loc,
         )
@@ -1981,7 +2121,10 @@ pub struct RegExp {
     pub flags_offset: Option<u16>,
 }
 impl RegExp {
-    pub const EMPTY: RegExp = RegExp { value: Str::EMPTY, flags_offset: None };
+    pub const EMPTY: RegExp = RegExp {
+        value: Str::EMPTY,
+        flags_offset: None,
+    };
 
     pub fn pattern(&self) -> &[u8] {
         // rewind until we reach the /foo/gim
@@ -2012,7 +2155,10 @@ impl RegExp {
         b""
     }
 
-    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(&self.value)
     }
 }
@@ -2027,7 +2173,10 @@ pub struct Yield {
 }
 impl Default for Yield {
     fn default() -> Self {
-        Self { value: None, is_star: false }
+        Self {
+            value: None,
+            is_star: false,
+        }
     }
 }
 
@@ -2045,7 +2194,10 @@ pub struct RequireString {
 }
 impl Default for RequireString {
     fn default() -> Self {
-        Self { import_record_index: 0, unwrapped_id: u32::MAX }
+        Self {
+            import_record_index: 0,
+            unwrapped_id: u32::MAX,
+        }
     }
 }
 
@@ -2082,16 +2234,24 @@ impl Import {
 
     pub fn import_record_loader(&self) -> Option<crate::Loader> {
         // This logic is duplicated in js_printer.zig fn parsePath()
-        let crate::ExprData::EObject(obj) = &self.options.data else { return None };
+        let crate::ExprData::EObject(obj) = &self.options.data else {
+            return None;
+        };
         let with = Object::get(obj, b"with").or_else(|| Object::get(obj, b"assert"))?;
-        let crate::ExprData::EObject(with_obj) = &with.data else { return None };
+        let crate::ExprData::EObject(with_obj) = &with.data else {
+            return None;
+        };
         let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
 
         if !str_.is_utf16 {
             if let Some(loader) = crate::Loader::from_string(&str_.data) {
                 if loader == crate::Loader::Sqlite {
-                    let Some(embed) = Object::get(with_obj, b"embed") else { return Some(loader) };
-                    let Some(embed_str) = embed.data.as_e_string() else { return Some(loader) };
+                    let Some(embed) = Object::get(with_obj, b"embed") else {
+                        return Some(loader);
+                    };
+                    let Some(embed_str) = embed.data.as_e_string() else {
+                        return Some(loader);
+                    };
                     if embed_str.eql_comptime(b"true") {
                         return Some(crate::Loader::SqliteEmbedded);
                     }

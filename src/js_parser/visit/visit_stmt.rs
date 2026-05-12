@@ -1,23 +1,30 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code, unused_unsafe)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unreachable_code,
+    unused_unsafe
+)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
-use bun_core::Error;
+use crate::lexer as js_lexer;
+use crate::p::{P, ReactRefreshExportKind, null_expr_data};
 use crate::parser::{
-    statement_cares_about_scope, JsxT, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars,
-    RelocateVarsMode, SideEffects, StmtsKind,
+    JsxT, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects,
+    StmtsKind, statement_cares_about_scope,
 };
-use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-use bun_ast::stmt::Data as StmtData;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::G::Decl;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::expr::PrimitiveType;
-use bun_ast::G::Decl;
-use crate::p::{P, ReactRefreshExportKind, null_expr_data};
-use bun_ast::scope::Kind as ScopeKind;
-use bun_ast::ts;
-use crate::lexer as js_lexer;
 use bun_ast::flags;
+use bun_ast::scope::Kind as ScopeKind;
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::ts;
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
+use bun_collections::VecExt;
+use bun_core::Error;
 use bun_core::strings;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -227,7 +234,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
-                            format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
+                            format_args!(
+                                "\"{}\" is not declared in this file",
+                                bstr::BStr::new(name)
+                            ),
                         );
                     }
                     continue;
@@ -254,7 +264,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
-                            format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
+                            format_args!(
+                                "\"{}\" is not declared in this file",
+                                bstr::BStr::new(name)
+                            ),
                         );
                         continue;
                     }
@@ -306,7 +319,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    let _ = p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                    let _ =
+                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
                     continue;
                 }
 
@@ -361,11 +375,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(alias) = &data.alias {
             if p.options.features.replace_exports.count() > 0 {
                 let alias_name = alias.original_name.slice();
-                if let Some(entry) = p.options.features.replace_exports.get_ptr(alias_name).cloned() {
+                if let Some(entry) = p
+                    .options
+                    .features
+                    .replace_exports
+                    .get_ptr(alias_name)
+                    .cloned()
+                {
                     let declared = p
-                        .declare_symbol(js_ast::symbol::Kind::Other, bun_ast::Loc::EMPTY, alias_name)
+                        .declare_symbol(
+                            js_ast::symbol::Kind::Other,
+                            bun_ast::Loc::EMPTY,
+                            alias_name,
+                        )
                         .expect("unreachable");
-                    let _ = p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
+                    let _ =
+                        p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
                     return Ok(());
                 }
             }
@@ -405,7 +430,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Zig: defer { p.is_control_flow_dead = orig_dead; }
         macro_rules! restore_dead {
-            () => { p.is_control_flow_dead = orig_dead; };
+            () => {
+                p.is_control_flow_dead = orig_dead;
+            };
         }
 
         match &mut data.value {
@@ -416,7 +443,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let prev_decorator_class_name = p.decorator_class_name;
                 if was_anonymous_named_expr
                     && matches!(expr.data, js_ast::ExprData::EClass(_))
-                    && expr.data.e_class().expect("infallible: variant checked").should_lower_standard_decorators
+                    && expr
+                        .data
+                        .e_class()
+                        .expect("infallible: variant checked")
+                        .should_lower_standard_decorators
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
@@ -456,7 +487,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
 
-                if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
+                if data
+                    .default_name
+                    .ref_
+                    .expect("infallible: ref bound")
+                    .is_source_contents_slice()
+                {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -481,7 +517,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::Local {
                             kind: S::Kind::KConst,
                             decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(p.arena, B::Identifier { r#ref: temp_id }, stmt.loc),
+                                binding: Binding::alloc(
+                                    p.arena,
+                                    B::Identifier { r#ref: temp_id },
+                                    stmt.loc,
+                                ),
                                 value: Some(value_expr),
                             }]),
                             ..Default::default()
@@ -491,7 +531,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     *expr = Expr::init_identifier(temp_id, stmt.loc);
 
-                    p.emit_react_refresh_register(stmts, b"default", temp_id, ReactRefreshExportKind::Default)?;
+                    p.emit_react_refresh_register(
+                        stmts,
+                        b"default",
+                        temp_id,
+                        ReactRefreshExportKind::Default,
+                    )?;
                 }
 
                 if p.options.features.server_components.wraps_exports() {
@@ -499,22 +544,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 // If there are lowered "using" declarations, change this into a "var"
-                if p.current_scope().parent.is_none()
-                    && p.will_wrap_module_in_try_catch_for_using
-                {
+                if p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
                     stmts.reserve(2);
 
                     let mut decls = G::DeclList::init_capacity(1);
-                    VecExt::append(&mut decls, G::Decl {
+                    VecExt::append(
+                        &mut decls,
+                        G::Decl {
                             binding: p.b(
-                                B::Identifier { r#ref: data.default_name.ref_.expect("infallible: ref bound") },
+                                B::Identifier {
+                                    r#ref: data.default_name.ref_.expect("infallible: ref bound"),
+                                },
                                 data.default_name.loc,
                             ),
                             value: Some(*expr),
-                        });
+                        },
+                    );
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
-                        S::Local { decls, ..Default::default() },
+                        S::Local {
+                            decls,
+                            ..Default::default()
+                        },
                         stmt.loc,
                     ));
                     let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
@@ -525,7 +576,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }));
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
-                        S::ExportClause { items: bun_ast::StoreSlice::new_mut(items), is_single_line: false },
+                        S::ExportClause {
+                            items: bun_ast::StoreSlice::new_mut(items),
+                            is_single_line: false,
+                        },
                         stmt.loc,
                     ));
                 }
@@ -538,10 +592,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .get_ptr(b"default")
                         .cloned()
                         .unwrap();
-                    if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                    if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry
+                    {
                         *expr = replace_expr;
                     } else {
-                        let _ = p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, &entry);
+                        let _ = p.inject_replacement_export(
+                            stmts,
+                            Ref::NONE,
+                            bun_ast::Loc::EMPTY,
+                            &entry,
+                        );
                         restore_dead!();
                         record_on_exit!();
                         return Ok(());
@@ -580,8 +640,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             return Ok(());
                         }
 
-                        if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
-                            data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                        if data
+                            .default_name
+                            .ref_
+                            .expect("infallible: ref bound")
+                            .is_source_contents_slice()
+                        {
+                            data.default_name =
+                                p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
                         // Capture the original function name before any `mem::take` below resets
@@ -594,8 +660,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let signature_cb = hook.signature_cb;
                             stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
 
-                            let func_expr =
-                                p.new_expr(E::Function { func: core::mem::take(&mut func.func) }, stmt.loc);
+                            let func_expr = p.new_expr(
+                                E::Function {
+                                    func: core::mem::take(&mut func.func),
+                                },
+                                stmt.loc,
+                            );
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.get_react_refresh_hook_signal_init(hook, func_expr),
                             );
@@ -609,10 +679,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .get_ptr(b"default")
                                 .cloned()
                                 .unwrap();
-                            if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                            if let crate::parser::Runtime::ReplaceableExport::Replace(
+                                replace_expr,
+                            ) = entry
+                            {
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                             } else {
-                                let _ = p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, &entry);
+                                let _ = p.inject_replacement_export(
+                                    stmts,
+                                    Ref::NONE,
+                                    bun_ast::Loc::EMPTY,
+                                    &entry,
+                                );
                                 p.react_refresh.hook_ctx_storage = prev;
                                 restore_dead!();
                                 record_on_exit!();
@@ -671,9 +749,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         stmt.loc,
                                     ));
 
-                                    data.value = js_ast::StmtOrExpr::Expr(
-                                        Expr::init_identifier(ref_to_use, stmt.loc),
-                                    );
+                                    data.value = js_ast::StmtOrExpr::Expr(Expr::init_identifier(
+                                        ref_to_use, stmt.loc,
+                                    ));
 
                                     break 'emit_temp_var ref_to_use;
                                 }
@@ -686,7 +764,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     e
                                 } else {
                                     p.new_expr(
-                                        E::Function { func: core::mem::take(&mut func.func) },
+                                        E::Function {
+                                            func: core::mem::take(&mut func.func),
+                                        },
                                         stmt.loc,
                                     )
                                 };
@@ -696,13 +776,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
 
                             stmts.push(*stmt);
-                            p.emit_react_refresh_register(stmts, name, ref_, ReactRefreshExportKind::Default)?;
+                            p.emit_react_refresh_register(
+                                stmts,
+                                name,
+                                ref_,
+                                ReactRefreshExportKind::Default,
+                            )?;
                         } else {
                             if p.options.features.server_components.wraps_exports() {
-                                let func_expr =
-                                    p.new_expr(E::Function { func: core::mem::take(&mut func.func) }, stmt.loc);
+                                let func_expr = p.new_expr(
+                                    E::Function {
+                                        func: core::mem::take(&mut func.func),
+                                    },
+                                    stmt.loc,
+                                );
                                 data.value = js_ast::StmtOrExpr::Expr(
-                                    p.wrap_value_for_server_component_reference(func_expr, b"default"),
+                                    p.wrap_value_for_server_component_reference(
+                                        func_expr, b"default",
+                                    ),
                                 );
                             }
 
@@ -719,7 +810,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_.expect("infallible: ref bound"));
+                        let _ = p.visit_class(
+                            s2_loc,
+                            &mut class.class,
+                            data.default_name.ref_.expect("infallible: ref bound"),
+                        );
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -735,18 +830,32 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .get_ptr(b"default")
                                 .cloned()
                                 .unwrap();
-                            if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                            if let crate::parser::Runtime::ReplaceableExport::Replace(
+                                replace_expr,
+                            ) = entry
+                            {
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                             } else {
-                                let _ = p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, &entry);
+                                let _ = p.inject_replacement_export(
+                                    stmts,
+                                    Ref::NONE,
+                                    bun_ast::Loc::EMPTY,
+                                    &entry,
+                                );
                                 restore_dead!();
                                 record_on_exit!();
                                 return Ok(());
                             }
                         }
 
-                        if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
-                            data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                        if data
+                            .default_name
+                            .ref_
+                            .expect("infallible: ref bound")
+                            .is_source_contents_slice()
+                        {
+                            data.default_name =
+                                p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
                         // We only inject a name into classes when there is a decorator
@@ -786,7 +895,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if p.options.features.server_components.wraps_exports() {
                             // TODO(port): Zig spec mutates `data.value` *after* pushing `stmt` —
                             // mirrored bug-for-bug. The class expr wrap likely belongs before push.
-                            let class_expr = p.new_expr(core::mem::take(&mut class.class), stmt.loc);
+                            let class_expr =
+                                p.new_expr(core::mem::take(&mut class.class), stmt.loc);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
@@ -818,7 +928,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
-            && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound"));
+            && p.is_export_to_eliminate(
+                data.func
+                    .name
+                    .expect("infallible: name checked")
+                    .ref_
+                    .expect("infallible: ref bound"),
+            );
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -831,23 +947,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // are trivial; no `'a` constraint to fight.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage =
-            Some(core::ptr::NonNull::from(&mut react_hook_data));
+        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
 
-        let name_ref = data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
+        let name_ref = data
+            .func
+            .name
+            .expect("infallible: name checked")
+            .ref_
+            .expect("infallible: ref bound");
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
 
         // Handle exporting this function from a namespace
-        if data.func.flags.contains(flags::Function::IsExport) && p.enclosing_namespace_arg_ref.is_some() {
+        if data.func.flags.contains(flags::Function::IsExport)
+            && p.enclosing_namespace_arg_ref.is_some()
+        {
             data.func.flags.remove(flags::Function::IsExport);
 
-            let enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref.expect("infallible: in namespace");
+            let enclosing_namespace_arg_ref = p
+                .enclosing_namespace_arg_ref
+                .expect("infallible: in namespace");
             stmts.reserve(3);
             stmts.push(*stmt); // PERF(port): was assume_capacity
             let func_name = data.func.name.expect("infallible: name checked");
@@ -861,13 +985,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     },
                     stmt.loc,
                 ),
-                Expr::init_identifier(func_name.ref_.expect("infallible: ref bound"), func_name.loc),
+                Expr::init_identifier(
+                    func_name.ref_.expect("infallible: ref bound"),
+                    func_name.loc,
+                ),
             )); // PERF(port): was assume_capacity
         } else if !mark_as_dead {
             if remove_overwritten {
                 // Zig: defer { ... } — restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
-                if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+                if mark_as_dead {
+                    p.is_control_flow_dead = original_is_dead;
+                }
                 return Ok(());
             }
 
@@ -878,10 +1007,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let name = data.func.name.expect("infallible: name checked");
                 // From the inner scope, have code reference the wrapped function.
                 data.func.name = None;
-                let func_expr =
-                    p.new_expr(E::Function { func: core::mem::take(&mut data.func) }, stmt.loc);
-                let wrapped =
-                    p.wrap_value_for_server_component_reference(func_expr, original_name);
+                let func_expr = p.new_expr(
+                    E::Function {
+                        func: core::mem::take(&mut data.func),
+                    },
+                    stmt.loc,
+                );
+                let wrapped = p.wrap_value_for_server_component_reference(func_expr, original_name);
                 let binding = p.b(B::Identifier { r#ref: name_ref }, name.loc);
                 stmts.push(p.s(
                     S::Local {
@@ -899,8 +1031,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 stmts.push(*stmt);
             }
         } else if mark_as_dead {
-            if let Some(replacement) =
-                p.options.features.replace_exports.get_ptr(original_name).cloned()
+            if let Some(replacement) = p
+                .options
+                .features
+                .replace_exports
+                .get_ptr(original_name)
+                .cloned()
             {
                 let _ = p.inject_replacement_export(
                     stmts,
@@ -920,7 +1056,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Expr::init_identifier(name_ref, bun_ast::Loc::EMPTY),
                 );
                 stmts.push(p.s(
-                    S::SExpr { value: init, ..Default::default() },
+                    S::SExpr {
+                        value: init,
+                        ..Default::default()
+                    },
                     bun_ast::Loc::EMPTY,
                 ));
             }
@@ -938,7 +1077,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Zig: defer p.react_refresh.hook_ctx_storage = prev;
         p.react_refresh.hook_ctx_storage = prev_hook_storage;
         // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
-        if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+        if mark_as_dead {
+            p.is_control_flow_dead = original_is_dead;
+        }
         Ok(())
     }
 
@@ -951,7 +1092,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
             && p.options.features.replace_exports.count() > 0
-            && p.is_export_to_eliminate(data.class.class_name.expect("infallible: name checked").ref_.expect("infallible: ref bound"));
+            && p.is_export_to_eliminate(
+                data.class
+                    .class_name
+                    .expect("infallible: name checked")
+                    .ref_
+                    .expect("infallible: ref bound"),
+            );
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -973,7 +1120,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
         } else {
-            let ref_ = data.class.class_name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
+            let ref_ = data
+                .class
+                .class_name
+                .expect("infallible: name checked")
+                .ref_
+                .expect("infallible: ref bound");
             let name = p.load_name_from_ref(ref_);
             if let Some(replacement) = p.options.features.replace_exports.get_ptr(name).cloned() {
                 if p.inject_replacement_export(
@@ -991,11 +1143,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if was_export_inside_namespace {
             let class_name = data.class.class_name.expect("infallible: name checked");
             let class_name_ref = class_name.ref_.expect("infallible: ref bound");
-            let original_name = p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
+            let original_name = p.symbols[class_name_ref.inner_index() as usize]
+                .original_name
+                .slice();
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
-                        target: Expr::init_identifier(p.enclosing_namespace_arg_ref.expect("infallible: in namespace"), stmt.loc),
+                        target: Expr::init_identifier(
+                            p.enclosing_namespace_arg_ref
+                                .expect("infallible: in namespace"),
+                            stmt.loc,
+                        ),
                         name: original_name.into(),
                         name_loc: class_name.loc,
                         ..Default::default()
@@ -1007,7 +1165,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
-        if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+        if mark_as_dead {
+            p.is_control_flow_dead = original_is_dead;
+        }
         Ok(())
     }
 
@@ -1042,7 +1202,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
             for d in data.decls.slice() {
                 if let Some(val) = d.value {
-                    p.record_usage(p.enclosing_namespace_arg_ref.expect("infallible: in namespace"));
+                    p.record_usage(
+                        p.enclosing_namespace_arg_ref
+                            .expect("infallible: in namespace"),
+                    );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
                     // PORT NOTE: ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
                     // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
@@ -1085,7 +1248,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
         let kind = p.select_local_kind(data.kind);
         if kind == S::Kind::KVar && !data.is_export {
-            let relocated = p.maybe_relocate_vars_to_top_level(data.decls.slice(), RelocateVarsMode::Normal);
+            let relocated =
+                p.maybe_relocate_vars_to_top_level(data.decls.slice(), RelocateVarsMode::Normal);
             if relocated.ok {
                 if let Some(new_stmt) = relocated.stmt {
                     stmts.push(new_stmt);
@@ -1101,7 +1265,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
             for decl in data.decls.slice() {
                 'try_register: {
-                    let Some(val) = decl.value else { break 'try_register };
+                    let Some(val) = decl.value else {
+                        break 'try_register;
+                    };
                     match val.data {
                         // Assigning a component to a local.
                         js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
@@ -1135,13 +1301,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if data.is_export && p.options.features.server_components.wraps_exports() {
             for decl in data.decls.slice_mut() {
                 'try_annotate: {
-                    let Some(val) = decl.value else { break 'try_annotate };
+                    let Some(val) = decl.value else {
+                        break 'try_annotate;
+                    };
                     let id = match decl.binding.data {
                         js_ast::binding::Data::BIdentifier(b) => b.r#ref,
                         _ => break 'try_annotate,
                     };
-                    let original_name =
-                        p.symbols[id.inner_index() as usize].original_name.slice();
+                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
                     decl.value =
                         Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
@@ -1153,11 +1320,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     // ─── control-flow / scope visitors ──────────────────────────────────────
 
-    fn s_break(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Break) -> Result<(), Error> {
+    fn s_break(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Break,
+    ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
-            let r = label
-                .ref_
-                .unwrap_or_else(|| p.panic_loc("Expected label to have a ref", format_args!(""), Some(label.loc)));
+            let r = label.ref_.unwrap_or_else(|| {
+                p.panic_loc(
+                    "Expected label to have a ref",
+                    format_args!(""),
+                    Some(label.loc),
+                )
+            });
             let name = p.load_name_from_ref(r);
             let res = p.find_label_symbol(label.loc, name);
             if res.found {
@@ -1177,22 +1353,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_continue(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Continue) -> Result<(), Error> {
+    fn s_continue(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Continue,
+    ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
             let r = label.ref_.unwrap_or_else(|| {
-                p.panic_loc("Expected continue label to have a ref", format_args!(""), Some(label.loc))
+                p.panic_loc(
+                    "Expected continue label to have a ref",
+                    format_args!(""),
+                    Some(label.loc),
+                )
             });
             let name = p.load_name_from_ref(r);
             let res = p.find_label_symbol(label.loc, name);
             label.ref_ = Some(res.r#ref);
             if res.found && !res.is_loop {
                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
-                p.log()
-                    .add_range_error_fmt(
-                        Some(p.source),
-                        r,
-                        format_args!("Cannot \"continue\" to label {}", bstr::BStr::new(name)),
-                    );
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    r,
+                    format_args!("Cannot \"continue\" to label {}", bstr::BStr::new(name)),
+                );
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
@@ -1204,10 +1388,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_label(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Label) -> Result<(), Error> {
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc).expect("unreachable");
+    fn s_label(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Label,
+    ) -> Result<(), Error> {
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
+            .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_.expect("infallible: ref bound"));
-        let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name).expect("unreachable");
+        let ref_ = p
+            .new_symbol(js_ast::symbol::Kind::Label, name)
+            .expect("unreachable");
         data.name.ref_ = Some(ref_);
         p.cur_scope().label_ref = Some(ref_);
         match data.stmt.data {
@@ -1228,7 +1420,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_expr(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::SExpr) -> Result<(), Error> {
+    fn s_expr(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::SExpr,
+    ) -> Result<(), Error> {
         let should_trim_primitive = p.options.features.dead_code_elimination
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
@@ -1247,7 +1444,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Zig: defer p.stmt_expr_value = .{ .e_missing = .{} };
         // PORT NOTE: restructured — restored at every return below.
         macro_rules! restore_stmt_expr {
-            () => { p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {}); };
+            () => {
+                p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {});
+            };
         }
 
         if should_trim_primitive && data.value.is_primitive_literal() {
@@ -1276,7 +1475,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             };
                             let bin: &mut E::Binary = &mut *bin_ref;
                             if bin.op == js_ast::OpCode::BinAssign
-                                && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
+                                && matches!(
+                                    bin.left.data,
+                                    js_ast::ExprData::ECommonjsExportIdentifier(_)
+                                )
                             {
                                 // last entry's value — `keys()` borrows the map; wrap as
                                 // `StoreStr` so the borrow is detached before re-borrowing
@@ -1285,7 +1487,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     &p.commonjs_named_exports.keys()[to_convert as usize][..],
                                 )
                                 .slice();
-                                let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
+                                let last =
+                                    &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;
                                 }
@@ -1297,24 +1500,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
                                 };
-                                VecExt::append(&mut decls, G::Decl {
+                                VecExt::append(
+                                    &mut decls,
+                                    G::Decl {
                                         binding: p.b(B::Identifier { r#ref: ref_ }, bin.left.loc),
                                         value: Some(bin.right),
-                                    });
+                                    },
+                                );
                                 // we have to ensure these are known to be top-level
                                 p.declared_symbols
-                                    .append(js_ast::DeclaredSymbol { ref_, is_top_level: true })
+                                    .append(js_ast::DeclaredSymbol {
+                                        ref_,
+                                        is_top_level: true,
+                                    })
                                     .expect("oom");
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;
-                                let clause_items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                                    // We want the generated name to not conflict
-                                    alias: js_ast::StoreStr::new(key),
-                                    alias_loc: bin.left.loc,
-                                    name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
-                                    ..Default::default()
-                                }));
+                                let clause_items =
+                                    core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
+                                        // We want the generated name to not conflict
+                                        alias: js_ast::StoreStr::new(key),
+                                        alias_loc: bin.left.loc,
+                                        name: js_ast::LocRef {
+                                            ref_: Some(ref_),
+                                            loc: last_loc,
+                                        },
+                                        ..Default::default()
+                                    }));
                                 let local = p.s(
                                     S::Local {
                                         kind: S::Kind::KVar,
@@ -1361,13 +1574,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_throw(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Throw) -> Result<(), Error> {
+    fn s_throw(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Throw,
+    ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
         stmts.push(*stmt);
         Ok(())
     }
 
-    fn s_return(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Return) -> Result<(), Error> {
+    fn s_return(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Return,
+    ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
             let where_ = if p.esm_export_keyword.len > 0 {
@@ -1379,12 +1602,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             };
 
             if where_.len > 0 {
-                p.log()
-                    .add_range_error(
-                        Some(p.source),
-                        where_,
-                        b"Top-level return cannot be used inside an ECMAScript module",
-                    );
+                p.log().add_range_error(
+                    Some(p.source),
+                    where_,
+                    b"Top-level return cannot be used inside an ECMAScript module",
+                );
             }
         }
 
@@ -1404,16 +1626,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_block(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Block) -> Result<(), Error> {
+    fn s_block(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Block,
+    ) -> Result<(), Error> {
         {
-            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
+                .expect("unreachable");
 
             // Pass the "is loop body" status on to the direct children of a block used
             // as a loop body. This is used to enable optimizations specific to the
             // topmost scope in a loop body block.
-            let kind = if core::mem::discriminant(&p.loop_body) == core::mem::discriminant(&stmt.data)
+            let kind = if core::mem::discriminant(&p.loop_body)
+                == core::mem::discriminant(&stmt.data)
                 && match (p.loop_body, stmt.data) {
-                    (StmtData::SBlock(a), StmtData::SBlock(b)) => core::ptr::eq(&raw const *a, &raw const *b),
+                    (StmtData::SBlock(a), StmtData::SBlock(b)) => {
+                        core::ptr::eq(&raw const *a, &raw const *b)
+                    }
                     _ => false,
                 } {
                 StmtsKind::LoopBody
@@ -1430,7 +1661,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // // trim empty statements
             let block_stmts: &[Stmt] = data.stmts.slice();
             if block_stmts.is_empty() {
-                stmts.push(Stmt { data: Stmt::empty().data, loc: stmt.loc });
+                stmts.push(Stmt {
+                    data: Stmt::empty().data,
+                    loc: stmt.loc,
+                });
                 return Ok(());
             } else if block_stmts.len() == 1 && !statement_cares_about_scope(&block_stmts[0]) {
                 // Unwrap blocks containing a single statement
@@ -1443,10 +1677,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_with(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::With) -> Result<(), Error> {
+    fn s_with(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::With,
+    ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
 
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc).expect("unreachable");
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)
+            .expect("unreachable");
 
         // This can be many different kinds of statements.
         // example code:
@@ -1463,21 +1703,36 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::While) -> Result<(), Error> {
+    fn s_while(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::While,
+    ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
         data.body = p.visit_loop_body(data.body);
 
         data.test_ = SideEffects::simplify_boolean(p, data.test_);
         let result = SideEffects::to_boolean(p, &data.test_.data);
         if result.ok && result.side_effects == SideEffects::NoSideEffects {
-            data.test_ = p.new_expr(E::Boolean { value: result.value }, data.test_.loc);
+            data.test_ = p.new_expr(
+                E::Boolean {
+                    value: result.value,
+                },
+                data.test_.loc,
+            );
         }
 
         stmts.push(*stmt);
         Ok(())
     }
 
-    fn s_do_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::DoWhile) -> Result<(), Error> {
+    fn s_do_while(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::DoWhile,
+    ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
         p.visit_expr(&mut data.test_);
 
@@ -1486,7 +1741,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_if(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::If) -> Result<(), Error> {
+    fn s_if(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::If,
+    ) -> Result<(), Error> {
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
         p.visit_expr(&mut data.test_);
@@ -1542,12 +1802,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if effects.ok {
                 if effects.value {
                     if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.arena)
+                        || !SideEffects::should_keep_stmt_in_dead_control_flow(
+                            data.no.unwrap(),
+                            p.arena,
+                        )
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
-                                stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
+                                stmts.push(p.s(
+                                    S::SExpr {
+                                        value: test_,
+                                        ..Default::default()
+                                    },
+                                    test_.loc,
+                                ));
                             }
                         }
 
@@ -1561,7 +1830,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
-                                stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
+                                stmts.push(p.s(
+                                    S::SExpr {
+                                        value: test_,
+                                        ..Default::default()
+                                    },
+                                    test_.loc,
+                                ));
                             }
                         }
 
@@ -1605,8 +1880,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_for(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::For) -> Result<(), Error> {
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+    fn s_for(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::For,
+    ) -> Result<(), Error> {
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
+            .expect("unreachable");
 
         if let Some(initst) = data.init {
             data.init = Some(p.visit_for_loop_init(initst, false));
@@ -1633,8 +1914,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Potentially relocate "var" declarations to the top level. Note that this
                 // must be done inside the scope of the for loop or they won't be relocated.
                 if local.kind == S::Kind::KVar {
-                    let relocate =
-                        p.maybe_relocate_vars_to_top_level(local.decls.slice(), RelocateVarsMode::Normal);
+                    let relocate = p.maybe_relocate_vars_to_top_level(
+                        local.decls.slice(),
+                        RelocateVarsMode::Normal,
+                    );
                     if let Some(relocated) = relocate.stmt {
                         data.init = Some(relocated);
                     }
@@ -1648,9 +1931,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_for_in(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForIn) -> Result<(), Error> {
+    fn s_for_in(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ForIn,
+    ) -> Result<(), Error> {
         {
-            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
+                .expect("unreachable");
             // Zig: defer p.popScope(); — restructured: pop at end of block
             let _ = p.visit_for_loop_init(data.init, true);
             p.visit_expr(&mut data.value);
@@ -1691,8 +1980,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_for_of(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForOf) -> Result<(), Error> {
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+    fn s_for_of(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ForOf,
+    ) -> Result<(), Error> {
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
+            .expect("unreachable");
         // Zig: defer p.popScope();
         let _ = p.visit_for_loop_init(data.init, true);
         p.visit_expr(&mut data.value);
@@ -1725,17 +2020,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         js_ast::binding::Data::BIdentifier(b) => b,
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
-                    let id_original_name =
-                        p.symbols[id.r#ref.inner_index() as usize].original_name.slice();
+                    let id_original_name = p.symbols[id.r#ref.inner_index() as usize]
+                        .original_name
+                        .slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1);
-                    VecExt::append(&mut first_decls, G::Decl {
+                    VecExt::append(
+                        &mut first_decls,
+                        G::Decl {
                             binding: p.b(B::Identifier { r#ref: id.r#ref }, loc),
                             value: Some(Expr::init_identifier(temp_ref, loc)),
-                        });
+                        },
+                    );
                     let first = p.s(
-                        S::Local { kind: init2.kind, decls: first_decls, ..Default::default() },
+                        S::Local {
+                            kind: init2.kind,
+                            decls: first_decls,
+                            ..Default::default()
+                        },
                         loc,
                     );
 
@@ -1744,7 +2047,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     } else {
                         1
                     };
-                    let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.arena);
+                    let mut statements: BumpVec<'a, Stmt> =
+                        BumpVec::with_capacity_in(1 + length, p.arena);
                     statements.push(first);
                     if let StmtData::SBlock(b) = data.body.data {
                         statements.extend_from_slice(b.stmts.slice());
@@ -1765,7 +2069,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         b.stmts = list_to_stmts(visited_stmts);
                     } else {
                         data.body = p.s(
-                            S::Block { stmts: list_to_stmts(visited_stmts), ..Default::default() },
+                            S::Block {
+                                stmts: list_to_stmts(visited_stmts),
+                                ..Default::default()
+                            },
                             loc,
                         );
                     }
@@ -1780,12 +2087,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_try(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Try) -> Result<(), Error> {
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+    fn s_try(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Try,
+    ) -> Result<(), Error> {
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
+            .expect("unreachable");
         {
             let mut _stmts = stmts_to_list(p.arena, data.body);
             p.fn_or_arrow_data_visit.try_body_count += 1;
-            p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+            p.visit_stmts(&mut _stmts, StmtsKind::None)
+                .expect("unreachable");
             p.fn_or_arrow_data_visit.try_body_count -= 1;
             data.body = list_to_stmts(_stmts);
         }
@@ -1801,7 +2115,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let mut _stmts = stmts_to_list(p.arena, catch_.body);
                 p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch_.body_loc)
                     .expect("unreachable");
-                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                    .expect("unreachable");
                 p.pop_scope();
                 catch_.body = list_to_stmts(_stmts);
             }
@@ -1809,10 +2124,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         if let Some(finally) = &mut data.finally {
-            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, finally.loc).expect("unreachable");
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, finally.loc)
+                .expect("unreachable");
             {
                 let mut _stmts = stmts_to_list(p.arena, finally.stmts);
-                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                    .expect("unreachable");
                 finally.stmts = list_to_stmts(_stmts);
             }
             p.pop_scope();
@@ -1822,10 +2139,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_switch(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Switch) -> Result<(), Error> {
+    fn s_switch(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Switch,
+    ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
         {
-            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc).expect("unreachable");
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
+                .expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
             let cases = data.cases.slice_mut();
@@ -1837,7 +2160,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                    .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
@@ -1868,7 +2192,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
         if p.current_scope == p.module_scope && p.options.bundle {
-            p.top_level_enums.push(data.name.ref_.expect("infallible: ref bound"));
+            p.top_level_enums
+                .push(data.name.ref_.expect("infallible: ref bound"));
         }
 
         p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
@@ -1929,10 +2254,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 match underlying_value.data {
                     js_ast::ExprData::ENumber(num) => {
-                        exported_members
-                            .get_ptr_mut(name)
-                            .unwrap()
-                            .data = js_ast::ts::Data::EnumNumber(num.value);
+                        exported_members.get_ptr_mut(name).unwrap().data =
+                            js_ast::ts::Data::EnumNumber(num.value);
 
                         p.ref_to_ts_namespace_member
                             .insert(value.ref_, js_ast::ts::Data::EnumNumber(num.value));
@@ -1942,10 +2265,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EString(str_) => {
                         has_string_value = true;
 
-                        exported_members
-                            .get_ptr_mut(name)
-                            .unwrap()
-                            .data = js_ast::ts::Data::EnumString(str_);
+                        exported_members.get_ptr_mut(name).unwrap().data =
+                            js_ast::ts::Data::EnumString(str_);
 
                         p.ref_to_ts_namespace_member
                             .insert(value.ref_, js_ast::ts::Data::EnumString(str_));
@@ -2034,13 +2355,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+        p.should_fold_typescript_constant_expressions =
+            old_should_fold_typescript_constant_expressions;
 
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions
         for expr in value_exprs.iter() {
             // PERF(port): was assume_capacity
-            value_stmts.push(p.s(S::SExpr { value: *expr, ..Default::default() }, expr.loc));
+            value_stmts.push(p.s(
+                S::SExpr {
+                    value: *expr,
+                    ..Default::default()
+                },
+                expr.loc,
+            ));
         }
         drop(value_exprs);
         p.generate_closure_for_type_script_namespace_or_enum(
@@ -2057,7 +2385,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_namespace(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Namespace) -> Result<(), Error> {
+    fn s_namespace(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Namespace,
+    ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
 
         // Scan ahead for any variables inside this namespace. This must be done
@@ -2073,13 +2406,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        let mut prepend_temp_refs =
-            PrependTempRefsOpts { kind: StmtsKind::FnBody, ..Default::default() };
+        let mut prepend_temp_refs = PrependTempRefsOpts {
+            kind: StmtsKind::FnBody,
+            ..Default::default()
+        };
         let mut prepend_list = stmts_to_list(p.arena, data.stmts);
 
         let old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
         p.enclosing_namespace_arg_ref = Some(data.arg);
-        p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc).expect("unreachable");
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)
+            .expect("unreachable");
         p.record_declared_symbol(data.arg);
         p.visit_stmts_and_prepend_temp_refs(&mut prepend_list, &mut prepend_temp_refs)?;
         p.pop_scope();

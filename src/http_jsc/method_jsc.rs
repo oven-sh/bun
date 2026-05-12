@@ -1,8 +1,8 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
+use bun_core::{OwnedString, String as BunString};
 use bun_http_types::Method::Method;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_core::{OwnedString, String as BunString};
 
 unsafe extern "C" {
     // SAFETY (safe fn): `Method` is a `#[repr(uN)]` scalar; `JSGlobalObject` is an

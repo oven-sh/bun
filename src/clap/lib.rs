@@ -1,12 +1,11 @@
 #![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
-
 #![warn(unreachable_pub)]
 use core::fmt;
 use core::fmt::Write as _;
 
-use bun_core::{self, Output};
 use bun_core::fmt::CountingWriter;
+use bun_core::{self, Output};
 
 pub mod args;
 pub mod comptime;
@@ -108,8 +107,15 @@ pub const fn __param_slices_len(parts: &[&[Param<Help>]]) -> usize {
 pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> [Param<Help>; N] {
     // Placeholder element for the pre-fill; every slot is overwritten below.
     const DUMMY: Param<Help> = Param {
-        id: Help { msg: b"", value: b"" },
-        names: Names { short: None, long: None, long_aliases: &[] },
+        id: Help {
+            msg: b"",
+            value: b"",
+        },
+        names: Names {
+            short: None,
+            long: None,
+            long_aliases: &[],
+        },
         takes_value: Values::None,
     };
     let mut out = [DUMMY; N];
@@ -161,7 +167,11 @@ pub struct Names {
 
 impl Default for Names {
     fn default() -> Self {
-        Self { short: None, long: None, long_aliases: &[] }
+        Self {
+            short: None,
+            long: None,
+            long_aliases: &[],
+        }
     }
 }
 
@@ -169,13 +179,21 @@ impl Names {
     /// `.{ .short = c }`
     #[inline]
     pub const fn short(c: u8) -> Self {
-        Self { short: Some(c), long: None, long_aliases: &[] }
+        Self {
+            short: Some(c),
+            long: None,
+            long_aliases: &[],
+        }
     }
 
     /// `.{ .long = name }`
     #[inline]
     pub const fn long(name: &'static [u8]) -> Self {
-        Self { short: None, long: Some(name), long_aliases: &[] }
+        Self {
+            short: None,
+            long: Some(name),
+            long_aliases: &[],
+        }
     }
 
     /// Check if the given name matches the primary long name or any alias
@@ -252,7 +270,11 @@ impl<Id: Default> Default for Param<Id> {
     fn default() -> Self {
         // SAFETY note: Zig used `std.mem.zeroes(Id)` / `std.mem.zeroes(Names)`.
         // We require `Id: Default` instead — same effect for the `Help` payload.
-        Self { id: Id::default(), names: Names::default(), takes_value: Values::None }
+        Self {
+            id: Id::default(),
+            names: Names::default(),
+            takes_value: Values::None,
+        }
     }
 }
 
@@ -323,10 +345,7 @@ impl Diagnostic {
                 name
             );
         } else if err == bun_core::err!("InvalidArgument") {
-            bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> Invalid Argument '{}'",
-                name
-            );
+            bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name);
         } else {
             bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> {} while parsing argument '{}'",
@@ -358,7 +377,10 @@ pub struct Help {
 
 impl Default for Help {
     fn default() -> Self {
-        Self { msg: b"", value: b"" }
+        Self {
+            msg: b"",
+            value: b"",
+        }
     }
 }
 
@@ -372,7 +394,10 @@ pub struct ParseOptions<'a> {
 
 impl<'a> Default for ParseOptions<'a> {
     fn default() -> Self {
-        Self { diagnostic: None, stop_after_positional_at: 0 }
+        Self {
+            diagnostic: None,
+            stop_after_positional_at: 0,
+        }
     }
 }
 
@@ -580,13 +605,25 @@ where
     match param.takes_value {
         Values::None => {}
         Values::One => {
-            write!(w, " <{}>", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
+            write!(
+                w,
+                " <{}>",
+                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
+            )?;
         }
         Values::OneOptional => {
-            write!(w, " <{}>?", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
+            write!(
+                w,
+                " <{}>?",
+                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
+            )?;
         }
         Values::Many => {
-            write!(w, " <{}>...", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
+            write!(
+                w,
+                " <{}>...",
+                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
+            )?;
         }
     }
     Ok(())
@@ -622,7 +659,10 @@ where
     help_full(
         stream,
         params,
-        &Context { help_text, value_text },
+        &Context {
+            help_text,
+            value_text,
+        },
         help::<Id>,
         value::<Id>,
     )
@@ -663,7 +703,11 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
 /// `simple_print_param`'s `"=<val>"` literal — change both together.
 fn param_display_width(param: &Param<Help>) -> usize {
     let flags_len = param.names.long.map_or(0, |l| l.len());
-    let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
+    let value_len: usize = if param.takes_value != Values::None {
+        6
+    } else {
+        0
+    };
     flags_len + value_len
 }
 
@@ -738,7 +782,8 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
                 // is the *format string*, so `<tag>` markers inside `desc_text` are
                 // rewritten. Mirror that with the runtime rewriter.
-                let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
+                let desc =
+                    Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
                 Output::pretty(format_args!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
@@ -774,7 +819,9 @@ where
     // TODO(port): std.io.countingWriter(stream)
     let mut cos = CountingWriter::wrap(stream);
     for param in params {
-        let Some(name) = param.names.short else { continue };
+        let Some(name) = param.names.short else {
+            continue;
+        };
         if param.takes_value != Values::None {
             continue;
         }
@@ -796,7 +843,11 @@ where
             continue;
         }
 
-        let prefix: &[u8] = if param.names.short.is_some() { b"-" } else { b"--" };
+        let prefix: &[u8] = if param.names.short.is_some() {
+            b"-"
+        } else {
+            b"--"
+        };
 
         // Zig had a workaround `@as([*]const u8, @ptrCast(s))[0..1]` for taking
         // a 1-byte slice of the short char. Rust expresses this as a 1-elem array.
@@ -824,7 +875,11 @@ where
         if cos.count != 0 {
             cos.write_char(' ')?;
         }
-        write!(cos, "<{}>", bstr::BStr::new(value_text(context, &p).map_err(Into::into)?))?;
+        write!(
+            cos,
+            "<{}>",
+            bstr::BStr::new(value_text(context, &p).map_err(Into::into)?)
+        )?;
     }
     Ok(())
 }
@@ -872,8 +927,15 @@ mod tests {
     fn parse_param_test() {
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"value" },
-                names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"value",
+                },
+                names: Names {
+                    short: Some(b's'),
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 takes_value: Values::One,
             },
             parse_param!("-s, --long <value> Help text"),
@@ -881,8 +943,15 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"value" },
-                names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"value",
+                },
+                names: Names {
+                    short: Some(b's'),
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 takes_value: Values::Many,
             },
             parse_param!("-s, --long <value>... Help text"),
@@ -890,8 +959,14 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"value" },
-                names: Names { long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"value",
+                },
+                names: Names {
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 takes_value: Values::One,
             },
             parse_param!("--long <value> Help text"),
@@ -899,8 +974,14 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"value" },
-                names: Names { short: Some(b's'), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"value",
+                },
+                names: Names {
+                    short: Some(b's'),
+                    ..Default::default()
+                },
                 takes_value: Values::One,
             },
             parse_param!("-s <value> Help text"),
@@ -908,8 +989,15 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", ..Default::default() },
-                names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    ..Default::default()
+                },
+                names: Names {
+                    short: Some(b's'),
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             parse_param!("-s, --long Help text"),
@@ -917,8 +1005,14 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", ..Default::default() },
-                names: Names { short: Some(b's'), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    ..Default::default()
+                },
+                names: Names {
+                    short: Some(b's'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             parse_param!("-s Help text"),
@@ -926,8 +1020,14 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", ..Default::default() },
-                names: Names { long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    ..Default::default()
+                },
+                names: Names {
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             parse_param!("--long Help text"),
@@ -935,8 +1035,14 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"A | B" },
-                names: Names { long: Some(b"long"), ..Default::default() },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"A | B",
+                },
+                names: Names {
+                    long: Some(b"long"),
+                    ..Default::default()
+                },
                 takes_value: Values::One,
             },
             parse_param!("--long <A | B> Help text"),
@@ -944,7 +1050,10 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"A" },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"A",
+                },
                 names: Names::default(),
                 takes_value: Values::One,
             },
@@ -953,7 +1062,10 @@ mod tests {
 
         expect_param(
             Param {
-                id: Help { msg: b"Help text", value: b"A" },
+                id: Help {
+                    msg: b"Help text",
+                    value: b"A",
+                },
                 names: Names::default(),
                 takes_value: Values::Many,
             },
@@ -991,7 +1103,10 @@ mod tests {
         assert_eq!(MACRO_PARAMS[1].id.value, b"STR");
 
         // Aliases — proc-macro restores the comptime alias array the runtime parser drops.
-        assert_eq!(MACRO_PARAMS[2].names.long, Some(b"test-name-pattern" as &[u8]));
+        assert_eq!(
+            MACRO_PARAMS[2].names.long,
+            Some(b"test-name-pattern" as &[u8])
+        );
         assert_eq!(MACRO_PARAMS[2].names.long_aliases, &[b"grep" as &[u8]]);
         assert_eq!(MACRO_PARAMS[2].takes_value, Values::Many);
 

@@ -10,22 +10,25 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
-use bun_io::Loop as AsyncLoop;
-use crate::package_manager_real::Command::Context as CommandContext;
-use bun_collections::ArrayHashMap;
-use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
-use bun_install::{
-    invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
-};
-use bun_io::{BufferedReader, ReadState};
-use bun_io::pipe_reader::PosixFlags;
-use bun_spawn::subprocess::{self, StdioResult};
-use bun_event_loop::{AnyEventLoop, EventLoopHandle};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
-use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use crate::package_manager_real::Command::Context as CommandContext;
+use bun_collections::ArrayHashMap;
 use bun_core::strings;
+use bun_core::{self, Error, Output, err};
+use bun_event_loop::{AnyEventLoop, EventLoopHandle};
+use bun_install::{
+    DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
+};
+use bun_io::Loop as AsyncLoop;
+use bun_io::pipe_reader::PosixFlags;
+use bun_io::{BufferedReader, ReadState};
+use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_spawn::subprocess::{self, StdioResult};
+use bun_spawn::{
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
+    SpawnResultExt as _, Status, Stdio,
+};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
@@ -237,7 +240,13 @@ pub fn perform_security_scan_after_resolution(
     // For other commands, scan all if no update requests, otherwise scan update packages
     let scan_all =
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
-    let result = attempt_security_scan(manager, &security_scanner, scan_all, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(
+        manager,
+        &security_scanner,
+        scan_all,
+        command_ctx,
+        original_cwd,
+    )?;
 
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
@@ -284,7 +293,8 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result = attempt_security_scan(manager, &security_scanner, true, command_ctx, original_cwd)?;
+    let result =
+        attempt_security_scan(manager, &security_scanner, true, command_ctx, original_cwd)?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
@@ -358,7 +368,10 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
                     let ancestor_name = pkg_names[*ancestor_id as usize].slice(string_buf);
                     Output::pretty(format_args!("{}", BStr::new(ancestor_name)));
                 }
-                Output::pretty(format_args!(" › <red>{}<r>\n", BStr::new(&advisory.package)));
+                Output::pretty(format_args!(
+                    " › <red>{}<r>\n",
+                    BStr::new(&advisory.package)
+                ));
             } else {
                 Output::pretty(format_args!("    <d>(direct dependency)<r>\n"));
             }
@@ -470,7 +483,9 @@ pub fn prompt_for_warnings() -> bool {
         return false;
     }
 
-    Output::pretty(format_args!("\n<yellow>Continuing with installation...<r>\n\n"));
+    Output::pretty(format_args!(
+        "\n<yellow>Continuing with installation...<r>\n\n"
+    ));
     true
 }
 
@@ -593,11 +608,13 @@ impl<'a> PackageCollector<'a> {
 
         for req in self.manager.update_requests.iter() {
             for _update_pkg_id in 0..pkgs.len() {
-                let update_pkg_id: PackageID = PackageID::try_from(_update_pkg_id).expect("int cast");
+                let update_pkg_id: PackageID =
+                    PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
                     continue;
                 }
-                if pkg_resolutions[update_pkg_id as usize].tag != bun_install::resolution::Tag::Npm {
+                if pkg_resolutions[update_pkg_id as usize].tag != bun_install::resolution::Tag::Npm
+                {
                     continue;
                 }
 
@@ -615,7 +632,8 @@ impl<'a> PackageCollector<'a> {
 
                     let pkg_deps = pkg_dependencies[pkg_id as usize];
                     for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                        let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+                        let dep_id: DependencyID =
+                            DependencyID::try_from(_dep_id).expect("int cast");
                         let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
                         if dep_pkg_id == invalid_package_id {
                             continue;
@@ -682,7 +700,8 @@ impl<'a> PackageCollector<'a> {
 
             let pkg_deps = pkg_dependencies[pkg_id as usize];
             for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let next_dep_id: DependencyID = DependencyID::try_from(_next_dep_id).expect("int cast");
+                let next_dep_id: DependencyID =
+                    DependencyID::try_from(_next_dep_id).expect("int cast");
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
                 if next_pkg_id == invalid_package_id {
@@ -780,7 +799,10 @@ impl<'a> JSONBuilder<'a> {
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
                     bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
                     npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(dep_version.literal.slice(string_buf), json_opts),
+                    bun_core::fmt::format_json_string_utf8(
+                        dep_version.literal.slice(string_buf),
+                        json_opts
+                    ),
                     bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
                 )?;
             }
@@ -805,7 +827,14 @@ fn attempt_security_scan(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<ScanAttemptResult, Error> {
-    attempt_security_scan_with_retry(manager, security_scanner, scan_all, command_ctx, original_cwd, false)
+    attempt_security_scan_with_retry(
+        manager,
+        security_scanner,
+        scan_all,
+        command_ctx,
+        original_cwd,
+        false,
+    )
 }
 
 fn attempt_security_scan_with_retry(
@@ -866,7 +895,11 @@ fn attempt_security_scan_with_retry(
     // PORT NOTE: destructure `collector` here to release its `&PackageManager`
     // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
     // Only `package_paths` and the dedupe count are read past this point.
-    let PackageCollector { dedupe, package_paths, .. } = collector;
+    let PackageCollector {
+        dedupe,
+        package_paths,
+        ..
+    } = collector;
     let mut package_paths = package_paths;
     let packages_scanned = dedupe.count();
 
@@ -886,7 +919,11 @@ fn attempt_security_scan_with_retry(
     if let Some(index) = strings::index_of(temp_source, suppress_placeholder) {
         let mut new_code: Vec<u8> = Vec::new();
         new_code.extend_from_slice(&temp_source[0..index]);
-        new_code.extend_from_slice(if suppress_error_output { b"true" } else { b"false" });
+        new_code.extend_from_slice(if suppress_error_output {
+            b"true"
+        } else {
+            b"false"
+        });
         new_code.extend_from_slice(&temp_source[index + suppress_placeholder.len()..]);
         // PORT NOTE: reshaped for borrowck — drop borrow of `code` (via `temp_source`) before reassigning.
         code = new_code;
@@ -1068,7 +1105,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             core::ptr::null(),
         ];
         const _: () = assert!(
-            core::mem::size_of::<[*const core::ffi::c_char; 5]>() == 5 * core::mem::size_of::<usize>()
+            core::mem::size_of::<[*const core::ffi::c_char; 5]>()
+                == 5 * core::mem::size_of::<usize>()
         );
 
         #[cfg(windows)]
@@ -1123,11 +1161,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.ipc_reader.flags.remove(PosixFlags::SOCKET);
 
         let json_fd = spawned.extra_pipes[1].fd();
-        self.finish_spawn(
-            &mut spawned,
-            ipc_output_fds[0],
-            move || subprocess::stdio_result_from_fd(json_fd),
-        )
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
+            subprocess::stdio_result_from_fd(json_fd)
+        })
     }
 
     /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
@@ -1142,13 +1178,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv: &mut [*const core::ffi::c_char; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
-        use bun_sys::windows::libuv as uv;
         use bun_sys::ReturnCodeExt as _;
+        use bun_sys::windows::libuv as uv;
 
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
-        let pipe_rc =
-            unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
+        let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
         // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
         // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
         // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
@@ -1199,8 +1234,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
             return Err(e.into());
         }
-        if let Some(e) =
-            unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
+        if let Some(e) = unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
         {
             return Err(e.into());
         }
@@ -1208,7 +1242,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
-            Stdio::Pipe(fds.0.unwrap()), // fd 4: child inherits non-overlapped read end
+            Stdio::Pipe(fds.0.unwrap()),    // fd 4: child inherits non-overlapped read end
         ]);
 
         let spawn_options = SpawnOptions {
@@ -1327,12 +1361,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `on_close_io` via the `parent` backref; that callback must observe
         // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
         // `is_done()` never returns true and `sleep_until` hangs.
-        let writer = StaticPipeWriter::create(
-            event_loop,
-            parent.cast(),
-            make_json_stdio(),
-            json_source,
-        );
+        let writer =
+            StaticPipeWriter::create(event_loop, parent.cast(), make_json_stdio(), json_source);
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
         // held across `start()` — `on_close_io` may `.take()` the field.
         let writer_local = writer.dupe_ref();
@@ -1582,10 +1612,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
             Ok(e) => e,
             Err(e) => {
-                Output::err_generic(
-                    "Security scanner sent invalid JSON: {}",
-                    (e.name(),),
-                );
+                Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
                 if self.ipc_data.len() < 1000 {
                     Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
                 }
@@ -1594,18 +1621,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         if !matches!(json_expr.data, ExprData::EObject(_)) {
-            Output::err_generic(
-                "Security scanner IPC message must be a JSON object",
-                (),
-            );
+            Output::err_generic("Security scanner IPC message must be a JSON object", ());
             return Err(err!("InvalidIPCFormat"));
         }
 
         let Some(type_expr) = json_expr.get(b"type") else {
-            Output::err_generic(
-                "Security scanner IPC message missing 'type' field",
-                (),
-            );
+            Output::err_generic("Security scanner IPC message missing 'type' field", ());
             return Err(err!("MissingIPCType"));
         };
 
@@ -1784,24 +1805,22 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
 
         let Some(advisories_expr) = json_expr.get(b"advisories") else {
-            Output::err_generic(
-                "Security scanner result missing 'advisories' field",
-                (),
-            );
+            Output::err_generic("Security scanner result missing 'advisories' field", ());
             return Err(err!("MissingAdvisoriesField"));
         };
 
-        let advisories =
-            parse_security_advisories_from_expr(self.manager, advisories_expr, &bump, package_paths)?;
+        let advisories = parse_security_advisories_from_expr(
+            self.manager,
+            advisories_expr,
+            &bump,
+            package_paths,
+        )?;
 
         if !status.is_ok() {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
                     if *code != 0 {
-                        Output::err_generic(
-                            "Security scanner failed with exit code: {}",
-                            (*code,),
-                        );
+                        Output::err_generic("Security scanner failed with exit code: {}", (*code,));
                         return Err(err!("SecurityScannerFailed"));
                     }
                 }

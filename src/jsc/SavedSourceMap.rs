@@ -6,14 +6,14 @@ use core::ptr;
 use std::sync::Arc;
 
 use bun_collections::{HashMap, TaggedPtrUnion};
+use bun_core::MutableString;
 use bun_core::{Ordinal, Output};
 use bun_paths::PathBuffer;
+use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
     ParsedSourceMap, SourceProviderMap,
 };
-use bun_sourcemap::internal_source_map::FindCache;
-use bun_core::MutableString;
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
@@ -199,20 +199,12 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    pub fn put_zig_source_provider(
-        &mut self,
-        opaque_source_provider: *mut c_void,
-        path: &[u8],
-    ) {
+    pub fn put_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         let source_provider: *mut SourceProviderMap = opaque_source_provider.cast();
         let _ = self.put_value(path, Value::init(source_provider));
     }
 
-    pub fn remove_zig_source_provider(
-        &mut self,
-        opaque_source_provider: *mut c_void,
-        path: &[u8],
-    ) {
+    pub fn remove_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
         // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
@@ -280,7 +272,10 @@ impl Drop for SavedSourceMap {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
                     // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap { data: ism as *const u8 }).free_owned();
+                    (InternalSourceMap {
+                        data: ism as *const u8,
+                    })
+                    .free_owned();
                 }
             }
             self.unlock();
@@ -370,7 +365,10 @@ impl SavedSourceMap {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
                     // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap { data: ism as *const u8 }).free_owned();
+                    (InternalSourceMap {
+                        data: ism as *const u8,
+                    })
+                    .free_owned();
                 }
                 *o.get_mut() = value.ptr();
             }
@@ -442,10 +440,8 @@ impl SavedSourceMap {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
                     // Leak one strong ref into the table (mirrors Zig `map.ref()`).
-                    let _ = self.put_value(
-                        path,
-                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
-                    );
+                    let _ =
+                        self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
                     return parse;
                 }
@@ -469,10 +465,8 @@ impl SavedSourceMap {
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    let _ = self.put_value(
-                        path,
-                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
-                    );
+                    let _ =
+                        self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
                     return parse;
                 }
@@ -488,7 +482,8 @@ impl SavedSourceMap {
             return SourceMap::ParseUrl::default();
         } else if tag == Value::case::<DevServerSourceProvider>() {
             // TODO: This is a copy-paste of above branch
-            let ptr: *mut DevServerSourceProvider = tagged.as_unchecked::<DevServerSourceProvider>();
+            let ptr: *mut DevServerSourceProvider =
+                tagged.as_unchecked::<DevServerSourceProvider>();
             self.unlock();
 
             // Do not lock the mutex while we're parsing JSON!
@@ -496,10 +491,8 @@ impl SavedSourceMap {
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    let _ = self.put_value(
-                        path,
-                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
-                    );
+                    let _ =
+                        self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
                     return parse;
                 }
@@ -525,7 +518,8 @@ impl SavedSourceMap {
 
     /// You must `deref()` the returned value or you will leak memory
     pub fn get(&mut self, path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
-        self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly).map
+        self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly)
+            .map
     }
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.

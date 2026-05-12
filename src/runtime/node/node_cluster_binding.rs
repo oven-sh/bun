@@ -4,9 +4,9 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
+use bun_core::String as BunString;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
-use bun_core::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;
 
@@ -112,9 +112,13 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         Ok(JSValue::UNDEFINED)
     }
 
-    let good = ipc_instance
-        .data
-        .serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+    let good = ipc_instance.data.serialize_and_send(
+        global,
+        message,
+        IsInternal::Internal,
+        JSValue::NULL,
+        None,
+    );
 
     if good == SerializeAndSendResult::Failure {
         let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
@@ -203,7 +207,8 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
 
     let _ = handle;
-    let success = ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+    let success =
+        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
     Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
@@ -212,7 +217,10 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn on_internal_message_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn on_internal_message_primary(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<3>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
     let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();

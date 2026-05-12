@@ -14,7 +14,9 @@ use core::ptr;
 
 #[path = "napi_body.rs"]
 mod napi_body;
-pub use napi_body::{fix_dead_code_elimination, napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
+pub use napi_body::{
+    NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
+};
 
 // ─── compiling free items ────────────────────────────────────────────────────
 

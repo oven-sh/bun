@@ -1,7 +1,7 @@
-use bun_core::{err, Error, Output, Timespec, TimespecMockMode};
-use bun_paths::{resolve_path, AutoAbsPath, PathBuffer};
+use bun_core::{Error, Output, Timespec, TimespecMockMode, err};
 use bun_core::{OwnedString, String as BunString};
-use bun_sys::{self as sys, Fd, FdDirExt, E};
+use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
+use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
 
@@ -66,8 +66,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
         let errno = err.get_errno();
         if errno == E::ENOENT || errno == E::EPERM || errno == E::EACCES {
             // Derive directory from the absolute output path
-            let dir_path =
-                resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
+            let dir_path = resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
             if !dir_path.is_empty() {
                 let _ = Fd::cwd().make_path(dir_path);
                 // Retry write

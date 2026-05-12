@@ -1,12 +1,12 @@
 //! https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
 
+use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 pub struct CondExpr {
     pub base: Base,
@@ -20,7 +20,9 @@ pub struct CondExpr {
 pub enum CondExprState {
     #[default]
     Idle,
-    ExpandingArgs { idx: u32 },
+    ExpandingArgs {
+        idx: u32,
+    },
     WaitingStat,
     WaitingWriteErr,
     Done,
@@ -73,7 +75,10 @@ impl CondExpr {
                         atom,
                         this,
                         io,
-                        ExpansionOpts { for_spawn: false, single: true },
+                        ExpansionOpts {
+                            for_spawn: false,
+                            single: true,
+                        },
                     );
                     return Expansion::start(interp, child);
                 }
@@ -89,11 +94,7 @@ impl CondExpr {
 
     /// Spec: CondExpr.zig `commandImplStart`. Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
-    fn command_impl_start(
-        interp: &Interpreter,
-        this: NodeId,
-        op: ast::CondExprOp,
-    ) -> Yield {
+    fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
         match op {
@@ -142,14 +143,22 @@ impl CondExpr {
             Op::DashZ => {
                 let exit = {
                     let me = interp.as_condexpr(this);
-                    if me.args.is_empty() || me.args[0].is_empty() { 0 } else { 1 }
+                    if me.args.is_empty() || me.args[0].is_empty() {
+                        0
+                    } else {
+                        1
+                    }
                 };
                 interp.child_done(parent, this, exit)
             }
             Op::DashN => {
                 let exit = {
                     let me = interp.as_condexpr(this);
-                    if !me.args.is_empty() && !me.args[0].is_empty() { 0 } else { 1 }
+                    if !me.args.is_empty() && !me.args[0].is_empty() {
+                        0
+                    } else {
+                        1
+                    }
                 };
                 interp.child_done(parent, this, exit)
             }
@@ -195,7 +204,10 @@ impl CondExpr {
             let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
             return interp.child_done(parent, this, exit_code);
         }
-        if matches!(interp.as_condexpr(this).state, CondExprState::WaitingWriteErr) {
+        if matches!(
+            interp.as_condexpr(this).state,
+            CondExprState::WaitingWriteErr
+        ) {
             return interp.child_done(parent, this, 1);
         }
         crate::shell::interpreter::unreachable_state(
@@ -228,9 +240,9 @@ impl CondExpr {
                     ast::CondExprOp::DashF => bun_sys::S::ISREG(mode),
                     ast::CondExprOp::DashD => bun_sys::S::ISDIR(mode),
                     ast::CondExprOp::DashC => bun_sys::S::ISCHR(mode),
-                    _ => unreachable!(
-                        "CondExprOp does not need stat(); this indicates a bug in Bun"
-                    ),
+                    _ => {
+                        unreachable!("CondExprOp does not need stat(); this indicates a bug in Bun")
+                    }
                 };
                 if ok { 0 } else { 1 }
             }

@@ -53,12 +53,8 @@ impl<C: ReaderContext> NewReader<C> {
 
     pub fn skip(self, count: impl TryInto<isize>) {
         // Zig: skipFn(this.wrapped, @as(isize, @intCast(count)))
-        self.wrapped.skip(
-            count
-                .try_into()
-                .ok()
-                .expect("skip count fits in isize"),
-        );
+        self.wrapped
+            .skip(count.try_into().ok().expect("skip count fits in isize"));
     }
 
     pub fn peek(&self) -> &[u8] {

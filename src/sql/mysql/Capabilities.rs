@@ -103,38 +103,102 @@ impl Capabilities {
         let mut value: u32 = 0;
 
         // PORT NOTE: unrolled `inline for (fields) |field| { if @field(this, field) value |= @field(Capabilities, "_" ++ field) }`
-        if self.CLIENT_LONG_PASSWORD { value |= Self::_CLIENT_LONG_PASSWORD; }
-        if self.CLIENT_FOUND_ROWS { value |= Self::_CLIENT_FOUND_ROWS; }
-        if self.CLIENT_LONG_FLAG { value |= Self::_CLIENT_LONG_FLAG; }
-        if self.CLIENT_CONNECT_WITH_DB { value |= Self::_CLIENT_CONNECT_WITH_DB; }
-        if self.CLIENT_NO_SCHEMA { value |= Self::_CLIENT_NO_SCHEMA; }
-        if self.CLIENT_COMPRESS { value |= Self::_CLIENT_COMPRESS; }
-        if self.CLIENT_ODBC { value |= Self::_CLIENT_ODBC; }
-        if self.CLIENT_LOCAL_FILES { value |= Self::_CLIENT_LOCAL_FILES; }
-        if self.CLIENT_IGNORE_SPACE { value |= Self::_CLIENT_IGNORE_SPACE; }
-        if self.CLIENT_PROTOCOL_41 { value |= Self::_CLIENT_PROTOCOL_41; }
-        if self.CLIENT_INTERACTIVE { value |= Self::_CLIENT_INTERACTIVE; }
-        if self.CLIENT_SSL { value |= Self::_CLIENT_SSL; }
-        if self.CLIENT_IGNORE_SIGPIPE { value |= Self::_CLIENT_IGNORE_SIGPIPE; }
-        if self.CLIENT_TRANSACTIONS { value |= Self::_CLIENT_TRANSACTIONS; }
-        if self.CLIENT_RESERVED { value |= Self::_CLIENT_RESERVED; }
-        if self.CLIENT_SECURE_CONNECTION { value |= Self::_CLIENT_SECURE_CONNECTION; }
-        if self.CLIENT_MULTI_STATEMENTS { value |= Self::_CLIENT_MULTI_STATEMENTS; }
-        if self.CLIENT_MULTI_RESULTS { value |= Self::_CLIENT_MULTI_RESULTS; }
-        if self.CLIENT_PS_MULTI_RESULTS { value |= Self::_CLIENT_PS_MULTI_RESULTS; }
-        if self.CLIENT_PLUGIN_AUTH { value |= Self::_CLIENT_PLUGIN_AUTH; }
-        if self.CLIENT_CONNECT_ATTRS { value |= Self::_CLIENT_CONNECT_ATTRS; }
-        if self.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA { value |= Self::_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA; }
-        if self.CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS { value |= Self::_CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS; }
-        if self.CLIENT_SESSION_TRACK { value |= Self::_CLIENT_SESSION_TRACK; }
-        if self.CLIENT_DEPRECATE_EOF { value |= Self::_CLIENT_DEPRECATE_EOF; }
-        if self.CLIENT_OPTIONAL_RESULTSET_METADATA { value |= Self::_CLIENT_OPTIONAL_RESULTSET_METADATA; }
-        if self.CLIENT_ZSTD_COMPRESSION_ALGORITHM { value |= Self::_CLIENT_ZSTD_COMPRESSION_ALGORITHM; }
-        if self.CLIENT_QUERY_ATTRIBUTES { value |= Self::_CLIENT_QUERY_ATTRIBUTES; }
-        if self.MULTI_FACTOR_AUTHENTICATION { value |= Self::_MULTI_FACTOR_AUTHENTICATION; }
-        if self.CLIENT_CAPABILITY_EXTENSION { value |= Self::_CLIENT_CAPABILITY_EXTENSION; }
-        if self.CLIENT_SSL_VERIFY_SERVER_CERT { value |= Self::_CLIENT_SSL_VERIFY_SERVER_CERT; }
-        if self.CLIENT_REMEMBER_OPTIONS { value |= Self::_CLIENT_REMEMBER_OPTIONS; }
+        if self.CLIENT_LONG_PASSWORD {
+            value |= Self::_CLIENT_LONG_PASSWORD;
+        }
+        if self.CLIENT_FOUND_ROWS {
+            value |= Self::_CLIENT_FOUND_ROWS;
+        }
+        if self.CLIENT_LONG_FLAG {
+            value |= Self::_CLIENT_LONG_FLAG;
+        }
+        if self.CLIENT_CONNECT_WITH_DB {
+            value |= Self::_CLIENT_CONNECT_WITH_DB;
+        }
+        if self.CLIENT_NO_SCHEMA {
+            value |= Self::_CLIENT_NO_SCHEMA;
+        }
+        if self.CLIENT_COMPRESS {
+            value |= Self::_CLIENT_COMPRESS;
+        }
+        if self.CLIENT_ODBC {
+            value |= Self::_CLIENT_ODBC;
+        }
+        if self.CLIENT_LOCAL_FILES {
+            value |= Self::_CLIENT_LOCAL_FILES;
+        }
+        if self.CLIENT_IGNORE_SPACE {
+            value |= Self::_CLIENT_IGNORE_SPACE;
+        }
+        if self.CLIENT_PROTOCOL_41 {
+            value |= Self::_CLIENT_PROTOCOL_41;
+        }
+        if self.CLIENT_INTERACTIVE {
+            value |= Self::_CLIENT_INTERACTIVE;
+        }
+        if self.CLIENT_SSL {
+            value |= Self::_CLIENT_SSL;
+        }
+        if self.CLIENT_IGNORE_SIGPIPE {
+            value |= Self::_CLIENT_IGNORE_SIGPIPE;
+        }
+        if self.CLIENT_TRANSACTIONS {
+            value |= Self::_CLIENT_TRANSACTIONS;
+        }
+        if self.CLIENT_RESERVED {
+            value |= Self::_CLIENT_RESERVED;
+        }
+        if self.CLIENT_SECURE_CONNECTION {
+            value |= Self::_CLIENT_SECURE_CONNECTION;
+        }
+        if self.CLIENT_MULTI_STATEMENTS {
+            value |= Self::_CLIENT_MULTI_STATEMENTS;
+        }
+        if self.CLIENT_MULTI_RESULTS {
+            value |= Self::_CLIENT_MULTI_RESULTS;
+        }
+        if self.CLIENT_PS_MULTI_RESULTS {
+            value |= Self::_CLIENT_PS_MULTI_RESULTS;
+        }
+        if self.CLIENT_PLUGIN_AUTH {
+            value |= Self::_CLIENT_PLUGIN_AUTH;
+        }
+        if self.CLIENT_CONNECT_ATTRS {
+            value |= Self::_CLIENT_CONNECT_ATTRS;
+        }
+        if self.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
+            value |= Self::_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA;
+        }
+        if self.CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS {
+            value |= Self::_CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS;
+        }
+        if self.CLIENT_SESSION_TRACK {
+            value |= Self::_CLIENT_SESSION_TRACK;
+        }
+        if self.CLIENT_DEPRECATE_EOF {
+            value |= Self::_CLIENT_DEPRECATE_EOF;
+        }
+        if self.CLIENT_OPTIONAL_RESULTSET_METADATA {
+            value |= Self::_CLIENT_OPTIONAL_RESULTSET_METADATA;
+        }
+        if self.CLIENT_ZSTD_COMPRESSION_ALGORITHM {
+            value |= Self::_CLIENT_ZSTD_COMPRESSION_ALGORITHM;
+        }
+        if self.CLIENT_QUERY_ATTRIBUTES {
+            value |= Self::_CLIENT_QUERY_ATTRIBUTES;
+        }
+        if self.MULTI_FACTOR_AUTHENTICATION {
+            value |= Self::_MULTI_FACTOR_AUTHENTICATION;
+        }
+        if self.CLIENT_CAPABILITY_EXTENSION {
+            value |= Self::_CLIENT_CAPABILITY_EXTENSION;
+        }
+        if self.CLIENT_SSL_VERIFY_SERVER_CERT {
+            value |= Self::_CLIENT_SSL_VERIFY_SERVER_CERT;
+        }
+        if self.CLIENT_REMEMBER_OPTIONS {
+            value |= Self::_CLIENT_REMEMBER_OPTIONS;
+        }
 
         value
     }
@@ -163,12 +227,18 @@ impl Capabilities {
             CLIENT_PS_MULTI_RESULTS: (Self::_CLIENT_PS_MULTI_RESULTS & flags) != 0,
             CLIENT_PLUGIN_AUTH: (Self::_CLIENT_PLUGIN_AUTH & flags) != 0,
             CLIENT_CONNECT_ATTRS: (Self::_CLIENT_CONNECT_ATTRS & flags) != 0,
-            CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: (Self::_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA & flags) != 0,
-            CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS: (Self::_CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS & flags) != 0,
+            CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: (Self::_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+                & flags)
+                != 0,
+            CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS: (Self::_CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS
+                & flags)
+                != 0,
             CLIENT_SESSION_TRACK: (Self::_CLIENT_SESSION_TRACK & flags) != 0,
             CLIENT_DEPRECATE_EOF: (Self::_CLIENT_DEPRECATE_EOF & flags) != 0,
-            CLIENT_OPTIONAL_RESULTSET_METADATA: (Self::_CLIENT_OPTIONAL_RESULTSET_METADATA & flags) != 0,
-            CLIENT_ZSTD_COMPRESSION_ALGORITHM: (Self::_CLIENT_ZSTD_COMPRESSION_ALGORITHM & flags) != 0,
+            CLIENT_OPTIONAL_RESULTSET_METADATA: (Self::_CLIENT_OPTIONAL_RESULTSET_METADATA & flags)
+                != 0,
+            CLIENT_ZSTD_COMPRESSION_ALGORITHM: (Self::_CLIENT_ZSTD_COMPRESSION_ALGORITHM & flags)
+                != 0,
             CLIENT_QUERY_ATTRIBUTES: (Self::_CLIENT_QUERY_ATTRIBUTES & flags) != 0,
             MULTI_FACTOR_AUTHENTICATION: (Self::_MULTI_FACTOR_AUTHENTICATION & flags) != 0,
             CLIENT_CAPABILITY_EXTENSION: (Self::_CLIENT_CAPABILITY_EXTENSION & flags) != 0,

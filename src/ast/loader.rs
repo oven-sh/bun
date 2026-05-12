@@ -268,11 +268,17 @@ impl Loader {
     // `bun_bundler::options::LoaderExt` so cross-crate callers (bun_jsc,
     // bun_runtime) resolve them as inherent methods without a trait import.
     #[inline]
-    pub fn is_type_script(self) -> bool { self.is_typescript() }
+    pub fn is_type_script(self) -> bool {
+        self.is_typescript()
+    }
     #[inline]
-    pub fn is_java_script_like(self) -> bool { self.is_javascript_like() }
+    pub fn is_java_script_like(self) -> bool {
+        self.is_javascript_like()
+    }
     #[inline]
-    pub fn is_java_script_like_or_json(self) -> bool { self.is_javascript_like_or_json() }
+    pub fn is_java_script_like_or_json(self) -> bool {
+        self.is_javascript_like_or_json()
+    }
 
     pub fn is_javascript_like_or_json(self) -> bool {
         matches!(
@@ -327,7 +333,6 @@ pub enum SideEffects {
     /// This file was loaded using a data-oriented loader (e.g. "text") that is
     /// known to not have side effects.
     NoSideEffectsPureData,
-
     // /// Same as above but it came from a plugin. We don't want to warn about
     // /// unused imports to these files since running the plugin is a side effect.
     // /// Removing the import would not call the plugin which is observable.

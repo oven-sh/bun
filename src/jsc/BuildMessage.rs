@@ -1,9 +1,10 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-
 use crate::zig_string::ZigString;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
+use crate::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
+};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
@@ -18,7 +19,10 @@ pub struct BuildMessage {
 
 impl Default for BuildMessage {
     fn default() -> Self {
-        Self { msg: bun_ast::Msg::default(), logged: Cell::new(false) }
+        Self {
+            msg: bun_ast::Msg::default(),
+            logged: Cell::new(false),
+        }
     }
 }
 
@@ -39,7 +43,11 @@ impl BuildMessage {
                 u32::try_from(i).expect("int cast"),
                 BuildMessage::create(
                     global,
-                    bun_ast::Msg { data: cloned, kind: bun_ast::Kind::Note, ..Default::default() },
+                    bun_ast::Msg {
+                        data: cloned,
+                        kind: bun_ast::Kind::Note,
+                        ..Default::default()
+                    },
                 )?,
             )?;
         }
@@ -51,7 +59,12 @@ impl BuildMessage {
         // std.fmt.allocPrint → write! into Vec<u8>; Rust aborts on OOM so the
         // `catch { throwOutOfMemoryValue }` branch is unreachable here.
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "BuildMessage: {}", bstr::BStr::new(&self.msg.data.text)).expect("infallible: in-memory write");
+        write!(
+            &mut text,
+            "BuildMessage: {}",
+            bstr::BStr::new(&self.msg.data.text)
+        )
+        .expect("infallible: in-memory write");
 
         let mut str = ZigString::init(&text);
         str.set_output_encoding();
@@ -94,11 +107,7 @@ impl BuildMessage {
     }
 
     #[crate::host_fn(method)]
-    pub fn to_string(
-        &self,
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn to_string(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(self.to_string_fn(global))
     }
 
@@ -125,13 +134,13 @@ impl BuildMessage {
     }
 
     #[crate::host_fn(method)]
-    pub fn to_json(
-        &self,
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn to_json(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 4);
-        object.put(global, b"name", bun_core::String::static_str(b"BuildMessage").to_js(global)?);
+        object.put(
+            global,
+            b"name",
+            bun_core::String::static_str(b"BuildMessage").to_js(global)?,
+        );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
         object.put(global, b"level", self.get_level(global)?);
@@ -139,7 +148,9 @@ impl BuildMessage {
     }
 
     pub fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
-        let Some(location) = &msg.data.location else { return JSValue::NULL };
+        let Some(location) = &msg.data.location else {
+            return JSValue::NULL;
+        };
         let object = JSValue::create_empty_object(global, 7);
 
         object.put(
@@ -147,8 +158,16 @@ impl BuildMessage {
             b"lineText",
             ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
         );
-        object.put(global, b"file", ZigString::init(&location.file).to_js(global));
-        object.put(global, b"namespace", ZigString::init(location.namespace).to_js(global));
+        object.put(
+            global,
+            b"file",
+            ZigString::init(&location.file).to_js(global),
+        );
+        object.put(
+            global,
+            b"namespace",
+            ZigString::init(location.namespace).to_js(global),
+        );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
         object.put(global, b"length", JSValue::from(location.length));

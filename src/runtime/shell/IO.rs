@@ -3,14 +3,14 @@
 //! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
 //! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
 
-use bun_collections::{VecExt, ByteVecExt};
+use bun_collections::{ByteVecExt, VecExt};
 use core::fmt;
 
-use crate::shell::interpreter::{OutputNeedsIOSafeGuard};
+use crate::api::bun_spawn::stdio::{Capture, Stdio};
+use crate::shell::interpreter::OutputNeedsIOSafeGuard;
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
-use crate::api::bun_spawn::stdio::{Capture, Stdio};
 
 #[derive(Clone, Default)]
 pub struct IO {
@@ -21,7 +21,11 @@ pub struct IO {
 
 impl fmt::Display for IO {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "stdin: {}\nstdout: {}\nstderr: {}", self.stdin, self.stdout, self.stderr)
+        write!(
+            f,
+            "stdin: {}\nstdout: {}\nstderr: {}",
+            self.stdin, self.stdout, self.stderr
+        )
     }
 }
 
@@ -29,7 +33,9 @@ impl IO {
     /// Zig `copy` = `ref()` + struct copy. With `Arc` fields, `Clone`
     /// increments refcounts and copies the struct in one step.
     #[inline]
-    pub fn copy(&self) -> IO { self.clone() }
+    pub fn copy(&self) -> IO {
+        self.clone()
+    }
 
     /// Spec: IO.zig `memoryCost` — sum of stdin/stdout/stderr.
     pub fn memory_cost(&self) -> usize {

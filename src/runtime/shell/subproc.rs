@@ -4,34 +4,36 @@ use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
 use std::sync::Arc;
 
+use crate::api::bun::process::{
+    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
+};
+#[cfg(windows)]
+use crate::api::bun::process::{
+    WindowsOptions, WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult,
+};
+use crate::api::bun::subprocess as JscSubprocess;
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{self, IOWriter};
+use crate::shell::states::cmd::Cmd as ShellCmd;
+use crate::shell::{self as sh, EnvMap, Yield};
+use crate::webcore::{self, Blob, FileSink, ReadableStream, blob};
 use bun_alloc::Arena;
-use bun_io::Loop as AsyncLoop;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
+use bun_io::Loop as AsyncLoop;
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
 };
 use bun_ptr::RefPtr;
-use crate::api::bun::subprocess as JscSubprocess;
-use crate::webcore::{self, blob, Blob, FileSink, ReadableStream};
-use crate::shell::states::cmd::Cmd as ShellCmd;
-use crate::shell::interpreter::{Interpreter, NodeId};
-use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::{self as sh, EnvMap, Yield};
-use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
-};
-#[cfg(windows)]
-use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;
 
-use crate::shell::util::{self, OutKind};
 use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::shell::util::{self, OutKind};
 
 /// Local helper: `OutKind` → tag-name string for logs (Zig `@tagName`).
 #[inline]
@@ -279,7 +281,6 @@ pub struct ShellSubprocess {
     pub closed: EnumSet<StdioKind>,
     // TODO(port): this_jsvalue was always .zero in Zig (never assigned) — dropped.
     // A bare JSValue field on a Box-allocated struct is a UAF per PORTING.md §JSC.
-
     pub flags: Flags,
 }
 
@@ -318,7 +319,8 @@ impl Drop for ShellSubprocess {
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag =
+        bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -807,7 +809,11 @@ impl ShellSubprocess {
                 stdin,
                 stdout,
                 stderr,
-                flags: if IS_SYNC { Flags::IS_SYNC } else { Flags::empty() },
+                flags: if IS_SYNC {
+                    Flags::IS_SYNC
+                } else {
+                    Flags::empty()
+                },
                 cmd_parent,
                 closed: EnumSet::empty(),
             });
@@ -853,8 +859,9 @@ impl ShellSubprocess {
                 // path that drops the FileSinkPtr. `init_with_type` is
                 // `unsafe fn` (caller asserts the handler outlives the
                 // `Signal`).
-                pipe.signal
-                    .set(unsafe { webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr) });
+                pipe.signal.set(unsafe {
+                    webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
+                });
             }
         }
 
@@ -876,14 +883,20 @@ impl ShellSubprocess {
             }
         }
 
-        if let Err(err) = subproc.stdout.start_pipe_reader(subprocess, event_loop, !spawn_args.lazy) {
+        if let Err(err) = subproc
+            .stdout
+            .start_pipe_reader(subprocess, event_loop, !spawn_args.lazy)
+        {
             let sys_err = err.to_shell_system_error();
             let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
 
-        if let Err(err) = subproc.stderr.start_pipe_reader(subprocess, event_loop, !spawn_args.lazy) {
+        if let Err(err) = subproc
+            .stderr
+            .start_pipe_reader(subprocess, event_loop, !spawn_args.lazy)
+        {
             let sys_err = err.to_shell_system_error();
             let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
             Self::abort_after_failed_start(subprocess);
@@ -1035,7 +1048,9 @@ impl Writable {
 
                         // SAFETY: `create_with_pipe` returns a freshly-boxed
                         // non-null FileSink with refcount 1; sole reference.
-                        match unsafe { (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe()) } {
+                        match unsafe {
+                            (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe())
+                        } {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
                                 // SAFETY: pipe_ptr is live with refcount 1;
@@ -1061,10 +1076,8 @@ impl Writable {
                     // destructure-moved out. Take ownership via ManuallyDrop +
                     // ptr::read; the wrapper suppresses the Stdio destructor so
                     // the blob is moved exactly once.
-                    let old = core::mem::ManuallyDrop::new(core::mem::replace(
-                        &mut stdio,
-                        Stdio::Ignore,
-                    ));
+                    let old =
+                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
                     // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
@@ -1120,10 +1133,8 @@ impl Writable {
                     // destructure-moved out. Take ownership via ManuallyDrop +
                     // ptr::read; the wrapper suppresses the Stdio destructor so
                     // the blob is moved exactly once.
-                    let old = core::mem::ManuallyDrop::new(core::mem::replace(
-                        &mut stdio,
-                        Stdio::Ignore,
-                    ));
+                    let old =
+                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
                     // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
@@ -1137,14 +1148,12 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                    )))
-                }
+                Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop,
+                    subprocess,
+                    result,
+                    JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
+                ))),
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1154,10 +1163,8 @@ impl Writable {
                     // so `Stdio::Drop` doesn't close the fd we just took
                     // (`stdio = Stdio::Ignore` alone would drop+close the old
                     // `Stdio::Memfd`).
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(
-                        &mut stdio,
-                        Stdio::Ignore,
-                    ));
+                    let _ =
+                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Ok(Writable::Memfd(fd))
                 }
                 Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
@@ -1345,48 +1352,46 @@ impl Readable {
 
         #[cfg(not(windows))]
         {
-        match &mut stdio {
-            Stdio::Inherit => Readable::Inherit,
-            Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-            Stdio::Path(_) => Readable::Ignore,
-            Stdio::Fd(_) => Readable::Fd(result.unwrap()),
-            // blobs are immutable, so we should only ever get the case
-            // where the user passed in a Blob with an fd
-            Stdio::Blob(_) => Readable::Ignore,
-            Stdio::Memfd(memfd) => {
-                let fd = *memfd;
-                // Ownership of the fd transfers to `Readable::Memfd` (Zig sets
-                // `stdio_consumed = true` to suppress `Stdio.deinit`). Swap in
-                // `Ignore` and suppress the old value's destructor so
-                // `Stdio::Drop` doesn't close the fd we just took.
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(
-                    &mut stdio,
-                    Stdio::Ignore,
-                ));
-                Readable::Memfd(fd)
+            match &mut stdio {
+                Stdio::Inherit => Readable::Inherit,
+                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
+                Stdio::Path(_) => Readable::Ignore,
+                Stdio::Fd(_) => Readable::Fd(result.unwrap()),
+                // blobs are immutable, so we should only ever get the case
+                // where the user passed in a Blob with an fd
+                Stdio::Blob(_) => Readable::Ignore,
+                Stdio::Memfd(memfd) => {
+                    let fd = *memfd;
+                    // Ownership of the fd transfers to `Readable::Memfd` (Zig sets
+                    // `stdio_consumed = true` to suppress `Stdio.deinit`). Swap in
+                    // `Ignore` and suppress the old value's destructor so
+                    // `Stdio::Drop` doesn't close the fd we just took.
+                    let _ =
+                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
+                    Readable::Memfd(fd)
+                }
+                Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                    event_loop, process, result, None, out_type, interp,
+                )),
+                Stdio::ArrayBuffer(array_buffer) => {
+                    let mut pipe =
+                        PipeReader::create(event_loop, process, result, None, out_type, interp);
+                    // The Arc was just created by `PipeReader::create` and is
+                    // uniquely held (strong=1, weak=0) — `get_mut` is the safe
+                    // route to set `buffered_output` before it's shared.
+                    Arc::get_mut(&mut pipe)
+                        .expect("fresh PipeReader Arc")
+                        .buffered_output = BufferedOutput::ArrayBuffer {
+                        buf: core::mem::take(array_buffer),
+                        i: 0,
+                    };
+                    Readable::Pipe(pipe)
+                }
+                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                    event_loop, process, result, shellio, out_type, interp,
+                )),
+                Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
             }
-            Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                event_loop, process, result, None, out_type, interp,
-            )),
-            Stdio::ArrayBuffer(array_buffer) => {
-                let mut pipe =
-                    PipeReader::create(event_loop, process, result, None, out_type, interp);
-                // The Arc was just created by `PipeReader::create` and is
-                // uniquely held (strong=1, weak=0) — `get_mut` is the safe
-                // route to set `buffered_output` before it's shared.
-                Arc::get_mut(&mut pipe)
-                    .expect("fresh PipeReader Arc")
-                    .buffered_output = BufferedOutput::ArrayBuffer {
-                    buf: core::mem::take(array_buffer),
-                    i: 0,
-                };
-                Readable::Pipe(pipe)
-            }
-            Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                event_loop, process, result, shellio, out_type, interp,
-            )),
-            Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
-        }
         }
     }
 
@@ -1790,7 +1795,6 @@ impl CapturedWriter {
         }
     }
 
-
     pub fn event_loop(&self) -> EventLoopHandle {
         self.parent().event_loop()
     }
@@ -1840,16 +1844,12 @@ impl CapturedWriter {
             // SAFETY: `parent_mut` recovers the embedding `PipeReader` via
             // `container_of`; raw-ptr form per `try_signal_done_to_cmd`
             // contract (no `&mut PipeReader` held across the Cmd re-entry).
-            return unsafe {
-                PipeReader::try_signal_done_to_cmd(self.parent_mut())
-            };
+            return unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
         } else if self.written >= self.parent().buffered_output.len()
             && !matches!(self.parent().state, PipeReaderState::Pending)
         {
             // SAFETY: as above.
-            return unsafe {
-                PipeReader::try_signal_done_to_cmd(self.parent_mut())
-            };
+            return unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
         }
         Yield::Suspended
     }
@@ -1931,10 +1931,7 @@ impl PipeReader {
     /// Free-function form of [`run_yield`] for callers that must not hold any
     /// `&PipeReader` borrow across the interpreter trampoline (which can
     /// re-derive `&PipeReader` via the `Readable::Pipe` `Arc`).
-    pub(crate) fn run_yield_with(
-        interp: *mut crate::shell::interpreter::Interpreter,
-        y: Yield,
-    ) {
+    pub(crate) fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
         if interp.is_null() {
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended | Yield::Failed),
@@ -2298,16 +2295,17 @@ impl PipeReader {
     }
 
     // TODO(port): move to shell_jsc
-    pub fn to_readable_stream(
-        &mut self,
-        global_object: &JSGlobalObject,
-    ) -> jsc::JsResult<JSValue> {
+    pub fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> jsc::JsResult<JSValue> {
         // TODO(port): `defer self.deinit()` — with Arc this is the last-strong-ref drop.
         // Cannot express on &mut self; Phase B should take Arc<Self> by value.
 
         match core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default())) {
             PipeReaderState::Pending => {
-                let stream = ReadableStream::from_pipe(global_object, std::ptr::from_mut::<Self>(self), &mut self.reader)?;
+                let stream = ReadableStream::from_pipe(
+                    global_object,
+                    std::ptr::from_mut::<Self>(self),
+                    &mut self.reader,
+                )?;
                 self.state = PipeReaderState::Done(Box::default());
                 Ok(stream)
             }
@@ -2318,7 +2316,9 @@ impl PipeReader {
             PipeReaderState::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;
                 ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object).unwrap().unwrap(),
+                    &ReadableStream::from_js(empty, global_object)
+                        .unwrap()
+                        .unwrap(),
                     global_object,
                 );
                 Ok(empty)
@@ -2345,11 +2345,7 @@ impl PipeReader {
     /// # Safety
     /// See [`Self::on_reader_done`].
     pub unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        log!(
-            "PipeReader(0x{:x}) onReaderError {:?}",
-            this as usize,
-            err
-        );
+        log!("PipeReader(0x{:x}) onReaderError {:?}", this as usize, err);
         // SAFETY: caller contract.
         let guard = unsafe { Self::guard_from_raw(this) };
         {

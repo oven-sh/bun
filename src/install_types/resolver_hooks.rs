@@ -17,9 +17,11 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_semver::version::VersionInt;
-use bun_semver::{self as semver, ExternalString, String as SemverString, Version as SemverVersion};
 use bun_core::strings;
+use bun_semver::version::VersionInt;
+use bun_semver::{
+    self as semver, ExternalString, String as SemverString, Version as SemverVersion,
+};
 
 // ─── Identity / sentinel ──────────────────────────────────────────────────
 
@@ -49,30 +51,51 @@ pub struct ExternalSlice<T> {
 impl<T> Copy for ExternalSlice<T> {}
 impl<T> Clone for ExternalSlice<T> {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<T> Default for ExternalSlice<T> {
     #[inline]
-    fn default() -> Self { Self { off: 0, len: 0, _marker: PhantomData } }
+    fn default() -> Self {
+        Self {
+            off: 0,
+            len: 0,
+            _marker: PhantomData,
+        }
+    }
 }
 impl<T> PartialEq for ExternalSlice<T> {
     #[inline]
-    fn eq(&self, other: &Self) -> bool { self.off == other.off && self.len == other.len }
+    fn eq(&self, other: &Self) -> bool {
+        self.off == other.off && self.len == other.len
+    }
 }
 impl<T> Eq for ExternalSlice<T> {}
 impl<T> core::fmt::Debug for ExternalSlice<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ExternalSlice").field("off", &self.off).field("len", &self.len).finish()
+        f.debug_struct("ExternalSlice")
+            .field("off", &self.off)
+            .field("len", &self.len)
+            .finish()
     }
 }
 
 impl<T> ExternalSlice<T> {
     #[inline]
     pub const fn new(off: u32, len: u32) -> Self {
-        Self { off, len, _marker: PhantomData }
+        Self {
+            off,
+            len,
+            _marker: PhantomData,
+        }
     }
 
-    pub const INVALID: Self = Self { off: u32::MAX, len: u32::MAX, _marker: PhantomData };
+    pub const INVALID: Self = Self {
+        off: u32::MAX,
+        len: u32::MAX,
+        _marker: PhantomData,
+    };
 
     #[inline]
     pub fn is_invalid(self) -> bool {
@@ -101,10 +124,14 @@ impl<T> ExternalSlice<T> {
     }
 
     #[inline]
-    pub fn begin(self) -> u32 { self.off }
+    pub fn begin(self) -> u32 {
+        self.off
+    }
 
     #[inline]
-    pub fn end(self) -> u32 { self.off + self.len }
+    pub fn end(self) -> u32 {
+        self.off + self.len
+    }
 
     pub fn init(buf: &[T], in_: &[T]) -> Self {
         // if cfg!(debug_assertions) {
@@ -112,7 +139,8 @@ impl<T> ExternalSlice<T> {
         //     debug_assert!((in_.as_ptr() as usize + in_.len()) <= (buf.as_ptr() as usize + buf.len()));
         // }
         Self {
-            off: ((in_.as_ptr() as usize - buf.as_ptr() as usize) / core::mem::size_of::<T>()) as u32,
+            off: ((in_.as_ptr() as usize - buf.as_ptr() as usize) / core::mem::size_of::<T>())
+                as u32,
             len: in_.len() as u32,
             _marker: PhantomData,
         }
@@ -167,27 +195,54 @@ impl Behavior {
         ("bundled", |b| b.contains(Behavior::BUNDLED)),
     ];
 
-    #[inline] pub fn is_prod(self) -> bool { self.contains(Self::PROD) }
+    #[inline]
+    pub fn is_prod(self) -> bool {
+        self.contains(Self::PROD)
+    }
     /// Zig: `optional and !peer` — peer-optionals are reported separately.
-    #[inline] pub fn is_optional(self) -> bool {
+    #[inline]
+    pub fn is_optional(self) -> bool {
         self.contains(Self::OPTIONAL) && !self.contains(Self::PEER)
     }
-    #[inline] pub fn is_optional_peer(self) -> bool {
+    #[inline]
+    pub fn is_optional_peer(self) -> bool {
         self.contains(Self::OPTIONAL) && self.contains(Self::PEER)
     }
-    #[inline] pub fn is_dev(self) -> bool { self.contains(Self::DEV) }
-    #[inline] pub fn is_peer(self) -> bool { self.contains(Self::PEER) }
-    #[inline] pub fn is_workspace(self) -> bool { self.contains(Self::WORKSPACE) }
-    #[inline] pub fn is_bundled(self) -> bool { self.contains(Self::BUNDLED) }
-    #[inline] pub fn includes(self, rhs: Self) -> bool { self.intersects(rhs) }
-    #[inline] pub fn is_required(self) -> bool { !self.is_optional() }
+    #[inline]
+    pub fn is_dev(self) -> bool {
+        self.contains(Self::DEV)
+    }
+    #[inline]
+    pub fn is_peer(self) -> bool {
+        self.contains(Self::PEER)
+    }
+    #[inline]
+    pub fn is_workspace(self) -> bool {
+        self.contains(Self::WORKSPACE)
+    }
+    #[inline]
+    pub fn is_bundled(self) -> bool {
+        self.contains(Self::BUNDLED)
+    }
+    #[inline]
+    pub fn includes(self, rhs: Self) -> bool {
+        self.intersects(rhs)
+    }
+    #[inline]
+    pub fn is_required(self) -> bool {
+        !self.is_optional()
+    }
 
     #[inline]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool { lhs.bits() == rhs.bits() }
+    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
+        lhs.bits() == rhs.bits()
+    }
 
     /// Zig: `add(this, kind)` — Zig took `@Type(.enum_literal)`; callers pass `Behavior::FLAG`.
     #[inline]
-    pub fn add(self, kind: Behavior) -> Behavior { self | kind }
+    pub fn add(self, kind: Behavior) -> Behavior {
+        self | kind
+    }
 
     /// Renamed from Zig `set` (collides with `bitflags::Flags::set`).
     #[inline]
@@ -213,7 +268,9 @@ impl Behavior {
 
     pub fn cmp(self, rhs: Self) -> core::cmp::Ordering {
         use core::cmp::Ordering::*;
-        if self == rhs { return Equal; }
+        if self == rhs {
+            return Equal;
+        }
         // ensure workspaces are placed at the beginning
         if self.is_workspace() != rhs.is_workspace() {
             return if self.is_workspace() { Less } else { Greater };
@@ -332,7 +389,10 @@ pub struct TarballInfo {
 
 impl Default for TarballInfo {
     fn default() -> Self {
-        TarballInfo { uri: URI::Local(SemverString::default()), package_name: SemverString::default() }
+        TarballInfo {
+            uri: URI::Local(SemverString::default()),
+            package_name: SemverString::default(),
+        }
     }
 }
 
@@ -369,7 +429,9 @@ pub union DependencyVersionValue {
 
 impl Default for DependencyVersionValue {
     #[inline]
-    fn default() -> Self { DependencyVersionValue { uninitialized: () } }
+    fn default() -> Self {
+        DependencyVersionValue { uninitialized: () }
+    }
 }
 
 impl Clone for DependencyVersionValue {
@@ -393,14 +455,22 @@ pub struct DependencyVersion {
 
 impl Default for DependencyVersion {
     fn default() -> Self {
-        Self { tag: DependencyVersionTag::Uninitialized, literal: SemverString::default(), value: DependencyVersionValue { uninitialized: () } }
+        Self {
+            tag: DependencyVersionTag::Uninitialized,
+            literal: SemverString::default(),
+            value: DependencyVersionValue { uninitialized: () },
+        }
     }
 }
 
 impl Clone for DependencyVersion {
     #[inline]
     fn clone(&self) -> Self {
-        Self { tag: self.tag, literal: self.literal, value: self.value.clone() }
+        Self {
+            tag: self.tag,
+            literal: self.literal,
+            value: self.value.clone(),
+        }
     }
 }
 
@@ -453,14 +523,24 @@ pub struct Dependency {
 
 impl Default for Dependency {
     fn default() -> Self {
-        Self { name_hash: 0, name: SemverString::default(), version: DependencyVersion::default(), behavior: Behavior::default() }
+        Self {
+            name_hash: 0,
+            name: SemverString::default(),
+            version: DependencyVersion::default(),
+            behavior: Behavior::default(),
+        }
     }
 }
 
 impl Clone for Dependency {
     #[inline]
     fn clone(&self) -> Self {
-        Self { name_hash: self.name_hash, name: self.name, version: self.version.clone(), behavior: self.behavior }
+        Self {
+            name_hash: self.name_hash,
+            name: self.name,
+            version: self.version.clone(),
+            behavior: self.behavior,
+        }
     }
 }
 
@@ -550,7 +630,11 @@ impl<T: NegatableEnum> Negatable<T> {
     // https://github.com/pnpm/pnpm/blob/1f228b0aeec2ef9a2c8577df1d17186ac83790f9/config/package-is-installable/src/checkPlatform.ts#L56-L86
     // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/node_modules/npm-install-checks/lib/index.js#L2-L96
     pub fn combine(self) -> T {
-        let added = if self.had_wildcard { T::ALL_VALUE } else { self.added.to_raw() };
+        let added = if self.had_wildcard {
+            T::ALL_VALUE
+        } else {
+            self.added.to_raw()
+        };
         let removed = self.removed.to_raw();
         let zero = T::Int::default();
 
@@ -778,11 +862,26 @@ impl OperatingSystem {
     #[cfg(target_os = "freebsd")]
     pub const CURRENT_NAME: &'static str = "freebsd";
 
-    #[inline] pub const fn none() -> Self { Self::NONE }
-    #[inline] pub const fn all() -> Self { Self::ALL }
-    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
-    #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
-    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+    #[inline]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+    #[inline]
+    pub const fn all() -> Self {
+        Self::ALL
+    }
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        (self.0 & target.0) != 0
+    }
+    #[inline]
+    pub fn has(self, other: u16) -> bool {
+        (self.0 & other) != 0
+    }
+    #[inline]
+    pub fn negatable(self) -> Negatable<Self> {
+        NegatableExt::negatable(self)
+    }
 }
 
 negatable_names! { OperatingSystem: u16 => [
@@ -808,11 +907,26 @@ impl Libc {
     // TODO: (matches Zig — runtime libc detection)
     pub const CURRENT: Self = Self(Self::GLIBC);
 
-    #[inline] pub const fn none() -> Self { Self::NONE }
-    #[inline] pub const fn all() -> Self { Self::ALL }
-    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
-    #[inline] pub fn has(self, other: u8) -> bool { (self.0 & other) != 0 }
-    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+    #[inline]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+    #[inline]
+    pub const fn all() -> Self {
+        Self::ALL
+    }
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        (self.0 & target.0) != 0
+    }
+    #[inline]
+    pub fn has(self, other: u8) -> bool {
+        (self.0 & other) != 0
+    }
+    #[inline]
+    pub fn negatable(self) -> Negatable<Self> {
+        NegatableExt::negatable(self)
+    }
 }
 
 negatable_names! { Libc: u8 => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
@@ -863,11 +977,26 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT_NAME: &'static str = "x64";
 
-    #[inline] pub const fn none() -> Self { Self::NONE }
-    #[inline] pub const fn all() -> Self { Self::ALL }
-    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
-    #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
-    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+    #[inline]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+    #[inline]
+    pub const fn all() -> Self {
+        Self::ALL
+    }
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        (self.0 & target.0) != 0
+    }
+    #[inline]
+    pub fn has(self, other: u16) -> bool {
+        (self.0 & other) != 0
+    }
+    #[inline]
+    pub fn negatable(self) -> Negatable<Self> {
+        NegatableExt::negatable(self)
+    }
 }
 
 negatable_names! { Architecture: u16 => [
@@ -875,7 +1004,6 @@ negatable_names! { Architecture: u16 => [
     b"ia32" => IA32, b"mips" => MIPS, b"s390" => S390,
     b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,
 ] }
-
 
 // ─── Repository (data) ────────────────────────────────────────────────────
 // MOVE_DOWN from `bun_install::repository` — the on-disk lockfile shape
@@ -900,15 +1028,21 @@ pub struct Repository {
 // time for the 2-arg call sites in `bun_install::resolution`.
 impl Clone for Repository {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl Repository {
     pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
-        if owner_order != Ordering::Equal { return owner_order; }
+        if owner_order != Ordering::Equal {
+            return owner_order;
+        }
         let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
-        if repo_order != Ordering::Equal { return repo_order; }
+        if repo_order != Ordering::Equal {
+            return repo_order;
+        }
         self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
     }
 
@@ -934,8 +1068,12 @@ impl Repository {
     }
 
     pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) { return false; }
-        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) { return false; }
+        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+            return false;
+        }
         if self.resolved.is_empty() || rhs.resolved.is_empty() {
             return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
         }
@@ -964,12 +1102,17 @@ pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
 impl<SemverInt: bun_semver::version::VersionInt> Copy for VersionedURLType<SemverInt> {}
 impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<SemverInt: bun_semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
     #[inline]
     fn default() -> Self {
-        Self { url: SemverString::default(), version: bun_semver::VersionType::default() }
+        Self {
+            url: SemverString::default(),
+            version: bun_semver::VersionType::default(),
+        }
     }
 }
 
@@ -1001,7 +1144,10 @@ impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
 impl VersionedURLType<u32> {
     #[inline]
     pub fn migrate(self) -> VersionedURLType<u64> {
-        VersionedURLType { url: self.url, version: self.version.migrate() }
+        VersionedURLType {
+            url: self.url,
+            version: self.version.migrate(),
+        }
     }
 }
 
@@ -1048,7 +1194,9 @@ pub union ResolutionValue<I: VersionInt> {
 
 impl<I: VersionInt> Default for ResolutionValue<I> {
     #[inline]
-    fn default() -> Self { ResolutionValue { uninitialized: () } }
+    fn default() -> Self {
+        ResolutionValue { uninitialized: () }
+    }
 }
 
 /// Port of `install/resolution.zig` `Resolution` (= `ResolutionType(u64)`).
@@ -1064,12 +1212,20 @@ pub struct Resolution {
 impl Default for Resolution {
     #[inline]
     fn default() -> Self {
-        Self { tag: ResolutionTag::Uninitialized, _padding: [0; 7], value: ResolutionValue { uninitialized: () } }
+        Self {
+            tag: ResolutionTag::Uninitialized,
+            _padding: [0; 7],
+            value: ResolutionValue { uninitialized: () },
+        }
     }
 }
 
 impl Resolution {
-    pub const ROOT: Self = Self { tag: ResolutionTag::Root, _padding: [0; 7], value: ResolutionValue { root: () } };
+    pub const ROOT: Self = Self {
+        tag: ResolutionTag::Root,
+        _padding: [0; 7],
+        value: ResolutionValue { root: () },
+    };
 }
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────
@@ -1117,17 +1273,35 @@ impl Default for Features {
 
 impl Features {
     /// Zig: `Features.main` decl-literal (src/install/install.zig).
-    #[inline] pub const fn main() -> Self { Self::MAIN }
+    #[inline]
+    pub const fn main() -> Self {
+        Self::MAIN
+    }
     /// Zig: `Features.npm` decl-literal.
-    #[inline] pub const fn npm() -> Self { Self::NPM }
+    #[inline]
+    pub const fn npm() -> Self {
+        Self::NPM
+    }
     /// Zig: `Features.folder` decl-literal.
-    #[inline] pub const fn folder() -> Self { Self::FOLDER }
+    #[inline]
+    pub const fn folder() -> Self {
+        Self::FOLDER
+    }
     /// Zig: `Features.workspace` decl-literal.
-    #[inline] pub const fn workspace() -> Self { Self::WORKSPACE }
+    #[inline]
+    pub const fn workspace() -> Self {
+        Self::WORKSPACE
+    }
     /// Zig: `Features.link` decl-literal.
-    #[inline] pub const fn link() -> Self { Self::LINK }
+    #[inline]
+    pub const fn link() -> Self {
+        Self::LINK
+    }
     /// Zig: `Features.tarball` decl-literal.
-    #[inline] pub const fn tarball() -> Self { Self::TARBALL }
+    #[inline]
+    pub const fn tarball() -> Self {
+        Self::TARBALL
+    }
 
     pub fn behavior(self) -> Behavior {
         let mut out: u8 = 0;
@@ -1261,10 +1435,16 @@ pub struct DependencyGroup {
     pub behavior: Behavior,
 }
 impl DependencyGroup {
-    pub const DEPENDENCIES: Self =
-        Self { prop: b"dependencies", field: b"dependencies", behavior: Behavior::PROD };
-    pub const DEV: Self =
-        Self { prop: b"devDependencies", field: b"dev_dependencies", behavior: Behavior::DEV };
+    pub const DEPENDENCIES: Self = Self {
+        prop: b"dependencies",
+        field: b"dependencies",
+        behavior: Behavior::PROD,
+    };
+    pub const DEV: Self = Self {
+        prop: b"devDependencies",
+        field: b"dev_dependencies",
+        behavior: Behavior::DEV,
+    };
     pub const OPTIONAL: Self = Self {
         prop: b"optionalDependencies",
         field: b"optional_dependencies",
@@ -1275,8 +1455,11 @@ impl DependencyGroup {
         field: b"peer_dependencies",
         behavior: Behavior::PEER,
     };
-    pub const WORKSPACES: Self =
-        Self { prop: b"workspaces", field: b"workspaces", behavior: Behavior::WORKSPACE };
+    pub const WORKSPACES: Self = Self {
+        prop: b"workspaces",
+        field: b"workspaces",
+        behavior: Behavior::WORKSPACE,
+    };
 
     /// Unordered set of the four package.json dependency sections. Use the
     /// named constants and build your own ordered array when iteration order
@@ -1316,7 +1499,10 @@ impl DependencyGroup {
 // ─── EnqueueResult ────────────────────────────────────────────────────────
 
 pub enum EnqueueResult {
-    Resolution { package_id: PackageID, resolution: Resolution },
+    Resolution {
+        package_id: PackageID,
+        resolution: Resolution,
+    },
     Pending(DependencyID),
     NotFound,
     Failure(bun_core::Error),

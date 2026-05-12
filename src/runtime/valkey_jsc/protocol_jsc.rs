@@ -4,7 +4,7 @@
 //! here so `valkey/` is JSC-free.
 
 use crate::jsc::{
-    bun_string_jsc, ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult,
+    ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc,
 };
 use bun_core::String as BunString;
 use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};

@@ -1,10 +1,10 @@
-use bun_collections::VecExt;
-use bun_collections::StringHashMap;
-use bun_js_parser as js_ast;
-use bun_js_parser::lexer as js_lexer;
 use bun_ast::ExprData;
 use bun_ast::Ref;
+use bun_collections::StringHashMap;
+use bun_collections::VecExt;
 use bun_core::strings;
+use bun_js_parser as js_ast;
+use bun_js_parser::lexer as js_lexer;
 
 use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
@@ -23,8 +23,8 @@ use crate::defines_table::{
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    are_parts_equal, Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray,
+    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
+    UserDefinesArray, are_parts_equal,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
@@ -39,7 +39,9 @@ pub struct Globals;
 impl Globals {
     pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
     pub const NAN: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
-    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number { value: f64::INFINITY };
+    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number {
+        value: f64::INFINITY,
+    };
 
     #[inline]
     pub fn undefined_data() -> ExprData {
@@ -75,7 +77,11 @@ pub type Data = DefineData;
 // `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
 // ══════════════════════════════════════════════════════════════════════════
 
-fn env_string_store_put(store: &mut UserDefinesArray, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
+fn env_string_store_put(
+    store: &mut UserDefinesArray,
+    key: &[u8],
+    value: &[u8],
+) -> Result<(), bun_core::Error> {
     // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
     // `allocator` (= `bun.default_allocator`), NOT the thread-local
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
@@ -226,13 +232,19 @@ impl DefineExt for Define {
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             list.extend_from_slice(existing);
             // PERF(port): was appendAssumeCapacity — profile in Phase B
-            list.push(DotDefine { parts, data: value_define.clone() });
+            list.push(DotDefine {
+                parts,
+                data: value_define.clone(),
+            });
             // Zig: define.arena.free(gpe.value_ptr.*); — handled by Vec drop on assign
             *existing = list;
         } else {
             let mut list: Vec<DotDefine> = Vec::with_capacity(1);
             // PERF(port): was appendAssumeCapacity — profile in Phase B
-            list.push(DotDefine { parts, data: value_define.clone() });
+            list.push(DotDefine {
+                parts,
+                data: value_define.clone(),
+            });
             self.dots.put_assume_capacity(key, list);
         }
         Ok(())
@@ -283,9 +295,7 @@ impl DefineExt for Define {
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.
         if let Some(user_defines) = &_user_defines {
-            define.insert_from_iterator(
-                user_defines.iter().map(|(k, v)| (k.as_ref(), v)),
-            )?;
+            define.insert_from_iterator(user_defines.iter().map(|(k, v)| (k.as_ref(), v)))?;
         }
 
         // Step 4. Load environment data into hash tables.
@@ -448,9 +458,7 @@ impl DefineDataExt for DefineData {
             // which the caller (`Define::init`) owns for the lifetime of the
             // `Define` table — i.e. as long as any `ExprData` produced here is
             // reachable. Route through `StoreStr` for the lifetime erasure.
-            contents: std::borrow::Cow::Borrowed(
-                bun_ast::StoreStr::new(arena_value).slice(),
-            ),
+            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
             path: defines_path(),
             ..Default::default()
         };
@@ -492,14 +500,26 @@ impl DefineDataExt for DefineData {
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize); // @truncate
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
             <Self as DefineDataExt>::from_mergeable_input_entry(
-                &mut user_defines, key, value, false, false, log, bump,
+                &mut user_defines,
+                key,
+                value,
+                false,
+                false,
+                log,
+                bump,
             )?;
         }
 
         for drop_item in drop {
             if !drop_item.is_empty() {
                 <Self as DefineDataExt>::from_mergeable_input_entry(
-                    &mut user_defines, drop_item, b"", true, true, log, bump,
+                    &mut user_defines,
+                    drop_item,
+                    b"",
+                    true,
+                    true,
+                    log,
+                    bump,
                 )?;
             }
         }

@@ -242,7 +242,6 @@ static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-
 static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_DECOMPRESSOR,
@@ -257,12 +256,14 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-
 // TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
 // which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
 // `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
 // verify UTF-16-backed ZigStrings still match.
-fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_core::ZigString) -> Option<i32> {
+fn lookup_zig_string(
+    table: &phf::Map<&'static [u8], i32>,
+    key: &bun_core::ZigString,
+) -> Option<i32> {
     table.get(key.slice()).copied()
 }
 
@@ -336,7 +337,9 @@ pub fn on_create(
                 }
             }
 
-            if let Some(compression) = per_message_deflate.get_truthy(global_object, "decompress")? {
+            if let Some(compression) =
+                per_message_deflate.get_truthy(global_object, "decompress")?
+            {
                 if compression.is_boolean() {
                     server.compression |= if compression.to_boolean() {
                         uws::SHARED_DECOMPRESSOR

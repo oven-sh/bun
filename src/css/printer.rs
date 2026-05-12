@@ -3,8 +3,8 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::VecExt;
 use bun_ast::ImportRecord;
+use bun_collections::VecExt;
 
 use crate::css_parser as css;
 use crate::sourcemap;
@@ -54,7 +54,10 @@ impl<'a> PrinterOptions<'a> {
             minify,
             source_map: None,
             project_root: None,
-            targets: Targets { browsers: None, ..Targets::default() },
+            targets: Targets {
+                browsers: None,
+                ..Targets::default()
+            },
             analyze_dependencies: None,
             pseudo_classes: None,
             public_path: b"",
@@ -276,7 +279,11 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() { Some(BumpVec::new_in(arena)) } else { None },
+            dependencies: if options.analyze_dependencies.is_some() {
+                Some(BumpVec::new_in(arena))
+            } else {
+                None
+            },
             remove_imports: options
                 .analyze_dependencies
                 .as_ref()
@@ -340,7 +347,8 @@ impl<'a> Printer<'a> {
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
             let import_record = info.import_records.at(import_record_idx as usize);
-            let [a, b] = bun_core::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+            let [a, b] =
+                bun_core::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
@@ -410,7 +418,6 @@ impl<'a> bun_io::Write for Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
-
     /// Serialize a CSS identifier through this printer.
     ///
     /// Thin wrapper over `css::serializer::serialize_identifier`. The
@@ -548,32 +555,38 @@ impl<'a> Printer<'a> {
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                     let m = self.css_module.as_ref().unwrap();
                     let sources: &'a Vec<Box<[u8]>> = m.sources;
-                    (m.config, m.hashes[source_index], sources[source_index].as_ref())
+                    (
+                        m.config,
+                        m.hashes[source_index],
+                        sources[source_index].as_ref(),
+                    )
                 };
 
                 let mut first = true;
                 let mut err: Option<PrintErr> = None;
-                config.pattern.write(hash, source, ident, |s1: &[u8], replace_dots: bool| {
-                    if err.is_some() {
-                        return;
-                    }
-                    // PERF: stack fallback?
-                    let s: &[u8] = if !replace_dots {
-                        s1
-                    } else {
-                        Printer::replace_dots(arena, s1)
-                    };
-                    self.col += u32::try_from(s.len()).expect("int cast");
-                    let r = if first {
-                        first = false;
-                        css::serializer::serialize_identifier(s, self)
-                    } else {
-                        css::serializer::serialize_name(s, self)
-                    };
-                    if r.is_err() {
-                        err = Some(PrintErr::CSSPrintError);
-                    }
-                });
+                config
+                    .pattern
+                    .write(hash, source, ident, |s1: &[u8], replace_dots: bool| {
+                        if err.is_some() {
+                            return;
+                        }
+                        // PERF: stack fallback?
+                        let s: &[u8] = if !replace_dots {
+                            s1
+                        } else {
+                            Printer::replace_dots(arena, s1)
+                        };
+                        self.col += u32::try_from(s.len()).expect("int cast");
+                        let r = if first {
+                            first = false;
+                            css::serializer::serialize_identifier(s, self)
+                        } else {
+                            css::serializer::serialize_name(s, self)
+                        };
+                        if r.is_err() {
+                            err = Some(PrintErr::CSSPrintError);
+                        }
+                    });
                 if let Some(e) = err {
                     return Err(e);
                 }
@@ -613,24 +626,33 @@ impl<'a> Printer<'a> {
             let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                 let m = self.css_module.as_ref().unwrap();
                 let sources: &'a Vec<Box<[u8]>> = m.sources;
-                (m.config, m.hashes[source_index], sources[source_index].as_ref())
+                (
+                    m.config,
+                    m.hashes[source_index],
+                    sources[source_index].as_ref(),
+                )
             };
 
             let mut err: Option<PrintErr> = None;
-            config.pattern.write(hash, source, &ident_v[2..], |s1: &[u8], replace_dots: bool| {
-                if err.is_some() {
-                    return;
-                }
-                let s: &[u8] = if !replace_dots {
-                    s1
-                } else {
-                    Printer::replace_dots(arena, s1)
-                };
-                self.col += u32::try_from(s.len()).expect("int cast");
-                if css::serializer::serialize_name(s, self).is_err() {
-                    err = Some(PrintErr::CSSPrintError);
-                }
-            });
+            config.pattern.write(
+                hash,
+                source,
+                &ident_v[2..],
+                |s1: &[u8], replace_dots: bool| {
+                    if err.is_some() {
+                        return;
+                    }
+                    let s: &[u8] = if !replace_dots {
+                        s1
+                    } else {
+                        Printer::replace_dots(arena, s1)
+                    };
+                    self.col += u32::try_from(s.len()).expect("int cast");
+                    if css::serializer::serialize_name(s, self).is_err() {
+                        err = Some(PrintErr::CSSPrintError);
+                    }
+                },
+            );
             if let Some(e) = err {
                 return Err(e);
             }

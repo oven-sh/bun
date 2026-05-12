@@ -14,10 +14,10 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::AllocError;
-use bun_collections::{VecExt, StringHashMap};
-use bun_core::{self, StackCheck};
-use bun_ast::{self, Expr, E, G};
+use bun_ast::{self, E, Expr, G};
 use bun_ast::{self as ast, Loc, Log, Source};
+use bun_collections::{StringHashMap, VecExt};
+use bun_core::{self, StackCheck};
 
 // ───────────────────────────────────────────────────────────────────────────
 // YAML entry point
@@ -52,12 +52,19 @@ impl YAML {
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
-                let mut items: ast::ExprNodeList = ast::ExprNodeList::init_capacity(stream.docs.len());
+                let mut items: ast::ExprNodeList =
+                    ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
                     // PERF(port): was appendAssumeCapacity
                 }
-                Ok(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY))
+                Ok(Expr::init(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ))
             }
         }
     }
@@ -103,10 +110,7 @@ pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> Par
     }
 }
 
-pub fn print<Enc: Encoding, W: fmt::Write>(
-    stream: Stream<Enc>,
-    writer: &mut W,
-) -> fmt::Result {
+pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
     // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
     // and calls `printer.print()`. The `Printer` type is commented out in the spec
     // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
@@ -319,7 +323,9 @@ impl Pos {
     }
 
     pub fn loc(self) -> bun_ast::Loc {
-        bun_ast::Loc { start: i32::try_from(self.0).expect("int cast") }
+        bun_ast::Loc {
+            start: i32::try_from(self.0).expect("int cast"),
+        }
     }
 
     pub fn inc(&mut self, n: usize) {
@@ -503,7 +509,10 @@ impl Encoding for Latin1 {
         debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
         let mut buf = [0u8; 8];
         buf[..s.len()].copy_from_slice(s);
-        EncLit { buf, len: s.len() as u8 }
+        EncLit {
+            buf,
+            len: s.len() as u8,
+        }
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -528,7 +537,10 @@ impl Encoding for Utf8 {
         debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
         let mut buf = [0u8; 8];
         buf[..s.len()].copy_from_slice(s);
-        EncLit { buf, len: s.len() as u8 }
+        EncLit {
+            buf,
+            len: s.len() as u8,
+        }
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -560,7 +572,10 @@ impl Encoding for Utf16 {
             buf[i] = s[i] as u16;
             i += 1;
         }
-        EncLit { buf, len: s.len() as u8 }
+        EncLit {
+            buf,
+            len: s.len() as u8,
+        }
     }
     #[inline]
     fn key_bytes(s: &[u16]) -> &[u8] {
@@ -642,8 +657,8 @@ pub mod chars {
         let c0 = Enc::wide(cs[0]);
         match c0 {
             // '#' ';' '/' '?' ':' '@' '&' '=' '+' '$' '_' '.' '~' '*' '\'' '(' ')'
-            0x23 | 0x3B | 0x2F | 0x3F | 0x3A | 0x40 | 0x26 | 0x3D | 0x2B | 0x24 | 0x5F
-            | 0x2E | 0x7E | 0x2A | 0x27 | 0x28 | 0x29 => Some(1),
+            0x23 | 0x3B | 0x2F | 0x3F | 0x3A | 0x40 | 0x26 | 0x3D | 0x2B | 0x24 | 0x5F | 0x2E
+            | 0x7E | 0x2A | 0x27 | 0x28 | 0x29 => Some(1),
 
             // '!' ',' '[' ']' '{' '}'
             0x21 | 0x2C | 0x5B | 0x5D | 0x7B | 0x7D => None,
@@ -689,8 +704,24 @@ pub mod chars {
         matches!(
             Enc::wide(c),
             // - ? : , [ ] { } # & * ! | > ' " % @ `
-            0x2D | 0x3F | 0x3A | 0x2C | 0x5B | 0x5D | 0x7B | 0x7D | 0x23 | 0x26
-                | 0x2A | 0x21 | 0x7C | 0x3E | 0x27 | 0x22 | 0x25 | 0x40 | 0x60
+            0x2D | 0x3F
+                | 0x3A
+                | 0x2C
+                | 0x5B
+                | 0x5D
+                | 0x7B
+                | 0x7D
+                | 0x23
+                | 0x26
+                | 0x2A
+                | 0x21
+                | 0x7C
+                | 0x3E
+                | 0x27
+                | 0x22
+                | 0x25
+                | 0x40
+                | 0x60
         )
     }
 
@@ -705,8 +736,8 @@ pub mod chars {
         let c0 = Enc::wide(cs[0]);
         match c0 {
             // '#' ';' '/' '?' ':' '@' '&' '=' '+' '$' ',' '_' '.' '!' '~' '*' '\'' '(' ')' '[' ']'
-            0x23 | 0x3B | 0x2F | 0x3F | 0x3A | 0x40 | 0x26 | 0x3D | 0x2B | 0x24 | 0x2C
-            | 0x5F | 0x2E | 0x21 | 0x7E | 0x2A | 0x27 | 0x28 | 0x29 | 0x5B | 0x5D => true,
+            0x23 | 0x3B | 0x2F | 0x3F | 0x3A | 0x40 | 0x26 | 0x3D | 0x2B | 0x24 | 0x2C | 0x5F
+            | 0x2E | 0x21 | 0x7E | 0x2A | 0x27 | 0x28 | 0x29 | 0x5B | 0x5D => true,
             _ => {
                 if c0 == 0x25
                     && cs.len() > 2
@@ -842,7 +873,10 @@ impl<Enc: Encoding> YamlString<Enc> {
         if l_slice.len() != r.len() {
             return false;
         }
-        l_slice.iter().zip(r.iter()).all(|(a, b)| Enc::wide(*a) == *b as u32)
+        l_slice
+            .iter()
+            .zip(r.iter())
+            .all(|(a, b)| Enc::wide(*a) == *b as u32)
     }
 }
 
@@ -947,8 +981,14 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         Ok(())
     }
 
-    pub fn append_source_whitespace(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
-        self.parser_mut().whitespace_buf.push(Whitespace::Source { unit, pos });
+    pub fn append_source_whitespace(
+        &mut self,
+        unit: Enc::Unit,
+        pos: Pos,
+    ) -> Result<(), AllocError> {
+        self.parser_mut()
+            .whitespace_buf
+            .push(Whitespace::Source { unit, pos });
         Ok(())
     }
 
@@ -957,7 +997,11 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         Ok(())
     }
 
-    pub fn append_whitespace_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+    pub fn append_whitespace_n_times(
+        &mut self,
+        unit: Enc::Unit,
+        n: usize,
+    ) -> Result<(), AllocError> {
         for _ in 0..n {
             self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
         }
@@ -1133,16 +1177,27 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             if let Some(scalar) = scalar_opt {
                 if scalar_str.len() == resolved_scalar_len {
                     drop(scalar_str);
-                    break 'scalar TokenScalar { multiline, data: scalar };
+                    break 'scalar TokenScalar {
+                        multiline,
+                        data: scalar,
+                    };
                 }
                 // the first characters resolved to something
                 // but there were more characters afterwards
             }
 
-            break 'scalar TokenScalar { multiline, data: NodeScalar::String(scalar_str) };
+            break 'scalar TokenScalar {
+                multiline,
+                data: NodeScalar::String(scalar_str),
+            };
         };
 
-        Token::scalar(ScalarInit { start, indent: line_indent, line, resolved: scalar })
+        Token::scalar(ScalarInit {
+            start,
+            indent: line_indent,
+            line,
+            resolved: scalar,
+        })
     }
 
     pub fn check_append(&mut self) {
@@ -1161,7 +1216,11 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source(unit, pos)
     }
 
-    pub fn append_source_whitespace(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
+    pub fn append_source_whitespace(
+        &mut self,
+        unit: Enc::Unit,
+        pos: Pos,
+    ) -> Result<(), AllocError> {
         self.str_builder.append_source_whitespace(unit, pos)
     }
 
@@ -1211,7 +1270,11 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_n_times(unit, n)
     }
 
-    pub fn append_whitespace_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+    pub fn append_whitespace_n_times(
+        &mut self,
+        unit: Enc::Unit,
+        n: usize,
+    ) -> Result<(), AllocError> {
         if n == 0 {
             return Ok(());
         }
@@ -1681,9 +1744,7 @@ impl NodeTag {
             | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => {
-                Expr::init(E::String::default(), loc)
-            }
+            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
         }
     }
 }
@@ -1699,12 +1760,8 @@ impl<Enc: Encoding> NodeScalar<Enc> {
     pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
-            NodeScalar::Boolean(value) => {
-                Expr::init(E::Boolean { value: *value }, pos.loc())
-            }
-            NodeScalar::Number(value) => {
-                Expr::init(E::Number { value: *value }, pos.loc())
-            }
+            NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
             NodeScalar::String(value) => {
                 // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
                 // `E.String.data` is `[]const u8`, so the Zig source only
@@ -1945,55 +2002,140 @@ pub struct ScalarInit<Enc: Encoding> {
 
 impl<Enc: Encoding> Token<Enc> {
     pub fn eof(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Eof }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Eof,
+        }
     }
     pub fn sequence_entry(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::SequenceEntry }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::SequenceEntry,
+        }
     }
     pub fn mapping_key(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::MappingKey }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::MappingKey,
+        }
     }
     pub fn mapping_value(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::MappingValue }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::MappingValue,
+        }
     }
     pub fn collect_entry(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::CollectEntry }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::CollectEntry,
+        }
     }
     pub fn sequence_start(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::SequenceStart }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::SequenceStart,
+        }
     }
     pub fn sequence_end(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::SequenceEnd }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::SequenceEnd,
+        }
     }
     pub fn mapping_start(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::MappingStart }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::MappingStart,
+        }
     }
     pub fn mapping_end(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::MappingEnd }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::MappingEnd,
+        }
     }
     pub fn anchor(init: AnchorInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Anchor(init.name) }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Anchor(init.name),
+        }
     }
     pub fn alias(init: AliasInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Alias(init.name) }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Alias(init.name),
+        }
     }
     pub fn tag(init: TagInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Tag(init.tag) }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Tag(init.tag),
+        }
     }
     pub fn directive(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Directive }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Directive,
+        }
     }
     pub fn reserved(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Reserved }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Reserved,
+        }
     }
     pub fn document_start(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::DocumentStart }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::DocumentStart,
+        }
     }
     pub fn document_end(init: TokenInit) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::DocumentEnd }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::DocumentEnd,
+        }
     }
     pub fn scalar(init: ScalarInit<Enc>) -> Self {
-        Self { start: init.start, indent: init.indent, line: init.line, data: TokenData::Scalar(init.resolved) }
+        Self {
+            start: init.start,
+            indent: init.indent,
+            line: init.line,
+            data: TokenData::Scalar(init.resolved),
+        }
     }
 }
 
@@ -2091,15 +2233,15 @@ impl<Enc: Encoding> ParseResult<Enc> {
         let e = match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
-            ParseError::UnexpectedToken => {
-                ParseResultError::UnexpectedToken { pos: parser.token.start }
-            }
-            ParseError::UnexpectedEof => {
-                ParseResultError::UnexpectedEof { pos: parser.token.start }
-            }
-            ParseError::InvalidDirective => {
-                ParseResultError::InvalidDirective { pos: parser.token.start }
-            }
+            ParseError::UnexpectedToken => ParseResultError::UnexpectedToken {
+                pos: parser.token.start,
+            },
+            ParseError::UnexpectedEof => ParseResultError::UnexpectedEof {
+                pos: parser.token.start,
+            },
+            ParseError::InvalidDirective => ParseResultError::InvalidDirective {
+                pos: parser.token.start,
+            },
             ParseError::UnexpectedCharacter => {
                 if !parser.pos.is_less_than(parser.input.len()) {
                     ParseResultError::UnexpectedEof { pos: parser.pos }
@@ -2110,27 +2252,27 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::UnresolvedTagHandle => {
                 ParseResultError::UnresolvedTagHandle { pos: parser.pos }
             }
-            ParseError::UnresolvedAlias => {
-                ParseResultError::UnresolvedAlias { pos: parser.token.start }
-            }
-            ParseError::MultilineImplicitKey => {
-                ParseResultError::MultilineImplicitKey { pos: parser.token.start }
-            }
-            ParseError::MultipleAnchors => {
-                ParseResultError::MultipleAnchors { pos: parser.token.start }
-            }
-            ParseError::MultipleTags => {
-                ParseResultError::MultipleTags { pos: parser.token.start }
-            }
+            ParseError::UnresolvedAlias => ParseResultError::UnresolvedAlias {
+                pos: parser.token.start,
+            },
+            ParseError::MultilineImplicitKey => ParseResultError::MultilineImplicitKey {
+                pos: parser.token.start,
+            },
+            ParseError::MultipleAnchors => ParseResultError::MultipleAnchors {
+                pos: parser.token.start,
+            },
+            ParseError::MultipleTags => ParseResultError::MultipleTags {
+                pos: parser.token.start,
+            },
             ParseError::UnexpectedDocumentStart => {
                 ParseResultError::UnexpectedDocumentStart { pos: parser.pos }
             }
             ParseError::UnexpectedDocumentEnd => {
                 ParseResultError::UnexpectedDocumentEnd { pos: parser.pos }
             }
-            ParseError::MultipleYamlDirectives => {
-                ParseResultError::MultipleYamlDirectives { pos: parser.token.start }
-            }
+            ParseError::MultipleYamlDirectives => ParseResultError::MultipleYamlDirectives {
+                pos: parser.token.start,
+            },
             ParseError::InvalidIndentation => {
                 ParseResultError::InvalidIndentation { pos: parser.pos }
             }
@@ -2174,7 +2316,6 @@ pub struct Parser<'i, Enc: Encoding> {
     pub anchors: StringHashMap<Expr>,
     // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
     // For Utf16 this needs a different map type.
-
     pub tag_handles: StringHashMap<()>,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
@@ -2212,7 +2353,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
-        self.scan(ScanOptions { first_scan: true, ..Default::default() })?;
+        self.scan(ScanOptions {
+            first_scan: true,
+            ..Default::default()
+        })?;
         self.parse_stream()
     }
 
@@ -2227,7 +2371,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             docs.push(doc);
         }
 
-        Ok(Stream { docs, input: std::ptr::from_ref::<[Enc::Unit]>(self.input) })
+        Ok(Stream {
+            docs,
+            input: std::ptr::from_ref::<[Enc::Unit]>(self.input),
+        })
     }
 
     // PERF(port): was comptime monomorphization — profile
@@ -2485,7 +2632,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            E::Array { items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()), ..Default::default() },
+            E::Array {
+                items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                ..Default::default()
+            },
             sequence_start.loc(),
         ))
     }
@@ -2523,7 +2673,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property { key: Some(key), value: Some(value), ..Default::default() })?;
+                        props.append(G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        })?;
 
                         self.context.set(Context::FlowKey)?;
                         let r = self.scan(ScanOptions::default());
@@ -2533,7 +2687,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property { key: Some(key), value: Some(value), ..Default::default() })?;
+                        props.append(G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        })?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2544,9 +2702,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 self.scan(ScanOptions::default())?;
 
-                if matches!(self.token.data, TokenData::MappingEnd | TokenData::CollectEntry) {
+                if matches!(
+                    self.token.data,
+                    TokenData::MappingEnd | TokenData::CollectEntry
+                ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property { key: Some(key), value: Some(value), ..Default::default() })?;
+                    props.append(G::Property {
+                        key: Some(key),
+                        value: Some(value),
+                        ..Default::default()
+                    })?;
                 } else {
                     let value = self.parse_node(ParseNodeOptions::default())?;
                     props.append_maybe_merge(key, value)?;
@@ -2569,7 +2734,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            E::Object { properties: props.move_list(), ..Default::default() },
+            E::Object {
+                properties: props.move_list(),
+                ..Default::default()
+            },
             mapping_start.loc(),
         ))
     }
@@ -2692,7 +2860,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             Ok(Expr::init(
-                E::Array { items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()), ..Default::default() },
+                E::Array {
+                    items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                    ..Default::default()
+                },
                 sequence_start.loc(),
             ))
         })();
@@ -2715,7 +2886,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
                 // Zig: `ls.eqlEString(rs)` — inline the UTF-8/UTF-16 + slice-eq logic.
                 if ls.is_utf16 != rs.is_utf16 {
-                    if ls.is_utf16 { rs.eql_bytes(ls.data.slice()) } else { ls.eql_bytes(rs.data.slice()) }
+                    if ls.is_utf16 {
+                        rs.eql_bytes(ls.data.slice())
+                    } else {
+                        ls.eql_bytes(rs.data.slice())
+                    }
                 } else if ls.is_utf16 {
                     ls.slice16() == rs.slice16()
                 } else {
@@ -2799,7 +2974,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             if self.context.get() == Context::FlowIn {
                 return Ok(Expr::init(
-                    E::Object { properties: props.move_list(), ..Default::default() },
+                    E::Object {
+                        properties: props.move_list(),
+                        ..Default::default()
+                    },
                     mapping_start.loc(),
                 ));
             }
@@ -2870,7 +3048,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                         return Err(Self::unexpected_token());
                                     }
                                     if self.token.indent.is_less_than(mapping_indent) {
-                                        break 'value Expr::init(E::Null {}, mapping_value_start.loc());
+                                        break 'value Expr::init(
+                                            E::Null {},
+                                            mapping_value_start.loc(),
+                                        );
                                     }
                                     break 'value self.parse_node(ParseNodeOptions {
                                         current_mapping_indent: Some(mapping_indent),
@@ -2881,7 +3062,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     if self.token.line != mapping_value_line
                                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                                     {
-                                        break 'value Expr::init(E::Null {}, mapping_value_start.loc());
+                                        break 'value Expr::init(
+                                            E::Null {},
+                                            mapping_value_start.loc(),
+                                        );
                                     }
                                     break 'value self.parse_node(ParseNodeOptions {
                                         current_mapping_indent: Some(mapping_indent),
@@ -2896,7 +3080,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 Ok(Expr::init(
-                    E::Object { properties: props.move_list(), ..Default::default() },
+                    E::Object {
+                        properties: props.move_list(),
+                        ..Default::default()
+                    },
                     mapping_start.loc(),
                 ))
             })();
@@ -2920,7 +3107,9 @@ pub struct MappingProps {
 
 impl MappingProps {
     pub fn init() -> Self {
-        Self { list: bun_alloc::AstAlloc::vec() }
+        Self {
+            list: bun_alloc::AstAlloc::vec(),
+        }
     }
 
     pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
@@ -2963,7 +3152,11 @@ impl MappingProps {
         // TODO(port): exact ExprData variant names depend on bun_ast.
 
         if !is_merge_key {
-            self.list.push(G::Property { key: Some(key), value: Some(value), ..Default::default() });
+            self.list.push(G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            });
             return Ok(());
         }
 
@@ -2980,7 +3173,11 @@ impl MappingProps {
                 Ok(())
             }
             _ => {
-                self.list.push(G::Property { key: Some(key), value: Some(value), ..Default::default() });
+                self.list.push(G::Property {
+                    key: Some(key),
+                    value: Some(value),
+                    ..Default::default()
+                });
                 Ok(())
             }
         }
@@ -3007,7 +3204,12 @@ pub struct NodeProperties<Enc: Encoding> {
 
 impl<Enc: Encoding> Default for NodeProperties<Enc> {
     fn default() -> Self {
-        Self { has_anchor: None, has_tag: None, has_mapping_anchor: None, has_mapping_tag: None }
+        Self {
+            has_anchor: None,
+            has_tag: None,
+            has_mapping_anchor: None,
+            has_mapping_tag: None,
+        }
     }
 }
 
@@ -3048,10 +3250,12 @@ impl<Enc: Encoding> NodeProperties<Enc> {
     }
 
     pub fn mapping_anchor(&self) -> Option<StringRange> {
-        self.has_mapping_anchor.as_ref().and_then(|t| match &t.data {
-            TokenData::Anchor(r) => Some(*r),
-            _ => None,
-        })
+        self.has_mapping_anchor
+            .as_ref()
+            .and_then(|t| match &t.data {
+                TokenData::Anchor(r) => Some(*r),
+                _ => None,
+            })
     }
 
     pub fn implicit_key_anchors(&self, implicit_key_line: Line) -> ImplicitKeyAnchors {
@@ -3076,12 +3280,21 @@ impl<Enc: Encoding> NodeProperties<Enc> {
                 _ => None,
             };
             if mystery_anchor.line == implicit_key_line {
-                return ImplicitKeyAnchors { key_anchor: r, mapping_anchor: None };
+                return ImplicitKeyAnchors {
+                    key_anchor: r,
+                    mapping_anchor: None,
+                };
             }
-            return ImplicitKeyAnchors { key_anchor: None, mapping_anchor: r };
+            return ImplicitKeyAnchors {
+                key_anchor: None,
+                mapping_anchor: r,
+            };
         }
 
-        ImplicitKeyAnchors { key_anchor: None, mapping_anchor: None }
+        ImplicitKeyAnchors {
+            key_anchor: None,
+            mapping_anchor: None,
+        }
     }
 
     pub fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
@@ -3218,14 +3431,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::Anchor(_anchor) => {
                     node_props.set_anchor(self.token.clone())?;
-                    self.scan(ScanOptions { tag: node_props.tag(), ..Default::default() })?;
+                    self.scan(ScanOptions {
+                        tag: node_props.tag(),
+                        ..Default::default()
+                    })?;
                     continue;
                 }
 
                 TokenData::Tag(tag) => {
                     let tag = *tag;
                     node_props.set_tag(self.token.clone())?;
-                    self.scan(ScanOptions { tag, ..Default::default() })?;
+                    self.scan(ScanOptions {
+                        tag,
+                        ..Default::default()
+                    })?;
                     continue;
                 }
 
@@ -3275,7 +3494,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let map = self.parse_block_mapping(copy, alias_start, alias_indent, alias_line)?;
+                        let map =
+                            self.parse_block_mapping(copy, alias_start, alias_indent, alias_line)?;
                         return Ok(map);
                     }
 
@@ -3306,13 +3526,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key_anchors = node_props.implicit_key_anchors(sequence_line);
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors.put(Enc::key_bytes(key_anchor.slice(self.input)), seq.clone())?;
+                            self.anchors
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq.clone())?;
                         }
 
-                        let map = self.parse_block_mapping(seq, sequence_start, sequence_indent, sequence_line)?;
+                        let map = self.parse_block_mapping(
+                            seq,
+                            sequence_start,
+                            sequence_indent,
+                            sequence_line,
+                        )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(Enc::key_bytes(mapping_anchor.slice(self.input)), map.clone())?;
+                            self.anchors.put(
+                                Enc::key_bytes(mapping_anchor.slice(self.input)),
+                                map.clone(),
+                            )?;
                         }
 
                         return Ok(map);
@@ -3367,13 +3596,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line);
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors.put(Enc::key_bytes(key_anchor.slice(self.input)), map.clone())?;
+                            self.anchors
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map.clone())?;
                         }
 
-                        let parent_map = self.parse_block_mapping(map, mapping_start, mapping_indent, mapping_line)?;
+                        let parent_map = self.parse_block_mapping(
+                            map,
+                            mapping_start,
+                            mapping_indent,
+                            mapping_line,
+                        )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(Enc::key_bytes(mapping_anchor.slice(self.input)), parent_map.clone())?;
+                            self.anchors.put(
+                                Enc::key_bytes(mapping_anchor.slice(self.input)),
+                                parent_map.clone(),
+                            )?;
                         }
 
                         break 'node parent_map;
@@ -3392,7 +3630,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let key = self.parse_node(ParseNodeOptions {
                         explicit_mapping_key: true,
-                        current_mapping_indent: Some(opts.current_mapping_indent.unwrap_or(mapping_indent)),
+                        current_mapping_indent: Some(
+                            opts.current_mapping_indent.unwrap_or(mapping_indent),
+                        ),
                         ..Default::default()
                     })?;
 
@@ -3404,7 +3644,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    break 'node self.parse_block_mapping(key, mapping_start, mapping_indent, mapping_line)?;
+                    break 'node self.parse_block_mapping(
+                        key,
+                        mapping_start,
+                        mapping_indent,
+                        mapping_line,
+                    )?;
                 }
 
                 TokenData::MappingValue => {
@@ -3453,14 +3698,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
                                 // 3
-                                break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                                break 'node scalar.data.to_expr(
+                                    scalar_start,
+                                    self.input,
+                                    self.bump,
+                                );
                             }
                         }
 
                         match self.context.get() {
                             Context::FlowKey => {
                                 // 1
-                                break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                                break 'node scalar.data.to_expr(
+                                    scalar_start,
+                                    self.input,
+                                    self.bump,
+                                );
                             }
                             Context::FlowIn | Context::BlockOut | Context::BlockIn => {
                                 if scalar_line != self.token.line && !opts.explicit_mapping_key {
@@ -3474,7 +3727,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors.put(Enc::key_bytes(key_anchor.slice(self.input)), implicit_key.clone())?;
+                            self.anchors.put(
+                                Enc::key_bytes(key_anchor.slice(self.input)),
+                                implicit_key.clone(),
+                            )?;
                         }
 
                         let mapping = self.parse_block_mapping(
@@ -3485,7 +3741,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping.clone())?;
+                            self.anchors.put(
+                                Enc::key_bytes(mapping_anchor.slice(self.input)),
+                                mapping.clone(),
+                            )?;
                         }
 
                         return Ok(mapping);
@@ -3515,7 +3774,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         if let Some(anchor) = node_props.anchor() {
-            self.anchors.put(Enc::key_bytes(anchor.slice(self.input)), resolved.clone())?;
+            self.anchors
+                .put(Enc::key_bytes(anchor.slice(self.input)), resolved.clone())?;
         }
 
         Ok(resolved)
@@ -3591,7 +3851,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // SAFETY: single provenance chain — once the raw pointer is derived,
         // route ALL parser access through it; never touch `self` directly again
         // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
-        macro_rules! parser { () => { unsafe { &mut *parser } }; }
+        macro_rules! parser {
+            () => {
+                unsafe { &mut *parser }
+            };
+        }
         // SAFETY: ctx outlived by the &mut self this fn was entered with. Both
         // `ctx.parser` and `ctx.str_builder.parser` are copies of the SAME raw
         // pointer (`parser` above) so all derived `&mut Parser` share one
@@ -3599,7 +3863,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut ctx = ScalarResolverCtx::<Enc> {
             str_builder: StringBuilder {
                 parser,
-                str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
+                str: YamlString::Range(StringRange {
+                    off: Pos::ZERO,
+                    end: Pos::ZERO,
+                }),
             },
             resolved: false,
             scalar: None,
@@ -4613,8 +4880,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         for _ in 0..(escape as u8) {
             self.inc(1);
             let digit = Enc::wide(self.next());
-            let num = bun_core::fmt::hex_digit_value_u32(digit)
-                .ok_or(ParseError::UnexpectedCharacter)?;
+            let num =
+                bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
 
@@ -4785,11 +5052,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
         let s = shorthand.slice(self.input);
         // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
-        if eq_ascii::<Enc>(s, b"bool") { return NodeTag::Bool; }
-        if eq_ascii::<Enc>(s, b"int") { return NodeTag::Int; }
-        if eq_ascii::<Enc>(s, b"float") { return NodeTag::Float; }
-        if eq_ascii::<Enc>(s, b"null") { return NodeTag::Null; }
-        if eq_ascii::<Enc>(s, b"str") { return NodeTag::Str; }
+        if eq_ascii::<Enc>(s, b"bool") {
+            return NodeTag::Bool;
+        }
+        if eq_ascii::<Enc>(s, b"int") {
+            return NodeTag::Int;
+        }
+        if eq_ascii::<Enc>(s, b"float") {
+            return NodeTag::Float;
+        }
+        if eq_ascii::<Enc>(s, b"null") {
+            return NodeTag::Null;
+        }
+        if eq_ascii::<Enc>(s, b"str") {
+            return NodeTag::Str;
+        }
         NodeTag::Unknown(shorthand)
     }
 
@@ -5163,7 +5440,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn try_skip_ns_tag_chars(&mut self) -> Result<(), ParseError> {
-        let first_len = self.is_ns_tag_char().ok_or(ParseError::UnexpectedCharacter)?;
+        let first_len = self
+            .is_ns_tag_char()
+            .ok_or(ParseError::UnexpectedCharacter)?;
         self.inc(first_len as usize);
         while let Some(len) = self.is_ns_tag_char() {
             self.inc(len as usize);
@@ -5388,7 +5667,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
             parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
+            str: YamlString::Range(StringRange {
+                off: Pos::ZERO,
+                end: Pos::ZERO,
+            }),
         }
     }
 
@@ -5398,7 +5680,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
             parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
+            str: YamlString::Range(StringRange {
+                off: Pos::ZERO,
+                end: Pos::ZERO,
+            }),
         }
     }
 }

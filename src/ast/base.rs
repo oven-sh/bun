@@ -26,15 +26,21 @@ pub trait IntoIndexInt {
 }
 impl IntoIndexInt for u32 {
     #[inline]
-    fn into_index_int(self) -> IndexInt { self }
+    fn into_index_int(self) -> IndexInt {
+        self
+    }
 }
 impl IntoIndexInt for usize {
     #[inline]
-    fn into_index_int(self) -> IndexInt { self as IndexInt }
+    fn into_index_int(self) -> IndexInt {
+        self as IndexInt
+    }
 }
 impl IntoIndexInt for i32 {
     #[inline]
-    fn into_index_int(self) -> IndexInt { self as IndexInt }
+    fn into_index_int(self) -> IndexInt {
+        self as IndexInt
+    }
 }
 
 impl Index {
@@ -170,9 +176,15 @@ impl Ref {
         symbol_table.get_symbol(self)
     }
     pub fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
-        RefDump { ref_: self, symbol: symbol_table.get_symbol(self) }
+        RefDump {
+            ref_: self,
+            symbol: symbol_table.get_symbol(self),
+        }
     }
-    pub fn json_stringify<W: crate::JsonWriter>(self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn json_stringify<W: crate::JsonWriter>(
+        self,
+        writer: &mut W,
+    ) -> Result<(), bun_core::Error> {
         writer.write(&[self.source_index(), self.inner_index()])
     }
 }

@@ -14,9 +14,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSl
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
+use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
-use bun_core::{strings, ZStr};
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
@@ -194,8 +194,9 @@ impl UserOptions {
                     let root = match getcwd_alloc(&arena) {
                         Ok(r) => r,
                         Err(e) => {
-                            return Err(global
-                                .throw_error(e, "while querying current working directory"));
+                            return Err(
+                                global.throw_error(e, "while querying current working directory")
+                            );
                         }
                     };
 
@@ -212,8 +213,9 @@ impl UserOptions {
                     });
                 }
             }
-            return Err(global
-                .throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME)));
+            return Err(
+                global.throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME))
+            );
         }
 
         if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
@@ -232,11 +234,10 @@ impl UserOptions {
             match config.get(global, "framework")? {
                 Some(v) => v,
                 None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!(
-                            "'{}' is missing 'framework'",
-                            API_NAME
-                        )));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'{}' is missing 'framework'",
+                        API_NAME
+                    )));
                 }
             },
             global,
@@ -251,8 +252,7 @@ impl UserOptions {
             match getcwd_alloc(&arena) {
                 Ok(r) => r.as_bytes(),
                 Err(e) => {
-                    return Err(global
-                        .throw_error(e, "while querying current working directory"));
+                    return Err(global.throw_error(e, "while querying current working directory"));
                 }
             }
         };
@@ -280,7 +280,9 @@ pub struct StringRefList {
 }
 
 impl StringRefList {
-    pub const EMPTY: StringRefList = StringRefList { strings: Vec::new() };
+    pub const EMPTY: StringRefList = StringRefList {
+        strings: Vec::new(),
+    };
 
     // PORT NOTE: returned slice borrows JSC-owned storage kept alive by the
     // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
@@ -341,9 +343,9 @@ impl SplitBundlerOptions {
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
             if !plugin_config.is_object() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected plugin to be an object"
-                )));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected plugin to be an object"))
+                );
             }
 
             if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
@@ -354,9 +356,9 @@ impl SplitBundlerOptions {
                 }
                 // slice dropped here (defer slice.deinit())
             } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected plugin to have a name"
-                )));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected plugin to have a name"))
+                );
             }
 
             let function = match get_function(plugin_config, global, b"setup")? {
@@ -521,13 +523,16 @@ impl Framework {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx").as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx")
+                    .as_bytes(),
             ),
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx").as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
+                    .as_bytes(),
             ),
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/ssr.tsx").as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/ssr.tsx")
+                    .as_bytes(),
             ),
         ];
 
@@ -597,7 +602,8 @@ impl Framework {
                 import_source: b"react-refresh/runtime/index.js",
             });
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js").as_bytes(),
+                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
+                    .as_bytes(),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -633,8 +639,7 @@ impl Framework {
         }
     }
 
-    pub const REACT_INSTALL_COMMAND: &'static str =
-        "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
+    pub const REACT_INSTALL_COMMAND: &'static str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         let clone_line_text = log.clone_line_text;
@@ -693,14 +698,16 @@ impl Framework {
 
         for fsr in clone.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(
-                paths::resolve_path::join_abs::<paths::platform::Auto>(
-                    top_level_dir,
-                    fsr.root,
-                ),
-            ));
+            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
+                paths::platform::Auto,
+            >(top_level_dir, fsr.root)));
             if let Some(entry_client) = &mut fsr.entry_client {
-                self.resolve_helper(client, entry_client, &mut had_errors, b"client side entrypoint");
+                self.resolve_helper(
+                    client,
+                    entry_client,
+                    &mut had_errors,
+                    b"client side entrypoint",
+                );
             }
             self.resolve_helper(
                 client,
@@ -910,17 +917,18 @@ impl Framework {
                     }
                 };
 
-                let value: BuiltInModule =
-                    if let Some(str) = get_optional_string(file, global, b"path", refs, arena)? {
-                        BuiltInModule::Import(str)
-                    } else if let Some(str) = get_optional_string(file, global, b"code", refs, arena)? {
-                        BuiltInModule::Code(str)
-                    } else {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'builtInModules[{}]' needs either 'path' or 'code'",
-                            i
-                        )));
-                    };
+                let value: BuiltInModule = if let Some(str) =
+                    get_optional_string(file, global, b"path", refs, arena)?
+                {
+                    BuiltInModule::Import(str)
+                } else if let Some(str) = get_optional_string(file, global, b"code", refs, arena)? {
+                    BuiltInModule::Code(str)
+                } else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'builtInModules[{}]' needs either 'path' or 'code'",
+                        i
+                    )));
+                };
 
                 // PERF(port): was assume_capacity
                 files.put_assume_capacity(path, value);
@@ -961,26 +969,28 @@ impl Framework {
                         )));
                     }
                 };
-                let server_entry_point =
-                    match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs, arena)? {
-                        Some(s) => s,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
-                                i
-                            )));
-                        }
-                    };
+                let server_entry_point = match get_optional_string(
+                    fsr_opts,
+                    global,
+                    b"serverEntryPoint",
+                    refs,
+                    arena,
+                )? {
+                    Some(s) => s,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
+                            i
+                        )));
+                    }
+                };
                 let client_entry_point =
                     get_optional_string(fsr_opts, global, b"clientEntryPoint", refs, arena)?;
                 let prefix =
                     get_optional_string(fsr_opts, global, b"prefix", refs, arena)?.unwrap_or(b"/");
                 let ignore_underscores =
-                    get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?
-                        .unwrap_or(false);
-                let layouts =
-                    get_boolean_strict(fsr_opts, global, b"layouts")?
-                        .unwrap_or(false);
+                    get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?.unwrap_or(false);
+                let layouts = get_boolean_strict(fsr_opts, global, b"layouts")?.unwrap_or(false);
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
@@ -996,83 +1006,85 @@ impl Framework {
                 )?;
                 // errdefer style.deinit() — handled by Style's Drop
 
-                let extensions: &'static [&'static [u8]] =
-                    if let Some(exts_js) = fsr_opts.get(global, "extensions")? {
-                        'exts: {
-                            if exts_js.is_string() {
-                                let str = exts_js.to_slice(global)?;
-                                if str.slice() == b"*" {
-                                    break 'exts &[] as &[&[u8]];
-                                }
-                            } else if exts_js.is_array() {
-                                let mut it_2 = exts_js.array_iterator(global)?;
-                                let mut extensions =
-                                    bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                        exts_js.get_length(global)? as usize,
-                                        arena,
-                                    );
-                                while let Some(array_item) = it_2.next()? {
-                                    let slice = refs.track(array_item.to_slice(global)?);
-                                    if slice == b"*" {
-                                        return Err(global.throw_invalid_arguments(format_args!(
+                let extensions: &'static [&'static [u8]] = if let Some(exts_js) =
+                    fsr_opts.get(global, "extensions")?
+                {
+                    'exts: {
+                        if exts_js.is_string() {
+                            let str = exts_js.to_slice(global)?;
+                            if str.slice() == b"*" {
+                                break 'exts &[] as &[&[u8]];
+                            }
+                        } else if exts_js.is_array() {
+                            let mut it_2 = exts_js.array_iterator(global)?;
+                            let mut extensions =
+                                bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                                    exts_js.get_length(global)? as usize,
+                                    arena,
+                                );
+                            while let Some(array_item) = it_2.next()? {
+                                let slice = refs.track(array_item.to_slice(global)?);
+                                if slice == b"*" {
+                                    return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
                                         )));
-                                    }
-
-                                    if slice.is_empty() {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "'extensions' cannot include \"\" as an extension."
-                                        )));
-                                    }
-
-                                    extensions.push(if slice[0] == b'.' {
-                                        slice
-                                    } else {
-                                        // PERF(port): std.mem.concat into arena
-                                        let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
-                                            1 + slice.len(),
-                                            arena,
-                                        );
-                                        v.push(b'.');
-                                        v.extend_from_slice(slice);
-                                        arena_erase(v.into_bump_slice())
-                                    });
                                 }
-                                break 'exts arena_erase(extensions.into_bump_slice());
-                            }
 
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "'extensions' must be an array of strings or \"*\" for all extensions"
-                            )));
-                        }
-                    } else {
-                        &[
-                            b".jsx", b".tsx", b".js", b".ts", b".cjs", b".cts", b".mjs", b".mts",
-                        ]
-                    };
+                                if slice.is_empty() {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "'extensions' cannot include \"\" as an extension."
+                                    )));
+                                }
 
-                let ignore_dirs: &'static [&'static [u8]] =
-                    if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
-                        'exts: {
-                            if exts_js.is_array() {
-                                let mut it_2 = array.array_iterator(global)?;
-                                let mut dirs =
-                                    bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                        len as usize, arena,
+                                extensions.push(if slice[0] == b'.' {
+                                    slice
+                                } else {
+                                    // PERF(port): std.mem.concat into arena
+                                    let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
+                                        1 + slice.len(),
+                                        arena,
                                     );
-                                while let Some(array_item) = it_2.next()? {
-                                    dirs.push(refs.track(array_item.to_slice(global)?));
-                                }
-                                break 'exts arena_erase(dirs.into_bump_slice());
+                                    v.push(b'.');
+                                    v.extend_from_slice(slice);
+                                    arena_erase(v.into_bump_slice())
+                                });
                             }
-
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
-                            )));
+                            break 'exts arena_erase(extensions.into_bump_slice());
                         }
-                    } else {
-                        &[b".git", b"node_modules"]
-                    };
+
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'extensions' must be an array of strings or \"*\" for all extensions"
+                        )));
+                    }
+                } else {
+                    &[
+                        b".jsx", b".tsx", b".js", b".ts", b".cjs", b".cts", b".mjs", b".mts",
+                    ]
+                };
+
+                let ignore_dirs: &'static [&'static [u8]] = if let Some(exts_js) =
+                    fsr_opts.get(global, "ignoreDirs")?
+                {
+                    'exts: {
+                        if exts_js.is_array() {
+                            let mut it_2 = array.array_iterator(global)?;
+                            let mut dirs = bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                                len as usize,
+                                arena,
+                            );
+                            while let Some(array_item) = it_2.next()? {
+                                dirs.push(refs.track(array_item.to_slice(global)?));
+                            }
+                            break 'exts arena_erase(dirs.into_bump_slice());
+                        }
+
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
+                        )));
+                    }
+                } else {
+                    &[b".git", b"node_modules"]
+                };
 
                 file_system_router_types.push(FileSystemRouterType {
                     root,
@@ -1123,16 +1135,22 @@ impl Framework {
             };
             bun_core::handle_oom(built_in_modules.put(k, bv));
         }
-        let server_components = self.server_components.as_ref().map(|sc| bt::ServerComponents {
-            separate_ssr_graph: sc.separate_ssr_graph,
-            server_runtime_import: sc.server_runtime_import.into(),
-            server_register_client_reference: sc.server_register_client_reference.into(),
-            server_register_server_reference: sc.server_register_server_reference.into(),
-            client_register_server_reference: sc.client_register_server_reference.into(),
-        });
-        let react_fast_refresh = self.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
-            import_source: rfr.import_source.into(),
-        });
+        let server_components = self
+            .server_components
+            .as_ref()
+            .map(|sc| bt::ServerComponents {
+                separate_ssr_graph: sc.separate_ssr_graph,
+                server_runtime_import: sc.server_runtime_import.into(),
+                server_register_client_reference: sc.server_register_client_reference.into(),
+                server_register_server_reference: sc.server_register_server_reference.into(),
+                client_register_server_reference: sc.client_register_server_reference.into(),
+            });
+        let react_fast_refresh = self
+            .react_fast_refresh
+            .as_ref()
+            .map(|rfr| bt::ReactFastRefresh {
+                import_source: rfr.import_source.into(),
+            });
         bt::Framework::new(
             built_in_modules,
             server_components,
@@ -1221,9 +1239,7 @@ impl Framework {
         out.options.log = log;
         out.options.output_format = match mode {
             Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => {
-                bun_bundler::options::Format::Esm
-            }
+            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
         };
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
@@ -1234,8 +1250,9 @@ impl Framework {
         out.options.output_dir = Box::default();
 
         // framework configuration
-        out.options.react_fast_refresh =
-            mode == Mode::Development && renderer == Graph::Client && self.react_fast_refresh.is_some();
+        out.options.react_fast_refresh = mode == Mode::Development
+            && renderer == Graph::Client
+            && self.react_fast_refresh.is_some();
         out.options.server_components = self.server_components.is_some();
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(
@@ -1443,10 +1460,7 @@ pub use super::HmrRuntime;
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
         code,
-        line_count: u32::try_from(
-            code.as_bytes().iter().filter(|&&b| b == b'\n').count(),
-        )
-        .unwrap(),
+        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
     }
 }
 
@@ -1502,9 +1516,9 @@ pub fn add_import_meta_defines(
     mode: Mode,
     side: Side,
 ) -> Result<(), bun_core::Error> {
-    use bun_bundler::defines::DefineData;
-    use bun_bundler::DefineExt;
     use bun_ast::E::EString;
+    use bun_bundler::DefineExt;
+    use bun_bundler::defines::DefineData;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
     static MODE_PRODUCTION: EString = EString::from_static(b"production");
@@ -1637,7 +1651,10 @@ impl PatternBuffer {
 
 pub fn print_warning() {
     // Silence this for the test suite
-    if bun_core::env_var::BUN_DEV_SERVER_TEST_RUNNER.get().is_none() {
+    if bun_core::env_var::BUN_DEV_SERVER_TEST_RUNNER
+        .get()
+        .is_none()
+    {
         Output::warn(format_args!(
             "Be advised that Bun Bake is highly experimental, and its API\n\
              will have breaking changes. Join the <magenta>#bake<r> Discord\n\

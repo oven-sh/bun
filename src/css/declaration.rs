@@ -1,7 +1,7 @@
-use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;
-pub use css::Error;
 use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
+pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
 // PORT NOTE: every leaf property module is currently a `handler_stub!` ZST in
@@ -15,7 +15,9 @@ use crate::css_properties::box_shadow::BoxShadowHandler;
 use crate::css_properties::custom::CustomPropertyName;
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
-use crate::css_properties::margin_padding::{InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler};
+use crate::css_properties::margin_padding::{
+    InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler,
+};
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
 use crate::css_properties::text::Direction;
@@ -78,11 +80,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
         match res {
             Ok(()) => {}
             Err(e) => {
-                return write!(
-                    writer,
-                    "<error writing declaration block: {}>\n",
-                    e.name()
-                );
+                return write!(writer, "<error writing declaration block: {}>\n", e.name());
             }
         }
         write!(writer, "{}", bstr::BStr::new(&arraylist))
@@ -140,12 +138,19 @@ impl<'bump> DeclarationBlock<'bump> {
                     // — move the value out and overwrite the slot with a
                     // non-allocating placeholder so the source list's drop is a
                     // no-op.
-                    hndlr.decls.push(core::mem::replace(prop, placeholder_property()));
+                    hndlr
+                        .decls
+                        .push(core::mem::replace(prop, placeholder_property()));
                 }
             }
         }
 
-        handle(&mut self.important_declarations, context, important_handler, true);
+        handle(
+            &mut self.important_declarations,
+            context,
+            important_handler,
+            true,
+        );
         handle(&mut self.declarations, context, handler, false);
 
         handler.finalize(context);
@@ -155,8 +160,7 @@ impl<'bump> DeclarationBlock<'bump> {
         // implicitly on overwrite (arena reclaims on reset).
         self.important_declarations =
             core::mem::replace(&mut important_handler.decls, DeclarationList::new_in(bump));
-        self.declarations =
-            core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
+        self.declarations = core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
     }
 }
 
@@ -239,7 +243,10 @@ impl<'bump> DeclarationBlock<'bump> {
 // lands.
 
 impl DeclarationBlock<'static> {
-    pub fn parse(input: &mut css::Parser, options: &css::ParserOptions) -> Result<DeclarationBlock<'static>> {
+    pub fn parse(
+        input: &mut css::Parser,
+        options: &css::ParserOptions,
+    ) -> Result<DeclarationBlock<'static>> {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see note above), not a real static borrow.
@@ -299,7 +306,10 @@ impl<'bump> DeclarationBlock<'bump> {
         {
             return false;
         }
-        self.declarations.iter().zip(other.declarations.iter()).all(|(a, b)| a.eql(b))
+        self.declarations
+            .iter()
+            .zip(other.declarations.iter())
+            .all(|(a, b)| a.eql(b))
             && self
                 .important_declarations
                 .iter()
@@ -313,7 +323,9 @@ impl<'bump> DeclarationBlock<'bump> {
         // the inherent per-variant impl in properties_generated.rs.
         Self {
             important_declarations: bun_alloc::vec_from_iter_in(
-                self.important_declarations.iter().map(|p| p.deep_clone(bump)),
+                self.important_declarations
+                    .iter()
+                    .map(|p| p.deep_clone(bump)),
                 bump,
             ),
             declarations: bun_alloc::vec_from_iter_in(
@@ -340,7 +352,11 @@ impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
 
-    fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut css::Parser) -> Result<Self::Prelude> {
+    fn parse_prelude(
+        _this: &mut Self,
+        name: &[u8],
+        input: &mut css::Parser,
+    ) -> Result<Self::Prelude> {
         Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
     }
 
@@ -383,7 +399,11 @@ impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump
 impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
     type Declaration = ();
 
-    fn parse_value(this: &mut Self, name: &[u8], input: &mut css::Parser) -> Result<Self::Declaration> {
+    fn parse_value(
+        this: &mut Self,
+        name: &[u8],
+        input: &mut css::Parser,
+    ) -> Result<Self::Declaration> {
         parse_declaration(
             name,
             input,
@@ -443,7 +463,10 @@ where
     let mut delimiters = css::Delimiters::BANG;
     // Zig: `if (property_id != .custom or property_id.custom != .custom)` —
     // i.e. NOT (tag == .custom AND payload tag == .custom).
-    if !matches!(property_id, css::PropertyId::Custom(CustomPropertyName::Custom(_))) {
+    if !matches!(
+        property_id,
+        css::PropertyId::Custom(CustomPropertyName::Custom(_))
+    ) {
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
     let source_location = input.current_source_location();
@@ -561,21 +584,50 @@ impl<'bump> DeclarationHandler<'bump> {
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
         // return this.background.handleProperty(property, &this.decls, context);
-        self.background.handle_property(property, &mut self.decls, context)
-            || self.border.handle_property(property, &mut self.decls, context)
-            || self.flex.handle_property(property, &mut self.decls, context)
-            || self.align.handle_property(property, &mut self.decls, context)
-            || self.size.handle_property(property, &mut self.decls, context)
-            || self.margin.handle_property(property, &mut self.decls, context)
-            || self.padding.handle_property(property, &mut self.decls, context)
-            || self.scroll_margin.handle_property(property, &mut self.decls, context)
-            || self.transition.handle_property(property, &mut self.decls, context)
-            || self.font.handle_property(property, &mut self.decls, context)
-            || self.inset.handle_property(property, &mut self.decls, context)
-            || self.transform.handle_property(property, &mut self.decls, context)
-            || self.box_shadow.handle_property(property, &mut self.decls, context)
-            || self.color_scheme.handle_property(property, &mut self.decls, context)
-            || self.fallback.handle_property(property, &mut self.decls, context)
+        self.background
+            .handle_property(property, &mut self.decls, context)
+            || self
+                .border
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .flex
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .align
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .size
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .margin
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .padding
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .scroll_margin
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .transition
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .font
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .inset
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .transform
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .box_shadow
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .color_scheme
+                .handle_property(property, &mut self.decls, context)
+            || self
+                .fallback
+                .handle_property(property, &mut self.decls, context)
     }
 
     pub fn new(bump: &'bump Bump) -> Self {

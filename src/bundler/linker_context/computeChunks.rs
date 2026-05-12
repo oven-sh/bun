@@ -1,13 +1,13 @@
 use crate::mal_prelude::*;
+use bun_alloc::ArenaVecExt as _;
 use core::mem::offset_of;
 use core::sync::atomic::AtomicUsize;
-use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
-use bun_paths::{resolve_path, PathBuffer};
-use bun_sourcemap::SourceMapPieces;
 use bun_core::strings;
+use bun_paths::{PathBuffer, resolve_path};
+use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 
 use crate::bun_css;
@@ -86,8 +86,7 @@ pub fn compute_chunks(
     let code_splitting = this.graph.code_splitting;
     let could_be_browser_target_from_server_build = this.options.target.is_server_side()
         && parse_graph.html_imports.html_source_indices.len() > 0;
-    let has_server_html_imports =
-        parse_graph.html_imports.server_source_indices.len() > 0;
+    let has_server_html_imports = parse_graph.html_imports.server_source_indices.len() > 0;
 
     // Create chunks for entry points
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
@@ -109,8 +108,7 @@ pub fn compute_chunks(
         // reachable from other entry points (e.g., via re-exports), its content goes into
         // a shared chunk rather than staying in the entry point's chunk.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
-        let mut entry_point_chunk_bits =
-            AutoBitSet::init_empty(this.graph.entry_points.len())?;
+        let mut entry_point_chunk_bits = AutoBitSet::init_empty(this.graph.entry_points.len())?;
         entry_point_chunk_bits.set(entry_bit as usize);
 
         let js_chunk_key: &[u8] = 'brk: {
@@ -247,8 +245,9 @@ pub fn compute_chunks(
                 let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
-                    js.css_chunks =
-                        Box::<[u32]>::from(&[u32::try_from(css_chunk_entry.index).expect("int cast")][..]);
+                    js.css_chunks = Box::<[u32]>::from(
+                        &[u32::try_from(css_chunk_entry.index).expect("int cast")][..],
+                    );
                 }
                 js_chunks_with_css += 1;
 
@@ -296,23 +295,20 @@ pub fn compute_chunks(
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
                 if css_reprs[source_index.get() as usize].is_none() {
-                    let entry_bits: &AutoBitSet =
-                        &file_entry_bits[source_index.get() as usize];
+                    let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
                     if css_reprs[source_index.get() as usize].is_some() {
                         continue;
                     }
 
                     if this.graph.code_splitting {
-                        let js_chunk_key = temp.alloc_slice_copy(
-                            entry_bits.bytes(this.graph.entry_points.len()),
-                        );
+                        let js_chunk_key =
+                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
                             let is_browser_chunk_from_server_build =
                                 could_be_browser_target_from_server_build
-                                    && ast_targets[source_index.get() as usize]
-                                        == Target::Browser;
+                                    && ast_targets[source_index.get() as usize] == Target::Browser;
                             *js_chunk_entry.value_ptr = Chunk {
                                 entry_bits: entry_bits.clone()?,
                                 entry_point: chunk::EntryPoint::new(
@@ -410,8 +406,12 @@ pub fn compute_chunks(
 
         impl<'a> ChunkSortContext<'a> {
             fn less_than(&self, a_key: &[u8], b_key: &[u8]) -> bool {
-                let Some(a_chunk) = self.chunks.get(&a_key) else { return true };
-                let Some(b_chunk) = self.chunks.get(&b_key) else { return false };
+                let Some(a_chunk) = self.chunks.get(&a_key) else {
+                    return true;
+                };
+                let Some(b_chunk) = self.chunks.get(&b_key) else {
+                    return false;
+                };
                 let a_id = a_chunk.entry_point.entry_point_id();
                 let b_id = b_chunk.entry_point.entry_point_id();
 
@@ -429,9 +429,16 @@ pub fn compute_chunks(
         }
 
         let ctx = ChunkSortContext { chunks: &js_chunks };
-        sorted_keys.sort_by(|a, b| if ctx.less_than(a, b) { core::cmp::Ordering::Less } else if ctx.less_than(b, a) { core::cmp::Ordering::Greater } else { core::cmp::Ordering::Equal });
-        let mut js_chunk_indices_with_css =
-            Vec::<u32>::init_capacity(js_chunks_with_css);
+        sorted_keys.sort_by(|a, b| {
+            if ctx.less_than(a, b) {
+                core::cmp::Ordering::Less
+            } else if ctx.less_than(b, a) {
+                core::cmp::Ordering::Greater
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        });
+        let mut js_chunk_indices_with_css = Vec::<u32>::init_capacity(js_chunks_with_css);
         for &key in sorted_keys.slice() {
             let chunk = js_chunks.get(&key).expect("unreachable");
 
@@ -470,8 +477,7 @@ pub fn compute_chunks(
             // Use sorted_chunks.len as the starting index because HTML chunks
             // may be interleaved with JS chunks, so js_chunks.count() would be
             // incorrect when HTML entry points are present.
-            for (sorted_index, &key) in
-                (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
+            for (sorted_index, &key) in (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
             {
                 let index = css_chunks.get_index(&key).expect("unreachable");
                 // PERF(port): was assume_capacity

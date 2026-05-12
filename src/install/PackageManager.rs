@@ -3,28 +3,28 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
-use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_core::{err, Error, Global, Once, Output};
-use bun_dotenv as dot_env;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
+use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_schema::api as Api;
+use bun_alloc::AllocError;
+use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
+use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_core::ZBox;
+use bun_core::{Error, Global, Once, Output, err};
+use bun_core::{ZStr, strings};
+use bun_dotenv as dot_env;
+use bun_event_loop::MiniEventLoop as mini_event_loop;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_http::AsyncHTTP;
 use bun_ini as ini;
-use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
-use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
-use bun_paths::resolve_path::{self, platform, PosixToWinNormalizer};
-use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::bun_schema::api as Api;
+use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
+use bun_paths::{self as path, DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_core::{strings, ZStr};
-use bun_core::ZBox;
 use bun_sys::{self, Fd};
-use bun_threading::{thread_pool, ThreadPool, UnboundedQueue};
+use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
@@ -43,7 +43,10 @@ pub struct LazyBool<F> {
 }
 impl<F> LazyBool<F> {
     pub const fn new(getter: F) -> Self {
-        Self { value: core::cell::Cell::new(None), getter }
+        Self {
+            value: core::cell::Cell::new(None),
+            getter,
+        }
     }
 }
 impl LazyBool<fn(&PackageManager) -> bool> {
@@ -103,38 +106,38 @@ pub mod Command {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
-#[path = "PackageManager/PackageManagerOptions.rs"]
-pub mod package_manager_options;
-#[path = "PackageManager/PackageJSONEditor.rs"]
-pub mod package_json_editor;
-#[path = "PackageManager/UpdateRequest.rs"]
-pub mod update_request;
-#[path = "PackageManager/WorkspacePackageJSONCache.rs"]
-pub mod workspace_package_json_cache;
 #[path = "PackageManager/install_with_manager.rs"]
 pub mod install_with_manager;
+#[path = "PackageManager/PackageJSONEditor.rs"]
+pub mod package_json_editor;
 #[path = "PackageManager/PackageManagerDirectories.rs"]
 pub mod package_manager_directories;
 #[path = "PackageManager/PackageManagerEnqueue.rs"]
 pub mod package_manager_enqueue;
 #[path = "PackageManager/PackageManagerLifecycle.rs"]
 pub mod package_manager_lifecycle;
+#[path = "PackageManager/PackageManagerOptions.rs"]
+pub mod package_manager_options;
 #[path = "PackageManager/PackageManagerResolution.rs"]
 pub mod package_manager_resolution;
-#[path = "PackageManager/ProgressStrings.rs"]
-pub mod progress_strings;
 #[path = "PackageManager/patchPackage.rs"]
 pub mod patch_package;
-#[path = "PackageManager/processDependencyList.rs"]
-pub mod process_dependency_list;
-#[path = "PackageManager/runTasks.rs"]
-pub mod run_tasks;
-#[path = "PackageManager/updatePackageJSONAndInstall.rs"]
-pub mod update_package_json_and_install;
 #[path = "PackageManager/PopulateManifestCache.rs"]
 pub mod populate_manifest_cache;
+#[path = "PackageManager/processDependencyList.rs"]
+pub mod process_dependency_list;
+#[path = "PackageManager/ProgressStrings.rs"]
+pub mod progress_strings;
+#[path = "PackageManager/runTasks.rs"]
+pub mod run_tasks;
 #[path = "PackageManager/security_scanner.rs"]
 pub mod security_scanner;
+#[path = "PackageManager/updatePackageJSONAndInstall.rs"]
+pub mod update_package_json_and_install;
+#[path = "PackageManager/UpdateRequest.rs"]
+pub mod update_request;
+#[path = "PackageManager/WorkspacePackageJSONCache.rs"]
+pub mod workspace_package_json_cache;
 
 /// Lower-case path alias so `package_manager::options::Options` (used by the
 /// retired stub surface) keeps resolving.
@@ -213,16 +216,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 // so import the real type directly instead of an opaque ZST stub.
 use bun_resolver::dir_info::DirInfo;
 
-use bun_install::{
-    initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features,
-    IdentityContext, LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
-    TaskCallbackContext,
-};
-use crate::resolvers::folder_resolver::FolderResolution;
-use bun_install::lockfile::{self, Lockfile};
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
+use crate::resolvers::folder_resolver::FolderResolution;
+use bun_install::lockfile::{self, Lockfile};
+use bun_install::{
+    ArrayIdentityContext, Dependency, DependencyID, Features, IdentityContext,
+    LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
+    PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
+    TaskCallbackContext, initialize_store,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sub-module re-exports (thin re-exports — bodies live in their own files)
@@ -233,14 +236,15 @@ pub use self::command_line_arguments::CommandLineArguments;
 pub use self::package_manager_options::Options;
 // Zig's `PackageJSONEditor` is a file-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
+pub use self::install_with_manager::install_with_manager;
 #[allow(non_snake_case)]
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
 pub use super::package_installer::PackageInstaller;
-pub use self::install_with_manager::install_with_manager;
 
 pub use self::package_manager_directories as directories;
+use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
@@ -252,7 +256,6 @@ pub use directories::{
     is_folder_in_cache, path_for_cached_npm_path, path_for_resolution, save_lockfile,
     setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
-use directories::attempt_to_create_package_json_and_open;
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
@@ -266,11 +269,11 @@ pub use enqueue::{
 
 use self::package_manager_lifecycle as lifecycle;
 pub use lifecycle::{
-    determine_preinstall_state, ensure_preinstall_state_list_capacity,
-    find_trusted_dependencies_from_update_requests, get_preinstall_state,
-    has_no_more_pending_lifecycle_scripts, load_root_lifecycle_scripts,
+    LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry, determine_preinstall_state,
+    ensure_preinstall_state_list_capacity, find_trusted_dependencies_from_update_requests,
+    get_preinstall_state, has_no_more_pending_lifecycle_scripts, load_root_lifecycle_scripts,
     report_slow_lifecycle_scripts, set_preinstall_state, sleep, spawn_package_lifecycle_scripts,
-    tick_lifecycle_scripts, LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry,
+    tick_lifecycle_scripts,
 };
 
 use self::package_manager_resolution as resolution;
@@ -282,15 +285,15 @@ pub use resolution::{
 
 pub use self::progress_strings as progress_mod;
 pub use progress_mod::{
-    end_progress_bar, set_node_name, start_progress_bar, start_progress_bar_if_none,
-    ProgressStrings,
+    ProgressStrings, end_progress_bar, set_node_name, start_progress_bar,
+    start_progress_bar_if_none,
 };
 
-pub use self::patch_package::{do_patch_commit, prepare_patch, PatchCommitResult};
+pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
 
 pub use self::process_dependency_list::{
-    process_dependency_list, process_dependency_list_item, process_extracted_tarball_package,
-    process_peer_dependency_list, GitResolver,
+    GitResolver, process_dependency_list, process_dependency_list_item,
+    process_extracted_tarball_package, process_peer_dependency_list,
 };
 
 pub use self::run_tasks::{
@@ -301,8 +304,7 @@ pub use self::run_tasks::{
 };
 
 pub use self::update_package_json_and_install::{
-    update_package_json_and_install_and_cli,
-    update_package_json_and_install_with_manager,
+    update_package_json_and_install_and_cli, update_package_json_and_install_with_manager,
 };
 
 pub use self::populate_manifest_cache::populate_manifest_cache;
@@ -312,7 +314,8 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type TaskCallbackList = Vec<TaskCallbackContext>;
-pub type TaskDependencyQueue = HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
+pub type TaskDependencyQueue =
+    HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
 type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
@@ -322,7 +325,8 @@ type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>
 /// Zig: `FolderResolution.Map` (resolvers/folder_resolver.zig) =
 /// `std.HashMap(u64, FolderResolution, IdentityContext(u64), 80)`.
 pub type FolderResolutionMap = HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
-pub type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
+pub type NpmAliasMap =
+    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
@@ -589,15 +593,14 @@ impl WorkspaceFilter {
 
         let is_path = !remain.is_empty() && remain[0] == b'.';
 
-        let filter: &[u8] = if is_path {
-            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
-                cwd,
-                path_buf,
-                &[remain],
-            ))
-        } else {
-            remain
-        };
+        let filter: &[u8] =
+            if is_path {
+                strings::without_trailing_slash(
+                    resolve_path::join_abs_string_buf::<platform::Posix>(cwd, path_buf, &[remain]),
+                )
+            } else {
+                remain
+            };
 
         if filter.is_empty() {
             // won't match anything
@@ -779,8 +782,7 @@ impl PackageManager {
 // namespace whose only consumer is `hasEnoughTimePassedBetweenWaitingMessages`.
 // PORTING.md §Global mutable state: counter → Atomic. Main-thread-only so
 // `Relaxed` matches the Zig non-atomic read/write.
-static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
+static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
     // bun.ThreadlocalBuffers: heap-backed so only a pointer lives in TLS
@@ -850,8 +852,7 @@ mod holder {
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> =
-    bun_core::RacyCell::new(ZStr::EMPTY); // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
+pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY); // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -894,7 +895,9 @@ impl PackageManager {
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
             // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = self.log_mut().print(std::ptr::from_mut(Output::error_writer()));
+            let _ = self
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()));
         }
         Global::crash();
     }
@@ -969,12 +972,7 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
-            (self.on_wake.get_on_dependency_error())(
-                ctx.as_ptr(),
-                dependency,
-                dependency_id,
-                err,
-            );
+            (self.on_wake.get_on_dependency_error())(ctx.as_ptr(), dependency, dependency_id, err);
         }
     }
 
@@ -1117,8 +1115,9 @@ impl PackageManager {
 // and caches the result. `Transpiler` is non-`Copy` and self-referential, so cache
 // a process-static raw pointer (mirrors Zig `var ..: Transpiler = undefined;`).
 // PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
-static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<transpiler::Transpiler<'static>> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
+    transpiler::Transpiler<'static>,
+> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
@@ -1204,9 +1203,7 @@ fn configure_env_for_scripts_run(
                     break 'brk;
                 }
                 this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this
-                    .env_mut()
-                    .load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
             }
         }
     }
@@ -1223,8 +1220,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = PathBuffer::uninit();
-    let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, 12345)?;
+    let node_gyp_tempdir_name = fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, 12345)?;
 
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
@@ -1332,7 +1328,9 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         "{}{}{}{}{}",
         bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
         SEP_STR,
-        bstr::BStr::new(strings::without_trailing_slash(&manager.node_gyp_tempdir_name)),
+        bstr::BStr::new(strings::without_trailing_slash(
+            &manager.node_gyp_tempdir_name
+        )),
         SEP_STR,
         FILE_NAME
     )?;
@@ -1364,8 +1362,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized =
-                normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -1553,7 +1550,10 @@ pub fn init(
                     .copy_from_slice(b"/package.json");
                 package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
                 // SAFETY: NUL written above
-                let package_json_path = ZStr::from_buf(&package_json_path_buf[..], this_cwd.len() + b"/package.json".len(),);
+                let package_json_path = ZStr::from_buf(
+                    &package_json_path_buf[..],
+                    this_cwd.len() + b"/package.json".len(),
+                );
 
                 match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
@@ -1697,10 +1697,13 @@ pub fn init(
                         &json_arena,
                     )?;
                     if subcommand == Subcommand::Pm {
-                        if let Some(name) = json
-                            .get(b"name")
-                            .and_then(|e| if let bun_ast::ExprData::EString(s) = &e.data { Some(s.data.slice()) } else { None })
-                        {
+                        if let Some(name) = json.get(b"name").and_then(|e| {
+                            if let bun_ast::ExprData::EString(s) = &e.data {
+                                Some(s.data.slice())
+                            } else {
+                                None
+                            }
+                        }) {
                             root_package_json_name_at_time_of_init = Box::<[u8]>::from(name);
                         }
                     }
@@ -1775,8 +1778,7 @@ pub fn init(
                                 // Windows `seekTo` error path Zig also leaves the file
                                 // open (defer sees `found == true`), which `into_inner`
                                 // before `seek_to(0)?` preserves.
-                                let json_file =
-                                    scopeguard::ScopeGuard::into_inner(json_file_guard);
+                                let json_file = scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 #[cfg(windows)]
                                 {
                                     json_file.seek_to(0)?;
@@ -1825,10 +1827,7 @@ pub fn init(
         // rebound to the process-lifetime CWD_BUF (it was a transient slice
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(
-            CWD_BUF.get().cast::<u8>(),
-            tld.len(),
-        ));
+        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
         // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
@@ -1841,16 +1840,15 @@ pub fn init(
     // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)`
     // (PackageManager.zig:779). Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option =
-        match fs.read_directory(fs.top_level_dir(), 0, true)? {
-            fs::EntriesOption::Entries(e) => {
-                // SAFETY: the BSSMap singleton owns `*e` for the process
-                // lifetime, and `init()` runs single-threaded before any other
-                // access — sole exclusive borrow is sound.
-                unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
-            }
-            fs::EntriesOption::Err(e) => return Err(e.canonical_error),
-        };
+    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+        fs::EntriesOption::Entries(e) => {
+            // SAFETY: the BSSMap singleton owns `*e` for the process
+            // lifetime, and `init()` runs single-threaded before any other
+            // access — sole exclusive borrow is sound.
+            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
+        }
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+    };
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate
@@ -1865,7 +1863,8 @@ pub fn init(
         core::ptr::write(map_ptr, dot_env::Map::init());
         holder::ENV_MAP.store(map_ptr);
 
-        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>()).cast::<dot_env::Loader<'static>>();
+        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
+            .cast::<dot_env::Loader<'static>>();
         if loader_ptr.is_null() {
             bun_alloc::out_of_memory();
         }
@@ -1925,7 +1924,9 @@ pub fn init(
 
     let options = Options {
         global: cli.global,
-        max_concurrent_lifecycle_scripts: cli.concurrent_scripts.unwrap_or((cpu_count * 2) as usize),
+        max_concurrent_lifecycle_scripts: cli
+            .concurrent_scripts
+            .unwrap_or((cpu_count * 2) as usize),
         ..Default::default()
     };
 
@@ -1937,7 +1938,10 @@ pub fn init(
         WaiterThread::set_should_use_waiter_thread();
     }
 
-    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get().unwrap_or(false) {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS
+        .get()
+        .unwrap_or(false)
+    {
         bun_sys::WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
     }
 
@@ -2154,7 +2158,13 @@ pub fn init(
             .options
             // SAFETY: ctx.log is the process-lifetime CLI log set by
             // create_context_data(); single-threaded init region.
-            .load(unsafe { &mut *ctx.log }, env, Some(cli), ctx.install.as_deref(), subcommand)?;
+            .load(
+                unsafe { &mut *ctx.log },
+                env,
+                Some(cli),
+                ctx.install.as_deref(),
+                subcommand,
+            )?;
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2243,7 +2253,8 @@ pub fn init(
     let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
         b""
     } else {
-        let _ = holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
+        let _ =
+            holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
         holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
     };
     http::http_thread::init(&http::http_thread::InitOpts {
@@ -2329,28 +2340,32 @@ pub fn init_with_runtime_once(
     // where the resolver already opened `top_level_dir`, so failure is a
     // programmer-error / fs-disappeared edge.
     let fs_instance = FileSystem::instance();
-    let root_dir =
-        match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true).map(|r| &mut *r) {
-            // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-            // and runtime init runs once on the main thread before any other access.
-            Ok(fs::EntriesOption::Entries(e)) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-            Ok(fs::EntriesOption::Err(e)) => {
-                Output::err(
-                    e.canonical_error,
-                    "failed to read root directory: '{s}'",
-                    (bstr::BStr::new(fs_instance.top_level_dir()),),
-                );
-                panic!("Failed to initialize package manager");
-            }
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to read root directory: '{s}'",
-                    (bstr::BStr::new(fs_instance.top_level_dir()),),
-                );
-                panic!("Failed to initialize package manager");
-            }
-        };
+    let root_dir = match fs_instance
+        .read_directory(fs_instance.top_level_dir(), 0, true)
+        .map(|r| &mut *r)
+    {
+        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
+        // and runtime init runs once on the main thread before any other access.
+        Ok(fs::EntriesOption::Entries(e)) => unsafe {
+            &mut *std::ptr::from_mut::<fs::DirEntry>(*e)
+        },
+        Ok(fs::EntriesOption::Err(e)) => {
+            Output::err(
+                e.canonical_error,
+                "failed to read root directory: '{s}'",
+                (bstr::BStr::new(fs_instance.top_level_dir()),),
+            );
+            panic!("Failed to initialize package manager");
+        }
+        Err(err) => {
+            Output::err(
+                err,
+                "failed to read root directory: '{s}'",
+                (bstr::BStr::new(fs_instance.top_level_dir()),),
+            );
+            panic!("Failed to initialize package manager");
+        }
+    };
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -2360,8 +2375,8 @@ pub fn init_with_runtime_once(
         vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
     original_package_json_path[..top_level_dir_no_trailing_slash.len()]
         .copy_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path
-        [top_level_dir_no_trailing_slash.len()..top_level_dir_no_trailing_slash.len() + b"/package.json".len()]
+    original_package_json_path[top_level_dir_no_trailing_slash.len()
+        ..top_level_dir_no_trailing_slash.len() + b"/package.json".len()]
         .copy_from_slice(b"/package.json");
     // last byte already 0 (sentinel)
 

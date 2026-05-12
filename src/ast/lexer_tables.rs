@@ -134,7 +134,8 @@ pub enum T {
 
 impl T {
     pub fn is_assign(self) -> bool {
-        (self as u8) >= (T::TAmpersandAmpersandEquals as u8) && (self as u8) <= (T::TSlashEquals as u8)
+        (self as u8) >= (T::TAmpersandAmpersandEquals as u8)
+            && (self as u8) <= (T::TSlashEquals as u8)
     }
 
     pub fn is_reserved_word(self) -> bool {
@@ -292,7 +293,7 @@ pub fn keyword(s: &[u8]) -> Option<T> {
 // `STRICT_MODE_RESERVED_WORDS` is now `[&[u8]; 9]` — `.len()`/`.iter()`-
 // compatible with the former `phf::Set` callers (renamer.rs).
 pub use bun_core::lexer_tables::{
-    is_strict_mode_reserved_word, strict_mode_reserved_word_remap, STRICT_MODE_RESERVED_WORDS,
+    STRICT_MODE_RESERVED_WORDS, is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
 };
 
 // Kept for non-hot-path callers (e.g. error formatting, `to_string` on the
@@ -911,8 +912,17 @@ mod tests {
         // Negative: a few near-misses and the strict-mode set (which are NOT
         // in KEYWORDS) must miss.
         for k in [
-            b"" as &[u8], b"i", b"iff", b"forr", b"functions", b"instanceo",
-            b"let", b"yield", b"static", b"implements", b"awaits",
+            b"" as &[u8],
+            b"i",
+            b"iff",
+            b"forr",
+            b"functions",
+            b"instanceo",
+            b"let",
+            b"yield",
+            b"static",
+            b"implements",
+            b"awaits",
         ] {
             assert_eq!(keyword(k), None, "keyword({:?})", k);
         }
@@ -925,8 +935,15 @@ mod tests {
             assert!(strict_mode_reserved_word_remap(k).is_some(), "{:?}", k);
         }
         for k in [
-            b"" as &[u8], b"le", b"lett", b"publi", b"publics", b"var",
-            b"function", b"interfac", b"interfaces",
+            b"" as &[u8],
+            b"le",
+            b"lett",
+            b"publi",
+            b"publics",
+            b"var",
+            b"function",
+            b"interfac",
+            b"interfaces",
         ] {
             assert!(!is_strict_mode_reserved_word(k), "{:?}", k);
             assert!(strict_mode_reserved_word_remap(k).is_none(), "{:?}", k);
@@ -939,8 +956,17 @@ mod tests {
             assert_eq!(PropertyModifierKeyword::find(k), Some(*v), "{:?}", k);
         }
         for k in [
-            b"" as &[u8], b"ge", b"gett", b"asyn", b"asyncc", b"static_",
-            b"abstrac", b"abstractt", b"protecte", b"protecteds", b"const",
+            b"" as &[u8],
+            b"ge",
+            b"gett",
+            b"asyn",
+            b"asyncc",
+            b"static_",
+            b"abstrac",
+            b"abstractt",
+            b"protecte",
+            b"protecteds",
+            b"const",
         ] {
             assert_eq!(PropertyModifierKeyword::find(k), None, "{:?}", k);
         }

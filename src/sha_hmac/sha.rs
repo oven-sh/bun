@@ -15,10 +15,11 @@ use bun_boringssl_sys as boringssl_sys;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     pub use bun_boringssl_sys::{
-        ENGINE, EVP_MD, EVP_MD_CTX, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate,
+        ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha3_224,
-        EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
+        EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,
+        EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -85,8 +86,9 @@ macro_rules! new_hasher {
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
                 // *_Update reads exactly `len` bytes from `data`.
-                let rc: c_int =
-                    unsafe { $update(&mut self.hasher, data.as_ptr().cast::<c_void>(), data.len()) };
+                let rc: c_int = unsafe {
+                    $update(&mut self.hasher, data.as_ptr().cast::<c_void>(), data.len())
+                };
                 debug_assert!(rc == 1);
             }
 
@@ -132,11 +134,7 @@ macro_rules! new_evp {
                 this
             }
 
-            pub fn hash(
-                bytes: &[u8],
-                out: &mut [u8; $digest_size],
-                engine: *mut ffi::ENGINE,
-            ) {
+            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size], engine: *mut ffi::ENGINE) {
                 let md = ffi::$md_fn();
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
@@ -156,11 +154,7 @@ macro_rules! new_evp {
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
                 let rc: c_int = unsafe {
-                    ffi::EVP_DigestUpdate(
-                        &mut self.ctx,
-                        data.as_ptr().cast::<c_void>(),
-                        data.len(),
-                    )
+                    ffi::EVP_DigestUpdate(&mut self.ctx, data.as_ptr().cast::<c_void>(), data.len())
                 };
                 debug_assert!(rc == 1);
             }
@@ -278,15 +272,15 @@ pub mod evp {
 }
 
 pub use evp::Algorithm;
-pub use evp::SHA1;
-pub use evp::MD5;
 pub use evp::MD4;
-pub use evp::SHA224;
-pub use evp::SHA512;
-pub use evp::SHA384;
-pub use evp::SHA256;
-pub use evp::SHA512_256;
+pub use evp::MD5;
 pub use evp::MD5_SHA1;
+pub use evp::SHA1;
+pub use evp::SHA224;
+pub use evp::SHA256;
+pub use evp::SHA384;
+pub use evp::SHA512;
+pub use evp::SHA512_256;
 
 /// API that OpenSSL 3 deprecated
 pub mod hashers {

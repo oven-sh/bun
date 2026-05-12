@@ -51,7 +51,8 @@ macro_rules! fallback_module_init {
             ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/index.js").as_bytes();
         const _PRETTY: &[u8] = ::const_format::concatcp!("node:", $name).as_bytes();
         const _PKGJSON_PATH: &[u8] =
-            ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/package.json").as_bytes();
+            ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/package.json")
+                .as_bytes();
         (
             $name.as_bytes(),
             PackageJSON {
@@ -70,7 +71,12 @@ macro_rules! fallback_module_init {
     }};
 }
 
-type FallbackEntry = (&'static [u8], PackageJSON, fs::Path<'static>, fn() -> &'static str);
+type FallbackEntry = (
+    &'static [u8],
+    PackageJSON,
+    fs::Path<'static>,
+    fn() -> &'static str,
+);
 
 // PORT NOTE: `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a
 // `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. Zig built this at
@@ -85,29 +91,29 @@ static INIT: std::sync::Once = std::sync::Once::new();
 #[cold]
 fn init_modules() {
     let modules: Box<[FallbackEntry]> = Box::new([
-        fallback_module_init!("assert",         "node-fallbacks/assert.js"),
-        fallback_module_init!("buffer",         "node-fallbacks/buffer.js"),
-        fallback_module_init!("console",        "node-fallbacks/console.js"),
-        fallback_module_init!("constants",      "node-fallbacks/constants.js"),
-        fallback_module_init!("crypto",         "node-fallbacks/crypto.js"),
-        fallback_module_init!("domain",         "node-fallbacks/domain.js"),
-        fallback_module_init!("events",         "node-fallbacks/events.js"),
-        fallback_module_init!("http",           "node-fallbacks/http.js"),
-        fallback_module_init!("https",          "node-fallbacks/https.js"),
-        fallback_module_init!("net",            "node-fallbacks/net.js"),
-        fallback_module_init!("os",             "node-fallbacks/os.js"),
-        fallback_module_init!("path",           "node-fallbacks/path.js"),
-        fallback_module_init!("process",        "node-fallbacks/process.js"),
-        fallback_module_init!("punycode",       "node-fallbacks/punycode.js"),
-        fallback_module_init!("querystring",    "node-fallbacks/querystring.js"),
-        fallback_module_init!("stream",         "node-fallbacks/stream.js"),
+        fallback_module_init!("assert", "node-fallbacks/assert.js"),
+        fallback_module_init!("buffer", "node-fallbacks/buffer.js"),
+        fallback_module_init!("console", "node-fallbacks/console.js"),
+        fallback_module_init!("constants", "node-fallbacks/constants.js"),
+        fallback_module_init!("crypto", "node-fallbacks/crypto.js"),
+        fallback_module_init!("domain", "node-fallbacks/domain.js"),
+        fallback_module_init!("events", "node-fallbacks/events.js"),
+        fallback_module_init!("http", "node-fallbacks/http.js"),
+        fallback_module_init!("https", "node-fallbacks/https.js"),
+        fallback_module_init!("net", "node-fallbacks/net.js"),
+        fallback_module_init!("os", "node-fallbacks/os.js"),
+        fallback_module_init!("path", "node-fallbacks/path.js"),
+        fallback_module_init!("process", "node-fallbacks/process.js"),
+        fallback_module_init!("punycode", "node-fallbacks/punycode.js"),
+        fallback_module_init!("querystring", "node-fallbacks/querystring.js"),
+        fallback_module_init!("stream", "node-fallbacks/stream.js"),
         fallback_module_init!("string_decoder", "node-fallbacks/string_decoder.js"),
-        fallback_module_init!("sys",            "node-fallbacks/sys.js"),
-        fallback_module_init!("timers",         "node-fallbacks/timers.js"),
-        fallback_module_init!("tty",            "node-fallbacks/tty.js"),
-        fallback_module_init!("url",            "node-fallbacks/url.js"),
-        fallback_module_init!("util",           "node-fallbacks/util.js"),
-        fallback_module_init!("zlib",           "node-fallbacks/zlib.js"),
+        fallback_module_init!("sys", "node-fallbacks/sys.js"),
+        fallback_module_init!("timers", "node-fallbacks/timers.js"),
+        fallback_module_init!("tty", "node-fallbacks/tty.js"),
+        fallback_module_init!("url", "node-fallbacks/url.js"),
+        fallback_module_init!("util", "node-fallbacks/util.js"),
+        fallback_module_init!("zlib", "node-fallbacks/zlib.js"),
     ]);
 
     let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
@@ -115,12 +121,15 @@ fn init_modules() {
     // thread observes `MODULES`/`MAP` until this returns.
     unsafe {
         *MODULES.get() = Some(modules);
-        let modules_ref: &'static [FallbackEntry] =
-            (*MODULES.get()).as_deref().unwrap();
+        let modules_ref: &'static [FallbackEntry] = (*MODULES.get()).as_deref().unwrap();
         for (name, pkg, path, code) in modules_ref.iter() {
             m.put_assume_capacity(
                 name,
-                FallbackModule { path: path.clone(), package_json: pkg, code: *code },
+                FallbackModule {
+                    path: path.clone(),
+                    package_json: pkg,
+                    code: *code,
+                },
             );
         }
         *MAP.get() = Some(m);

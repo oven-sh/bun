@@ -33,12 +33,12 @@ pub mod bun_install_js_bindings {
         use core::ptr::NonNull;
 
         use bstr::BStr;
+        use bun_core::{OwnedString, String as BunString};
         use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
-            json_stringify, WriteStream, WriteStreamOptions,
+            WriteStream, WriteStreamOptions, json_stringify,
         };
         use bun_install::lockfile::{LoadResult, Lockfile};
         use bun_paths::resolve_path;
-        use bun_core::{OwnedString, String as BunString};
         use bun_sys::FdExt as _;
 
         let mut log = bun_ast::Log::init();

@@ -26,10 +26,10 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 // to the same allocation `dns_body::Resolver::init` produces.
 
 pub use dns_body::{
-    get_addr_info_request, get_host_by_addr_info_request, get_name_info_request,
-    resolve_info_request,
+    CacheConfig, CacheHit, GetAddrInfoAsyncCallback, GetAddrInfoRequest, GlobalData,
+    InternalDNSRequest, Order, PendingCache, PendingCacheField, RecordType, Resolver, internal,
 };
 pub use dns_body::{
-    internal, CacheConfig, CacheHit, GetAddrInfoAsyncCallback, GetAddrInfoRequest, GlobalData,
-    InternalDNSRequest, Order, PendingCache, PendingCacheField, RecordType, Resolver,
+    get_addr_info_request, get_host_by_addr_info_request, get_name_info_request,
+    resolve_info_request,
 };

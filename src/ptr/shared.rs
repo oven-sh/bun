@@ -59,7 +59,11 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { atomic: false, allow_weak: false, deinit: true }
+        Self {
+            atomic: false,
+            allow_weak: false,
+            deinit: true,
+        }
     }
 }
 

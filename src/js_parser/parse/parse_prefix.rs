@@ -1,22 +1,26 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    clippy::single_match
+)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
+use bun_collections::VecExt;
 use bun_core::strings;
 
-use bun_ast::{
-    self as js_ast, scope, symbol, B, E, Expr, ExprData, ExprNodeList, G, OpCode,
+use crate::lexer::T;
+use crate::p::P;
+use crate::parser::{
+    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParenExprOpts,
+    ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag, prefill,
 };
 use bun_ast::e::UnaryFlags;
+use bun_ast::expr::EFlags;
 use bun_ast::g::{Arg, Property, PropertyKind};
 use bun_ast::op::Level;
-use bun_ast::expr::EFlags;
-use crate::p::P;
-use crate::lexer::T;
-use crate::parser::{
-    prefill, AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT,
-    ParenExprOpts, ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag,
-};
+use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
 
 // TODO(port): narrow error set — Zig used `anyerror!Expr` throughout
 type PResult<T> = core::result::Result<T, bun_core::Error>;
@@ -98,7 +102,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .add_range_error(Some(p.source), p.lexer.range(), b"Cannot use \"this\" here");
         }
         p.lexer.next()?;
-        Ok(Expr { data: prefill::data::THIS, loc })
+        Ok(Expr {
+            data: prefill::data::THIS,
+            loc,
+        })
     }
 
     fn pfx_t_private_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
@@ -138,85 +145,75 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            AsyncPrefixExpression::IsAwait => {
-                match p.fn_or_arrow_data_parse.allow_await {
-                    AwaitOrYield::ForbidAll => {
-                        p.log()
-                            .add_range_error(
-                                Some(p.source),
-                                name_range,
-                                b"The keyword \"await\" cannot be used here",
-                            );
-                    }
-                    AwaitOrYield::AllowExpr => {
-                        if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
-                            p.log()
-                                .add_range_error(
-                                    Some(p.source),
-                                    name_range,
-                                    b"The keyword \"await\" cannot be escaped",
-                                );
-                        } else {
-                            if p.fn_or_arrow_data_parse.is_top_level {
-                                p.top_level_await_keyword = name_range;
-                            }
-
-                            if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
-                                p.fn_or_arrow_data_parse
-                                    .arrow_arg_errors
-                                    .invalid_expr_await = name_range;
-                            }
-
-                            let value = p.parse_expr(Level::Prefix)?;
-                            if p.lexer.token == T::TAsteriskAsterisk {
-                                p.lexer.unexpected()?;
-                                return Err(bun_core::err!("SyntaxError"));
-                            }
-
-                            return Ok(p.new_expr(E::Await { value }, loc));
+            AsyncPrefixExpression::IsAwait => match p.fn_or_arrow_data_parse.allow_await {
+                AwaitOrYield::ForbidAll => {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        name_range,
+                        b"The keyword \"await\" cannot be used here",
+                    );
+                }
+                AwaitOrYield::AllowExpr => {
+                    if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            name_range,
+                            b"The keyword \"await\" cannot be escaped",
+                        );
+                    } else {
+                        if p.fn_or_arrow_data_parse.is_top_level {
+                            p.top_level_await_keyword = name_range;
                         }
-                    }
-                    AwaitOrYield::AllowIdent => {
-                        p.lexer.prev_token_was_await_keyword = true;
-                        p.lexer.await_keyword_loc = name_range.loc;
-                        p.lexer.fn_or_arrow_start_loc =
-                            p.fn_or_arrow_data_parse.needs_async_loc;
+
+                        if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
+                            p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await =
+                                name_range;
+                        }
+
+                        let value = p.parse_expr(Level::Prefix)?;
+                        if p.lexer.token == T::TAsteriskAsterisk {
+                            p.lexer.unexpected()?;
+                            return Err(bun_core::err!("SyntaxError"));
+                        }
+
+                        return Ok(p.new_expr(E::Await { value }, loc));
                     }
                 }
-            }
+                AwaitOrYield::AllowIdent => {
+                    p.lexer.prev_token_was_await_keyword = true;
+                    p.lexer.await_keyword_loc = name_range.loc;
+                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                }
+            },
 
             AsyncPrefixExpression::IsYield => {
                 match p.fn_or_arrow_data_parse.allow_yield {
                     AwaitOrYield::ForbidAll => {
-                        p.log()
-                            .add_range_error(
-                                Some(p.source),
-                                name_range,
-                                b"The keyword \"yield\" cannot be used here",
-                            );
+                        p.log().add_range_error(
+                            Some(p.source),
+                            name_range,
+                            b"The keyword \"yield\" cannot be used here",
+                        );
                     }
                     AwaitOrYield::AllowExpr => {
                         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield {
-                            p.log()
-                                .add_range_error(
-                                    Some(p.source),
-                                    name_range,
-                                    b"The keyword \"yield\" cannot be escaped",
-                                );
+                            p.log().add_range_error(
+                                Some(p.source),
+                                name_range,
+                                b"The keyword \"yield\" cannot be escaped",
+                            );
                         } else {
                             if level.gt(Level::Assign) {
-                                p.log()
-                                    .add_range_error(
-                                        Some(p.source),
-                                        name_range,
-                                        b"Cannot use a \"yield\" here without parentheses",
-                                    );
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    name_range,
+                                    b"Cannot use a \"yield\" here without parentheses",
+                                );
                             }
 
                             if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
-                                p.fn_or_arrow_data_parse
-                                    .arrow_arg_errors
-                                    .invalid_expr_yield = name_range;
+                                p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_yield =
+                                    name_range;
                             }
 
                             return p.parse_yield_expr(loc);
@@ -236,12 +233,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 | T::TNumericLiteral
                                 | T::TBigIntegerLiteral
                                 | T::TStringLiteral => {
-                                    p.log()
-                                        .add_range_error(
-                                            Some(p.source),
-                                            name_range,
-                                            b"Cannot use \"yield\" outside a generator function",
-                                        );
+                                    p.log().add_range_error(
+                                        Some(p.source),
+                                        name_range,
+                                        b"Cannot use \"yield\" outside a generator function",
+                                    );
                                 }
                                 _ => {}
                             }
@@ -258,9 +254,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // PORT NOTE: reshaped for borrowck — build binding before borrowing arena.
             // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
-            let args = p
-                .arena
-                .alloc_slice_fill_iter([Arg { binding, ..Default::default() }]);
+            let args = p.arena.alloc_slice_fill_iter([Arg {
+                binding,
+                ..Default::default()
+            }]);
 
             let _ = p
                 .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)
@@ -301,7 +298,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let value = p.new_expr(E::Number { value: p.lexer.number }, loc);
+        let value = p.new_expr(
+            E::Number {
+                value: p.lexer.number,
+            },
+            loc,
+        );
         // p.checkForLegacyOctalLiteral()
         p.lexer.next()?;
         Ok(value)
@@ -328,7 +330,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.regex_flags_start = None;
         next_result?;
 
-        Ok(p.new_expr(E::RegExp { value, flags_offset }, loc))
+        Ok(p.new_expr(
+            E::RegExp {
+                value,
+                flags_offset,
+            },
+            loc,
+        ))
     }
 
     fn pfx_t_void(p: &mut Self) -> PResult<Expr> {
@@ -341,7 +349,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnVoid, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnVoid,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -359,7 +371,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if matches!(value.data, ExprData::EIdentifier(_)) {
             flags |= UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER;
         }
-        Ok(p.new_expr(E::Unary { op: OpCode::UnTypeof, value, flags }, loc))
+        Ok(p.new_expr(
+            E::Unary {
+                op: OpCode::UnTypeof,
+                value,
+                flags,
+            },
+            loc,
+        ))
     }
 
     fn pfx_t_delete(p: &mut Self) -> PResult<Expr> {
@@ -377,24 +396,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     loc: value.loc,
                     len: i32::try_from(name.len()).expect("int cast"),
                 };
-                p.log()
-                    .add_range_error_fmt(
-                        Some(p.source),
-                        range,
-                        format_args!(
-                            "Deleting the private name \"{}\" is forbidden",
-                            bstr::BStr::new(name),
-                        ),
-                    );
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    range,
+                    format_args!(
+                        "Deleting the private name \"{}\" is forbidden",
+                        bstr::BStr::new(name),
+                    ),
+                );
             }
         }
 
         let mut flags = UnaryFlags::default();
         // Zig: `value.isPropertyAccess()` — `.e_dot, .e_index => true`.
-        if matches!(value.data, ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_)) {
+        if matches!(
+            value.data,
+            ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_)
+        ) {
             flags |= UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS;
         }
-        Ok(p.new_expr(E::Unary { op: OpCode::UnDelete, value, flags }, loc))
+        Ok(p.new_expr(
+            E::Unary {
+                op: OpCode::UnDelete,
+                value,
+                flags,
+            },
+            loc,
+        ))
     }
 
     fn pfx_t_plus(p: &mut Self) -> PResult<Expr> {
@@ -407,7 +435,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnPos, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnPos,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -422,7 +454,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnNeg, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnNeg,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -437,7 +473,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnCpl, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnCpl,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -452,7 +492,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnNot, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnNot,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -462,7 +506,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnPreDec, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnPreDec,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -472,7 +520,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         Ok(p.new_expr(
-            E::Unary { op: OpCode::UnPreInc, value, flags: UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnPreInc,
+                value,
+                flags: UnaryFlags::default(),
+            },
             loc,
         ))
     }
@@ -500,12 +552,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
-                    p.log()
-                        .add_range_error(
-                            Some(p.source),
-                            p.lexer.range(),
-                            b"Cannot use \"await\" as an identifier here",
-                        );
+                    p.log().add_range_error(
+                        Some(p.source),
+                        p.lexer.range(),
+                        b"Cannot use \"await\" as an identifier here",
+                    );
                 }
 
                 name = Some(js_ast::LocRef {
@@ -567,12 +618,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
-                    p.log()
-                        .add_range_error(
-                            Some(p.source),
-                            p.lexer.range(),
-                            b"Cannot use \"await\" as an identifier here",
-                        );
+                    p.log().add_range_error(
+                        Some(p.source),
+                        p.lexer.range(),
+                        b"Cannot use \"await\" as an identifier here",
+                    );
                 }
 
                 name = Some(js_ast::LocRef {
@@ -673,8 +723,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // PERF(port): was arena-backed ArrayList — profile in Phase B
-        let mut items: bun_alloc::ArenaVec<'_, Expr> =
-            bun_alloc::ArenaVec::new_in(p.arena);
+        let mut items: bun_alloc::ArenaVec<'_, Expr> = bun_alloc::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = bun_ast::Loc::default();
 
@@ -844,8 +893,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // PORT NOTE: BumpVec → Vec via arena slice; see pfx_t_open_bracket.
-        let properties_list =
-            G::PropertyList::from_bump_vec(properties);
+        let properties_list = G::PropertyList::from_bump_vec(properties);
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,
@@ -904,12 +952,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PERF(port): was comptime monomorphization — profile in Phase B
         if Self::IS_TYPESCRIPT_ENABLED && Self::IS_JSX_ENABLED {
             if p.is_ts_arrow_fn_jsx()? {
-                let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+                let _ =
+                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
                 p.lexer.expect(T::TOpenParen)?;
                 return p.parse_paren_expr(
                     loc,
                     level,
-                    ParenExprOpts { force_arrow_fn: true, ..Default::default() },
+                    ParenExprOpts {
+                        force_arrow_fn: true,
+                        ..Default::default()
+                    },
                 );
             }
         }

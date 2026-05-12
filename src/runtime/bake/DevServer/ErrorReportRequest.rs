@@ -18,24 +18,24 @@
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_ast::Log;
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
+use bun_core::{String as BunString, strings};
+use bun_io::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
 };
-use bun_ast::Log;
 use bun_paths::path_buffer_pool;
-use bun_core::{strings, String as BunString};
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
-use bun_io::Write as _;
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
-use super::{DevServer, CLIENT_PREFIX};
+use super::{CLIENT_PREFIX, DevServer};
 use crate::bake::dev_server_body::parse_hex_to_int;
-use crate::server::static_route::InitFromBytesOptions;
 use crate::server::StaticRoute;
+use crate::server::static_route::InitFromBytesOptions;
 
 pub struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
@@ -50,7 +50,11 @@ pub struct ErrorReportRequest {
 impl BodyReaderHandler for ErrorReportRequest {
     const MIXIN_OFFSET: usize = core::mem::offset_of!(ErrorReportRequest, body);
 
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+    unsafe fn on_body(
+        this: *mut Self,
+        body: &[u8],
+        resp: AnyResponse,
+    ) -> Result<(), bun_core::Error> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
@@ -68,7 +72,10 @@ impl ErrorReportRequest {
         // Use the caller's `&mut DevServer` directly (matches
         // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
         // freshly-allocated ctx's `BackRef` under `unsafe`.
-        dev.server.as_mut().expect("server bound").on_pending_request();
+        dev.server
+            .as_mut()
+            .expect("server bound")
+            .on_pending_request();
         let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
             dev: bun_ptr::BackRef::new_mut(dev),
             body: uws::BodyReaderMixin::init(),
@@ -84,7 +91,13 @@ impl ErrorReportRequest {
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
         // both of which uphold this contract.
         unsafe {
-            (*ctx).dev.get_mut().server.as_mut().unwrap().on_static_request_complete();
+            (*ctx)
+                .dev
+                .get_mut()
+                .server
+                .as_mut()
+                .unwrap()
+                .on_static_request_complete();
             drop(bun_core::heap::take(ctx));
         }
     }
@@ -163,8 +176,7 @@ impl ErrorReportRequest {
 
         const RUNTIME_NAME: &[u8] = b"Bun HMR Runtime";
 
-        let browser_url_origin =
-            bun_url::origin_from_slice(browser_url).unwrap_or(browser_url);
+        let browser_url_origin = bun_url::origin_from_slice(browser_url).unwrap_or(browser_url);
 
         // All files that DevServer could provide a source map fit the pattern:
         // `/_bun/client/<label>-{u64}.js`
@@ -239,7 +251,9 @@ impl ErrorReportRequest {
             }
 
             // Remap the frame
-            let remapped = result.mappings.find(frame.position.line, frame.position.column);
+            let remapped = result
+                .mappings
+                .find(frame.position.line, frame.position.column);
             if let Some(remapped_position) = &remapped {
                 frame.position = ZigStackFramePosition {
                     line: Ordinal::from_zero_based(remapped_position.original_line()),
@@ -264,8 +278,7 @@ impl ErrorReportRequest {
                             // First line of interest is two above the target line.
                             let target_line = frame.position.line.zero_based() as usize;
                             first_line_of_interest = target_line.saturating_sub(2);
-                            region_of_interest_line =
-                                (target_line - first_line_of_interest) as u32;
+                            region_of_interest_line = (target_line - first_line_of_interest) as u32;
                             runtime_lines = extract_json_encoded_source_code::<5>(
                                 json_encoded_source_code,
                                 first_line_of_interest as u32,
@@ -487,8 +500,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     // both from the caller's arena so their lifetime matches the decoded
     // `ArenaVec<'a, u8>` slices we hand back in `result`.
     let log: &'a mut Log = arena.alloc(Log::init());
-    let source: &'a bun_ast::Source =
-        arena.alloc(bun_ast::Source::init_empty_file(b""));
+    let source: &'a bun_ast::Source = arena.alloc(bun_ast::Source::init_empty_file(b""));
     let mut l = bun_parsers::toml::Lexer {
         log,
         source,
@@ -555,10 +567,16 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 /// reader (the canonical allocating version lives in the gated `DevServer.rs`
 /// draft and is not yet re-exported from `super`).
 #[inline]
-fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> Result<&'a [u8], bun_core::Error> {
+fn read_string32<'a>(
+    r: &mut bun_io::FixedBufferStream<&'a [u8]>,
+) -> Result<&'a [u8], bun_core::Error> {
     let len = r.read_int_le::<u32>()? as usize;
     let buf: &'a [u8] = r.buffer;
-    let end = r.pos.checked_add(len).filter(|&e| e <= buf.len()).ok_or_else(|| bun_core::err!("EndOfStream"))?;
+    let end = r
+        .pos
+        .checked_add(len)
+        .filter(|&e| e <= buf.len())
+        .ok_or_else(|| bun_core::err!("EndOfStream"))?;
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)

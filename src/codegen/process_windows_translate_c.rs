@@ -8,8 +8,8 @@
 // directly: SetCurrentDirectoryW. To make the error better, a post
 // processing step is applied to the translate-c file.
 
-use std::io::Write as _;
 use bstr::{BStr, ByteSlice};
+use std::io::Write as _;
 
 // TODO(port): standalone build-time codegen binary — uses std::env / std::fs::{read,write}
 // directly (PORTING.md bans std::fs for runtime code). The Zig original also calls std.fs
@@ -31,8 +31,7 @@ pub fn main() -> Result<(), bun_core::Error> {
         let in_path = args.next().unwrap_or_else(|| panic!("missing argument"));
         // Zig: openFile + readToEndAllocOptions(.., sentinel 0). Sentinel was only
         // needed for std.zig.Tokenizer; the inline scan below doesn't require it.
-        break 'brk std::fs::read(&in_path)
-            .map_err(|_| bun_core::err!("ReadFailed"))?;
+        break 'brk std::fs::read(&in_path).map_err(|_| bun_core::err!("ReadFailed"))?;
     };
     let in_bytes: &[u8] = &input;
 

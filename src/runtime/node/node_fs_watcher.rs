@@ -3,23 +3,22 @@ use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use bun_core::Output;
+use bun_core::ZigString;
+use bun_core::strings;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
-use bun_core::Output;
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine,
-    ZigStringJsc as _,
+    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
-use bun_core::ZigString;
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_core::strings;
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
@@ -28,10 +27,10 @@ use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
 
-#[cfg(windows)]
-use super::win_watcher as path_watcher;
 #[cfg(not(windows))]
 use super::path_watcher;
+#[cfg(windows)]
+use super::win_watcher as path_watcher;
 
 // TODO: make this a top-level struct
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -267,10 +266,7 @@ impl FSWatchTaskPosix {
         #[cfg(debug_assertions)]
         {
             // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
-            debug_assert!(!core::ptr::eq(
-                this_ref.ctx().current_task.as_ptr(),
-                this
-            ));
+            debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
         }
         // SAFETY: paired with `heap::alloc` in `enqueue()`.
         drop(unsafe { bun_core::heap::take(this) });
@@ -460,7 +456,9 @@ impl FSWatchTaskWindows {
             // permanently elevated on a `transferToJS` failure. Returning from
             // this helper instead lets `run()` fall through to `unref_task()`,
             // which is the intended fix — the Zig behavior is a refcount leak.
-            let Ok(js) = s.transfer_to_js(&ctx.global_this) else { return };
+            let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
+                return;
+            };
             ctx.emit_with_filename::<EVENT_TYPE>(js);
         } else {
             let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {
@@ -517,13 +515,15 @@ impl FSWatcher {
                 #[cfg(not(windows))]
                 Event::Rename(value) | Event::Change(value) => {
                     if is_file {
-                        Output::pretty_errorln(
-                            format_args!("<r> <d>File changed: {}<r>", bstr::BStr::new(value)),
-                        );
+                        Output::pretty_errorln(format_args!(
+                            "<r> <d>File changed: {}<r>",
+                            bstr::BStr::new(value)
+                        ));
                     } else {
-                        Output::pretty_errorln(
-                            format_args!("<r> <d>Dir changed: {}<r>", bstr::BStr::new(value)),
-                        );
+                        Output::pretty_errorln(format_args!(
+                            "<r> <d>Dir changed: {}<r>",
+                            bstr::BStr::new(value)
+                        ));
                     }
                 }
                 _ => {}
@@ -609,9 +609,8 @@ impl<'a> Arguments<'a> {
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments<'a>> {
         let Some(path) = PathLike::from_js(ctx, arguments)? else {
-            return Err(ctx.throw_invalid_arguments(format_args!(
-                "filename must be a string or TypedArray"
-            )));
+            return Err(ctx
+                .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
         // TODO(port): PathLike Drop — Zig had `defer if (should_deinit_path) path.deinit();`
         // Once PathLike: Drop, `?` on the error paths below drops it automatically.
@@ -651,9 +650,8 @@ impl<'a> Arguments<'a> {
 
                 if let Some(recursive_) = options_or_callable.get_truthy(ctx, "recursive")? {
                     if !recursive_.is_boolean() {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
-                            "recursive must be a boolean"
-                        )));
+                        return Err(ctx
+                            .throw_invalid_arguments(format_args!("recursive must be a boolean")));
                     }
                     recursive = recursive_.to_boolean();
                 }
@@ -974,7 +972,11 @@ impl FSWatcher {
                     // balanced and the count stays > 0 while the close event is emitted.
                     self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
                     bun_output::scoped_log!(fs_watch, "emit('close')");
-                    emit_js::<{ EventType::Close }>(listener, &self.global_this, JSValue::UNDEFINED);
+                    emit_js::<{ EventType::Close }>(
+                        listener,
+                        &self.global_this,
+                        JSValue::UNDEFINED,
+                    );
                     self.unref_task();
                 }
             }
@@ -990,7 +992,9 @@ impl FSWatcher {
     pub fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
         if self.vm().test_isolation_enabled {
-            self.vm().rare_data().remove_fs_watcher_for_isolation(ctx_ptr);
+            self.vm()
+                .rare_data()
+                .remove_fs_watcher_for_isolation(ctx_ptr);
         }
 
         if let Some(watcher) = self.path_watcher.take() {
@@ -1076,45 +1080,42 @@ impl FSWatcher {
             .current_task
             .with_mut(|t| t.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) }));
 
-        ctx_ref.path_watcher.set(if args.signal.map_or(true, |s| !s.aborted()) {
-            // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
-            // and both backends `@compileError` if they aren't exactly
-            // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
-            // those parameters (only one valid value each), so the call is
-            // cfg-split by arity.
-            #[cfg(windows)]
-            let r = path_watcher::watch(
-                vm_ref,
-                file_path,
-                args.recursive,
-                ctx as *mut c_void,
-            );
-            #[cfg(not(windows))]
-            let r = path_watcher::watch(
-                vm_ref,
-                file_path,
-                args.recursive,
-                FSWatcher::ON_PATH_UPDATE,
-                FSWatcher::on_update_end,
-                ctx.cast::<c_void>(),
-            );
-            match r {
-                Ok(r) => Some(r),
-                Err(err) => {
-                    // SAFETY: `ctx` was produced by `heap::into_raw` above and
-                    // never handed to a JS wrapper; reclaim ownership.
-                    FSWatcher::finalize(unsafe { Box::from_raw(ctx) });
-                    return Err(bun_sys::Error {
-                        errno: err.errno,
-                        syscall: bun_sys::Tag::watch,
-                        path: args.path.slice().into(),
-                        ..Default::default()
-                    });
+        ctx_ref
+            .path_watcher
+            .set(if args.signal.map_or(true, |s| !s.aborted()) {
+                // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
+                // and both backends `@compileError` if they aren't exactly
+                // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
+                // those parameters (only one valid value each), so the call is
+                // cfg-split by arity.
+                #[cfg(windows)]
+                let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
+                #[cfg(not(windows))]
+                let r = path_watcher::watch(
+                    vm_ref,
+                    file_path,
+                    args.recursive,
+                    FSWatcher::ON_PATH_UPDATE,
+                    FSWatcher::on_update_end,
+                    ctx.cast::<c_void>(),
+                );
+                match r {
+                    Ok(r) => Some(r),
+                    Err(err) => {
+                        // SAFETY: `ctx` was produced by `heap::into_raw` above and
+                        // never handed to a JS wrapper; reclaim ownership.
+                        FSWatcher::finalize(unsafe { Box::from_raw(ctx) });
+                        return Err(bun_sys::Error {
+                            errno: err.errno,
+                            syscall: bun_sys::Tag::watch,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    }
                 }
-            }
-        } else {
-            None
-        });
+            } else {
+                None
+            });
         // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
         // the GC wrapper via `to_js_ptr`.
         unsafe {

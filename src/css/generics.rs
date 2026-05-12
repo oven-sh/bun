@@ -23,18 +23,20 @@ use bun_collections::VecExt;
 // directly.
 pub use bun_wyhash::Wyhash;
 
+use crate::SmallList;
 use crate::css_parser as css;
+use crate::css_parser::CssResult;
 use crate::css_parser::{Parser, ParserOptions};
 use crate::printer::Printer;
 use crate::values as css_values;
-use crate::SmallList;
-use crate::{PrintErr, VendorPrefix};
-use crate::css_parser::CssResult;
-use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
-use crate::values::ident::{CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, Ident, IdentFns};
 use crate::values::angle::Angle;
-use crate::values::size::Size2D;
+use crate::values::ident::{
+    CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, Ident, IdentFns,
+};
+use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
 use crate::values::rect::Rect;
+use crate::values::size::Size2D;
+use crate::{PrintErr, VendorPrefix};
 
 // `ArrayList(T)` in the Zig is `std.ArrayListUnmanaged(T)` fed the parser arena.
 // In this AST crate that maps to `bun_alloc::ArenaVec<'bump, T>`.
@@ -176,7 +178,6 @@ impl<'bump> DeepClone<'bump> for &'bump str {
         *self
     }
 }
-
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     #[inline]
@@ -332,7 +333,6 @@ impl<T: CssEql, const N: usize> CssEql for [T; N] {
         true
     }
 }
-
 
 impl<T: CssEql + ?Sized> CssEql for Box<T> {
     #[inline]
@@ -516,7 +516,13 @@ mod inherent_bridge {
     use crate::values::gradient::{
         ConicGradient, LinearGradient, RadialGradient, WebKitGradientLinear, WebKitGradientRadial,
     };
-    bridge_deep_clone!(LinearGradient, RadialGradient, ConicGradient, WebKitGradientLinear, WebKitGradientRadial);
+    bridge_deep_clone!(
+        LinearGradient,
+        RadialGradient,
+        ConicGradient,
+        WebKitGradientLinear,
+        WebKitGradientRadial
+    );
 
     use crate::values::position::{
         HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
@@ -526,31 +532,43 @@ mod inherent_bridge {
     // takes concrete `ty`s) can't cover it — spell the trivial impls out.
     impl<S: Clone + PartialEq> CssEql for PositionComponent<S> {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
+        fn eql(&self, other: &Self) -> bool {
+            PartialEq::eq(self, other)
+        }
     }
     impl<'bump, S: Clone + PartialEq> DeepClone<'bump> for PositionComponent<S> {
         #[inline]
-        fn deep_clone(&self, _bump: &'bump Arena) -> Self { Clone::clone(self) }
+        fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+            Clone::clone(self)
+        }
     }
 
     use crate::values::rect::Rect;
     impl<T: PartialEq> CssEql for Rect<T> {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { Rect::<T>::eql(self, other) }
+        fn eql(&self, other: &Self) -> bool {
+            Rect::<T>::eql(self, other)
+        }
     }
     impl<'bump, T: Clone> DeepClone<'bump> for Rect<T> {
         #[inline]
-        fn deep_clone(&self, bump: &'bump Arena) -> Self { Rect::<T>::deep_clone(self, bump) }
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            Rect::<T>::deep_clone(self, bump)
+        }
     }
 
     use crate::values::size::Size2D;
     impl<T: Clone + PartialEq> CssEql for Size2D<T> {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { Size2D::<T>::eql(self, other) }
+        fn eql(&self, other: &Self) -> bool {
+            Size2D::<T>::eql(self, other)
+        }
     }
     impl<'bump, T: Clone + PartialEq> DeepClone<'bump> for Size2D<T> {
         #[inline]
-        fn deep_clone(&self, bump: &'bump Arena) -> Self { Size2D::<T>::deep_clone(self, bump) }
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            Size2D::<T>::deep_clone(self, bump)
+        }
     }
 
     bridge_is_compatible!(CssColor);
@@ -558,8 +576,8 @@ mod inherent_bridge {
     // ── properties/border ──
     use crate::properties::border::{
         BorderBlockColor, BorderBlockStyle, BorderBlockWidth, BorderColor, BorderInlineColor,
-        BorderInlineStyle, BorderInlineWidth, BorderSideWidth, BorderStyle,
-        BorderWidth, GenericBorder, LineStyle,
+        BorderInlineStyle, BorderInlineWidth, BorderSideWidth, BorderStyle, BorderWidth,
+        GenericBorder, LineStyle,
     };
     bridge_eql!(BorderSideWidth);
     bridge_eql_partialeq!(LineStyle);
@@ -567,14 +585,22 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(LineStyle);
     bridge_is_compatible!(BorderSideWidth, LineStyle);
     bridge_clone_partialeq!(
-        BorderColor, BorderStyle, BorderWidth,
-        BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
-        BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
+        BorderColor,
+        BorderStyle,
+        BorderWidth,
+        BorderBlockColor,
+        BorderBlockStyle,
+        BorderBlockWidth,
+        BorderInlineColor,
+        BorderInlineStyle,
+        BorderInlineWidth,
     );
     impl<S: CssEql, const P: u8> CssEql for GenericBorder<S, P> {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
-            self.width.eql(&other.width) && self.style.eql(&other.style) && self.color.eql(&other.color)
+            self.width.eql(&other.width)
+                && self.style.eql(&other.style)
+                && self.color.eql(&other.color)
         }
     }
     impl<'bump, S: DeepClone<'bump>, const P: u8> DeepClone<'bump> for GenericBorder<S, P> {
@@ -613,8 +639,18 @@ mod inherent_bridge {
         Background, BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundPosition,
         BackgroundRepeat, BackgroundSize,
     };
-    bridge_eql!(Background, BackgroundSize, BackgroundPosition, BackgroundRepeat);
-    bridge_deep_clone!(Background, BackgroundSize, BackgroundPosition, BackgroundRepeat);
+    bridge_eql!(
+        Background,
+        BackgroundSize,
+        BackgroundPosition,
+        BackgroundRepeat
+    );
+    bridge_deep_clone!(
+        Background,
+        BackgroundSize,
+        BackgroundPosition,
+        BackgroundRepeat
+    );
     bridge_clone_partialeq!(BackgroundAttachment, BackgroundClip, BackgroundOrigin);
 
     // ── properties/align ──
@@ -623,8 +659,17 @@ mod inherent_bridge {
         JustifySelf, PlaceContent, PlaceItems, PlaceSelf,
     };
     bridge_clone_partialeq!(
-        AlignContent, AlignItems, AlignSelf, JustifyContent, JustifyItems, JustifySelf,
-        PlaceContent, PlaceItems, PlaceSelf, Gap, GapValue,
+        AlignContent,
+        AlignItems,
+        AlignSelf,
+        JustifyContent,
+        JustifyItems,
+        JustifySelf,
+        PlaceContent,
+        PlaceItems,
+        PlaceSelf,
+        Gap,
+        GapValue,
     );
 
     // ── properties/flex ──
@@ -633,20 +678,40 @@ mod inherent_bridge {
         FlexItemAlign, FlexLinePack, FlexPack, FlexWrap,
     };
     bridge_clone_partialeq!(
-        FlexDirection, FlexWrap, FlexFlow, Flex, BoxOrient, BoxDirection, BoxAlign, BoxPack,
-        BoxLines, FlexPack, FlexItemAlign, FlexLinePack,
+        FlexDirection,
+        FlexWrap,
+        FlexFlow,
+        Flex,
+        BoxOrient,
+        BoxDirection,
+        BoxAlign,
+        BoxPack,
+        BoxLines,
+        FlexPack,
+        FlexItemAlign,
+        FlexLinePack,
     );
 
     // ── properties/font ──
     use crate::properties::font::{
-        FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight,
-        LineHeight,
+        FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight, LineHeight,
     };
     bridge_clone_partialeq!(
-        FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight,
+        FontWeight,
+        FontSize,
+        FontStretch,
+        FontStyle,
+        FontVariantCaps,
+        LineHeight,
     );
     bridge_is_compatible!(
-        FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight, FontFamily,
+        FontWeight,
+        FontSize,
+        FontStretch,
+        FontStyle,
+        FontVariantCaps,
+        LineHeight,
+        FontFamily,
     );
     bridge_clone_partialeq!(FontFamily);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
@@ -704,12 +769,18 @@ mod inherent_bridge {
 
     // ── properties/masking ──
     use crate::properties::masking::{
-        GeometryBox, MaskBorderMode, MaskClip, MaskComposite, MaskMode,
-        MaskType, WebKitMaskComposite, WebKitMaskSourceType,
+        GeometryBox, MaskBorderMode, MaskClip, MaskComposite, MaskMode, MaskType,
+        WebKitMaskComposite, WebKitMaskSourceType,
     };
     bridge_clone_partialeq!(
-        GeometryBox, MaskMode, MaskClip, MaskComposite, MaskType, MaskBorderMode,
-        WebKitMaskComposite, WebKitMaskSourceType,
+        GeometryBox,
+        MaskMode,
+        MaskClip,
+        MaskComposite,
+        MaskType,
+        MaskBorderMode,
+        WebKitMaskComposite,
+        WebKitMaskSourceType,
     );
     // `Mask`/`MaskBorder` DeepClone/CssEql now via `#[derive]` on the structs
     // (properties/masking.rs).
@@ -731,9 +802,21 @@ mod inherent_bridge {
         ScrollPaddingBlock, ScrollPaddingInline,
     };
     bridge_clone_partialeq!(
-        Margin, MarginBlock, MarginInline, Padding, PaddingBlock, PaddingInline,
-        ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding, ScrollPaddingBlock,
-        ScrollPaddingInline, Inset, InsetBlock, InsetInline,
+        Margin,
+        MarginBlock,
+        MarginInline,
+        Padding,
+        PaddingBlock,
+        PaddingInline,
+        ScrollMargin,
+        ScrollMarginBlock,
+        ScrollMarginInline,
+        ScrollPadding,
+        ScrollPaddingBlock,
+        ScrollPaddingInline,
+        Inset,
+        InsetBlock,
+        InsetInline,
     );
 
     // ── properties/properties_generated ──
@@ -896,7 +979,6 @@ impl CssHash for str {
         hasher.update(self.as_bytes());
     }
 }
-
 
 impl<T: CssHash + ?Sized> CssHash for Box<T> {
     #[inline]
@@ -1151,7 +1233,9 @@ impl<T: Parse> ParseWithOptions for Box<T> {
 impl<T: Parse, const N: usize> Parse for SmallList<T, N> {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
-        input.parse_comma_separated(T::parse).map(SmallList::from_list)
+        input
+            .parse_comma_separated(T::parse)
+            .map(SmallList::from_list)
     }
 }
 impl<T: Parse, const N: usize> ParseWithOptions for SmallList<T, N> {
@@ -1160,7 +1244,6 @@ impl<T: Parse, const N: usize> ParseWithOptions for SmallList<T, N> {
         <Self as Parse>::parse(input)
     }
 }
-
 
 impl<T: Parse + Clone + PartialEq> Parse for Size2D<T> {
     #[inline]
@@ -1282,7 +1365,6 @@ impl<T: ToCss, const N: usize> ToCss for SmallList<T, N> {
         css::to_css::from_list(self.slice(), dest)
     }
 }
-
 
 impl<T: ToCss + Clone + PartialEq> ToCss for Size2D<T> {
     #[inline]
@@ -1468,7 +1550,9 @@ impl TryOpTo for CSSNumber {
 
 impl IsCompatible for CSSNumber {
     #[inline]
-    fn is_compatible(&self, _: crate::targets::Browsers) -> bool { true }
+    fn is_compatible(&self, _: crate::targets::Browsers) -> bool {
+        true
+    }
 }
 
 pub trait TryOp: Sized {
@@ -1477,7 +1561,12 @@ pub trait TryOp: Sized {
 }
 
 #[inline]
-pub fn try_op<T: TryOp, C>(lhs: &T, rhs: &T, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<T> {
+pub fn try_op<T: TryOp, C>(
+    lhs: &T,
+    rhs: &T,
+    ctx: C,
+    op_fn: impl Fn(C, f32, f32) -> f32,
+) -> Option<T> {
     lhs.try_op(rhs, ctx, op_fn)
 }
 
@@ -1548,7 +1637,9 @@ pub trait TryAdd: Sized {
 
 impl MulF32 for CSSNumber {
     #[inline]
-    fn mul_f32(self, rhs: f32) -> Self { self * rhs }
+    fn mul_f32(self, rhs: f32) -> Self {
+        self * rhs
+    }
 }
 
 // ported from: src/css/generics.zig

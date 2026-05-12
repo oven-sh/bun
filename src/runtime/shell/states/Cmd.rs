@@ -3,10 +3,10 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
-use bun_collections::{VecExt, ByteVecExt};
+use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -15,7 +15,7 @@ use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
+use bun_collections::{ByteVecExt, VecExt};
 
 pub struct Cmd {
     pub base: Base,
@@ -40,8 +40,12 @@ pub enum CmdState {
     #[default]
     Idle,
     ExpandingAssigns,
-    ExpandingArgs { idx: u32 },
-    ExpandingRedirect { idx: u32 },
+    ExpandingArgs {
+        idx: u32,
+    },
+    ExpandingRedirect {
+        idx: u32,
+    },
     Exec,
     WaitingWriteErr,
     Done,
@@ -54,7 +58,9 @@ pub enum Exec {
 }
 
 impl Default for Exec {
-    fn default() -> Self { Exec::None }
+    fn default() -> Self {
+        Exec::None
+    }
 }
 
 impl Cmd {
@@ -105,7 +111,9 @@ pub enum BufferedIoState {
 
 impl BufferedIoState {
     #[inline]
-    pub fn closed(&self) -> bool { matches!(self, BufferedIoState::Closed(_)) }
+    pub fn closed(&self) -> bool {
+        matches!(self, BufferedIoState::Closed(_))
+    }
 }
 
 impl Drop for BufferedIoState {
@@ -126,9 +134,21 @@ impl BufferedIoClosed {
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
         Self {
-            stdin: if io[STDIN_NO].is_piped() { Some(false) } else { None },
-            stdout: if io[STDOUT_NO].is_piped() { Some(BufferedIoState::Open) } else { None },
-            stderr: if io[STDERR_NO].is_piped() { Some(BufferedIoState::Open) } else { None },
+            stdin: if io[STDIN_NO].is_piped() {
+                Some(false)
+            } else {
+                None
+            },
+            stdout: if io[STDOUT_NO].is_piped() {
+                Some(BufferedIoState::Open)
+            } else {
+                None
+            },
+            stderr: if io[STDERR_NO].is_piped() {
+                Some(BufferedIoState::Open)
+            } else {
+                None
+            },
         }
     }
 
@@ -257,7 +277,10 @@ impl Cmd {
                                 atom,
                                 this,
                                 io,
-                                ExpansionOpts { for_spawn: false, single: true },
+                                ExpansionOpts {
+                                    for_spawn: false,
+                                    single: true,
+                                },
                             );
                             return Expansion::start(interp, child);
                         }
@@ -283,7 +306,10 @@ impl Cmd {
                         atom,
                         this,
                         io,
-                        ExpansionOpts { for_spawn: true, single: false },
+                        ExpansionOpts {
+                            for_spawn: true,
+                            single: false,
+                        },
                     );
                     return Expansion::start(interp, child);
                 }
@@ -340,11 +366,7 @@ impl Cmd {
             };
             interp.deinit_node(child);
             if let Some(err) = err {
-                let y = Builtin::cmd_write_failing_error(
-                    interp,
-                    this,
-                    format_args!("{}\n", err),
-                );
+                let y = Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
                 err.deinit();
                 return y;
             }
@@ -470,8 +492,7 @@ impl Cmd {
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
-        let mut spawn_args =
-            SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
+        let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
         // Cache the raw `*mut ShellExecEnv` and deref it directly so the
         // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
         // `*interp` — `Base::shell()` would tie the slice's lifetime to
@@ -488,7 +509,9 @@ impl Cmd {
             match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
-                    bun_core::self_exe_path().ok().map(|z| z.as_bytes().to_vec())
+                    bun_core::self_exe_path()
+                        .ok()
+                        .map(|z| z.as_bytes().to_vec())
                 }
                 None => None,
             }
@@ -700,9 +723,7 @@ impl Cmd {
                     .expect("JS values not allowed in this context");
                 let idx = val.idx as usize;
                 if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!(
-                        "Invalid JS object reference in shell"
-                    )));
+                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
                 }
                 let jsval = interp.jsobjs[idx];
 
@@ -959,7 +980,9 @@ impl Cmd {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
-        let Exec::Subproc(sub) = &mut self.exec else { return };
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return;
+        };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
         let child = unsafe { &mut *sub.child };
@@ -995,7 +1018,9 @@ impl Cmd {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
-        let Exec::Subproc(sub) = &mut self.exec else { return };
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return;
+        };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
         let child = unsafe { &mut *sub.child };

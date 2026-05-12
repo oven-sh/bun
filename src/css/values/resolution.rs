@@ -4,7 +4,15 @@ use crate::values::number::CSSNumber;
 use bun_core::strings;
 
 /// A CSS `<resolution>` value.
-#[derive(Clone, Copy, Debug, PartialEq, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    crate::generics::CssEql,
+    crate::generics::CssHash,
+    crate::generics::DeepClone,
+)]
 pub enum Resolution {
     /// A resolution in dots per inch.
     Dpi(CSSNumber),
@@ -58,7 +66,10 @@ impl Resolution {
             Resolution::Dpi(dpi) => (dpi, b"dpi".as_slice()),
             Resolution::Dpcm(dpcm) => (dpcm, b"dpcm".as_slice()),
             Resolution::Dppx(dppx) => {
-                if dest.targets.is_compatible(crate::compat::Feature::XResolutionUnit) {
+                if dest
+                    .targets
+                    .is_compatible(crate::compat::Feature::XResolutionUnit)
+                {
                     (dppx, b"x".as_slice())
                 } else {
                     (dppx, b"dppx".as_slice())

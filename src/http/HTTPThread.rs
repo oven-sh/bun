@@ -10,10 +10,10 @@ use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
+use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::http_context::ActiveSocketExt;
-use crate::{h2, h3, AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext};
+use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
 
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
@@ -432,7 +432,7 @@ impl HttpThread {
         &mut self,
         client: &mut HttpClient,
     ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
-    // TODO(port): narrow error set
+// TODO(port): narrow error set
     {
         // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
         // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
@@ -441,7 +441,9 @@ impl HttpThread {
         // `connect_socket` does not touch.
         let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
         if !unix_path.is_empty() {
-            return self.context::<IS_SSL>().connect_socket(client, unix_path.slice());
+            return self
+                .context::<IS_SSL>()
+                .connect_socket(client, unix_path.slice());
         }
 
         if IS_SSL {
@@ -492,7 +494,11 @@ impl HttpThread {
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
                     // has refcount 1; reclaim and drop on error.
-                    drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<NewHttpContext<true>>(custom_context)) });
+                    drop(unsafe {
+                        bun_core::heap::take(std::ptr::from_mut::<NewHttpContext<true>>(
+                            custom_context,
+                        ))
+                    });
 
                     return Err(match err {
                         InitError::FailedToOpenSocket
@@ -542,9 +548,11 @@ impl HttpThread {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
                 if url.protocol.is_empty() || url.protocol == b"https" || url.protocol == b"http" {
-                    return self
-                        .context::<IS_SSL>()
-                        .connect(client, url.hostname, url.get_port_auto());
+                    return self.context::<IS_SSL>().connect(
+                        client,
+                        url.hostname,
+                        url.get_port_auto(),
+                    );
                 }
                 return Err(bun_core::err!("UnsupportedProxyProtocol"));
             }
@@ -592,10 +600,7 @@ impl HttpThread {
 
             for http in &queued_shutdowns {
                 let tracker = abort_tracker();
-                let found_idx = tracker
-                    .keys()
-                    .iter()
-                    .position(|&k| k == http.async_http_id);
+                let found_idx = tracker.keys().iter().position(|&k| k == http.async_http_id);
                 if let Some(idx) = found_idx {
                     let (_k, socket_ptr) = tracker.swap_remove_at(idx);
                     match socket_ptr {
@@ -946,9 +951,8 @@ impl HttpThread {
             let mut batch_ = batch;
             while let Some(task) = batch_.pop() {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
-                let http: *mut AsyncHttp = unsafe {
-                    bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr())
-                };
+                let http: *mut AsyncHttp =
+                    unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
                 this.queued_tasks.push(http);
             }
         }
@@ -1050,7 +1054,9 @@ mod _event_loop_draft {
             .spawn(move || on_start(opts_copy));
         match thread {
             // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
-            Ok(t) => { let _ = HTTP_THREAD_HANDLE.set(t); }
+            Ok(t) => {
+                let _ = HTTP_THREAD_HANDLE.set(t);
+            }
             Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
         }
     }
@@ -1073,7 +1079,11 @@ mod _event_loop_draft {
             .unwrap_or(300)
             .min(239 * 60);
         crate::IDLE_TIMEOUT_SECONDS.store(
-            (if raw > 240 { raw.div_ceil(60) * 60 } else { raw }) as core::ffi::c_uint,
+            (if raw > 240 {
+                raw.div_ceil(60) * 60
+            } else {
+                raw
+            }) as core::ffi::c_uint,
             core::sync::atomic::Ordering::Relaxed,
         );
 

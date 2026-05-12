@@ -1,14 +1,20 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    clippy::single_match
+)]
 #![warn(unused_must_use)]
-use bun_core::{err, Error};
+use bun_core::{Error, err};
 
-use bun_ast::{self as js_ast, E, Expr, ExprData, Op, OpCode, OptionalChain};
-use bun_ast::op::Level;
-use bun_ast::expr::EFlags;
-use crate::p::P;
-use crate::scan::scan_side_effects::SideEffects;
 use crate::lexer::T;
+use crate::p::P;
 use crate::parser::{DeferredErrors, JsxT};
+use crate::scan::scan_side_effects::SideEffects;
+use bun_ast::expr::EFlags;
+use bun_ast::op::Level;
+use bun_ast::{self as js_ast, E, Expr, ExprData, Op, OpCode, OptionalChain};
 
 // Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -274,12 +280,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         left: &mut Expr,
     ) -> CResult {
         if old_optional_chain.is_some() {
-            p.log()
-                .add_range_error(
-                    Some(p.source),
-                    p.lexer.range(),
-                    b"Template literals cannot have an optional chain as a tag",
-                );
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"Template literals cannot have an optional chain as a tag",
+            );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());
@@ -306,12 +311,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         left: &mut Expr,
     ) -> CResult {
         if old_optional_chain.is_some() {
-            p.log()
-                .add_range_error(
-                    Some(p.source),
-                    p.lexer.range(),
-                    b"Template literals cannot have an optional chain as a tag",
-                );
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"Template literals cannot have an optional chain as a tag",
+            );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());
@@ -444,7 +448,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             },
             loc,
         );
-        let ExprData::EIf(mut e_if) = ternary.data else { unreachable!() };
+        let ExprData::EIf(mut e_if) = ternary.data else {
+            unreachable!()
+        };
 
         // Allow "in" in between "?" and ":"
         let old_allow_in = p.allow_in;
@@ -501,7 +507,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let value = *left;
         *left = p.new_expr(
-            E::Unary { op: OpCode::UnPostDec, value, flags: E::UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnPostDec,
+                value,
+                flags: E::UnaryFlags::default(),
+            },
             loc,
         );
         Ok(Continuation::Next)
@@ -516,7 +526,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let value = *left;
         *left = p.new_expr(
-            E::Unary { op: OpCode::UnPostInc, value, flags: E::UnaryFlags::default() },
+            E::Unary {
+                op: OpCode::UnPostInc,
+                value,
+                flags: E::UnaryFlags::default(),
+            },
             loc,
         );
         Ok(Continuation::Next)
@@ -531,7 +545,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Comma)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinComma, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinComma,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -547,7 +568,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Add)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinAdd, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinAdd,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -560,7 +588,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let prev = *left;
         // PORT NOTE: Zig wrote `@enumFromInt(@intFromEnum(Op.Level.assign) - 1)`; equivalent to `Level::Assign.sub(1)`.
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinAddAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinAddAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -572,7 +607,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Add)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinSub, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinSub,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -584,7 +626,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinSubAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinSubAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -596,7 +645,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Multiply)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinMul, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinMul,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -608,7 +664,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Exponentiation.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinPow, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinPow,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -620,7 +683,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinPowAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinPowAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -632,7 +702,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinMulAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinMulAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -644,7 +721,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Multiply)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinRem, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinRem,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -656,7 +740,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinRemAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinRemAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -668,7 +759,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Multiply)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinDiv, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinDiv,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -680,7 +778,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinDivAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinDivAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -692,7 +797,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Equals)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLooseEq, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLooseEq,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -704,7 +816,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Equals)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLooseNe, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLooseNe,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -716,7 +835,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Equals)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinStrictEq, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinStrictEq,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -728,7 +854,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Equals)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinStrictNe, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinStrictNe,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -742,7 +875,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking() {
+        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -754,7 +888,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLt, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLt,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -766,7 +907,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLe, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLe,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -778,7 +926,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinGt, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinGt,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -790,7 +945,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinGe, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinGe,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -804,7 +966,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking() {
+        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -816,7 +979,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Shift)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinShl, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinShl,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -828,7 +998,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinShlAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinShlAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -840,11 +1017,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Shift)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinShr, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinShr,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_greater_than_greater_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_greater_than_greater_than_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -852,11 +1040,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinShrAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinShrAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_greater_than_greater_than_greater_than(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_greater_than_greater_than_greater_than(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+    ) -> CResult {
         if level.gte(Level::Shift) {
             return Ok(Continuation::Done);
         }
@@ -864,7 +1063,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Shift)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinUShr, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinUShr,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -880,7 +1086,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinUShrAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinUShrAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -892,7 +1105,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let prev = *left;
         let loc = left.loc;
         let right = p.parse_expr(Level::NullishCoalescing)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinNullishCoalescing, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinNullishCoalescing,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -904,8 +1124,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left =
-            p.new_expr(E::Binary { op: OpCode::BinNullishCoalescingAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinNullishCoalescingAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -924,7 +1150,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let right = p.parse_expr(Level::LogicalOr)?;
         let loc = left.loc;
         let prev = *left;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLogicalOr, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLogicalOr,
+                left: prev,
+                right,
+            },
+            loc,
+        );
 
         if level.lt(Level::NullishCoalescing) {
             p.parse_suffix(left, Level::NullishCoalescing.add_f(1), None, flags)?;
@@ -945,11 +1178,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLogicalOrAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLogicalOrAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_ampersand(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
+    fn sfx_t_ampersand_ampersand(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::LogicalAnd) {
             return Ok(Continuation::Done);
         }
@@ -964,7 +1209,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::LogicalAnd)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLogicalAnd, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLogicalAnd,
+                left: prev,
+                right,
+            },
+            loc,
+        );
 
         // Prevent "&&" inside "??" from the left
         if level.lt(Level::NullishCoalescing) {
@@ -986,7 +1238,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinLogicalAndAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinLogicalAndAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -998,7 +1257,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::BitwiseOr)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseOr, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseOr,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1010,7 +1276,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseOrAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseOrAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1022,7 +1295,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::BitwiseAnd)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseAnd, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseAnd,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1034,7 +1314,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseAndAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseAndAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1046,7 +1333,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::BitwiseXor)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseXor, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseXor,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1058,7 +1352,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinBitwiseXorAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinBitwiseXorAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1070,7 +1371,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Assign.sub(1))?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinAssign, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1091,7 +1399,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinIn, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinIn,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1114,7 +1429,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
-        *left = p.new_expr(E::Binary { op: OpCode::BinInstanceof, left: prev, right }, loc);
+        *left = p.new_expr(
+            E::Binary {
+                op: OpCode::BinInstanceof,
+                left: prev,
+                right,
+            },
+            loc,
+        );
         Ok(Continuation::Next)
     }
 
@@ -1148,7 +1470,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let prev = *left;
                             let right = p.parse_expr(Level::Comma)?;
                             *left = p.new_expr(
-                                E::Binary { op: OpCode::BinComma, left: prev, right },
+                                E::Binary {
+                                    op: OpCode::BinComma,
+                                    left: prev,
+                                    right,
+                                },
                                 loc,
                             );
 
@@ -1186,7 +1512,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // arm is written out explicitly.
             let continuation = match p.lexer.token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
-                T::TAmpersandAmpersandEquals => Self::sfx_t_ampersand_ampersand_equals(p, level, left),
+                T::TAmpersandAmpersandEquals => {
+                    Self::sfx_t_ampersand_ampersand_equals(p, level, left)
+                }
                 T::TAmpersandEquals => Self::sfx_t_ampersand_equals(p, level, left),
                 T::TAsterisk => Self::sfx_t_asterisk(p, level, left),
                 T::TAsteriskAsterisk => Self::sfx_t_asterisk_asterisk(p, level, left),
@@ -1202,7 +1530,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TEqualsEquals => Self::sfx_t_equals_equals(p, level, left),
                 T::TEqualsEqualsEquals => Self::sfx_t_equals_equals_equals(p, level, left),
                 T::TExclamationEquals => Self::sfx_t_exclamation_equals(p, level, left),
-                T::TExclamationEqualsEquals => Self::sfx_t_exclamation_equals_equals(p, level, left),
+                T::TExclamationEqualsEquals => {
+                    Self::sfx_t_exclamation_equals_equals(p, level, left)
+                }
                 T::TGreaterThan => Self::sfx_t_greater_than(p, level, left),
                 T::TGreaterThanEquals => Self::sfx_t_greater_than_equals(p, level, left),
                 T::TGreaterThanGreaterThan => Self::sfx_t_greater_than_greater_than(p, level, left),
@@ -1218,7 +1548,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TIn => Self::sfx_t_in(p, level, left),
                 T::TInstanceof => Self::sfx_t_instanceof(p, level, left),
                 T::TLessThanEquals => Self::sfx_t_less_than_equals(p, level, left),
-                T::TLessThanLessThanEquals => Self::sfx_t_less_than_less_than_equals(p, level, left),
+                T::TLessThanLessThanEquals => {
+                    Self::sfx_t_less_than_less_than_equals(p, level, left)
+                }
                 T::TMinus => Self::sfx_t_minus(p, level, left),
                 T::TMinusEquals => Self::sfx_t_minus_equals(p, level, left),
                 T::TMinusMinus => Self::sfx_t_minus_minus(p, level, left),
@@ -1231,14 +1563,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TQuestionQuestionEquals => Self::sfx_t_question_question_equals(p, level, left),
                 T::TSlash => Self::sfx_t_slash(p, level, left),
                 T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
-                T::TExclamation => Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain),
+                T::TExclamation => {
+                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
+                }
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left),
                 T::TQuestionDot => Self::sfx_t_question_dot(p, level, &mut optional_chain, left),
-                T::TTemplateHead => {
-                    Self::sfx_t_template_head(p, level, &mut optional_chain, old_optional_chain, left)
-                }
+                T::TTemplateHead => Self::sfx_t_template_head(
+                    p,
+                    level,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    left,
+                ),
                 T::TLessThan => {
                     Self::sfx_t_less_than(p, level, &mut optional_chain, old_optional_chain, left)
                 }
@@ -1252,9 +1590,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     old_optional_chain,
                     left,
                 ),
-                T::TOpenBracket => {
-                    Self::sfx_t_open_bracket(p, &mut optional_chain, old_optional_chain, left, flags)
-                }
+                T::TOpenBracket => Self::sfx_t_open_bracket(
+                    p,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    left,
+                    flags,
+                ),
                 T::TDot => Self::sfx_t_dot(p, &mut optional_chain, old_optional_chain, left),
                 T::TLessThanLessThan => Self::sfx_t_less_than_less_than(
                     p,

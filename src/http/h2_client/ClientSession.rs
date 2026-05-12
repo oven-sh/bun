@@ -7,8 +7,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_collections::ArrayHashMap;
-use bun_core::{err, Error};
 use bun_core::strings;
+use bun_core::{Error, err};
 
 use super::bridge::socket_is_closed_or_has_error;
 use super::stream::{State as StreamState, Stream};
@@ -140,9 +140,7 @@ pub(super) fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
 /// [`crate::http_context::HTTPContext::h2_session_ref`].
 #[inline(always)]
 pub(super) fn stream_ref(ptr: *const Stream) -> bun_ptr::ParentRef<Stream> {
-    bun_ptr::ParentRef::from(
-        NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"),
-    )
+    bun_ptr::ParentRef::from(NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"))
 }
 
 /// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.
@@ -166,7 +164,9 @@ fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'
 /// callback. Disjoint allocation from both `Stream` and `ClientSession`, so
 /// the returned `&mut` does not alias either. HTTP-thread-only.
 #[inline(always)]
-pub(super) fn stream_client_mut<'a>(c: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+pub(super) fn stream_client_mut<'a>(
+    c: NonNull<HTTPClient<'static>>,
+) -> &'a mut HTTPClient<'static> {
     // Route through the crate-wide [`HTTPClient::from_erased_backref`] accessor;
     // see INVARIANT above.
     HTTPClient::from_erased_backref(c)
@@ -281,11 +281,11 @@ impl ClientSession {
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
     ) -> bool {
-        let mine: Option<*const ssl_config::SSLConfig> =
-            self.ssl_config.as_ref().map(|p| std::ptr::from_ref(p.get()));
-        self.port == port
-            && mine == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+        let mine: Option<*const ssl_config::SSLConfig> = self
+            .ssl_config
+            .as_ref()
+            .map(|p| std::ptr::from_ref(p.get()));
+        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
     }
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {
@@ -389,8 +389,8 @@ impl ClientSession {
     pub fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
 
-        let send_window =
-            i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).expect("int cast");
+        let send_window = i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE))
+            .expect("int cast");
         let stream = bun_core::heap::into_raw(Stream::new(
             self.next_stream_id,
             std::ptr::from_mut(self),
@@ -515,7 +515,11 @@ impl ClientSession {
             }
             false
         };
-        self.socket.set_timeout(if want { crate::idle_timeout_seconds() } else { 0 });
+        self.socket.set_timeout(if want {
+            crate::idle_timeout_seconds()
+        } else {
+            0
+        });
     }
 
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled
@@ -524,7 +528,9 @@ impl ClientSession {
     pub fn drain_response_body_by_http_id(&mut self, async_http_id: u32) {
         let _guard = self.ref_scope();
         for &stream in self.streams.values() {
-            let Some(client) = stream_mut(stream).client_mut() else { continue };
+            let Some(client) = stream_mut(stream).client_mut() else {
+                continue;
+            };
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -540,11 +546,16 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
-            let Some(client) = stream_mut(stream).client_mut() else { continue };
+            let Some(client) = stream_mut(stream).client_mut() else {
+                continue;
+            };
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if !matches!(client.state.original_request_body, HTTPRequestBody::Stream(_)) {
+            if !matches!(
+                client.state.original_request_body,
+                HTTPRequestBody::Stream(_)
+            ) {
                 return;
             }
             if let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body {
@@ -564,7 +575,12 @@ impl ClientSession {
 
     pub fn write_window_update(&mut self, stream_id: u32, increment: u31) {
         let bytes = increment.to_be_bytes();
-        self.write_frame(wire::FrameType::HTTP_FRAME_WINDOW_UPDATE, 0, stream_id, &bytes);
+        self.write_frame(
+            wire::FrameType::HTTP_FRAME_WINDOW_UPDATE,
+            0,
+            stream_id,
+            &bytes,
+        );
     }
 
     fn replenish_window(&mut self) {
@@ -932,7 +948,10 @@ impl ClientSession {
             if err == err!(HTTP2RefusedStream)
                 && stream.status_code == 0
                 && client.h2_retries < crate::MAX_H2_RETRIES
-                && matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_))
+                && matches!(
+                    client.state.original_request_body,
+                    HTTPRequestBody::Bytes(_)
+                )
             {
                 client.h2_retry();
             } else {

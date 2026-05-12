@@ -16,9 +16,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena → bumpalo::Bump
 use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MapEntry};
-use bun_core::{self, env_var, FeatureFlags, output as Output};
+use bun_core::{self, FeatureFlags, env_var, output as Output};
 use bun_sys::Fd;
-use bun_threading::{thread_pool as ThreadPoolLib, Mutex};
+use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
 #[allow(unused_imports)]
 use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
@@ -28,10 +28,10 @@ use crate::linker_context_mod::StmtList;
 // file-backed `options_impl::Target`. Compare against the latter so
 // `primary.options.target == target` type-checks. The two enums collapse in
 // Phase B-3 (see lib.rs `pub mod options` shadow note).
+use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
 use crate::transpiler::Transpiler;
-use crate::BundleV2;
 use bun_js_parser as js_ast;
 
 bun_core::declare_scope!(ThreadPool, visible);
@@ -145,11 +145,13 @@ mod io_thread_pool {
         if REF_COUNT.load(Ordering::Relaxed) == 0 {
             // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
             unsafe {
-                (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
-                    max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
-                    // Use a much smaller stack size for the IO thread pool
-                    stack_size: 512 * 1024,
-                }));
+                (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
+                    ThreadPoolLib::Config {
+                        max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
+                        // Use a much smaller stack size for the IO thread pool
+                        stack_size: 512 * 1024,
+                    },
+                ));
             }
             // 2 means initialized and referenced by one `ThreadPool`.
             REF_COUNT.store(2, Ordering::Release);
@@ -233,7 +235,10 @@ impl ThreadPool {
                 // PERF(port): was `v2.arena().create(ThreadPoolLib)` —
                 // using heap::alloc (global mimalloc).
                 let pool = bun_core::heap::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
-                    ThreadPoolLib::Config { max_threads: u32::from(cpu_count), ..Default::default() },
+                    ThreadPoolLib::Config {
+                        max_threads: u32::from(cpu_count),
+                        ..Default::default()
+                    },
                 )));
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
                 pool
@@ -247,7 +252,11 @@ impl ThreadPool {
     pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
         ThreadPool {
             worker_pool,
-            io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire().into()) } else { None },
+            io_pool: if Self::uses_io_pool() {
+                Some(io_thread_pool::acquire().into())
+            } else {
+                None
+            },
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref::<V2>(v2).cast(),
             worker_pool_is_owned: false,
@@ -320,7 +329,11 @@ impl ThreadPool {
     /// If a `ThreadPool` exists, this function is a no-op and returns false.
     /// Blocks until the IO pool is shut down.
     pub fn shutdown_io_pool() -> bool {
-        if Self::uses_io_pool() { io_thread_pool::shutdown() } else { true }
+        if Self::uses_io_pool() {
+            io_thread_pool::shutdown()
+        } else {
+            true
+        }
     }
 
     pub fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
@@ -340,23 +353,30 @@ impl ThreadPool {
                 contents: if contents.is_empty() {
                     Contents::Empty
                 } else {
-                    Contents::External { ptr: contents.as_ptr(), len: contents.len() }
+                    Contents::External {
+                        ptr: contents.as_ptr(),
+                        len: contents.len(),
+                    }
                 },
                 fd: Fd::INVALID,
                 external_free_function: ExternalFreeFunction::NONE,
             });
         }
 
-        let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) = if is_inside_thread_pool {
-            ThreadPoolLib::ThreadPool::schedule_inside_thread_pool
-        } else {
-            ThreadPoolLib::ThreadPool::schedule
-        };
+        let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) =
+            if is_inside_thread_pool {
+                ThreadPoolLib::ThreadPool::schedule_inside_thread_pool
+            } else {
+                ThreadPoolLib::ThreadPool::schedule
+            };
 
         if Self::uses_io_pool() {
             match parse_task.stage {
                 ParseTaskStage::NeedsParse(_) => {
-                    schedule_fn(self.worker_pool(), ThreadPoolLib::Batch::from(&raw mut parse_task.task));
+                    schedule_fn(
+                        self.worker_pool(),
+                        ThreadPoolLib::Batch::from(&raw mut parse_task.task),
+                    );
                 }
                 ParseTaskStage::NeedsSourceCode => {
                     // io_pool is Some when uses_io_pool().
@@ -365,7 +385,10 @@ impl ThreadPool {
                 }
             }
         } else {
-            schedule_fn(self.worker_pool(), ThreadPoolLib::Batch::from(&raw mut parse_task.task));
+            schedule_fn(
+                self.worker_pool(),
+                ThreadPoolLib::Batch::from(&raw mut parse_task.task),
+            );
         }
     }
 
@@ -422,7 +445,8 @@ impl ThreadPool {
                 ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
                 heap: None,
                 arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
-                thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
+                thread: NonNull::new(ThreadPoolLib::Thread::current())
+                    .map(bun_ptr::ParentRef::from),
                 data: None,
                 quit: false,
                 ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
@@ -536,9 +560,7 @@ impl Worker {
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via
         // `deinit_soon`, so provenance covers the full `Worker` allocation.
-        let this: *mut Worker = unsafe {
-            bun_core::from_field_ptr!(Worker, deinit_task, task)
-        };
+        let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, deinit_task, task) };
         // SAFETY: `deinit_soon` schedules this exactly once on a live
         // heap-allocated `Worker`; the idle-task fires on the worker's own OS
         // thread with no other live borrow, so we hold exclusive ownership.
@@ -643,9 +665,7 @@ impl Worker {
         // Self-referential — `arena` borrows `self.heap`. `Option::insert`
         // returns the stable address of the in-place payload (Worker is
         // heap-pinned, so this never moves).
-        self.arena = bun_ptr::BackRef::new(
-            self.heap.insert(ThreadLocalArena::new()),
-        );
+        self.arena = bun_ptr::BackRef::new(self.heap.insert(ThreadLocalArena::new()));
 
         // SAFETY: self-referential — `self.arena` was just set to `&self.heap`
         // (Worker is heap-pinned, address stable). `'static` is sound for the
@@ -657,8 +677,7 @@ impl Worker {
         // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
         // ASTMemoryAllocator owns its bump arena internally and ignores the
         // passed fallback (see ASTMemoryAllocator::new doc).
-        *self.ast_memory_store =
-            bun_ast::ASTMemoryAllocator::new(arena_ref);
+        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
         self.ast_memory_store.reset();
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
@@ -704,15 +723,13 @@ impl Worker {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
-                let client: &Transpiler<'_> =
-                    self.ctx.client_transpiler_ref().unwrap();
+                let client: &Transpiler<'_> = self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
                 // pinned for the worker's lifetime; detach to `'static` for the
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                let mut boxed =
-                    Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
+                let mut boxed = Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();
                 data.other_transpiler = Some(boxed);
@@ -737,7 +754,7 @@ impl Worker {
     }
 }
 
-use bun_ast::Ref;
 use bun_ast::Index;
+use bun_ast::Ref;
 
 // ported from: src/bundler/ThreadPool.zig

@@ -7,11 +7,11 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_core::{env_var, fmt as bun_fmt, Environment, Global};
 use bun_core::env::{Architecture, OperatingSystem};
+use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
+use bun_core::{MutableString, ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
-use bun_core::{strings, MutableString, ZStr};
 use bun_sys::Fd;
 
 /// Used for `bun build --compile`
@@ -243,10 +243,7 @@ impl CompileTarget {
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),
             &mut buf[..],
-            &[
-                cache_dir.as_slice(),
-                version_str.as_bytes(),
-            ],
+            &[cache_dir.as_slice(), version_str.as_bytes()],
         );
 
         if bun_sys::exists_at(Fd::cwd(), dest) {
@@ -258,7 +255,6 @@ impl CompileTarget {
 
     // `download_to_path` moved up to `bun_standalone_graph` so it can name
     // `bun_http::AsyncHTTP` directly; this struct stays data-only.
-
 
     pub fn is_supported(&self) -> bool {
         match self.os {
@@ -409,28 +405,22 @@ impl CompileTarget {
                         bstr::BStr::new(input_),
                     );
                 } else {
-                    bun_core::err_generic!(
-                        "Unsupported target: {}",
-                        bstr::BStr::new(input_)
-                    );
+                    bun_core::err_generic!("Unsupported target: {}", bstr::BStr::new(input_));
                 }
                 Global::exit(1);
             }
             Err(ParseError::InvalidTarget) => {
                 let input = strings::trim(input_, b" \t\r");
                 if strings::contains(input, b"musl") && !strings::contains(input, b"linux") {
-                    bun_core::err_generic!(
-                        "invalid target, musl libc only exists on linux"
-                    );
-                } else if strings::contains(input, b"android") && !strings::contains(input, b"linux")
+                    bun_core::err_generic!("invalid target, musl libc only exists on linux");
+                } else if strings::contains(input, b"android")
+                    && !strings::contains(input, b"linux")
                 {
                     bun_core::err_generic!(
                         "invalid target, android only exists with linux (use bun-linux-arm64-android)"
                     );
                 } else if strings::contains(input, b"wasm") {
-                    bun_core::err_generic!(
-                        "invalid target, WebAssembly is not supported. Sorry!"
-                    );
+                    bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
                 } else if strings::contains(input, b"v") {
                     // PORT NOTE: Zig used a comptime-concat format string with VERSION_STRING.
                     // `format_args!` requires a literal; pass the version as a runtime arg.
@@ -439,10 +429,7 @@ impl CompileTarget {
                         Environment::VERSION_STRING,
                     );
                 } else {
-                    bun_core::err_generic!(
-                        "Invalid target: {}",
-                        bstr::BStr::new(input_)
-                    );
+                    bun_core::err_generic!("Invalid target: {}", bstr::BStr::new(input_));
                 }
                 Global::exit(1);
             }
@@ -516,7 +503,9 @@ impl fmt::Display for CompileTarget {
             bstr::BStr::new(self.os.npm_name()),
             bstr::BStr::new(self.arch.npm_name()),
             self.libc,
-            BaselineFormatter { baseline: self.baseline },
+            BaselineFormatter {
+                baseline: self.baseline
+            },
             self.version.major,
             self.version.minor,
             self.version.patch,

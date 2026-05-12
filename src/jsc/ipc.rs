@@ -1,25 +1,25 @@
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_io::KeepAlive;
-use bun_collections::{ByteVecExt, VecExt};
-use bun_core::{handle_oom, Output};
-use bun_event_loop::ManagedTask::ManagedTask;
-use bun_io::StreamBuffer;
 use crate as jsc;
+use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
-use crate::js_value::Protected;
-use bun_core::{immutable as strings, String as BunString};
+use bun_collections::{ByteVecExt, VecExt};
+use bun_core::{Output, handle_oom};
+use bun_core::{String as BunString, immutable as strings};
+use bun_event_loop::ManagedTask::ManagedTask;
+use bun_io::KeepAlive;
+use bun_io::StreamBuffer;
+use bun_sys::Fd;
 use bun_sys::FdExt;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-use bun_sys::Fd;
 use bun_uws;
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
@@ -82,7 +82,8 @@ impl InternalMsgHolder {
     pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
         // TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
         // (Rust: just push; the workaround is Zig-specific.)
-        self.messages.push(crate::StrongOptional::create(message, global));
+        self.messages
+            .push(crate::StrongOptional::create(message, global));
     }
 
     pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
@@ -341,7 +342,11 @@ mod advanced {
         }
 
         let message_type_raw: u8 = data[0];
-        let message_len = u32::from_le_bytes(data[1..1 + size_of::<u32>()].try_into().expect("infallible: size matches"));
+        let message_len = u32::from_le_bytes(
+            data[1..1 + size_of::<u32>()]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
 
         log!(
             "Received IPC message type {} ({}) len {}",
@@ -539,7 +544,9 @@ mod json {
         let parsed = crate::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
         str.deref();
         if is_ascii && !was_ascii_string_freed {
-            panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
+            panic!(
+                "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
+            );
         }
         let deserialized = match parsed {
             Ok(v) => v,
@@ -675,7 +682,10 @@ pub struct Handle {
 
 impl Handle {
     pub fn init(fd: Fd, js: JSValue) -> Self {
-        Self { fd, js: js.protected() }
+        Self {
+            fd,
+            js: js.protected(),
+        }
     }
 }
 
@@ -1064,7 +1074,9 @@ impl SendQueue {
         self.close_next_tick = Some(task);
         // SAFETY: VirtualMachine::get() returns the singleton; enqueue_task
         // only mutates the task queue.
-        VirtualMachine::get().as_mut().enqueue_task(self.close_next_tick.unwrap());
+        VirtualMachine::get()
+            .as_mut()
+            .enqueue_task(self.close_next_tick.unwrap());
     }
 
     fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
@@ -1111,9 +1123,7 @@ impl SendQueue {
         let use_last = if handle.is_none() && !self.queue.is_empty() {
             let len = self.queue.len();
             let last = &self.queue[len - 1];
-            last.handle.is_none()
-                && !last.is_ack_nack()
-                && !(len == 1 && self.write_in_progress)
+            last.handle.is_none() && !last.is_ack_nack() && !(len == 1 && self.write_in_progress)
         } else {
             false
         };
@@ -1479,9 +1489,7 @@ impl SendQueue {
                     // `Box::from_raw` would carry the `&mut`-reborrow tag instead
                     // of the original allocation root. Matches Zig's raw-pointer
                     // pass-through (libuv.zig `uvWriteCb`).
-                    |req: *mut WindowsWrite, rc| {
-                        SendQueue::_windows_on_write_complete(req, rc)
-                    },
+                    |req: *mut WindowsWrite, rc| SendQueue::_windows_on_write_complete(req, rc),
                 )
             };
             if result.to_error(bun_sys::Tag::write).is_some() {
@@ -1622,8 +1630,7 @@ impl SendQueue {
         // `StreamReader for SendQueue` impl below (wraps the
         // `IPCHandlers::WindowsNamedPipe` callbacks).
         let read_start_result =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }
-                .to_error(bun_sys::Tag::listen);
+            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
         if let Some(err) = read_start_result {
             // SAFETY: caller contract — `this` is a live SendQueue.
             unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
@@ -1639,7 +1646,10 @@ impl SendQueue {
     /// pipe's lifetime and later writes through the root would otherwise pop
     /// its tag under Stacked Borrows.
     #[cfg(windows)]
-    pub unsafe fn windows_configure_client(this: *mut Self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
+    pub unsafe fn windows_configure_client(
+        this: *mut Self,
+        pipe_fd: Fd,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         log!("configureClient");
         let ipc_pipe: *mut uv::Pipe =
@@ -1653,9 +1663,7 @@ impl SendQueue {
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        if let Some(err) =
-            unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open)
-        {
+        if let Some(err) = unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open) {
             // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
             unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
             return Err(err.into());
@@ -1675,8 +1683,7 @@ impl SendQueue {
         // context pointer (see fn safety contract) so storing it in
         // `handle.data` is sound for the handle's lifetime.
         if let Some(err) =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }
-                .to_error(bun_sys::Tag::listen)
+            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen)
         {
             // SAFETY: caller contract — `this` is a live SendQueue.
             unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
@@ -1962,33 +1969,31 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
             };
             if adv_buf.len() == 0 {
                 loop {
-                    let result =
-                        match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
-                            Ok(r) => r,
-                            Err(IPCDecodeError::NotEnoughBytes) => {
-                                let IncomingBuffer::Advanced(adv_buf) =
-                                    &mut send_queue.incoming
-                                else {
-                                    unreachable!()
-                                };
-                                handle_oom(adv_buf.write(data));
-                                log!("hit NotEnoughBytes");
-                                return;
-                            }
-                            Err(
-                                IPCDecodeError::InvalidFormat
-                                | IPCDecodeError::JSError
-                                | IPCDecodeError::JSTerminated,
-                            ) => {
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                            Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.");
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                        };
+                    let result = match decode_ipc_message(Mode::Advanced, data, &global_this, None)
+                    {
+                        Ok(r) => r,
+                        Err(IPCDecodeError::NotEnoughBytes) => {
+                            let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
+                                unreachable!()
+                            };
+                            handle_oom(adv_buf.write(data));
+                            log!("hit NotEnoughBytes");
+                            return;
+                        }
+                        Err(
+                            IPCDecodeError::InvalidFormat
+                            | IPCDecodeError::JSError
+                            | IPCDecodeError::JSTerminated,
+                        ) => {
+                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                            return;
+                        }
+                        Err(IPCDecodeError::OutOfMemory) => {
+                            Output::print_errorln("IPC message is too long.");
+                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                            return;
+                        }
+                    };
 
                     handle_ipc_message(send_queue, result.message, &global_this);
 
@@ -2011,36 +2016,35 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                     unreachable!()
                 };
                 let slice = &adv_buf.slice()[slice_start..];
-                let result =
-                    match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
-                        Ok(r) => r,
-                        Err(IPCDecodeError::NotEnoughBytes) => {
-                            let slice_len = slice.len();
-                            // copy the remaining bytes to the start of the buffer
-                            // SAFETY: src/dst may overlap; use ptr::copy (memmove).
-                            unsafe {
-                                let base = adv_buf.as_mut_ptr();
-                                core::ptr::copy(base.add(slice_start), base, slice_len);
-                            }
-                            debug_assert!(slice_len <= u32::MAX as usize);
-                            unsafe { adv_buf.set_len(slice_len) };
-                            log!("hit NotEnoughBytes2");
-                            return;
+                let result = match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
+                    Ok(r) => r,
+                    Err(IPCDecodeError::NotEnoughBytes) => {
+                        let slice_len = slice.len();
+                        // copy the remaining bytes to the start of the buffer
+                        // SAFETY: src/dst may overlap; use ptr::copy (memmove).
+                        unsafe {
+                            let base = adv_buf.as_mut_ptr();
+                            core::ptr::copy(base.add(slice_start), base, slice_len);
                         }
-                        Err(
-                            IPCDecodeError::InvalidFormat
-                            | IPCDecodeError::JSError
-                            | IPCDecodeError::JSTerminated,
-                        ) => {
-                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                            return;
-                        }
-                        Err(IPCDecodeError::OutOfMemory) => {
-                            Output::print_errorln("IPC message is too long.");
-                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                            return;
-                        }
-                    };
+                        debug_assert!(slice_len <= u32::MAX as usize);
+                        unsafe { adv_buf.set_len(slice_len) };
+                        log!("hit NotEnoughBytes2");
+                        return;
+                    }
+                    Err(
+                        IPCDecodeError::InvalidFormat
+                        | IPCDecodeError::JSError
+                        | IPCDecodeError::JSTerminated,
+                    ) => {
+                        send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                        return;
+                    }
+                    Err(IPCDecodeError::OutOfMemory) => {
+                        Output::print_errorln("IPC message is too long.");
+                        send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                        return;
+                    }
+                };
 
                 let slice_len = slice.len();
                 handle_ipc_message(send_queue, result.message, &global_this);
@@ -2249,41 +2253,37 @@ pub mod IPCHandlers {
                             unreachable!()
                         };
                         let slice = &adv_buf.slice()[slice_start..total_len];
-                        let result = match decode_ipc_message(
-                            Mode::Advanced,
-                            slice,
-                            &global_this,
-                            None,
-                        ) {
-                            Ok(r) => r,
-                            Err(IPCDecodeError::NotEnoughBytes) => {
-                                let slice_len = slice.len();
-                                // copy the remaining bytes to the start of the buffer
-                                // SAFETY: src/dst may overlap; ptr::copy is memmove.
-                                unsafe {
-                                    let base = adv_buf.as_mut_ptr();
-                                    core::ptr::copy(base.add(slice_start), base, slice_len);
+                        let result =
+                            match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
+                                Ok(r) => r,
+                                Err(IPCDecodeError::NotEnoughBytes) => {
+                                    let slice_len = slice.len();
+                                    // copy the remaining bytes to the start of the buffer
+                                    // SAFETY: src/dst may overlap; ptr::copy is memmove.
+                                    unsafe {
+                                        let base = adv_buf.as_mut_ptr();
+                                        core::ptr::copy(base.add(slice_start), base, slice_len);
+                                    }
+                                    // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
+                                    debug_assert!(slice_len <= u32::MAX as usize);
+                                    unsafe { adv_buf.set_len(slice_len) };
+                                    log!("hit NotEnoughBytes3");
+                                    return;
                                 }
-                                // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
-                                debug_assert!(slice_len <= u32::MAX as usize);
-                                unsafe { adv_buf.set_len(slice_len) };
-                                log!("hit NotEnoughBytes3");
-                                return;
-                            }
-                            Err(
-                                IPCDecodeError::InvalidFormat
-                                | IPCDecodeError::JSError
-                                | IPCDecodeError::JSTerminated,
-                            ) => {
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                            Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.");
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                        };
+                                Err(
+                                    IPCDecodeError::InvalidFormat
+                                    | IPCDecodeError::JSError
+                                    | IPCDecodeError::JSTerminated,
+                                ) => {
+                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                    return;
+                                }
+                                Err(IPCDecodeError::OutOfMemory) => {
+                                    Output::print_errorln("IPC message is too long.");
+                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                    return;
+                                }
+                            };
 
                         let slice_len = slice.len();
                         handle_ipc_message(send_queue, result.message, &global_this);
@@ -2292,8 +2292,7 @@ pub mod IPCHandlers {
                             slice_start += result.bytes_consumed as usize;
                         } else {
                             // clear the buffer
-                            let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming
-                            else {
+                            let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                                 unreachable!()
                             };
                             adv_buf.clear();

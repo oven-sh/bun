@@ -28,11 +28,7 @@ use crate::mimalloc;
 /// opaque cookie is ignored (never dereferenced) and `mi_malloc` is `safe fn`,
 /// so this thunk has no memory-safety preconditions; a safe fn item still
 /// coerces to the `Option<unsafe extern "C" fn>` field at the assignment site.
-pub extern "C" fn mi_malloc_items(
-    _: *mut c_void,
-    items: c_uint,
-    size: c_uint,
-) -> *mut c_void {
+pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
     let p = mimalloc::mi_malloc((items * size) as usize);
     if p.is_null() {
         unreachable!();
@@ -121,10 +117,7 @@ macro_rules! c_thunks_for_zone {
             p
         }
 
-        pub unsafe extern "C" fn free(
-            _: *mut ::core::ffi::c_void,
-            data: *mut ::core::ffi::c_void,
-        ) {
+        pub unsafe extern "C" fn free(_: *mut ::core::ffi::c_void, data: *mut ::core::ffi::c_void) {
             if $crate::heap_breakdown::ENABLED {
                 // SAFETY: `data` was allocated by this zone in one of the
                 // alloc thunks above.

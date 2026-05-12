@@ -3,25 +3,25 @@
 use core::ptr::NonNull;
 
 use bun_collections::VecExt;
-use bun_core::{self, err};
 use bun_core::strings;
+use bun_core::{self, err};
 
-use bun_ast as js_ast;
-use crate::p::P;
-use bun_ast::scope::Kind as ScopeKind;
-use bun_ast::op::Level;
-use bun_ast::ts::Metadata as TsMetadata;
-use bun_ast::flags;
 use crate::lexer as js_lexer;
-use bun_ast::lexer_tables::PropertyModifierKeyword;
+use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParseStatementOptions, PropertyOpts,
     SkipTypeParameterResult, TypeParameterFlag,
 };
+use bun_ast as js_ast;
+use bun_ast::flags;
+use bun_ast::lexer_tables::PropertyModifierKeyword;
+use bun_ast::op::Level;
+use bun_ast::scope::Kind as ScopeKind;
+use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
-    E, Expr, ExprNodeList, Stmt,
+    E, Expr, ExprNodeList,
     G::{self, Property, PropertyKind},
-    symbol,
+    Stmt, symbol,
 };
 use js_lexer::T;
 
@@ -39,7 +39,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         key_range: bun_ast::Range,
     ) -> Result<Option<G::Property>, bun_core::Error> {
         let p = self;
-        if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set {
+        if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set
+        {
             // markSyntaxFeature object extensions
         }
 
@@ -55,18 +56,38 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 js_ast::ExprData::EString(str_) => {
                     if !opts.is_static && str_.eql_comptime(b"constructor") {
                         if kind == PropertyKind::Get {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter");
+                            p.log().add_range_error(
+                                Some(p.source),
+                                key_range,
+                                b"Class constructor cannot be a getter",
+                            );
                         } else if kind == PropertyKind::Set {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter");
+                            p.log().add_range_error(
+                                Some(p.source),
+                                key_range,
+                                b"Class constructor cannot be a setter",
+                            );
                         } else if opts.is_async {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function");
+                            p.log().add_range_error(
+                                Some(p.source),
+                                key_range,
+                                b"Class constructor cannot be an async function",
+                            );
                         } else if opts.is_generator {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function");
+                            p.log().add_range_error(
+                                Some(p.source),
+                                key_range,
+                                b"Class constructor cannot be a generator function",
+                            );
                         } else {
                             is_constructor = true;
                         }
                     } else if opts.is_static && str_.eql_comptime(b"prototype") {
-                        p.log().add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"");
+                        p.log().add_range_error(
+                            Some(p.source),
+                            key_range,
+                            b"Invalid static method name \"prototype\"",
+                        );
                     }
                 }
                 _ => {}
@@ -79,13 +100,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 async_range: opts.async_range,
                 needs_async_loc: key.loc,
                 has_async_range: !opts.async_range.is_empty(),
-                allow_await: if opts.is_async { AwaitOrYield::AllowExpr } else { AwaitOrYield::AllowIdent },
-                allow_yield: if opts.is_generator { AwaitOrYield::AllowExpr } else { AwaitOrYield::AllowIdent },
+                allow_await: if opts.is_async {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    AwaitOrYield::AllowIdent
+                },
+                allow_yield: if opts.is_generator {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    AwaitOrYield::AllowIdent
+                },
                 allow_super_call: opts.class_has_extends && is_constructor,
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
-                has_decorators: opts.ts_decorators.len() > 0 || (opts.has_class_decorators && is_constructor),
+                has_decorators: opts.ts_decorators.len() > 0
+                    || (opts.has_class_decorators && is_constructor),
 
                 // Only allow omitting the body if we're parsing TypeScript class
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,
@@ -93,7 +123,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             },
         )?;
 
-        opts.has_argument_decorators = opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
+        opts.has_argument_decorators =
+            opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
         // "class Foo { foo(): void; foo(): void {} }"
@@ -118,34 +149,39 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
                     // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
-                    p.log()
-                        .add_range_error_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!("Getter {} must have zero arguments", bstr::BStr::new(key_name)),
-                        );
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        r,
+                        format_args!(
+                            "Getter {} must have zero arguments",
+                            bstr::BStr::new(key_name)
+                        ),
+                    );
                 }
             }
             PropertyKind::Set => {
                 if args.len() != 1 {
                     let mut r = js_lexer::range_of_identifier(
                         p.source,
-                        if args.len() > 0 { args[0].binding.loc } else { loc },
+                        if args.len() > 0 {
+                            args[0].binding.loc
+                        } else {
+                            loc
+                        },
                     );
                     if args.len() > 1 {
                         r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
                     }
                     let key_name = p.key_name_for_error(key);
-                    p.log()
-                        .add_range_error_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!(
-                                "Setter {} must have exactly 1 argument (there are {})",
-                                bstr::BStr::new(key_name),
-                                args.len()
-                            ),
-                        );
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        r,
+                        format_args!(
+                            "Setter {} must have exactly 1 argument (there are {})",
+                            bstr::BStr::new(key_name),
+                            args.len()
+                        ),
+                    );
                 }
             }
             _ => {}
@@ -180,9 +216,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let name = p.load_name_from_ref(private.ref_);
                 if name == b"#constructor" {
-                    p.log().add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"");
+                    p.log().add_range_error(
+                        Some(p.source),
+                        key_range,
+                        b"Invalid method name \"#constructor\"",
+                    );
                 }
-                private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
+                private.ref_ = p
+                    .declare_symbol(declare, key.loc, name)
+                    .expect("unreachable");
             }
             _ => {}
         }
@@ -227,7 +269,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             match p.lexer.token {
                 T::TNumericLiteral => {
-                    key = p.new_expr(E::Number { value: p.lexer.number }, p.lexer.loc());
+                    key = p.new_expr(
+                        E::Number {
+                            value: p.lexer.number,
+                        },
+                        p.lexer.loc(),
+                    );
                     // p.checkForLegacyOctalLiteral()
                     p.lexer.next()?;
                 }
@@ -235,12 +282,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     key = p.parse_string_literal()?;
                 }
                 T::TBigIntegerLiteral => {
-                    key = p.new_expr(E::BigInt { value: p.lexer.identifier.into() }, p.lexer.loc());
+                    key = p.new_expr(
+                        E::BigInt {
+                            value: p.lexer.identifier.into(),
+                        },
+                        p.lexer.loc(),
+                    );
                     // markSyntaxFeature
                     p.lexer.next()?;
                 }
                 T::TPrivateIdentifier => {
-                    if !opts.is_class || (opts.ts_decorators.len() > 0 && !p.options.features.standard_decorators) {
+                    if !opts.is_class
+                        || (opts.ts_decorators.len() > 0 && !p.options.features.standard_decorators)
+                    {
                         p.lexer.expected(T::TIdentifier)?;
                     }
 
@@ -373,9 +427,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     PropertyModifierKeyword::PDeclare => {
                                         // skip declare keyword entirely
                                         // https://github.com/oven-sh/bun/issues/1907
-                                        if opts.is_class && Self::IS_TYPESCRIPT_ENABLED && raw == b"declare" {
+                                        if opts.is_class
+                                            && Self::IS_TYPESCRIPT_ENABLED
+                                            && raw == b"declare"
+                                        {
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(_prop) = p.parse_property(kind, opts, None)? {
+                                            if let Some(_prop) =
+                                                p.parse_property(kind, opts, None)?
+                                            {
                                                 let mut prop = _prop;
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
@@ -398,7 +457,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         {
                                             opts.is_ts_abstract = true;
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(prop) = p.parse_property(kind, opts, None)? {
+                                            if let Some(prop) =
+                                                p.parse_property(kind, opts, None)?
+                                            {
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
@@ -481,12 +542,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Handle invalid identifiers in property names
                     // https://github.com/oven-sh/bun/issues/12039
                     if p.lexer.token == T::TSyntaxError {
-                        p.log()
-                            .add_range_error_fmt(
-                                Some(p.source),
-                                name_range,
-                                format_args!("Unexpected {}", bun_core::fmt::quote(name)),
-                            );
+                        p.log().add_range_error_fmt(
+                            Some(p.source),
+                            name_range,
+                            format_args!("Unexpected {}", bun_core::fmt::quote(name)),
+                        );
                         return Err(err!("SyntaxError"));
                     }
 
@@ -509,9 +569,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && name == b"yield")
                         {
                             if name == b"await" {
-                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here");
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    name_range,
+                                    b"Cannot use \"await\" here",
+                                );
                             } else {
-                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here");
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    name_range,
+                                    b"Cannot use \"yield\" here",
+                                );
                             }
                         }
 
@@ -521,7 +589,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Destructuring patterns have an optional default value
                         let mut initializer: Option<Expr> = None;
                         if errors.is_some() && p.lexer.token == T::TEquals {
-                            errors.as_mut().unwrap().invalid_expr_default_value = Some(p.lexer.range());
+                            errors.as_mut().unwrap().invalid_expr_default_value =
+                                Some(p.lexer.range());
                             p.lexer.next()?;
                             initializer = Some(p.parse_expr(Level::Comma)?);
                         }
@@ -588,7 +657,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 || (opts.is_static && str_.eql_comptime(b"prototype"))
                             {
                                 // TODO: fmt error message to include string value.
-                                p.log().add_range_error(Some(p.source), key_range, b"Invalid field name");
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    key_range,
+                                    b"Invalid field name",
+                                );
                             }
                         }
                         _ => {}
@@ -640,7 +713,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(private) => {
                         let name = p.load_name_from_ref(private.ref_);
                         if name == b"#constructor" {
-                            p.log().add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"");
+                            p.log().add_range_error(
+                                Some(p.source),
+                                key_range,
+                                b"Invalid field name \"#constructor\"",
+                            );
                         }
 
                         let declare: symbol::Kind = if opts.is_static {
@@ -649,7 +726,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             symbol::Kind::PrivateField
                         };
 
-                        private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
+                        private.ref_ = p
+                            .declare_symbol(declare, key.loc, name)
+                            .expect("unreachable");
                     }
                     _ => {}
                 }
@@ -677,8 +756,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Auto-accessor fields cannot be methods
             if kind == PropertyKind::AutoAccessor && p.lexer.token == T::TOpenParen {
-                p.log()
-                    .add_range_error(Some(p.source), key_range, b"auto-accessor properties cannot have a method body");
+                p.log().add_range_error(
+                    Some(p.source),
+                    key_range,
+                    b"auto-accessor properties cannot have a method body",
+                );
                 return Err(err!("SyntaxError"));
             }
 
@@ -689,7 +771,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 || opts.is_async
                 || opts.is_generator
             {
-                return Self::parse_method_expression(p, kind, opts, is_computed, &mut key, key_range);
+                return Self::parse_method_expression(
+                    p,
+                    kind,
+                    opts,
+                    is_computed,
+                    &mut key,
+                    key_range,
+                );
             }
 
             // Parse an object key/value pair

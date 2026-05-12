@@ -53,8 +53,7 @@ impl ArrayBufferSink {
         } = stream_start
         {
             if chunk_size > 0 {
-                self
-                    .bytes
+                self.bytes
                     .ensure_total_capacity_precise(chunk_size as usize);
             }
 
@@ -104,7 +103,9 @@ impl ArrayBufferSink {
         unsafe { Self::destroy(this) };
     }
 
-    pub fn init(next: Option<Sink<'static>>) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
+    pub fn init(
+        next: Option<Sink<'static>>,
+    ) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
         Ok(Box::new(ArrayBufferSink {
             bytes: Vec::<u8>::default(),
             done: false,
@@ -192,7 +193,11 @@ impl ArrayBufferSink {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject, as_uint8array: bool) -> JsResult<JSValue> {
+    pub fn to_js(
+        &mut self,
+        global_this: &JSGlobalObject,
+        as_uint8array: bool,
+    ) -> JsResult<JSValue> {
         if self.streaming {
             // PORT NOTE: Zig calls `ArrayBuffer.create()` here without `catch`
             // (dead path under Zig's lazy compilation). Propagate the JS

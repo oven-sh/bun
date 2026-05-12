@@ -1,10 +1,10 @@
 #![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use crate as css;
+use bun_alloc::ArenaVecExt as _;
 
-use css::Printer;
 use css::PrintErr;
+use css::Printer;
 
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use css::css_properties::custom::UnparsedProperty;
@@ -14,9 +14,9 @@ use css::logical::PropertyCategory;
 use css::css_values::length::LengthPercentage;
 use css::css_values::ratio::Ratio;
 
-use css::VendorPrefix;
 use css::DeclarationList;
 use css::PropertyHandlerContext;
+use css::VendorPrefix;
 
 use bun_alloc::Arena as Bump;
 
@@ -158,7 +158,6 @@ impl Size {
             Size::LengthPercentage(l) => l.to_css(dest),
         }
     }
-
 }
 
 // PORT NOTE: split out of the gated `impl Size` above (B-2 round 15) — these
@@ -297,7 +296,6 @@ impl MaxSize {
             MaxSize::LengthPercentage(l) => l.to_css(dest),
         }
     }
-
 }
 
 // PORT NOTE: split out of the gated `impl MaxSize` above (B-2 round 15) — these
@@ -530,7 +528,13 @@ macro_rules! flush_property_helper {
             match &val {
                 $size_ty::Stretch(vp) if *vp == VendorPrefix::NONE => {
                     flush_prefix_helper!(
-                        $this, $prop_flag, $prop_variant, $size_ty, Stretch, Stretch, $dest,
+                        $this,
+                        $prop_flag,
+                        $prop_variant,
+                        $size_ty,
+                        Stretch,
+                        Stretch,
+                        $dest,
                         $context
                     );
                 }
@@ -623,40 +627,136 @@ impl SizeHandler {
 
         match property {
             Property::Width(v) => {
-                property_helper!(self, width, Size, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    width,
+                    Size,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::Height(v) => {
-                property_helper!(self, height, Size, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    height,
+                    Size,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::MinWidth(v) => {
-                property_helper!(self, min_width, Size, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    min_width,
+                    Size,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::MinHeight(v) => {
-                property_helper!(self, min_height, Size, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    min_height,
+                    Size,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::MaxWidth(v) => {
-                property_helper!(self, max_width, MaxSize, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    max_width,
+                    MaxSize,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::MaxHeight(v) => {
-                property_helper!(self, max_height, MaxSize, v, PropertyCategory::Physical, dest, context)
+                property_helper!(
+                    self,
+                    max_height,
+                    MaxSize,
+                    v,
+                    PropertyCategory::Physical,
+                    dest,
+                    context
+                )
             }
             Property::BlockSize(v) => {
-                property_helper!(self, block_size, Size, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    block_size,
+                    Size,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::MinBlockSize(v) => {
-                property_helper!(self, min_block_size, Size, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    min_block_size,
+                    Size,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::MaxBlockSize(v) => {
-                property_helper!(self, max_block_size, MaxSize, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    max_block_size,
+                    MaxSize,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::InlineSize(v) => {
-                property_helper!(self, inline_size, Size, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    inline_size,
+                    Size,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::MinInlineSize(v) => {
-                property_helper!(self, min_inline_size, Size, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    min_inline_size,
+                    Size,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::MaxInlineSize(v) => {
-                property_helper!(self, max_inline_size, MaxSize, v, PropertyCategory::Logical, dest, context)
+                property_helper!(
+                    self,
+                    max_inline_size,
+                    MaxSize,
+                    v,
+                    PropertyCategory::Logical,
+                    dest,
+                    context
+                )
             }
             Property::Unparsed(unparsed) => match unparsed.property_id.tag() {
                 PropertyIdTag::Width
@@ -742,64 +842,122 @@ impl SizeHandler {
         let logical_supported = !context.should_compile_logical(Feature::LogicalSize);
 
         flush_property_helper!(self, SizeProperty::WIDTH, Width, width, Size, dest, context);
-        flush_property_helper!(self, SizeProperty::MIN_WIDTH, MinWidth, min_width, Size, dest, context);
-        flush_property_helper!(self, SizeProperty::MAX_WIDTH, MaxWidth, max_width, MaxSize, dest, context);
-        flush_property_helper!(self, SizeProperty::HEIGHT, Height, height, Size, dest, context);
-        flush_property_helper!(self, SizeProperty::MIN_HEIGHT, MinHeight, min_height, Size, dest, context);
-        flush_property_helper!(self, SizeProperty::MAX_HEIGHT, MaxHeight, max_height, MaxSize, dest, context);
+        flush_property_helper!(
+            self,
+            SizeProperty::MIN_WIDTH,
+            MinWidth,
+            min_width,
+            Size,
+            dest,
+            context
+        );
+        flush_property_helper!(
+            self,
+            SizeProperty::MAX_WIDTH,
+            MaxWidth,
+            max_width,
+            MaxSize,
+            dest,
+            context
+        );
+        flush_property_helper!(
+            self,
+            SizeProperty::HEIGHT,
+            Height,
+            height,
+            Size,
+            dest,
+            context
+        );
+        flush_property_helper!(
+            self,
+            SizeProperty::MIN_HEIGHT,
+            MinHeight,
+            min_height,
+            Size,
+            dest,
+            context
+        );
+        flush_property_helper!(
+            self,
+            SizeProperty::MAX_HEIGHT,
+            MaxHeight,
+            max_height,
+            MaxSize,
+            dest,
+            context
+        );
         flush_logical_helper!(
             self,
-            SizeProperty::BLOCK_SIZE, BlockSize,
+            SizeProperty::BLOCK_SIZE,
+            BlockSize,
             block_size,
-            SizeProperty::HEIGHT, Height,
+            SizeProperty::HEIGHT,
+            Height,
             Size,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
         flush_logical_helper!(
             self,
-            SizeProperty::MIN_BLOCK_SIZE, MinBlockSize,
+            SizeProperty::MIN_BLOCK_SIZE,
+            MinBlockSize,
             min_block_size,
-            SizeProperty::MIN_HEIGHT, MinHeight,
+            SizeProperty::MIN_HEIGHT,
+            MinHeight,
             Size,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
         flush_logical_helper!(
             self,
-            SizeProperty::MAX_BLOCK_SIZE, MaxBlockSize,
+            SizeProperty::MAX_BLOCK_SIZE,
+            MaxBlockSize,
             max_block_size,
-            SizeProperty::MAX_HEIGHT, MaxHeight,
+            SizeProperty::MAX_HEIGHT,
+            MaxHeight,
             MaxSize,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
         flush_logical_helper!(
             self,
-            SizeProperty::INLINE_SIZE, InlineSize,
+            SizeProperty::INLINE_SIZE,
+            InlineSize,
             inline_size,
-            SizeProperty::WIDTH, Width,
+            SizeProperty::WIDTH,
+            Width,
             Size,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
         flush_logical_helper!(
             self,
-            SizeProperty::MIN_INLINE_SIZE, MinInlineSize,
+            SizeProperty::MIN_INLINE_SIZE,
+            MinInlineSize,
             min_inline_size,
-            SizeProperty::MIN_WIDTH, MinWidth,
+            SizeProperty::MIN_WIDTH,
+            MinWidth,
             Size,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
         flush_logical_helper!(
             self,
-            SizeProperty::MAX_INLINE_SIZE, MaxInlineSize,
+            SizeProperty::MAX_INLINE_SIZE,
+            MaxInlineSize,
             max_inline_size,
-            SizeProperty::MAX_WIDTH, MaxWidth,
+            SizeProperty::MAX_WIDTH,
+            MaxWidth,
             MaxSize,
             logical_supported,
-            dest, context
+            dest,
+            context
         );
     }
 

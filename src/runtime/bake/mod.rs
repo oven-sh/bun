@@ -34,19 +34,19 @@ mod production_body;
 
 // Re-exports from the full Phase-A drafts so `production.rs` can name them
 // without going through the keystone stubs below.
-pub use bake_body::{print_warning, PatternBuffer, UserOptions};
+pub use bake_body::{PatternBuffer, UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
 pub(crate) mod jsc {
-    pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
-    pub use bun_jsc::debugger::DebuggerId;
     /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
     /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
     /// (T5) and is re-exported through `crate::api::js_bundler` so the
     /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
     /// nominal type.
     pub use crate::api::js_bundler::Plugin;
+    pub use crate::jsc::*;
+    pub use bun_jsc::debugger::DebuggerId;
+    pub use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 /// export default { app: ... };
@@ -56,12 +56,12 @@ pub const API_NAME: &str = "app";
 // bake.zig top-level types
 // ══════════════════════════════════════════════════════════════════════════
 
+pub use bun_bundler::bake_types::BuiltInModule;
 /// `bake.Side` / `bake.Graph` — these are TYPE_ONLY moved-down into
 /// `bun_bundler::bake_types` (lower tier owns the canonical defs so the
 /// bundler can name them without depending on `bun_runtime`). Re-export
 /// here so intra-crate `bake::Side` paths resolve.
 pub use bun_bundler::bake_types::{Graph, Side};
-pub use bun_bundler::bake_types::BuiltInModule;
 
 /// `bake.Mode` — canonical definition. `bake_body::Mode` re-exports this
 /// (`pub use super::Mode;`) so both paths name the same nominal type.
@@ -110,7 +110,9 @@ pub struct ReactFastRefresh {
 }
 impl Default for ReactFastRefresh {
     fn default() -> Self {
-        Self { import_source: Cow::Borrowed(b"react-refresh/runtime") }
+        Self {
+            import_source: Cow::Borrowed(b"react-refresh/runtime"),
+        }
     }
 }
 
@@ -180,16 +182,31 @@ impl Framework {
             };
             bun_core::handle_oom(built_in_modules.put(k, bv));
         }
-        let server_components = self.server_components.as_ref().map(|sc| bt::ServerComponents {
-            separate_ssr_graph: sc.separate_ssr_graph,
-            server_runtime_import: sc.server_runtime_import.as_ref().into(),
-            server_register_client_reference: sc.server_register_client_reference.as_ref().into(),
-            server_register_server_reference: sc.server_register_server_reference.as_ref().into(),
-            client_register_server_reference: sc.client_register_server_reference.as_ref().into(),
-        });
-        let react_fast_refresh = self.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
-            import_source: rfr.import_source.as_ref().into(),
-        });
+        let server_components = self
+            .server_components
+            .as_ref()
+            .map(|sc| bt::ServerComponents {
+                separate_ssr_graph: sc.separate_ssr_graph,
+                server_runtime_import: sc.server_runtime_import.as_ref().into(),
+                server_register_client_reference: sc
+                    .server_register_client_reference
+                    .as_ref()
+                    .into(),
+                server_register_server_reference: sc
+                    .server_register_server_reference
+                    .as_ref()
+                    .into(),
+                client_register_server_reference: sc
+                    .client_register_server_reference
+                    .as_ref()
+                    .into(),
+            });
+        let react_fast_refresh = self
+            .react_fast_refresh
+            .as_ref()
+            .map(|rfr| bt::ReactFastRefresh {
+                import_source: rfr.import_source.as_ref().into(),
+            });
         bt::Framework::new(
             built_in_modules,
             server_components,
@@ -215,8 +232,7 @@ impl Framework {
     ) -> Result<(), bun_core::Error> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator =
-            bun_ast::ASTMemoryAllocator::new_without_stack(arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
         let ast_scope = ast_memory_allocator.enter();
         let _guard = scopeguard::guard(ast_scope, |s| s.exit());
 
@@ -246,8 +262,9 @@ impl Framework {
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
 
-        out.options.react_fast_refresh =
-            mode == Mode::Development && renderer == Graph::Client && self.react_fast_refresh.is_some();
+        out.options.react_fast_refresh = mode == Mode::Development
+            && renderer == Graph::Client
+            && self.react_fast_refresh.is_some();
         out.options.server_components = self.server_components.is_some();
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(
@@ -458,8 +475,7 @@ impl Framework {
     }
 
     /// `bake.Framework.react_install_command` (bake.zig:373).
-    pub const REACT_INSTALL_COMMAND: &str =
-        "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
+    pub const REACT_INSTALL_COMMAND: &str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     /// `bake.Framework.addReactInstallCommandNote` (bake.zig:375).
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
@@ -490,7 +506,12 @@ pub struct SplitBundlerOptions {
 }
 impl Default for SplitBundlerOptions {
     fn default() -> Self {
-        Self { plugin: None, client: Default::default(), server: Default::default(), ssr: Default::default() }
+        Self {
+            plugin: None,
+            client: Default::default(),
+            server: Default::default(),
+            ssr: Default::default(),
+        }
     }
 }
 
@@ -532,7 +553,9 @@ impl From<bake_body::ServerComponents> for ServerComponents {
 }
 impl From<bake_body::ReactFastRefresh> for ReactFastRefresh {
     fn from(src: bake_body::ReactFastRefresh) -> Self {
-        Self { import_source: Cow::Borrowed(src.import_source) }
+        Self {
+            import_source: Cow::Borrowed(src.import_source),
+        }
     }
 }
 impl From<bake_body::BuiltInModule> for BuiltInModule {
@@ -648,15 +671,15 @@ pub mod framework_router {
     // `framework_router::X` ≡ `framework_router_body::X` and the real method
     // bodies (`init_empty`, `match_slow`, `memory_cost`, `to_js`, …) resolve
     // directly.
+    /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
+    /// `framework_router::js_framework_router::get_bindings`; alias the type so
+    /// the associated-fn path resolves.
+    pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
     pub use super::framework_router_body::{
         DynamicRouteMap, EncodedPattern, FileKind, FrameworkRouter, InsertionHandler,
         JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
         RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
     };
-    /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
-    /// `framework_router::js_framework_router::get_bindings`; alias the type so
-    /// the associated-fn path resolves.
-    pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
 
     /// `FrameworkRouter.InsertionContext` — Zig used an `*anyopaque` +
     /// comptime fn-ptr `VTable` pair with a `wrap(T, ptr)` helper that
@@ -680,7 +703,7 @@ pub use framework_router as FrameworkRouter;
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
     pub use super::production_body::{
-        build_command, EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags,
+        EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags, build_command,
     };
 }
 

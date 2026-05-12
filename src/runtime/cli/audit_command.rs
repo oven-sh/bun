@@ -1,22 +1,22 @@
-use bun_collections::VecExt;
 use bstr::BStr;
+use bun_collections::VecExt;
 use std::io::Write as _;
 
+use bun_ast::{Expr, ExprData};
 use bun_collections::{StringArrayHashMap, StringHashMap};
-use bun_core::{pretty, prettyln, Global, Output};
+use bun_core::{Global, Output, pretty, prettyln};
+use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
+use bun_install::lockfile::package::{PackageColumns as _};
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
-use bun_parsers::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
-use bun_ast::{Expr, ExprData};
-use bun_core::{strings, MutableString};
+use bun_parsers::json as bun_json;
 use bun_url::URL;
 
-use crate::cli::package_manager_command::PackageManagerCommand;
 use crate::cli::Command;
+use crate::cli::package_manager_command::PackageManagerCommand;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
 // `allocator.dupe`d). Phase A boxes them to avoid a struct lifetime param; revisit in Phase B if
@@ -263,9 +263,7 @@ fn build_production_package_set(
     pm: &mut PackageManager,
     prod_set: &mut StringHashMap<()>,
 ) -> Result<(), bun_alloc::AllocError> {
-    let root_id = pm
-        .root_package_id
-        .get(&pm.lockfile, pm.workspace_name_hash);
+    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
@@ -326,9 +324,7 @@ fn collect_packages_for_audit(
     pm: &mut PackageManager,
     prod_only: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
-    let root_id = pm
-        .root_package_id
-        .get(&pm.lockfile, pm.workspace_name_hash);
+    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let mut packages_list: Vec<PackageVersions> = Vec::new();
     let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
@@ -590,9 +586,7 @@ fn find_dependency_paths(
 ) -> Result<Vec<DependencyPath>, bun_alloc::AllocError> {
     let mut paths: Vec<DependencyPath> = Vec::new();
 
-    let root_id = pm
-        .root_package_id
-        .get(&pm.lockfile, pm.workspace_name_hash);
+    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let packages = pm.lockfile.packages.slice();
     let dependencies = pm.lockfile.buffers.dependencies.as_slice();
@@ -615,8 +609,10 @@ fn find_dependency_paths(
         }
     }
 
-    for ((resolution, workspace_deps), pkg_name) in
-        pkg_resolutions.iter().zip(pkg_deps.iter()).zip(pkg_names.iter())
+    for ((resolution, workspace_deps), pkg_name) in pkg_resolutions
+        .iter()
+        .zip(pkg_deps.iter())
+        .zip(pkg_names.iter())
     {
         if resolution.tag != ResolutionTag::Workspace {
             continue;
@@ -629,8 +625,12 @@ fn find_dependency_paths(
             let dep_name = dependency.name.slice(buf);
             if dep_name == target_package {
                 let mut workspace_prefix: Vec<u8> = Vec::new();
-                write!(&mut workspace_prefix, "workspace:{}", BStr::new(workspace_name))
-                    .expect("unreachable");
+                write!(
+                    &mut workspace_prefix,
+                    "workspace:{}",
+                    BStr::new(workspace_name)
+                )
+                .expect("unreachable");
                 paths.push(DependencyPath {
                     path: vec![
                         workspace_prefix.into_boxed_slice(),
@@ -670,8 +670,10 @@ fn find_dependency_paths(
         }
 
         let mut workspace_name_for_dep: Option<&[u8]> = None;
-        for ((resolution, workspace_deps), pkg_name) in
-            pkg_resolutions.iter().zip(pkg_deps.iter()).zip(pkg_names.iter())
+        for ((resolution, workspace_deps), pkg_name) in pkg_resolutions
+            .iter()
+            .zip(pkg_deps.iter())
+            .zip(pkg_names.iter())
         {
             if resolution.tag != ResolutionTag::Workspace {
                 continue;
@@ -691,7 +693,10 @@ fn find_dependency_paths(
         }
 
         if is_root_dep || workspace_name_for_dep.is_some() {
-            let mut path = DependencyPath { path: Vec::new(), is_direct: false };
+            let mut path = DependencyPath {
+                path: Vec::new(),
+                is_direct: false,
+            };
 
             let mut trace: Box<[u8]> = current.clone();
             let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
@@ -717,8 +722,12 @@ fn find_dependency_paths(
 
             if let Some(workspace_name) = workspace_name_for_dep {
                 let mut workspace_prefix: Vec<u8> = Vec::new();
-                write!(&mut workspace_prefix, "workspace:{}", BStr::new(workspace_name))
-                    .expect("unreachable");
+                write!(
+                    &mut workspace_prefix,
+                    "workspace:{}",
+                    BStr::new(workspace_name)
+                )
+                .expect("unreachable");
                 path.path.insert(0, workspace_prefix.into_boxed_slice());
             }
 
@@ -967,7 +976,8 @@ fn print_enhanced_audit_report(
             }
         }
 
-        let total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
+        let total =
+            vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if total > 0 {
             pretty!("<b>{} vulnerabilities<r> (", total);
 

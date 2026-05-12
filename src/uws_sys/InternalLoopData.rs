@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use crate::{udp, us_socket_t, ConnectingSocket, Loop, SocketGroup, Timer};
+use crate::{ConnectingSocket, Loop, SocketGroup, Timer, udp, us_socket_t};
 
 /// Layout placeholder for the `mutex` field of `us_internal_loop_data_t`.
 /// Must match `zig_mutex_t` in `packages/bun-usockets/src/internal/loop_data.h`

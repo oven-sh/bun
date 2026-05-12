@@ -179,11 +179,19 @@ impl ABIType {
     }
 
     pub fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
-        ToCFormatter { tag: self, symbol, exact: false }
+        ToCFormatter {
+            tag: self,
+            symbol,
+            exact: false,
+        }
     }
 
     pub fn to_c_exact(self, symbol: &[u8]) -> ToCFormatter<'_> {
-        ToCFormatter { tag: self, symbol, exact: true }
+        ToCFormatter {
+            tag: self,
+            symbol,
+            exact: true,
+        }
     }
 
     pub fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
@@ -358,7 +366,11 @@ impl fmt::Display for ToJSFormatter<'_> {
             | ABIType::Int32T => write!(writer, "INT32_TO_JSVALUE((int32_t){})", sym),
             ABIType::Uint32T => write!(writer, "UINT32_TO_JSVALUE({})", sym),
             ABIType::I64Fast => {
-                write!(writer, "INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){})", sym)
+                write!(
+                    writer,
+                    "INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){})",
+                    sym
+                )
             }
             ABIType::Int64T => {
                 write!(writer, "INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {})", sym)

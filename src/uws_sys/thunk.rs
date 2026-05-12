@@ -26,7 +26,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{us_socket_t, ConnectingSocket};
+use crate::{ConnectingSocket, us_socket_t};
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
 /// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
@@ -53,8 +53,18 @@ pub unsafe trait OpaqueHandle: Sized {
     /// site. See the trait docs for why this is sound for ZST opaques.
     #[inline(always)]
     fn as_handle<'a>(p: *mut Self) -> &'a mut Self {
-        const { assert!(core::mem::size_of::<Self>() == 0, "OpaqueHandle impl must be a ZST") };
-        const { assert!(core::mem::align_of::<Self>() == 1, "OpaqueHandle impl must be align-1") };
+        const {
+            assert!(
+                core::mem::size_of::<Self>() == 0,
+                "OpaqueHandle impl must be a ZST"
+            )
+        };
+        const {
+            assert!(
+                core::mem::align_of::<Self>() == 1,
+                "OpaqueHandle impl must be align-1"
+            )
+        };
         // Not `debug_assert!`: the ZST/align-1 contract discharges aliasing and
         // dereferenceable-for-zero-bytes, but NOT the `&mut T` validity invariant
         // that references are non-null. This is a *safe* fn and `AnyResponse` is a

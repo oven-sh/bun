@@ -1,4 +1,10 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(
+    unused,
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::all
+)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — B-2 un-gated.
 //!
@@ -18,18 +24,23 @@ extern crate bun_core as bun_str;
 use bun_collections::VecExt;
 
 // ── B-2 un-gated sibling modules ──────────────────────────────────────────
-#[path = "Chunk.rs"]             pub mod chunk;
-#[path = "InternalSourceMap.rs"] pub mod internal_source_map;
-#[path = "LineOffsetTable.rs"] pub mod line_offset_table;
-#[path = "Mapping.rs"]         pub mod mapping;
-#[path = "ParsedSourceMap.rs"] pub mod parsed_source_map;
+#[path = "Chunk.rs"]
+pub mod chunk;
+#[path = "InternalSourceMap.rs"]
+pub mod internal_source_map;
+#[path = "LineOffsetTable.rs"]
+pub mod line_offset_table;
+#[path = "Mapping.rs"]
+pub mod mapping;
+#[path = "ParsedSourceMap.rs"]
+pub mod parsed_source_map;
 
 pub use bun_base64::vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
 pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
-pub use mapping::{Mapping, Lookup as MappingLookup};
+pub use mapping::{Lookup as MappingLookup, Mapping};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
@@ -180,7 +191,11 @@ pub enum SourceMapLoadHint {
 pub enum ParseUrlResultHint {
     MappingsOnly,
     SourceOnly(u32),
-    All { line: i32, column: i32, include_names: bool },
+    All {
+        line: i32,
+        column: i32,
+        include_names: bool,
+    },
 }
 
 #[derive(Default)]
@@ -233,7 +248,10 @@ pub struct LineColumnOffset {
 impl Default for LineColumnOffset {
     #[inline]
     fn default() -> Self {
-        Self { lines: Ordinal::START, columns: Ordinal::START }
+        Self {
+            lines: Ordinal::START,
+            columns: Ordinal::START,
+        }
     }
 }
 
@@ -274,7 +292,10 @@ impl LineColumnOffset {
             debug_assert!((i as usize) < input.len());
 
             let iter = strings::CodepointIterator::init_offset(input, i as usize);
-            let mut cursor = strings::Cursor { i, ..Default::default() };
+            let mut cursor = strings::Cursor {
+                i,
+                ..Default::default()
+            };
             let _ = iter.next(&mut cursor);
 
             // Given a null byte, cursor.width becomes 0
@@ -318,7 +339,9 @@ impl LineColumnOffset {
             debug_assert!(strings::index_of_char(remain, b'\r').is_none());
         }
 
-        this.columns = this.columns.add_scalar(i32::try_from(remain.len()).expect("int cast"));
+        this.columns = this
+            .columns
+            .add_scalar(i32::try_from(remain.len()).expect("int cast"));
 
         *this_ptr = this;
     }
@@ -370,20 +393,34 @@ pub fn append_mapping_to_buffer(
 
     let vlqs: [VLQ; 4] = [
         // Record the generated column (the line is recorded using ';' elsewhere)
-        VLQ::encode(current_state.generated_column.saturating_sub(prev_state.generated_column)),
+        VLQ::encode(
+            current_state
+                .generated_column
+                .saturating_sub(prev_state.generated_column),
+        ),
         // Record the generated source
-        VLQ::encode(current_state.source_index.saturating_sub(prev_state.source_index)),
+        VLQ::encode(
+            current_state
+                .source_index
+                .saturating_sub(prev_state.source_index),
+        ),
         // Record the original line
-        VLQ::encode(current_state.original_line.saturating_sub(prev_state.original_line)),
+        VLQ::encode(
+            current_state
+                .original_line
+                .saturating_sub(prev_state.original_line),
+        ),
         // Record the original column
-        VLQ::encode(current_state.original_column.saturating_sub(prev_state.original_column)),
+        VLQ::encode(
+            current_state
+                .original_column
+                .saturating_sub(prev_state.original_column),
+        ),
     ];
 
     // Count exactly how many bytes we need to write
-    let total_len = vlqs[0].len as usize
-        + vlqs[1].len as usize
-        + vlqs[2].len as usize
-        + vlqs[3].len as usize;
+    let total_len =
+        vlqs[0].len as usize + vlqs[1].len as usize + vlqs[2].len as usize + vlqs[3].len as usize;
 
     // Instead of updating .len 5 times, we only need to update it once.
     let mut writable = buffer
@@ -632,9 +669,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 ::bstr::BStr::new(err.name()),
                             ));
                             // Disable the "try using --sourcemap=external" hint
-                            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
-                                true,
-                            );
+                            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                             return None;
                         }
                     }
@@ -682,7 +717,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     .copy_from_slice(b".map");
                 load_path_buf[source_filename.len() + 4] = 0;
                 // SAFETY: byte at `len` was just set to NUL; buffer outlives `load_path`.
-                let load_path = bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
+                let load_path =
+                    bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
                 // PORT NOTE: Zig passed the arena allocator; the Rust
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`. The
@@ -751,9 +787,13 @@ pub mod SavedSourceMap {
         static PATH: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
 
         #[inline]
-        pub fn set_seen_invalid(v: bool) { SEEN_INVALID.store(v, Ordering::Relaxed); }
+        pub fn set_seen_invalid(v: bool) {
+            SEEN_INVALID.store(v, Ordering::Relaxed);
+        }
         #[inline]
-        pub fn seen_invalid() -> bool { SEEN_INVALID.load(Ordering::Relaxed) }
+        pub fn seen_invalid() -> bool {
+            SEEN_INVALID.load(Ordering::Relaxed)
+        }
 
         pub fn set_path(path: &[u8]) {
             *PATH.lock() = Some(path.to_vec().into_boxed_slice());
@@ -768,7 +808,9 @@ pub mod SavedSourceMap {
                     "missing sourcemaps for {}",
                     ::bstr::BStr::new(note),
                 ));
-                bun_core::Output::note("consider bundling with '--sourcemap' to get unminified traces");
+                bun_core::Output::note(
+                    "consider bundling with '--sourcemap' to get unminified traces",
+                );
             }
         }
     }
@@ -824,8 +866,7 @@ pub mod SerializedSourceMap {
             let head = self.header();
             let start = size_of::<Header>()
                 + head.source_files_count as usize * size_of::<StringPointer>() * 2;
-            if start > self.bytes.len()
-                || head.map_bytes_length as usize > self.bytes.len() - start
+            if start > self.bytes.len() || head.map_bytes_length as usize > self.bytes.len() - start
             {
                 return None;
             }
@@ -887,8 +928,8 @@ pub mod SerializedSourceMap {
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
-                self.decompressed_files[index] = Some(
-                    match bun_zstd::decompress(&mut bytes, compressed_file) {
+                self.decompressed_files[index] =
+                    Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
                         bun_zstd::Result::Err(err) => {
                             bun_core::Output::warn(&format_args!(
                                 "Source map decompression error: {}",
@@ -900,12 +941,15 @@ pub mod SerializedSourceMap {
                             bytes.truncate(n);
                             bytes
                         }
-                    },
-                );
+                    });
             }
 
             let decompressed = self.decompressed_files[index].as_deref().unwrap();
-            if decompressed.is_empty() { None } else { Some(decompressed) }
+            if decompressed.is_empty() {
+                None
+            } else {
+                Some(decompressed)
+            }
         }
     }
 }
@@ -1074,8 +1118,8 @@ pub fn parse_json(
     source: &[u8],
     hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    use bun_ast::StoreResetGuard as DataStoreScope;
     use crate::mapping::SourceMap as SourceMapLog;
+    use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
     // TODO(port): narrow error set
@@ -1160,7 +1204,10 @@ pub fn parse_json(
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
-                    ParseUrlResultHint::All { include_names: true, .. }
+                    ParseUrlResultHint::All {
+                        include_names: true,
+                        ..
+                    }
                 ),
                 sort: true,
             },
@@ -1169,7 +1216,11 @@ pub fn parse_json(
             ParseResult::Fail(fail) => return Err(fail.err),
         };
 
-        if let ParseUrlResultHint::All { include_names: true, .. } = hint {
+        if let ParseUrlResultHint::All {
+            include_names: true,
+            ..
+        } = hint
+        {
             if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
                 if let Some(names) = json.get(b"names") {
                     if let Some(arr) = names.data.as_e_array() {
@@ -1192,8 +1243,7 @@ pub fn parse_json(
                         }
 
                         map_data.mappings.names = names_list.into_boxed_slice();
-                        map_data.mappings.names_buffer =
-                            names_buffer;
+                        map_data.mappings.names_buffer = names_buffer;
                     }
                 }
             }
@@ -1212,11 +1262,10 @@ pub fn parse_json(
     let (found_mapping, source_index): (Option<Mapping>, Option<u32>) = match hint {
         ParseUrlResultHint::SourceOnly(index) => (None, Some(index)),
         ParseUrlResultHint::All { line, column, .. } => 'brk: {
-            let Some(m) = map
-                .as_ref()
-                .unwrap()
-                .find_mapping(Ordinal::from_zero_based(line), Ordinal::from_zero_based(column))
-            else {
+            let Some(m) = map.as_ref().unwrap().find_mapping(
+                Ordinal::from_zero_based(line),
+                Ordinal::from_zero_based(column),
+            ) else {
                 break 'brk (None, None);
             };
             let idx = u32::try_from(m.source_index).ok();
@@ -1274,12 +1323,10 @@ pub fn append_source_map_chunk(
     let mut start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
     if start_state.generated_line != 0 {
-        j.push_owned(
-            bun_core::strings::repeating_alloc(
-                usize::try_from(start_state.generated_line).expect("int cast"),
-                b';',
-            )?,
-        );
+        j.push_owned(bun_core::strings::repeating_alloc(
+            usize::try_from(start_state.generated_line).expect("int cast"),
+            b';',
+        )?);
         prev_end_state.generated_column = 0;
     }
 

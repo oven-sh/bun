@@ -4,8 +4,8 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::{Fd, E};
 use crate::Tag;
+use crate::{E, Fd};
 
 // PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
 // `declare_scope!` uses the ident as both static name AND tag string, but
@@ -210,7 +210,12 @@ pub fn copy_file_with_state(
                     0,
                 )
             };
-            crate::syslog!("copy_file_range({}, {}) = {}", in_.native(), out.native(), rc);
+            crate::syslog!(
+                "copy_file_range({}, {}) = {}",
+                in_.native(),
+                out.native(),
+                rc
+            );
             match crate::get_errno(rc) {
                 E::SUCCESS => {
                     if rc == 0 {
@@ -230,7 +235,10 @@ pub fn copy_file_with_state(
         // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
         let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
         if rc == 0 {
-            return Err(crate::Error::from_code(crate::windows::get_last_errno(), Tag::copyfile));
+            return Err(crate::Error::from_code(
+                crate::windows::get_last_errno(),
+                Tag::copyfile,
+            ));
         }
         return Ok(());
     }
@@ -273,7 +281,10 @@ pub fn can_use_copy_file_range_syscall() -> bool {
     let result = CAN_USE_COPY_FILE_RANGE.load(Ordering::Relaxed);
     if result == 0 {
         // This flag mostly exists to make other code more easily testable.
-        if bun_core::env_var::BUN_CONFIG_DISABLE_COPY_FILE_RANGE.get().unwrap_or(false) {
+        if bun_core::env_var::BUN_CONFIG_DISABLE_COPY_FILE_RANGE
+            .get()
+            .unwrap_or(false)
+        {
             bun_core::scoped_log!(
                 debug,
                 "copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE"
@@ -313,7 +324,10 @@ pub fn can_use_ioctl_ficlone() -> bool {
     let result = CAN_USE_IOCTL_FICLONE_.load(Ordering::Relaxed);
     if result == 0 {
         // This flag mostly exists to make other code more easily testable.
-        if bun_core::env_var::BUN_CONFIG_DISABLE_ioctl_ficlonerange.get().unwrap_or(false) {
+        if bun_core::env_var::BUN_CONFIG_DISABLE_ioctl_ficlonerange
+            .get()
+            .unwrap_or(false)
+        {
             bun_core::scoped_log!(
                 debug,
                 "ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange"
@@ -358,7 +372,14 @@ pub fn copy_file_range(
             // TODO(port): raw syscall binding `std.os.linux.copy_file_range`
             // SAFETY: raw syscall; fds valid, offset ptrs null
             let rc = unsafe {
-                crate::linux::copy_file_range(in_, core::ptr::null_mut(), out, core::ptr::null_mut(), len, flags)
+                crate::linux::copy_file_range(
+                    in_,
+                    core::ptr::null_mut(),
+                    out,
+                    core::ptr::null_mut(),
+                    len,
+                    flags,
+                )
             };
             crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
             match crate::get_errno(rc) {
@@ -469,6 +490,8 @@ fn kernel_at_least(major: u32, minor: u32) -> bool {
 
 /// Map a raw `copy_file`-path errno to `bun_core::Error` (kept for B-1 callers).
 #[inline]
-pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error { e.into() }
+pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error {
+    e.into()
+}
 
 // ported from: src/sys/copy_file.zig

@@ -1,5 +1,5 @@
-use bun_jsc::JSValue;
 use bun_core::String;
+use bun_jsc::JSValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum OptionValueType {
@@ -136,7 +136,10 @@ pub fn is_option_like_value(value: &String) -> bool {
 ///   options: { bar: { short: 'b' } }
 /// }) // returns "bar"
 /// ```
-pub fn find_option_by_short_name(short_name: &String, options: &[OptionDefinition]) -> Option<usize> {
+pub fn find_option_by_short_name(
+    short_name: &String,
+    options: &[OptionDefinition],
+) -> Option<usize> {
     let mut long_option_index: Option<usize> = None;
     for (i, option) in options.iter().enumerate() {
         if short_name.eql(&option.short_name) {

@@ -12,13 +12,13 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena;
-use bun_core::{Global, Output};
-use bun_jsc::{self as jsc, JSGlobalObject};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_js_parser as js_ast;
 use crate::dns_jsc::Order as DnsOrder;
+use bun_alloc::Arena;
 use bun_core::ZigString;
+use bun_core::{Global, Output};
+use bun_js_parser as js_ast;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, JSGlobalObject};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -26,8 +26,8 @@ use bun_core::ZigString;
 mod repl;
 use repl::Repl;
 
-use crate::cli::Arguments;
 use crate::Command;
+use crate::cli::Arguments;
 
 pub struct ReplCommand;
 
@@ -44,7 +44,10 @@ impl ReplCommand {
         Self::boot_repl_vm(ctx, &mut repl)
     }
 
-    fn boot_repl_vm<'r>(ctx: Command::Context<'_>, repl: &mut Repl<'r>) -> Result<(), bun_core::Error> {
+    fn boot_repl_vm<'r>(
+        ctx: Command::Context<'_>,
+        repl: &mut Repl<'r>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
@@ -111,10 +114,16 @@ impl ReplCommand {
         b.resolver.opts.install =
             install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
-        let prefer_latest =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
+        b.resolver.opts.prefer_offline_install = ctx
+            .debug
+            .offline_mode_setting
+            .unwrap_or(OfflineMode::Online)
+            == OfflineMode::Offline;
+        let prefer_latest = ctx
+            .debug
+            .offline_mode_setting
+            .unwrap_or(OfflineMode::Online)
+            == OfflineMode::Latest;
         // TODO(port): blocked_on: bun_resolver::options::BundleOptions::prefer_latest_install —
         // resolver's forward-decl stub lacks this field; assign directly to b.options below.
         b.options.global_cache = b.resolver.opts.global_cache;
@@ -129,11 +138,10 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(
-            VirtualMachine::get().log_mut().unwrap(),
-            b.env(),
-        );
-        VirtualMachine::get().as_mut().load_extra_env_and_source_code_printer();
+        bun_http::async_http::load_env(VirtualMachine::get().log_mut().unwrap(), b.env());
+        VirtualMachine::get()
+            .as_mut()
+            .load_extra_env_and_source_code_printer();
 
         VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -190,7 +198,9 @@ impl ReplCommand {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
             // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
-            let _ = unsafe { (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer)) };
+            let _ = unsafe {
+                (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer))
+            };
         }
     }
 }
@@ -294,7 +304,10 @@ unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
     // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
     // bun_jsc grows a wrapper.
-    fn JSGlobalObject__setTimeZone(global: *const JSGlobalObject, time_zone: *const ZigString) -> bool;
+    fn JSGlobalObject__setTimeZone(
+        global: *const JSGlobalObject,
+        time_zone: *const ZigString,
+    ) -> bool;
 }
 
 use bun_bundler::options::EnvBehavior;

@@ -1,13 +1,13 @@
 use crate as css;
+use crate::css_rules::Location;
 use crate::css_rules::layer::LayerName;
 use crate::css_rules::supports::SupportsCondition;
-use crate::css_rules::Location;
 use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
-use bun_collections::VecExt;
 use bun_ast::ImportRecord;
+use bun_collections::VecExt;
 
 /// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
 /// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
@@ -22,7 +22,9 @@ pub struct Layer {
 
 impl Layer {
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        Self { v: self.v.as_ref().map(|n| n.deep_clone(bump)) }
+        Self {
+            v: self.v.as_ref().map(|n| n.deep_clone(bump)),
+        }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
@@ -118,7 +120,7 @@ impl ImportConditions {
     /// But this could change in the future, so still keeping this function.
     ///
     // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-    
+
     pub fn clone_with_import_records(
         &self,
         arena: &Arena,
@@ -149,7 +151,7 @@ impl ImportConditions {
 
     // blocked_on: SupportsCondition::eql (gated in supports.rs on
     // generics::CssEql derive).
-    
+
     pub fn supports_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.supports, &rhs.supports) {
             (None, None) => true,
@@ -199,11 +201,18 @@ impl Default for ImportRule {
 
 impl ImportRule {
     pub fn from_url(url: &'static [u8]) -> Self {
-        Self { url, ..Default::default() }
+        Self {
+            url,
+            ..Default::default()
+        }
     }
 
     pub fn from_url_and_import_record_idx(url: &'static [u8], import_record_idx: u32) -> Self {
-        Self { url, import_record_idx, ..Default::default() }
+        Self {
+            url,
+            import_record_idx,
+            ..Default::default()
+        }
     }
 
     pub fn from_conditions_and_url(url: &'static [u8], conds: ImportConditions) -> Self {
@@ -225,7 +234,11 @@ impl ImportRule {
         // provenance to just `layer` and make sibling-field reads UB under SB.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
         let base = std::ptr::from_ref::<Self>(self).cast::<u8>();
-        unsafe { &*base.add(core::mem::offset_of!(Self, layer)).cast::<ImportConditions>() }
+        unsafe {
+            &*base
+                .add(core::mem::offset_of!(Self, layer))
+                .cast::<ImportConditions>()
+        }
     }
 
     pub fn conditions_mut(&mut self) -> &mut ImportConditions {
@@ -233,12 +246,16 @@ impl ImportRule {
         // provenance) via byte offset so the returned `&mut ImportConditions` may
         // legally write `supports` and `media`, not just `layer`.
         let base = std::ptr::from_mut::<Self>(self).cast::<u8>();
-        unsafe { &mut *base.add(core::mem::offset_of!(Self, layer)).cast::<ImportConditions>() }
+        unsafe {
+            &mut *base
+                .add(core::mem::offset_of!(Self, layer))
+                .cast::<ImportConditions>()
+        }
     }
 
     /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now
     // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-    
+
     pub fn conditions_with_import_records(
         &self,
         arena: &Arena,

@@ -10,24 +10,30 @@
 
 use core::mem::offset_of;
 
-use bun_collections::{linear_fifo::StaticBuffer, ArrayHashMap, LinearFifo};
+use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
+use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
-use bun_core::string_joiner::StringJoiner;
 
-use crate::bake::{self, Side};
 use crate::bake::dev_server_body::map_log;
+use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
-use super::{packed_map, ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag};
+use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Key(pub u64);
 impl Key {
-    #[inline] pub const fn init(v: u64) -> Self { Self(v) }
-    #[inline] pub const fn get(self) -> u64 { self.0 }
+    #[inline]
+    pub const fn init(v: u64) -> Self {
+        Self(v)
+    }
+    #[inline]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 /// Route bundle keys clear the bottom 32 bits of this value, using only the
@@ -43,13 +49,24 @@ impl Key {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SourceId(pub u64);
 impl SourceId {
-    #[inline] pub const fn kind(self) -> ChunkKind {
-        if self.0 & 1 == 0 { ChunkKind::InitialResponse } else { ChunkKind::HmrChunk }
+    #[inline]
+    pub const fn kind(self) -> ChunkKind {
+        if self.0 & 1 == 0 {
+            ChunkKind::InitialResponse
+        } else {
+            ChunkKind::HmrChunk
+        }
     }
     /// `bits.initial_response.generation_id` (top 32 bits)
-    #[inline] pub const fn initial_response_generation_id(self) -> u32 { (self.0 >> 32) as u32 }
+    #[inline]
+    pub const fn initial_response_generation_id(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
     /// `bits.hmr_chunk.content_hash` (upper 63 bits)
-    #[inline] pub const fn hmr_chunk_content_hash(self) -> u64 { self.0 >> 1 }
+    #[inline]
+    pub const fn hmr_chunk_content_hash(self) -> u64 {
+        self.0 >> 1
+    }
 }
 
 pub const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
@@ -166,7 +183,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"))
+                            return Err(bun_core::err!("OutOfMemory"));
                         }
                     }
                 } else {
@@ -180,7 +197,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"))
+                            return Err(bun_core::err!("OutOfMemory"));
                         }
                     }
                 }
@@ -193,7 +210,7 @@ impl Entry {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
                     Err(bun_core::PercentEncodeError::OutOfMemory) => {
-                        return Err(bun_core::err!("OutOfMemory"))
+                        return Err(bun_core::err!("OutOfMemory"));
                     }
                 }
                 source_map_strings.extend_from_slice(b"\"");
@@ -244,7 +261,11 @@ impl Entry {
             };
             if let Err(err) = crate::bake::dev_server_body::dump_bundle(
                 dump_dir,
-                if side == Side::Client { bake::Graph::Client } else { bake::Graph::Server },
+                if side == Side::Client {
+                    bake::Graph::Client
+                } else {
+                    bake::Graph::Server
+                },
                 rel_path_escaped,
                 &json_bytes,
                 false,
@@ -409,7 +430,9 @@ pub struct WeakRef {
 
 impl WeakRef {
     #[inline]
-    pub fn key(self) -> Key { Key::init((self.key_top_bits as u64) << 32) }
+    pub fn key(self) -> Key {
+        Key::init((self.key_top_bits as u64) << 32)
+    }
 
     #[inline]
     pub fn init(k: Key, count: u32, expire: i64) -> WeakRef {
@@ -487,7 +510,9 @@ impl SourceMapStore {
     /// PORT NOTE: ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
     /// this in lieu of a `const`.
     #[inline]
-    pub fn empty() -> Self { Self::default() }
+    pub fn empty() -> Self {
+        Self::default()
+    }
 
     /// Intrusive backref: recover the owning DevServer.
     ///
@@ -501,7 +526,9 @@ impl SourceMapStore {
     }
 
     #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All { crate::jsc_hooks::timer_all_mut() }
+    fn timer_all<'a>() -> &'a mut crate::timer::All {
+        crate::jsc_hooks::timer_all_mut()
+    }
 
     pub fn put_or_increment_ref_count(
         &mut self,
@@ -680,14 +707,14 @@ impl SourceMapStore {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
             } else {
-                store
-                    .weak_refs
-                    .unget(&[item])
-                    .expect("unreachable"); // space exists since the last item was just removed.
+                store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
                 store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
                 Self::timer_all().update(
                     core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
-                    &Timespec { sec: item.expire + 1, nsec: 0 },
+                    &Timespec {
+                        sec: item.expire + 1,
+                        nsec: 0,
+                    },
                 );
                 // SAFETY: invariant of `owner()`.
                 unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };

@@ -78,23 +78,53 @@ fn to_u64<T: ToU64>(value: T) -> u64 {
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(unix)]
-    { Timespec { sec: s.st_atime as i64, nsec: s.st_atime_nsec as i64 } }
+    {
+        Timespec {
+            sec: s.st_atime as i64,
+            nsec: s.st_atime_nsec as i64,
+        }
+    }
     #[cfg(windows)]
-    { Timespec { sec: s.atim.sec as i64, nsec: s.atim.nsec as i64 } }
+    {
+        Timespec {
+            sec: s.atim.sec as i64,
+            nsec: s.atim.nsec as i64,
+        }
+    }
 }
 #[inline]
 pub fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(unix)]
-    { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
+    {
+        Timespec {
+            sec: s.st_mtime as i64,
+            nsec: s.st_mtime_nsec as i64,
+        }
+    }
     #[cfg(windows)]
-    { Timespec { sec: s.mtim.sec as i64, nsec: s.mtim.nsec as i64 } }
+    {
+        Timespec {
+            sec: s.mtim.sec as i64,
+            nsec: s.mtim.nsec as i64,
+        }
+    }
 }
 #[inline]
 pub fn stat_ctime(s: &Stat) -> Timespec {
     #[cfg(unix)]
-    { Timespec { sec: s.st_ctime as i64, nsec: s.st_ctime_nsec as i64 } }
+    {
+        Timespec {
+            sec: s.st_ctime as i64,
+            nsec: s.st_ctime_nsec as i64,
+        }
+    }
     #[cfg(windows)]
-    { Timespec { sec: s.ctim.sec as i64, nsec: s.ctim.nsec as i64 } }
+    {
+        Timespec {
+            sec: s.ctim.sec as i64,
+            nsec: s.ctim.nsec as i64,
+        }
+    }
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
@@ -102,11 +132,39 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     // Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from NTFS
     // CreationTime, so it must NOT fall into the epoch arm.
     #[cfg(windows)]
-    { Timespec { sec: s.birthtim.sec as i64, nsec: s.birthtim.nsec as i64 } }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
-    { Timespec { sec: s.st_birthtime as i64, nsec: s.st_birthtime_nsec as i64 } }
-    #[cfg(not(any(windows, target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]
-    { let _ = s; Timespec::EPOCH }
+    {
+        Timespec {
+            sec: s.birthtim.sec as i64,
+            nsec: s.birthtim.nsec as i64,
+        }
+    }
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    {
+        Timespec {
+            sec: s.st_birthtime as i64,
+            nsec: s.st_birthtime_nsec as i64,
+        }
+    }
+    #[cfg(not(any(
+        windows,
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )))]
+    {
+        let _ = s;
+        Timespec::EPOCH
+    }
 }
 
 impl PosixStat {

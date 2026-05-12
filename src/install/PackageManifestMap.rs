@@ -3,8 +3,8 @@ use bun_collections::zig_hash_map::MapEntry as Entry;
 use bun_semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
-use crate::npm;
 use crate::PackageNameHash;
+use crate::npm;
 
 #[derive(Default)]
 pub struct PackageManifestMap {
@@ -25,7 +25,8 @@ impl Value {
 }
 
 // Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.
-type ManifestHashMap = HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
+type ManifestHashMap =
+    HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CacheBehavior {
@@ -197,8 +198,7 @@ impl PackageManifestMap {
                         if needs_extended_manifest && !m.pkg.has_extended_manifest
                 );
                 if demote {
-                    let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound)
-                    else {
+                    let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
                         unreachable!()
                     };
                     *value_ptr = Value::Expired(m);
@@ -221,9 +221,7 @@ impl PackageManifestMap {
                     // (see `manifest_disk_cache_ctx`).
                     let cache_fd = ctx.cache_directory.expect("cache_directory");
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
-                        scope,
-                        cache_fd,
-                        name_hash,
+                        scope, cache_fd, name_hash,
                     )
                     .ok()
                     .flatten()

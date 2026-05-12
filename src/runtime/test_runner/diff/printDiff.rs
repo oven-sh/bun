@@ -90,8 +90,10 @@ pub fn print_diff_main(
 
     let mut dmp = DmpUsize::default();
     dmp.config.diff_timeout = 200;
-    let lines_to_chars =
-        bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(expected_slice, received_slice));
+    let lines_to_chars = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(
+        expected_slice,
+        received_slice,
+    ));
     let char_diffs =
         bun_core::handle_oom(dmp.diff(&lines_to_chars.chars_1, &lines_to_chars.chars_2, false));
     let diffs = bun_core::handle_oom(diff_match_patch::diff_chars_to_lines(
@@ -237,7 +239,7 @@ pub enum DiffOperation {
 use bun_core::output::ansi as colors;
 
 mod prefix_styles {
-    use super::{colors, PrefixStyle};
+    use super::{PrefixStyle, colors};
     pub const INSERTED: PrefixStyle = PrefixStyle {
         msg: "+ ",
         color: colors::RED,
@@ -261,7 +263,7 @@ mod prefix_styles {
 }
 
 mod base_styles {
-    use super::{colors, prefix_styles, Style};
+    use super::{Style, colors, prefix_styles};
     pub const RED_BG_INSERTED: Style = Style {
         prefix: prefix_styles::INSERTED,
         text_color: const_format::concatcp!(colors::RED, colors::INVERT),
@@ -296,7 +298,7 @@ mod base_styles {
 // Mode::BgDiffOnly, only that arm is materialized here. The .bg_always and .fg_diff arms differ
 // only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
 mod styles {
-    use super::{base_styles, Style};
+    use super::{Style, base_styles};
     pub const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
     pub const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
     pub const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
@@ -340,7 +342,8 @@ fn print_diff_footer(
     write!(
         writer,
         "  {}{}",
-        styles::REMOVED_LINE.prefix.msg, removed_diff_lines
+        styles::REMOVED_LINE.prefix.msg,
+        removed_diff_lines
     )?;
     if config.enable_ansi_colors {
         writer.write_str(colors::RESET)?;
@@ -354,7 +357,8 @@ fn print_diff_footer(
     write!(
         writer,
         "  {}{}",
-        styles::INSERTED_LINE.prefix.msg, inserted_diff_lines
+        styles::INSERTED_LINE.prefix.msg,
+        inserted_diff_lines
     )?;
     if config.enable_ansi_colors {
         writer.write_str(colors::RESET)?;
@@ -540,7 +544,12 @@ fn print_modified_segment(
         let larger = r.max(i);
         let smaller = r.min(i);
         if larger > 30 && smaller.saturating_mul(3) < larger {
-            return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
+            return print_modified_segment_without_diffdiff(
+                writer,
+                config,
+                segment,
+                modified_style,
+            );
         }
     }
 

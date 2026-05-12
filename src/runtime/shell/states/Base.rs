@@ -27,7 +27,11 @@ pub struct Base {
 
 impl Base {
     pub fn new(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self { kind, parent, shell }
+        Self {
+            kind,
+            parent,
+            shell,
+        }
     }
 
     /// Kept for call-site parity with the Zig state machine; in Rust the

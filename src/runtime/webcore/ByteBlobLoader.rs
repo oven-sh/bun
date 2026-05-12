@@ -3,8 +3,8 @@ use core::mem::offset_of;
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
 use crate::webcore::blob::store::StoreExt as _;
+use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
@@ -55,14 +55,24 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
-    fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
+    fn on_start(&mut self) -> streams::Start {
+        Self::on_start(self)
+    }
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) { Self::on_cancel(self) }
-    fn deinit_fn(&mut self) { Self::deinit(self) }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
-    fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
+    fn on_cancel(&mut self) {
+        Self::on_cancel(self)
+    }
+    fn deinit_fn(&mut self) {
+        Self::deinit(self)
+    }
+    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+        Self::drain(self)
+    }
+    fn memory_cost_fn(&self) -> usize {
+        Self::memory_cost(self)
+    }
     fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
@@ -134,9 +144,7 @@ impl ByteBlobLoader {
         let temporary = store.shared_view();
         let temporary = &temporary[(self.offset as usize).min(temporary.len())..];
 
-        let take = buffer
-            .len()
-            .min(temporary.len().min(self.remain as usize));
+        let take = buffer.len().min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
         if temporary.is_empty() {
             self.clear_data();
@@ -185,7 +193,8 @@ impl ByteBlobLoader {
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
             blob.content_type_was_set.set(!ct.is_empty());
-            blob.content_type.set(bun_core::heap::into_raw(ct).cast_const());
+            blob.content_type
+                .set(bun_core::heap::into_raw(ct).cast_const());
             blob.content_type_allocated.set(self.content_type_allocated);
             self.content_type_allocated = false;
         }

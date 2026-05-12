@@ -92,7 +92,11 @@ pub struct FSEventStreamContext {
 
 impl Default for FSEventStreamContext {
     fn default() -> Self {
-        Self { version: 0, info: ptr::null_mut(), pad: [ptr::null_mut(); 3] }
+        Self {
+            version: 0,
+            info: ptr::null_mut(),
+            pad: [ptr::null_mut(); 3],
+        }
     }
 }
 
@@ -184,8 +188,11 @@ pub struct CoreFoundation {
     pub run_loop_get_current: unsafe extern "C" fn() -> CFRunLoopRef,
     pub run_loop_remove_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
     pub run_loop_run: unsafe extern "C" fn(),
-    pub run_loop_source_create:
-        unsafe extern "C" fn(CFAllocatorRef, CFIndex, *mut CFRunLoopSourceContext) -> CFRunLoopSourceRef,
+    pub run_loop_source_create: unsafe extern "C" fn(
+        CFAllocatorRef,
+        CFIndex,
+        *mut CFRunLoopSourceContext,
+    ) -> CFRunLoopSourceRef,
     pub run_loop_source_signal: unsafe extern "C" fn(CFRunLoopSourceRef),
     pub run_loop_stop: unsafe extern "C" fn(CFRunLoopRef),
     pub run_loop_wake_up: unsafe extern "C" fn(CFRunLoopRef),
@@ -396,7 +403,11 @@ pub type ConcurrentTaskQueue = UnboundedQueue<ConcurrentTask>;
 
 impl ConcurrentTask {
     pub fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
-        *this = ConcurrentTask { task, next: bun_threading::Link::new(), auto_delete };
+        *this = ConcurrentTask {
+            task,
+            next: bun_threading::Link::new(),
+            auto_delete,
+        };
         this
     }
 }
@@ -487,7 +498,8 @@ impl FSEventsLoop {
         };
 
         // SAFETY: ctx is stack-local and outlives the call; CF copies it
-        let signal_source = unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
+        let signal_source =
+            unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
             return Err(bun_core::err!("FailedToCreateCoreFoudationSourceLoop"));
         }
@@ -513,7 +525,10 @@ impl FSEventsLoop {
     fn enqueue_task_concurrent(&mut self, task: Task) {
         let cf = CoreFoundation::get();
         let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
-            task: Task { ctx: ptr::null_mut(), callback: |_| {} },
+            task: Task {
+                ctx: ptr::null_mut(),
+                callback: |_| {},
+            },
             next: bun_threading::Link::new(),
             auto_delete: false,
         }));
@@ -543,8 +558,7 @@ impl FSEventsLoop {
         // SAFETY: info was set to self in _schedule()
         let loop_ = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(info) };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
-        let event_flags =
-            unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
+        let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
@@ -565,8 +579,7 @@ impl FSEventsLoop {
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
                 // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
-                let mut path =
-                    unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
+                let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
                 // Filter out paths that are outside handle's request
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
@@ -612,7 +625,11 @@ impl FSEventsLoop {
                     }
                 }
 
-                let event_type: EventType = if is_rename { EventType::Rename } else { EventType::Change };
+                let event_type: EventType = if is_rename {
+                    EventType::Rename
+                } else {
+                    EventType::Change
+                };
                 handle.emit(event_type.to_event(path.into()), is_file);
             }
             handle.flush();
@@ -688,7 +705,10 @@ impl FSEventsLoop {
                 count as CFIndex,
                 ptr::null(),
             );
-            let mut ctx = FSEventStreamContext { info: std::ptr::from_mut(self).cast::<c_void>(), ..Default::default() };
+            let mut ctx = FSEventStreamContext {
+                info: std::ptr::from_mut(self).cast::<c_void>(),
+                ..Default::default()
+            };
 
             let latency: CFAbsoluteTime = 0.05;
             // Explanation of selected flags:
@@ -735,7 +755,11 @@ impl FSEventsLoop {
                 return;
             }
 
-            (cs.fs_event_stream_schedule_with_run_loop)(r#ref, self.loop_, *cf.run_loop_default_mode);
+            (cs.fs_event_stream_schedule_with_run_loop)(
+                r#ref,
+                self.loop_,
+                *cf.run_loop_default_mode,
+            );
             if (cs.fs_event_stream_start)(r#ref) == 0 {
                 //clean in case of failure
                 for s in &paths[..count as usize] {
@@ -829,7 +853,6 @@ impl FSEventsLoop {
         // SAFETY: self.loop_ is the CF thread's current run loop
         unsafe { (cf.run_loop_stop)(self.loop_) };
     }
-
 }
 
 impl Drop for FSEventsLoop {
@@ -919,7 +942,6 @@ impl FSEventsWatcher {
     pub fn flush(&self) {
         (self.flush_callback)(self.ctx);
     }
-
 }
 
 impl Drop for FSEventsWatcher {
@@ -968,7 +990,9 @@ pub fn watch(
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
-extern "C" fn close_and_wait_on_exit() { close_and_wait() }
+extern "C" fn close_and_wait_on_exit() {
+    close_and_wait()
+}
 
 pub fn close_and_wait() {
     #[cfg(not(target_os = "macos"))]

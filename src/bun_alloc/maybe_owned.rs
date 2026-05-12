@@ -49,7 +49,9 @@ impl<A> MaybeOwned<A> {
     ///
     /// Allocations are forwarded to `parent_alloc`.
     pub fn init_owned(parent_alloc: A) -> Self {
-        Self { _parent: Some(parent_alloc) }
+        Self {
+            _parent: Some(parent_alloc),
+        }
     }
 
     /// Creates a `MaybeOwned` allocator that does not own any memory. This allocator cannot
@@ -76,7 +78,9 @@ impl<A> MaybeOwned<A> {
     /// Used by smart pointer types and allocator wrappers. See `crate::borrow`.
     pub fn borrow(&self) -> MaybeOwnedBorrowed {
         // Borrowed view carries no allocator state — just the owned/borrowed bit.
-        MaybeOwned { _parent: if self.is_owned() { Some(()) } else { None } }
+        MaybeOwned {
+            _parent: if self.is_owned() { Some(()) } else { None },
+        }
     }
 }
 

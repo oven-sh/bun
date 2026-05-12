@@ -99,11 +99,7 @@ pub fn init_default<T: Default>() -> T {
 /// - `new_base` must point to a valid allocation of at least
 ///   `(slice.as_ptr() - old_base) + slice.len()` bytes.
 /// - The returned lifetime `'a` must not outlive the allocation at `new_base`.
-pub unsafe fn rebase_slice<'a>(
-    slice: &[u8],
-    old_base: *const u8,
-    new_base: *const u8,
-) -> &'a [u8] {
+pub unsafe fn rebase_slice<'a>(slice: &[u8], old_base: *const u8, new_base: *const u8) -> &'a [u8] {
     let offset = (slice.as_ptr() as usize) - (old_base as usize);
     // SAFETY: caller contract above guarantees `new_base.add(offset)` is in-bounds for
     // `slice.len()` bytes.

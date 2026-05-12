@@ -29,10 +29,18 @@ thread_local! {
 pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamily")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::from(AUTO_SELECT_FAMILY_DEFAULT.load(Ordering::Relaxed)))
+        Ok(JSValue::from(
+            AUTO_SELECT_FAMILY_DEFAULT.load(Ordering::Relaxed),
+        ))
     }
     // `#[bun_jsc::host_fn]` emits a `__jsc_host_<name>` shim with the raw `JSHostFn` ABI.
-    JSFunction::create(global, "getDefaultAutoSelectFamily", __jsc_host_getter, 0, Default::default())
+    JSFunction::create(
+        global,
+        "getDefaultAutoSelectFamily",
+        __jsc_host_getter,
+        0,
+        Default::default(),
+    )
 }
 
 pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
@@ -50,15 +58,21 @@ pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
         AUTO_SELECT_FAMILY_DEFAULT.store(value, Ordering::Relaxed);
         Ok(JSValue::from(value))
     }
-    JSFunction::create(global, "setDefaultAutoSelectFamily", __jsc_host_setter, 1, Default::default())
+    JSFunction::create(
+        global,
+        "setDefaultAutoSelectFamily",
+        __jsc_host_setter,
+        1,
+        Default::default(),
+    )
 }
 
 pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(
-            f64::from(AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.with(|v| v.get())),
-        ))
+        Ok(JSValue::js_number(f64::from(
+            AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.with(|v| v.get()),
+        )))
     }
     JSFunction::create(
         global,
@@ -77,7 +91,8 @@ pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
             return Err(global.throw(format_args!("missing argument")));
         }
         let arg = arguments.slice()[0];
-        let mut value = validators::validate_int32(global, arg, format_args!("value"), Some(1), None)?;
+        let mut value =
+            validators::validate_int32(global, arg, format_args!("value"), Some(1), None)?;
         if value < 10 {
             value = 10;
         }
@@ -144,7 +159,11 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         unsafe { (*socket).get_this_value(global) }
     }
 
-    Ok(if !is_ssl { make::<false>(global) } else { make::<true>(global) })
+    Ok(if !is_ssl {
+        make::<false>(global)
+    } else {
+        make::<true>(global)
+    })
 }
 
 #[bun_jsc::host_fn]

@@ -173,7 +173,10 @@ unsafe impl bytemuck::Pod for StreamPriority {}
 
 impl Default for StreamPriority {
     fn default() -> Self {
-        Self { stream_identifier: 0, weight: 0 }
+        Self {
+            stream_identifier: 0,
+            weight: 0,
+        }
     }
 }
 

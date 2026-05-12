@@ -12,7 +12,9 @@ use crate::posix_event_loop as posix;
 // only `FilePoll`/`Store`/`KeepAlive`/`Closer`/`Loop`/`Waker` are redefined
 // here. `Flags`/`Owner`/etc. are re-aliased below from `posix` for callers
 // that name them via this module.
-pub use crate::posix_event_loop::{get_vm_ctx, js_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
+pub use crate::posix_event_loop::{
+    AllocatorType, EventLoopCtx, OpaqueCallback, get_vm_ctx, js_vm_ctx,
+};
 
 bun_core::declare_scope!(KeepAlive, visible);
 bun_core::declare_scope!(FilePoll, visible);
@@ -77,12 +79,7 @@ impl FilePoll {
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
-    pub fn init(
-        vm: EventLoopCtx,
-        fd: Fd,
-        flags: FlagsStruct,
-        owner: Owner,
-    ) -> *mut FilePoll {
+    pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsStruct, owner: Owner) -> *mut FilePoll {
         Self::init_with_owner(vm, fd, flags, owner)
     }
 
@@ -462,9 +459,13 @@ impl Closer {
         // SAFETY: closer is a freshly-boxed valid pointer.
         unsafe {
             (*closer).io_request.data = closer.cast::<c_void>();
-            if let Some(err) =
-                uv::uv_fs_close(loop_, &mut (*closer).io_request, fd.uv(), Some(Self::on_close))
-                    .err_enum()
+            if let Some(err) = uv::uv_fs_close(
+                loop_,
+                &mut (*closer).io_request,
+                fd.uv(),
+                Some(Self::on_close),
+            )
+            .err_enum()
             {
                 Output::debug_warn(format_args!("libuv close() failed = {}", err));
                 drop(bun_core::heap::take(closer));
@@ -474,9 +475,7 @@ impl Closer {
 
     extern "C" fn on_close(req: *mut uv::fs_t) {
         // SAFETY: req points to Closer.io_request (set in `close` above).
-        let closer: *mut Closer = unsafe {
-            bun_core::from_field_ptr!(Closer, io_request, req)
-        };
+        let closer: *mut Closer = unsafe { bun_core::from_field_ptr!(Closer, io_request, req) };
         // SAFETY: req.data was set to `closer` in `close`; both are valid for the callback's duration.
         unsafe {
             debug_assert!(closer == (*req).data.cast::<Closer>());

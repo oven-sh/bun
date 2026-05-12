@@ -112,8 +112,14 @@ impl GarbageCollectionController {
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
-        self.gc_timer = Some(uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self)));
-        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self)));
+        self.gc_timer = Some(uws::Timer::create_fallthrough(
+            actual,
+            std::ptr::from_mut::<Self>(self),
+        ));
+        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(
+            actual,
+            std::ptr::from_mut::<Self>(self),
+        ));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
         #[cfg(debug_assertions)]
@@ -299,8 +305,9 @@ pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
     this.perform_gc();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
     if prev_heap_size == this.gc_last_heap_size_on_repeating_timer {
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count =
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count.saturating_add(1);
+        this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
+            .heap_size_didnt_change_for_repeating_timer_ticks_count
+            .saturating_add(1);
         if this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
             // make the timer interval longer
             this.update_gc_repeat_timer(GcRepeatSetting::Slow);

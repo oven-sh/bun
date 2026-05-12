@@ -1,10 +1,10 @@
 use core::mem::size_of;
 
-use bun_io::Loop as AsyncLoop;
 use bun_event_loop::EventLoopHandle;
-use bun_io::{BufferedWriter, WriteStatus};
+use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_io::{BufferedWriter, WriteStatus};
 use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
 use bun_sys;
 
@@ -153,10 +153,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
             // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
             use crate::process::WindowsStdioResult;
-            match core::mem::replace(
-                &mut this_ref.stdio_result,
-                WindowsStdioResult::Unavailable,
-            ) {
+            match core::mem::replace(&mut this_ref.stdio_result, WindowsStdioResult::Unavailable) {
                 WindowsStdioResult::Buffer(pipe) => {
                     // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
                     // takes ownership via `heap::take`.

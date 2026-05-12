@@ -2,8 +2,10 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use std::ffi::CStr;
 
 use bun_boringssl_sys as boringssl;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
-use bun_core::{strings, String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString, strings};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _,
+};
 
 use crate::api::bun_x509 as X509;
 use crate::webcore::blob::ZigStringBlobExt as _;
@@ -34,7 +36,7 @@ fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JS
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
-    use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509, X509_STORE_CTX};
+    use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE_CTX, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -186,11 +188,22 @@ pub mod ffi {
         pub safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
         pub safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
         pub safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
-        pub safe fn SSL_get0_alpn_selected(ssl: &SSL, out_data: &mut *const u8, out_len: &mut c_uint);
+        pub safe fn SSL_get0_alpn_selected(
+            ssl: &SSL,
+            out_data: &mut *const u8,
+            out_len: &mut c_uint,
+        );
         pub safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         pub safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
-        pub safe fn SSL_set_renegotiate_mode(ssl: &SSL, mode: super::boringssl::ssl_renegotiate_mode_t);
-        pub safe fn SSL_set_verify(ssl: &SSL, mode: c_int, callback: super::boringssl::SSL_verify_cb);
+        pub safe fn SSL_set_renegotiate_mode(
+            ssl: &SSL,
+            mode: super::boringssl::ssl_renegotiate_mode_t,
+        );
+        pub safe fn SSL_set_verify(
+            ssl: &SSL,
+            mode: c_int,
+            callback: super::boringssl::SSL_verify_cb,
+        );
         // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
         // it verbatim, never derefs) ⇒ no caller-side precondition.
         pub safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
@@ -230,10 +243,19 @@ use crate::node::StringOrBuffer;
 // `socket_body` instance.
 type This = super::TLSSocket;
 
-pub fn get_servername(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_servername(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
 
-    let servername = ffi::SSL_get_servername(boringssl::SSL::opaque_ref(ssl_ptr), ffi::TLSEXT_NAMETYPE_host_name);
+    let servername = ffi::SSL_get_servername(
+        boringssl::SSL::opaque_ref(ssl_ptr),
+        ffi::TLSEXT_NAMETYPE_host_name,
+    );
     if servername.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -242,9 +264,15 @@ pub fn get_servername(this: &This, global: &JSGlobalObject, _frame: &CallFrame) 
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fn set_servername(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_servername(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     if this.is_server() {
-        return Err(global.throw(format_args!("Cannot issue SNI from a TLS server-side socket")));
+        return Err(global.throw(format_args!(
+            "Cannot issue SNI from a TLS server-side socket"
+        )));
     }
 
     let args = frame.arguments_old::<1>();
@@ -257,13 +285,18 @@ pub fn set_servername(this: &This, global: &JSGlobalObject, frame: &CallFrame) -
         return Err(global.throw(format_args!("Expected \"serverName\" to be a string")));
     }
 
-    let slice: Box<[u8]> = server_name.get_zig_string(global)?.to_owned_slice().into_boxed_slice();
+    let slice: Box<[u8]> = server_name
+        .get_zig_string(global)?
+        .to_owned_slice()
+        .into_boxed_slice();
     // Drop replaces the old value (Zig manually freed `old`).
     this.server_name.set(Some(slice));
 
     let host = this.server_name.get().as_deref().unwrap();
     if !host.is_empty() {
-        let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+        let Some(ssl_ptr) = this.socket.get().ssl() else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         if ffi::SSL_is_init_finished(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
             // match node.js exceptions
@@ -277,8 +310,14 @@ pub fn set_servername(this: &This, global: &JSGlobalObject, frame: &CallFrame) -
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_peer_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_peer_x509_certificate(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     if !cert.is_null() {
         return X509::to_js_object(boringssl::X509::opaque_mut(cert), global);
@@ -286,8 +325,14 @@ pub fn get_peer_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_x509_certificate(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     if !cert.is_null() {
         // X509_up_ref bumps the refcount before handing to JS.
@@ -297,10 +342,16 @@ pub fn get_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &CallF
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_tls_version(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_tls_version(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::NULL) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::NULL);
+    };
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
     if version.is_null() {
         return Ok(JSValue::NULL);
@@ -313,7 +364,11 @@ pub fn get_tls_version(this: &This, global: &JSGlobalObject, _frame: &CallFrame)
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fn set_max_send_fragment(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_max_send_fragment(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding();
 
     let args = frame.arguments_old::<1>();
@@ -334,13 +389,22 @@ pub fn set_max_send_fragment(this: &This, global: &JSGlobalObject, frame: &CallF
         return Err(global.throw(format_args!("Expected size to be less than 16385")));
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::FALSE);
+    };
     Ok(JSValue::from(
-        ffi::SSL_set_max_send_fragment(boringssl::SSL::opaque_ref(ssl_ptr), usize::try_from(size).expect("int cast")) == 1,
+        ffi::SSL_set_max_send_fragment(
+            boringssl::SSL::opaque_ref(ssl_ptr),
+            usize::try_from(size).expect("int cast"),
+        ) == 1,
     ))
 }
 
-pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_peer_certificate(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding();
 
     let args = frame.arguments_old::<1>();
@@ -353,7 +417,9 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
         abbreviated = arg.to_boolean();
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
 
     if abbreviated {
         if this.is_server() {
@@ -407,8 +473,14 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_certificate(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
 
     if !cert.is_null() {
@@ -417,8 +489,14 @@ pub fn get_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame)
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_tls_finished_message(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_tls_finished_message(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     // We cannot just pass nullptr to SSL_get_finished()
     // because it would further be propagated to memcpy(),
     // where the standard requirements as described in ISO/IEC 9899:2011
@@ -427,7 +505,11 @@ pub fn get_tls_finished_message(this: &This, global: &JSGlobalObject, _frame: &C
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        ffi::SSL_get_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
+        ffi::SSL_get_finished(
+            ssl_ptr,
+            dummy.as_mut_ptr().cast::<c_void>(),
+            core::mem::size_of_val(&dummy),
+        )
     };
     if size == 0 {
         return Ok(JSValue::UNDEFINED);
@@ -443,12 +525,26 @@ pub fn get_tls_finished_message(this: &This, global: &JSGlobalObject, _frame: &C
     Ok(buffer)
 }
 
-pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_shared_sigalgs(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::NULL) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::NULL);
+    };
 
-    let nsig = ffi::SSL_get_shared_sigalgs(boringssl::SSL::opaque_ref(ssl_ptr), 0, None, None, None, None, None);
+    let nsig = ffi::SSL_get_shared_sigalgs(
+        boringssl::SSL::opaque_ref(ssl_ptr),
+        0,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
 
     let array = JSValue::create_empty_array(global, usize::try_from(nsig).expect("int cast"))?;
 
@@ -513,19 +609,29 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
             buffer.extend_from_slice(sig_with_md);
             buffer.push(b'+');
             buffer.extend_from_slice(hash_slice);
-            array.put_index(global, u32::try_from(i).expect("int cast"), ZigString::from_utf8(&buffer).to_js(global))?;
+            array.put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                ZigString::from_utf8(&buffer).to_js(global),
+            )?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + 6);
             buffer.extend_from_slice(sig_with_md);
             buffer.extend_from_slice(b"+UNDEF");
-            array.put_index(global, u32::try_from(i).expect("int cast"), ZigString::from_utf8(&buffer).to_js(global))?;
+            array.put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                ZigString::from_utf8(&buffer).to_js(global),
+            )?;
         }
     }
     Ok(array)
 }
 
 pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
     let result = JSValue::create_empty_object(global, 0);
 
@@ -552,7 +658,11 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
     } else {
         // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
-        result.put(global, b"standardName", ZigString::from_utf8(s).to_js(global));
+        result.put(
+            global,
+            b"standardName",
+            ZigString::from_utf8(s).to_js(global),
+        );
     }
 
     let version = ffi::SSL_CIPHER_get_version(cipher);
@@ -567,8 +677,14 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
     Ok(result)
 }
 
-pub fn get_tls_peer_finished_message(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_tls_peer_finished_message(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     // We cannot just pass nullptr to SSL_get_peer_finished()
     // because it would further be propagated to memcpy(),
     // where the standard requirements as described in ISO/IEC 9899:2011
@@ -577,7 +693,11 @@ pub fn get_tls_peer_finished_message(this: &This, global: &JSGlobalObject, _fram
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        ffi::SSL_get_peer_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
+        ffi::SSL_get_peer_finished(
+            ssl_ptr,
+            dummy.as_mut_ptr().cast::<c_void>(),
+            core::mem::size_of_val(&dummy),
+        )
     };
     if size == 0 {
         return Ok(JSValue::UNDEFINED);
@@ -593,7 +713,11 @@ pub fn get_tls_peer_finished_message(this: &This, global: &JSGlobalObject, _fram
     Ok(buffer)
 }
 
-pub fn export_keying_material(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn export_keying_material(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -619,7 +743,9 @@ pub fn export_keying_material(this: &This, global: &JSGlobalObject, frame: &Call
 
     let label = label_arg.to_slice_or_null(global)?;
     let label_slice = label.slice();
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
 
     if args.len > 2 {
         let context_arg = args.ptr[2];
@@ -646,11 +772,16 @@ pub fn export_keying_material(this: &This, global: &JSGlobalObject, frame: &Call
                 )
             };
             if result != 1 {
-                return Err(global.throw_value(get_ssl_exception(global, b"Failed to export keying material")));
+                return Err(global.throw_value(get_ssl_exception(
+                    global,
+                    b"Failed to export keying material",
+                )));
             }
             Ok(buffer)
         } else {
-            Err(global.throw(format_args!("Expected context to be a string, Buffer or TypedArray")))
+            Err(global.throw(format_args!(
+                "Expected context to be a string, Buffer or TypedArray"
+            )))
         }
     } else {
         let buffer_size = usize::try_from(length).expect("int cast");
@@ -671,19 +802,28 @@ pub fn export_keying_material(this: &This, global: &JSGlobalObject, frame: &Call
             )
         };
         if result != 1 {
-            return Err(global.throw_value(get_ssl_exception(global, b"Failed to export keying material")));
+            return Err(global.throw_value(get_ssl_exception(
+                global,
+                b"Failed to export keying material",
+            )));
         }
         Ok(buffer)
     }
 }
 
-pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_ephemeral_key_info(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     // only available for clients
     if this.is_server() {
         return Ok(JSValue::NULL);
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::NULL) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::NULL);
+    };
     let result = JSValue::create_empty_object(global, 0);
 
     // TODO: investigate better option or compatible way to get the key
@@ -733,7 +873,11 @@ pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &Cal
                 }
             }
             result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
-            result.put(global, b"name", ZigString::from_utf8(curve_name).to_js(global));
+            result.put(
+                global,
+                b"name",
+                ZigString::from_utf8(curve_name).to_js(global),
+            );
             result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
         _ => {}
@@ -745,9 +889,15 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     let mut alpn_proto: *const u8 = core::ptr::null();
     let mut alpn_proto_len: u32 = 0;
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::FALSE);
+    };
 
-    ffi::SSL_get0_alpn_selected(boringssl::SSL::opaque_ref(ssl_ptr), &mut alpn_proto, &mut alpn_proto_len);
+    ffi::SSL_get0_alpn_selected(
+        boringssl::SSL::opaque_ref(ssl_ptr),
+        &mut alpn_proto,
+        &mut alpn_proto_len,
+    );
     if alpn_proto.is_null() || alpn_proto_len == 0 {
         return Ok(JSValue::FALSE);
     }
@@ -764,7 +914,9 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
 }
 
 pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
@@ -793,7 +945,9 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
     let args = frame.arguments_old::<1>();
 
     if args.len < 1 {
-        return Err(global.throw(format_args!("Expected session to be a string, Buffer or TypedArray")));
+        return Err(global.throw(format_args!(
+            "Expected session to be a string, Buffer or TypedArray"
+        )));
     }
 
     let session_arg = args.ptr[0];
@@ -801,11 +955,17 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
-        let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+        let Some(ssl_ptr) = this.socket.get().ssl() else {
+            return Ok(JSValue::UNDEFINED);
+        };
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
         let session = unsafe {
-            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &raw mut tmp, c_long::try_from(session_slice.len()).expect("int cast"))
+            ffi::d2i_SSL_SESSION(
+                core::ptr::null_mut(),
+                &raw mut tmp,
+                c_long::try_from(session_slice.len()).expect("int cast"),
+            )
         };
         if session.is_null() {
             return Ok(JSValue::UNDEFINED);
@@ -814,17 +974,29 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
         let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
-        if ffi::SSL_set_session(boringssl::SSL::opaque_ref(ssl_ptr), ffi::SSL_SESSION::opaque_ref(session)) != 1 {
+        if ffi::SSL_set_session(
+            boringssl::SSL::opaque_ref(ssl_ptr),
+            ffi::SSL_SESSION::opaque_ref(session),
+        ) != 1
+        {
             return Err(global.throw_value(get_ssl_exception(global, b"SSL_set_session error")));
         }
         Ok(JSValue::UNDEFINED)
     } else {
-        Err(global.throw(format_args!("Expected session to be a string, Buffer or TypedArray")))
+        Err(global.throw(format_args!(
+            "Expected session to be a string, Buffer or TypedArray"
+        )))
     }
 }
 
-pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+pub fn get_tls_ticket(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
@@ -832,7 +1004,11 @@ pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) 
     let mut ticket: *const u8 = core::ptr::null();
     let mut length: usize = 0;
     // The pointer is only valid while the connection is in use so we need to copy it
-    ffi::SSL_SESSION_get0_ticket(ffi::SSL_SESSION::opaque_ref(session), &mut ticket, &mut length);
+    ffi::SSL_SESSION_get0_ticket(
+        ffi::SSL_SESSION::opaque_ref(session),
+        &mut ticket,
+        &mut length,
+    );
 
     if ticket.is_null() || length == 0 {
         return Ok(JSValue::UNDEFINED);
@@ -844,7 +1020,9 @@ pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) 
 }
 
 pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     boringssl::ERR_clear_error();
     if ffi::SSL_renegotiate(boringssl::SSL::opaque_ref(ssl_ptr)) != 1 {
         return Err(global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error")));
@@ -852,18 +1030,39 @@ pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn disable_renegotiation(this: &This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    ffi::SSL_set_renegotiate_mode(boringssl::SSL::opaque_ref(ssl_ptr), boringssl::ssl_renegotiate_never);
+pub fn disable_renegotiation(
+    this: &This,
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    ffi::SSL_set_renegotiate_mode(
+        boringssl::SSL::opaque_ref(ssl_ptr),
+        boringssl::ssl_renegotiate_never,
+    );
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn is_session_reused(this: &This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
-    Ok(JSValue::from(ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1))
+pub fn is_session_reused(
+    this: &This,
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::FALSE);
+    };
+    Ok(JSValue::from(
+        ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1,
+    ))
 }
 
-pub fn set_verify_mode(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_verify_mode(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -871,12 +1070,16 @@ pub fn set_verify_mode(this: &This, global: &JSGlobalObject, frame: &CallFrame) 
     let args = frame.arguments_old::<2>();
 
     if args.len < 2 {
-        return Err(global.throw(format_args!("Expected requestCert and rejectUnauthorized arguments")));
+        return Err(global.throw(format_args!(
+            "Expected requestCert and rejectUnauthorized arguments"
+        )));
     }
     let request_cert_js = args.ptr[0];
     let reject_unauthorized_js = args.ptr[1];
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
-        return Err(global.throw(format_args!("Expected requestCert and rejectUnauthorized arguments to be boolean")));
+        return Err(global.throw(format_args!(
+            "Expected requestCert and rejectUnauthorized arguments to be boolean"
+        )));
     }
 
     let request_cert = request_cert_js.to_boolean();
@@ -890,13 +1093,22 @@ pub fn set_verify_mode(this: &This, global: &JSGlobalObject, frame: &CallFrame) 
             }
         }
     }
-    let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     // we always allow and check the SSL certificate after the handshake or renegotiation
-    ffi::SSL_set_verify(boringssl::SSL::opaque_ref(ssl_ptr), verify_mode, Some(always_allow_ssl_verify_callback));
+    ffi::SSL_set_verify(
+        boringssl::SSL::opaque_ref(ssl_ptr),
+        verify_mode,
+        Some(always_allow_ssl_verify_callback),
+    );
     Ok(JSValue::UNDEFINED)
 }
 
-extern "C" fn always_allow_ssl_verify_callback(_preverify_ok: c_int, _ctx: *mut boringssl::X509_STORE_CTX) -> c_int {
+extern "C" fn always_allow_ssl_verify_callback(
+    _preverify_ok: c_int,
+    _ctx: *mut boringssl::X509_STORE_CTX,
+) -> c_int {
     1
 }
 

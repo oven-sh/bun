@@ -15,27 +15,29 @@ use super::cron_parser::{self, CronExpression};
 use core::ffi::c_char;
 use std::cell::Cell;
 
-use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
+use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSPromise, JSValue, JsCell, JsRef, JsResult,
 };
-use bun_jsc::event_loop::EventLoop;
-use bun_jsc::virtual_machine::{VirtualMachine, HOT_RELOAD_HOT};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::{FileSystem, RealFS};
 // `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
 // `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
 // not at the `spawn` module root). Alias `process` as `spawn` so the
 // `spawn::spawn_process(...)` call site below resolves.
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use crate::api::bun::process::{
+    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
+};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_jsc::JsClass as _;
+use bun_core::{ZStr, strings};
 use bun_io::pipe_reader::BufferedReaderParent;
+use bun_jsc::JsClass as _;
 use bun_sys::FdDirExt as _;
-use bun_core::{strings, ZStr};
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
@@ -178,11 +180,21 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 impl CronJobBase for CronRegisterJob {
-    fn remaining_fds_mut(&mut self) -> &mut i8 { &mut self.remaining_fds }
-    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
-    fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
-    fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
-    unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRegisterJob::maybe_finished(this) } }
+    fn remaining_fds_mut(&mut self) -> &mut i8 {
+        &mut self.remaining_fds
+    }
+    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> {
+        &mut self.err_msg
+    }
+    fn has_called_process_exit_mut(&mut self) -> &mut bool {
+        &mut self.has_called_process_exit
+    }
+    fn exit_status_mut(&mut self) -> &mut Option<Status> {
+        &mut self.exit_status
+    }
+    unsafe fn maybe_finished(this: *mut Self) {
+        unsafe { CronRegisterJob::maybe_finished(this) }
+    }
 }
 
 impl CronRegisterJob {
@@ -212,7 +224,9 @@ impl CronRegisterJob {
         if s.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.exit_status.take() else { return };
+        let Some(status) = s.exit_status.take() else {
+            return;
+        };
         match status {
             Status::Exited(exited) => {
                 if exited.code != 0
@@ -330,7 +344,9 @@ impl CronRegisterJob {
                     .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref
+                .promise
+                .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -460,9 +476,15 @@ impl CronRegisterJob {
         };
 
         let mut launch_agents_dir = Vec::new();
-        let _ = write!(&mut launch_agents_dir, "{}/Library/LaunchAgents", bstr::BStr::new(home));
+        let _ = write!(
+            &mut launch_agents_dir,
+            "{}/Library/LaunchAgents",
+            bstr::BStr::new(home)
+        );
         if Fd::cwd().make_path(&launch_agents_dir).is_err() {
-            s.set_err(format_args!("Failed to create ~/Library/LaunchAgents directory"));
+            s.set_err(format_args!(
+                "Failed to create ~/Library/LaunchAgents directory"
+            ));
             return unsafe { Self::finish(this) };
         }
 
@@ -609,142 +631,146 @@ impl CronRegisterJob {
         drop(uid_str);
         drop(plist_path);
     }
-
 }
 
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
 
 #[bun_jsc::host_fn]
 pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_as_array::<3>();
+    let args = frame.arguments_as_array::<3>();
 
-        // In-process callback cron: Bun.cron(schedule, handler)
-        if args[1].is_callable() {
-            return CronJob::register(global, args[0], args[1]);
-        }
-        if args[0].is_string() && args[2].is_undefined() {
+    // In-process callback cron: Bun.cron(schedule, handler)
+    if args[1].is_callable() {
+        return CronJob::register(global, args[0], args[1]);
+    }
+    if args[0].is_string() && args[2].is_undefined() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron(schedule, handler) expects a function handler as the second argument"
+        )));
+    }
+
+    if !args[0].is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron() expects a string path as the first argument"
+        )));
+    }
+    if !args[1].is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron() expects a string schedule as the second argument"
+        )));
+    }
+    if !args[2].is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron() expects a string title as the third argument"
+        )));
+    }
+
+    let path_str = args[0].to_bun_string(global)?;
+    let schedule_str = args[1].to_bun_string(global)?;
+    let title_str = args[2].to_bun_string(global)?;
+
+    let path_slice = path_str.to_utf8();
+    let schedule_slice = schedule_str.to_utf8();
+    let title_slice = title_str.to_utf8();
+
+    // Validate title: only [a-zA-Z0-9_-]
+    if !validate_title(title_slice.slice()) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Cron title must contain only alphanumeric characters, hyphens, and underscores"
+        )));
+    }
+
+    // Parse and normalize cron schedule to numeric form for crontab/launchd/schtasks
+    let parsed = match CronExpression::parse(schedule_slice.slice()) {
+        Ok(p) => p,
+        Err(e) => {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.cron(schedule, handler) expects a function handler as the second argument"
+                "{}",
+                bstr::BStr::new(CronExpression::error_message(e))
             )));
         }
+    };
+    let mut fmt_buf = [0u8; 512];
+    let normalized_schedule = parsed.format_numeric(&mut fmt_buf);
 
-        if !args[0].is_string() {
+    let abs_path = match resolve_path(global, frame, path_slice.slice()) {
+        Ok(p) => p,
+        Err(_) => {
+            return Err(global.throw_invalid_arguments(format_args!("Failed to resolve path")));
+        }
+    };
+
+    // Validate path has no single quotes (shell escaping in crontab) or
+    // percent signs (cron interprets % as newline before the shell sees it)
+    for &c in abs_path.as_bytes() {
+        if c == b'\'' {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Path must not contain single quotes"))
+            );
+        }
+        if c == b'%' {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.cron() expects a string path as the first argument"
+                "Path must not contain percent signs (cron interprets % as newline)"
             )));
         }
-        if !args[1].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.cron() expects a string schedule as the second argument"
-            )));
+    }
+
+    let bun_exe = match bun_core::self_exe_path() {
+        Ok(p) => p,
+        Err(_) => {
+            return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
-        if !args[2].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.cron() expects a string title as the third argument"
-            )));
-        }
-
-        let path_str = args[0].to_bun_string(global)?;
-        let schedule_str = args[1].to_bun_string(global)?;
-        let title_str = args[2].to_bun_string(global)?;
-
-        let path_slice = path_str.to_utf8();
-        let schedule_slice = schedule_str.to_utf8();
-        let title_slice = title_str.to_utf8();
-
-        // Validate title: only [a-zA-Z0-9_-]
-        if !validate_title(title_slice.slice()) {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Cron title must contain only alphanumeric characters, hyphens, and underscores"
-            )));
-        }
-
-        // Parse and normalize cron schedule to numeric form for crontab/launchd/schtasks
-        let parsed = match CronExpression::parse(schedule_slice.slice()) {
-            Ok(p) => p,
-            Err(e) => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{}",
-                    bstr::BStr::new(CronExpression::error_message(e))
-                )))
-            }
-        };
-        let mut fmt_buf = [0u8; 512];
-        let normalized_schedule = parsed.format_numeric(&mut fmt_buf);
-
-        let abs_path = match resolve_path(global, frame, path_slice.slice()) {
-            Ok(p) => p,
-            Err(_) => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Failed to resolve path")))
-            }
-        };
-
-        // Validate path has no single quotes (shell escaping in crontab) or
-        // percent signs (cron interprets % as newline before the shell sees it)
-        for &c in abs_path.as_bytes() {
-            if c == b'\'' {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Path must not contain single quotes"
-                )));
-            }
-            if c == b'%' {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Path must not contain percent signs (cron interprets % as newline)"
-                )));
-            }
-        }
-
-        let bun_exe = match bun_core::self_exe_path() {
-            Ok(p) => p,
-            Err(_) => {
-                return Err(global.throw(format_args!("Failed to get bun executable path")));
-            }
-        };
-        if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
-            return Err(global.throw_invalid_arguments(format_args!(
+    };
+    if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+        return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
-        }
-        let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
-            promise: jsc::JSPromiseStrong::init(global),
-            global: GlobalRef::from(global),
-            poll: KeepAlive::default(),
-            bun_exe,
-            abs_path,
-            schedule: ZString::from_bytes(normalized_schedule),
-            title: ZString::from_bytes(title_slice.slice()),
-            parsed_cron: parsed,
-            state: RegisterState::ReadingCrontab,
-            process: None,
-            stdout_reader: OutputReader::init::<CronRegisterJob>(),
-            stderr_reader: OutputReader::init::<CronRegisterJob>(),
-            remaining_fds: 0,
-            has_called_process_exit: false,
-            exit_status: None,
-            err_msg: None,
-            tmp_path: None,
-            event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-        }));
-        // SAFETY: just allocated; unique. Short-lived borrow ends before
-        // `start_*` (which may free `job`).
-        let promise_value = {
-            let job_ref = unsafe { &mut *job };
-            job_ref.poll.ref_(bun_io::js_vm_ctx());
-            job_ref.promise.value()
-        };
+    }
+    let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
+        promise: jsc::JSPromiseStrong::init(global),
+        global: GlobalRef::from(global),
+        poll: KeepAlive::default(),
+        bun_exe,
+        abs_path,
+        schedule: ZString::from_bytes(normalized_schedule),
+        title: ZString::from_bytes(title_slice.slice()),
+        parsed_cron: parsed,
+        state: RegisterState::ReadingCrontab,
+        process: None,
+        stdout_reader: OutputReader::init::<CronRegisterJob>(),
+        stderr_reader: OutputReader::init::<CronRegisterJob>(),
+        remaining_fds: 0,
+        has_called_process_exit: false,
+        exit_status: None,
+        err_msg: None,
+        tmp_path: None,
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+    }));
+    // SAFETY: just allocated; unique. Short-lived borrow ends before
+    // `start_*` (which may free `job`).
+    let promise_value = {
+        let job_ref = unsafe { &mut *job };
+        job_ref.poll.ref_(bun_io::js_vm_ctx());
+        job_ref.promise.value()
+    };
 
-        // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
-        // synchronous failure or hands it to the event loop on success.
-        #[cfg(target_os = "macos")]
-        unsafe { CronRegisterJob::start_mac(job) };
-        #[cfg(windows)]
-        unsafe { CronRegisterJob::start_windows(job) };
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
-        unsafe { CronRegisterJob::start_linux(job) };
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        CronRegisterJob::start_mac(job)
+    };
+    #[cfg(windows)]
+    unsafe {
+        CronRegisterJob::start_windows(job)
+    };
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    unsafe {
+        CronRegisterJob::start_linux(job)
+    };
 
-        Ok(promise_value)
+    Ok(promise_value)
 }
 
 impl CronRegisterJob {
@@ -899,11 +925,21 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 impl CronJobBase for CronRemoveJob {
-    fn remaining_fds_mut(&mut self) -> &mut i8 { &mut self.remaining_fds }
-    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
-    fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
-    fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
-    unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRemoveJob::maybe_finished(this) } }
+    fn remaining_fds_mut(&mut self) -> &mut i8 {
+        &mut self.remaining_fds
+    }
+    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> {
+        &mut self.err_msg
+    }
+    fn has_called_process_exit_mut(&mut self) -> &mut bool {
+        &mut self.has_called_process_exit
+    }
+    fn exit_status_mut(&mut self) -> &mut Option<Status> {
+        &mut self.exit_status
+    }
+    unsafe fn maybe_finished(this: *mut Self) {
+        unsafe { CronRemoveJob::maybe_finished(this) }
+    }
 }
 
 impl CronRemoveJob {
@@ -933,7 +969,9 @@ impl CronRemoveJob {
         if s.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.exit_status.take() else { return };
+        let Some(status) = s.exit_status.take() else {
+            return;
+        };
         match status {
             Status::Exited(exited) => {
                 let is_acceptable_nonzero = (s.state == RemoveState::ReadingCrontab
@@ -1045,7 +1083,9 @@ impl CronRemoveJob {
                     .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref
+                .promise
+                .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -1163,54 +1203,59 @@ impl CronRemoveJob {
 // free fn: `#[host_fn]` Free shim calls bare `cron_remove(..)`
 #[bun_jsc::host_fn]
 pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_as_array::<1>();
-        if !args[0].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.cron.remove() expects a string title"
-            )));
-        }
+    let args = frame.arguments_as_array::<1>();
+    if !args[0].is_string() {
+        return Err(global
+            .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
+    }
 
-        let title_str = args[0].to_bun_string(global)?;
-        let title_slice = title_str.to_utf8();
+    let title_str = args[0].to_bun_string(global)?;
+    let title_slice = title_str.to_utf8();
 
-        if !validate_title(title_slice.slice()) {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Cron title must contain only alphanumeric characters, hyphens, and underscores"
-            )));
-        }
+    if !validate_title(title_slice.slice()) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Cron title must contain only alphanumeric characters, hyphens, and underscores"
+        )));
+    }
 
-        let job = bun_core::heap::into_raw(Box::new(CronRemoveJob {
-            promise: jsc::JSPromiseStrong::init(global),
-            global: GlobalRef::from(global),
-            poll: KeepAlive::default(),
-            title: ZString::from_bytes(title_slice.slice()),
-            state: RemoveState::ReadingCrontab,
-            process: None,
-            stdout_reader: OutputReader::init::<CronRemoveJob>(),
-            stderr_reader: OutputReader::init::<CronRemoveJob>(),
-            remaining_fds: 0,
-            has_called_process_exit: false,
-            exit_status: None,
-            err_msg: None,
-            tmp_path: None,
-            event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-        }));
-        // SAFETY: just allocated; unique. Short-lived borrow ends before
-        // `start_*` (which may free `job`).
-        let promise_value = {
-            let job_ref = unsafe { &mut *job };
-            job_ref.poll.ref_(bun_io::js_vm_ctx());
-            job_ref.promise.value()
-        };
-        // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
-        // synchronous failure or hands it to the event loop on success.
-        #[cfg(target_os = "macos")]
-        unsafe { CronRemoveJob::start_mac(job) };
-        #[cfg(windows)]
-        unsafe { CronRemoveJob::start_windows(job) };
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
-        unsafe { CronRemoveJob::start_linux(job) };
-        Ok(promise_value)
+    let job = bun_core::heap::into_raw(Box::new(CronRemoveJob {
+        promise: jsc::JSPromiseStrong::init(global),
+        global: GlobalRef::from(global),
+        poll: KeepAlive::default(),
+        title: ZString::from_bytes(title_slice.slice()),
+        state: RemoveState::ReadingCrontab,
+        process: None,
+        stdout_reader: OutputReader::init::<CronRemoveJob>(),
+        stderr_reader: OutputReader::init::<CronRemoveJob>(),
+        remaining_fds: 0,
+        has_called_process_exit: false,
+        exit_status: None,
+        err_msg: None,
+        tmp_path: None,
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+    }));
+    // SAFETY: just allocated; unique. Short-lived borrow ends before
+    // `start_*` (which may free `job`).
+    let promise_value = {
+        let job_ref = unsafe { &mut *job };
+        job_ref.poll.ref_(bun_io::js_vm_ctx());
+        job_ref.promise.value()
+    };
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        CronRemoveJob::start_mac(job)
+    };
+    #[cfg(windows)]
+    unsafe {
+        CronRemoveJob::start_windows(job)
+    };
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    unsafe {
+        CronRemoveJob::start_linux(job)
+    };
+    Ok(promise_value)
 }
 
 impl CronRemoveJob {
@@ -1451,7 +1496,11 @@ impl CronJob {
         let _ = vm;
         let rare = VirtualMachine::get().as_mut().rare_data.as_mut();
         if let Some(rare) = rare {
-            if let Some(i) = rare.cron_jobs.iter().position(|&j| j.cast::<()>() == needle) {
+            if let Some(i) = rare
+                .cron_jobs
+                .iter()
+                .position(|&j| j.cast::<()>() == needle)
+            {
                 rare.cron_jobs.swap_remove(i);
                 // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
                 unsafe { Self::deref(this) };
@@ -1517,7 +1566,9 @@ impl CronJob {
         // an uncaughtException handler, or an unhandledRejection handler). If
         // that JS called process.exit() / worker.terminate(), don't re-arm
         // the timer into a VM whose teardown now owns it.
-        if this_ref.stopped.get() || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+        if this_ref.stopped.get()
+            || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+        {
             this_ref.stopped.set(true);
             return Self::finish_deferred_stop(this, vm);
         }
@@ -1538,7 +1589,9 @@ impl CronJob {
         // `noalias` `&mut Self` here would be Stacked-Borrows UB. All mutation
         // is interior (`Cell`/`JsCell`).
         let this_ref = Self::from_ctx_ptr(this);
-        this_ref.event_loop_timer.with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        this_ref
+            .event_loop_timer
+            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
         if this_ref.stopped.get() {
             return;
@@ -1587,7 +1640,8 @@ impl CronJob {
                     let global_ref = vm.global();
                     // SAFETY: single JS thread; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get().as_mut()
+                    let _ = VirtualMachine::get()
+                        .as_mut()
                         .uncaught_exception(global_ref, err, false);
                 }
                 Self::schedule_next(this, vm);
@@ -1619,7 +1673,11 @@ impl CronJob {
                     // the VM status and run the same recovery the Zig `catch`
                     // ran — otherwise `pending_ref` and the `ref_()` above leak.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
-                        js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
+                        js::pending_promise_set_cached(
+                            js_this,
+                            &this_ref.global,
+                            JSValue::UNDEFINED,
+                        );
                         Self::release_pending_ref(this);
                         Self::schedule_next(this, vm);
                     }
@@ -1632,13 +1690,18 @@ impl CronJob {
                     // dispatch on the variant and call `JSPromise::result` directly.
                     // S012: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
                     let reason = match promise {
-                        jsc::AnyPromise::Normal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
-                        jsc::AnyPromise::Internal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
+                        jsc::AnyPromise::Normal(p) => {
+                            jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm())
+                        }
+                        jsc::AnyPromise::Internal(p) => {
+                            jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm())
+                        }
                     };
                     // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
                     let global_ref = vm.global();
-                    VirtualMachine::get().as_mut()
+                    VirtualMachine::get()
+                        .as_mut()
                         .unhandled_rejection(global_ref, reason, result);
                 }
             }
@@ -1695,7 +1758,7 @@ impl CronJob {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "{}",
                     bstr::BStr::new(CronExpression::error_message(e))
-                )))
+                )));
             }
         };
 
@@ -1741,9 +1804,15 @@ impl CronJob {
         // SAFETY: `job` is a fresh `heap::alloc` pointer; ownership of one
         // ref transfers to the C++ wrapper (released via `finalize` → `deref`).
         let js_value = unsafe { Self::to_js_ptr(job, global) };
-        job_ref.this_value.with_mut(|v| v.set_strong(js_value, global));
+        job_ref
+            .this_value
+            .with_mut(|v| v.set_strong(js_value, global));
         js::cron_set_cached(js_value, global, schedule_arg);
-        js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));
+        js::callback_set_cached(
+            js_value,
+            global,
+            callback_arg.with_async_context_if_needed(global),
+        );
 
         job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
@@ -1820,12 +1889,27 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
 pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue {
     // `#[bun_jsc::host_fn]` emits the C-ABI shim as `__jsc_host_<name>`.
-    let cron_fn =
-        JSFunction::create(global_this, "cron", __jsc_host_cron_register, 3, Default::default());
-    let remove_fn =
-        JSFunction::create(global_this, "remove", __jsc_host_cron_remove, 1, Default::default());
-    let parse_fn =
-        JSFunction::create(global_this, "parse", __jsc_host_cron_parse, 1, Default::default());
+    let cron_fn = JSFunction::create(
+        global_this,
+        "cron",
+        __jsc_host_cron_register,
+        3,
+        Default::default(),
+    );
+    let remove_fn = JSFunction::create(
+        global_this,
+        "remove",
+        __jsc_host_cron_remove,
+        1,
+        Default::default(),
+    );
+    let parse_fn = JSFunction::create(
+        global_this,
+        "parse",
+        __jsc_host_cron_parse,
+        1,
+        Default::default(),
+    );
     cron_fn.put(global_this, b"remove", remove_fn);
     cron_fn.put(global_this, b"parse", parse_fn);
     cron_fn
@@ -1850,11 +1934,12 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
             return Err(global.throw_invalid_arguments(format_args!(
                 "{}",
                 bstr::BStr::new(CronExpression::error_message(e))
-            )))
+            )));
         }
     };
 
-    let from_ms: f64 = if !args[1].is_empty() && !args[1].is_undefined() && args[1] != JSValue::NULL {
+    let from_ms: f64 = if !args[1].is_empty() && !args[1].is_undefined() && args[1] != JSValue::NULL
+    {
         if args[1].is_number() {
             args[1].to_number(global)?
         } else if args[1].js_type() == jsc::JSType::JSDate {
@@ -1911,21 +1996,45 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl SpawnCmdTarget for CronRegisterJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
-    fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
-    unsafe fn finish(this: *mut Self) { unsafe { CronRegisterJob::finish(this) } }
-    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
-    fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
-    fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
+        CronRegisterJob::set_err(self, args)
+    }
+    unsafe fn finish(this: *mut Self) {
+        unsafe { CronRegisterJob::finish(this) }
+    }
+    fn process_slot(&mut self) -> &mut Option<*mut Process> {
+        &mut self.process
+    }
+    fn stdout_reader(&mut self) -> &mut OutputReader {
+        &mut self.stdout_reader
+    }
+    fn stderr_reader(&mut self) -> &mut OutputReader {
+        &mut self.stderr_reader
+    }
+    fn remaining_fds(&mut self) -> &mut i8 {
+        &mut self.remaining_fds
+    }
 }
 impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
-    fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
-    unsafe fn finish(this: *mut Self) { unsafe { CronRemoveJob::finish(this) } }
-    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
-    fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
-    fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
+        CronRemoveJob::set_err(self, args)
+    }
+    unsafe fn finish(this: *mut Self) {
+        unsafe { CronRemoveJob::finish(this) }
+    }
+    fn process_slot(&mut self) -> &mut Option<*mut Process> {
+        &mut self.process
+    }
+    fn stdout_reader(&mut self) -> &mut OutputReader {
+        &mut self.stdout_reader
+    }
+    fn stderr_reader(&mut self) -> &mut OutputReader {
+        &mut self.stderr_reader
+    }
+    fn remaining_fds(&mut self) -> &mut i8 {
+        &mut self.remaining_fds
+    }
 }
 
 /// Generic spawn used by both CronRegisterJob and CronRemoveJob.
@@ -1981,7 +2090,12 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let envp: *const *const c_char = {
         // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
         // (process-lifetime singleton; centralised single-unsafe deref).
-        match vm_mut().transpiler.env_mut().map.create_null_delimited_env_map() {
+        match vm_mut()
+            .transpiler
+            .env_mut()
+            .map
+            .create_null_delimited_env_map()
+        {
             Ok(v) => {
                 envp_owned = v;
                 envp_owned.as_ptr().cast()
@@ -2012,9 +2126,10 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
     // explicitly via `spawn_options.stderr.deinit()`.
     #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = bun_core::heap::into_raw(
-        Box::new(bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>()),
-    );
+    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
+        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+            bun_sys::windows::libuv::Pipe,
+        >()));
     let cwd = FileSystem::get().top_level_dir;
     // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
     #[allow(unused_mut)]
@@ -2205,8 +2320,12 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");
-    let name = FileSystem::tmpname(&full_prefix, name_buf.0.as_mut_slice(), bun_core::fast_random())
-        .map_err(|_| bun_alloc::AllocError)?;
+    let name = FileSystem::tmpname(
+        &full_prefix,
+        name_buf.0.as_mut_slice(),
+        bun_core::fast_random(),
+    )
+    .map_err(|_| bun_alloc::AllocError)?;
     let joined = path::resolve_path::join_abs_string::<path::platform::Auto>(
         RealFS::platform_temp_dir(),
         &[name.as_bytes()],
@@ -2338,8 +2457,8 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         for part in field.split(|&b| b == b',') {
             // Zig: std.fmt.parseInt(i32, part, 10) on raw []const u8.
             // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
-            let val: i32 = bun_core::parse_unsigned(part, 10)
-                .map_err(|_| CalendarError::InvalidCron)?;
+            let val: i32 =
+                bun_core::parse_unsigned(part, 10).map_err(|_| CalendarError::InvalidCron)?;
             vals.push(val);
         }
         *fv = Some(vals);
@@ -2452,11 +2571,21 @@ fn emit_calendar_dicts(
                 for &mo in iter_mons {
                     for &w in iter_wdays {
                         result.extend_from_slice(b"    <dict>\n");
-                        if effective[0].is_some() { append_calendar_key(result, PLIST_KEYS[0], m)?; }
-                        if effective[1].is_some() { append_calendar_key(result, PLIST_KEYS[1], h)?; }
-                        if effective[2].is_some() { append_calendar_key(result, PLIST_KEYS[2], d)?; }
-                        if effective[3].is_some() { append_calendar_key(result, PLIST_KEYS[3], mo)?; }
-                        if effective[4].is_some() { append_calendar_key(result, PLIST_KEYS[4], w)?; }
+                        if effective[0].is_some() {
+                            append_calendar_key(result, PLIST_KEYS[0], m)?;
+                        }
+                        if effective[1].is_some() {
+                            append_calendar_key(result, PLIST_KEYS[1], h)?;
+                        }
+                        if effective[2].is_some() {
+                            append_calendar_key(result, PLIST_KEYS[2], d)?;
+                        }
+                        if effective[3].is_some() {
+                            append_calendar_key(result, PLIST_KEYS[3], mo)?;
+                        }
+                        if effective[4].is_some() {
+                            append_calendar_key(result, PLIST_KEYS[4], w)?;
+                        }
                         result.extend_from_slice(b"    </dict>\n");
                     }
                 }
@@ -2518,25 +2647,28 @@ pub fn cron_to_task_xml(
     //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
     // Case 2: Single minute, evenly-spaced hours that divide 24
     //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
-    let can_use_repetition = days_is_wild && weekdays_is_wild && months_is_wild && 'blk: {
-        if hours_count == 24
-            && minute_interval.is_some()
-            && minute_interval.unwrap() <= 60
-            && 60 % minute_interval.unwrap() == 0
-            && minutes_count == 60 / minute_interval.unwrap()
-        {
-            break 'blk true; // Case 1
-        }
-        if minutes_count == 1
-            && hour_interval.is_some()
-            && hour_interval.unwrap() <= 24
-            && 24 % hour_interval.unwrap() == 0
-            && hours_count == 24 / hour_interval.unwrap()
-        {
-            break 'blk true; // Case 2
-        }
-        false
-    };
+    let can_use_repetition = days_is_wild
+        && weekdays_is_wild
+        && months_is_wild
+        && 'blk: {
+            if hours_count == 24
+                && minute_interval.is_some()
+                && minute_interval.unwrap() <= 60
+                && 60 % minute_interval.unwrap() == 0
+                && minutes_count == 60 / minute_interval.unwrap()
+            {
+                break 'blk true; // Case 1
+            }
+            if minutes_count == 1
+                && hour_interval.is_some()
+                && hour_interval.unwrap() <= 24
+                && 24 % hour_interval.unwrap() == 0
+                && hours_count == 24 / hour_interval.unwrap()
+            {
+                break 'blk true; // Case 2
+            }
+            false
+        };
 
     if can_use_repetition {
         let first_min: u32 = cron.minutes.trailing_zeros();
@@ -2560,7 +2692,9 @@ pub fn cron_to_task_xml(
             // Case 1: minute-based repetition
             let m = minute_interval.unwrap();
             if m == 1 {
-                xml.extend_from_slice(b"      <Repetition><Interval>PT1M</Interval></Repetition>\n");
+                xml.extend_from_slice(
+                    b"      <Repetition><Interval>PT1M</Interval></Repetition>\n",
+                );
             } else {
                 let _ = write!(
                     &mut xml,
@@ -2580,7 +2714,9 @@ pub fn cron_to_task_xml(
             }
         }
 
-        xml.extend_from_slice(b"      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");
+        xml.extend_from_slice(
+            b"      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n",
+        );
         xml.extend_from_slice(b"    </CalendarTrigger>\n");
     } else {
         // Complex pattern: emit CalendarTriggers for each hour×minute pair.
@@ -2601,18 +2737,18 @@ pub fn cron_to_task_xml(
                 let m: u32 = mins_bits.trailing_zeros() as u32;
                 mins_bits &= mins_bits - 1;
                 let mut sb_buf = [0u8; 32];
-                let sb = buf_print(
-                    &mut sb_buf,
-                    format_args!("2000-01-01T{:02}:{:02}:00", h, m),
-                )
-                .map_err(|_| TaskXmlError::InvalidCron)?;
+                let sb = buf_print(&mut sb_buf, format_args!("2000-01-01T{:02}:{:02}:00", h, m))
+                    .map_err(|_| TaskXmlError::InvalidCron)?;
 
                 // Emit day-of-month trigger if needed
                 if !days_is_wild {
                     append_calendar_trigger_with_schedule(
                         &mut xml,
                         sb,
-                        ScheduleType::ByMonth { cron: *cron, months_is_wild },
+                        ScheduleType::ByMonth {
+                            cron: *cron,
+                            months_is_wild,
+                        },
                     )?;
                 }
 
@@ -2629,7 +2765,10 @@ pub fn cron_to_task_xml(
                         append_calendar_trigger_with_schedule(
                             &mut xml,
                             sb,
-                            ScheduleType::ByMonthDow { cron: *cron, months_is_wild },
+                            ScheduleType::ByMonthDow {
+                                cron: *cron,
+                                months_is_wild,
+                            },
                         )?;
                     }
                 }
@@ -2702,8 +2841,19 @@ fn append_days_of_month_xml(xml: &mut Vec<u8>, days: u32) -> Result<(), TaskXmlE
 
 fn append_months_xml(xml: &mut Vec<u8>, months: u16) -> Result<(), TaskXmlError> {
     const MONTH_NAMES: [&str; 13] = [
-        "", "January", "February", "March", "April", "May", "June", "July", "August",
-        "September", "October", "November", "December",
+        "",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
     ];
     xml.extend_from_slice(b"        <Months>\n");
     for mo in 1..13usize {
@@ -2717,7 +2867,13 @@ fn append_months_xml(xml: &mut Vec<u8>, months: u16) -> Result<(), TaskXmlError>
 
 fn append_days_of_week_xml(xml: &mut Vec<u8>, weekdays: u8) -> Result<(), TaskXmlError> {
     const DAY_NAMES: [&str; 7] = [
-        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
     ];
     xml.extend_from_slice(b"        <DaysOfWeek>\n");
     for d in 0..7usize {
@@ -2734,8 +2890,14 @@ enum ScheduleType {
     ByDay,
     /// weekdays bitmask
     ByWeek(u8),
-    ByMonth { cron: CronExpression, months_is_wild: bool },
-    ByMonthDow { cron: CronExpression, months_is_wild: bool },
+    ByMonth {
+        cron: CronExpression,
+        months_is_wild: bool,
+    },
+    ByMonthDow {
+        cron: CronExpression,
+        months_is_wild: bool,
+    },
     /// months bitmask (daily with month restriction)
     ByMonthAllDays(u16),
 }

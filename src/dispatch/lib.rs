@@ -47,8 +47,8 @@ use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    braced, bracketed, parenthesized, Ident, Lifetime, ReturnType, Token, Type, TypeReference,
-    Visibility,
+    Ident, Lifetime, ReturnType, Token, Type, TypeReference, Visibility, braced, bracketed,
+    parenthesized,
 };
 
 struct Interface {
@@ -93,9 +93,18 @@ impl Parse for Interface {
             }
             let ret: ReturnType = body.parse()?;
             body.parse::<Token![;]>()?;
-            methods.push(Method { name: mname, args, ret });
+            methods.push(Method {
+                name: mname,
+                args,
+                ret,
+            });
         }
-        Ok(Interface { vis, name, variants, methods })
+        Ok(Interface {
+            vis,
+            name,
+            variants,
+            methods,
+        })
     }
 }
 
@@ -127,7 +136,12 @@ fn aliasable(t: &Type) -> Type {
 /// See the crate docs.
 #[proc_macro]
 pub fn link_interface(input: TokenStream) -> TokenStream {
-    let Interface { vis, name, variants, methods } = syn::parse_macro_input!(input as Interface);
+    let Interface {
+        vis,
+        name,
+        variants,
+        methods,
+    } = syn::parse_macro_input!(input as Interface);
     let name = &name;
     let variants = &variants;
     let methods = &methods;
@@ -214,24 +228,44 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
     let entry_arms = variants.iter().map(|v| {
         // Per-method pieces, all in declaration order so the single
         // `macro_rules!` arm can splice them positionally.
-        let mn:        Vec<_> = methods.iter().map(|m| &m.name).collect();
-        let s:         Vec<_> = methods.iter().map(|m| sym(name, v, &m.name)).collect();
-        let ret_alias: Vec<_> = methods.iter()
-            .map(|m| format_ident!("__{}__{}__ret", name, m.name)).collect();
+        let mn: Vec<_> = methods.iter().map(|m| &m.name).collect();
+        let s: Vec<_> = methods.iter().map(|m| sym(name, v, &m.name)).collect();
+        let ret_alias: Vec<_> = methods
+            .iter()
+            .map(|m| format_ident!("__{}__{}__ret", name, m.name))
+            .collect();
         // `$<method>__<arg>` — distinct per method so two methods sharing an arg
         // name (e.g. `key`) don't collide as duplicate matcher bindings.
-        let an_mv:     Vec<Vec<_>> = methods.iter()
-            .map(|m| m.args.iter().map(|(n, _)| {
-                let mv = format_ident!("{}__{}", m.name, n);
-                quote! { $#mv }
-            }).collect()).collect();
-        let at_alias:  Vec<Vec<_>> = methods.iter()
-            .map(|m| m.args.iter().map(|(an, _)|
-                format_ident!("__{}__{}__arg_{}", name, m.name, an)).collect()).collect();
+        let an_mv: Vec<Vec<_>> = methods
+            .iter()
+            .map(|m| {
+                m.args
+                    .iter()
+                    .map(|(n, _)| {
+                        let mv = format_ident!("{}__{}", m.name, n);
+                        quote! { $#mv }
+                    })
+                    .collect()
+            })
+            .collect();
+        let at_alias: Vec<Vec<_>> = methods
+            .iter()
+            .map(|m| {
+                m.args
+                    .iter()
+                    .map(|(an, _)| format_ident!("__{}__{}__arg_{}", name, m.name, an))
+                    .collect()
+            })
+            .collect();
         // `$e_<method>` — distinct expr metavar per method (a single `$e` would
         // collide across the outer repetition).
-        let e_mv: Vec<_> = methods.iter()
-            .map(|m| { let e = format_ident!("e_{}", m.name); quote! { $#e } }).collect();
+        let e_mv: Vec<_> = methods
+            .iter()
+            .map(|m| {
+                let e = format_ident!("e_{}", m.name);
+                quote! { $#e }
+            })
+            .collect();
 
         quote! {
             ( #v for $T:ty => | $th:ident | {

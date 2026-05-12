@@ -5,8 +5,8 @@ use core::slice;
 
 use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_core::strings;
 use bun_core::String as BunString;
+use bun_core::strings;
 use bun_simdutf_sys::simdutf as bun_simdutf;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
@@ -513,8 +513,7 @@ pub fn write_u8<const ENCODING: u8>(
             // path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]` view (it
             // re-checks alignment + even length, both proven here).
             if (to_slice.as_ptr() as usize) % core::mem::align_of::<u16>() == 0 {
-                let output: &mut [u16] =
-                    bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
+                let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
                 let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
             } else {
@@ -568,7 +567,12 @@ pub fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],
 ) -> Result<usize, bun_core::Error> {
-    write_u16::<ENCODING, ALLOW_PARTIAL_WRITE>(input.as_ptr(), input.len(), to.as_mut_ptr(), to.len())
+    write_u16::<ENCODING, ALLOW_PARTIAL_WRITE>(
+        input.as_ptr(),
+        input.len(),
+        to.as_mut_ptr(),
+        to.len(),
+    )
 }
 
 pub fn encode_into_from8<const ENCODING: u8>(
@@ -602,11 +606,10 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // non-overlapping for this encoding.
             let input_slice = unsafe { bun_core::ffi::slice(input, len) };
             let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
-            Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(
-                to_slice,
-                input_slice,
+            Ok(
+                strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
+                    .written as usize,
             )
-            .written as usize)
         }
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {
             let out = len.min(to_len);
@@ -665,8 +668,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             let transcoded = strings::to_utf8_alloc(input_slice);
             // transcoded dropped at end of scope
             write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len)
-        }
-        // else => return &[_]u8{};
+        } // else => return &[_]u8{};
     }
 }
 
@@ -852,7 +854,11 @@ fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
 
 /// Runtime-dispatch wrapper over [`encode_into_from16`] (Zig passed
 /// `comptime allow_partial_write = true` from `String.encodeInto`).
-fn encode_into_from16_dyn(input: &[u16], to: &mut [u8], encoding: Encoding) -> Result<usize, bun_core::Error> {
+fn encode_into_from16_dyn(
+    input: &[u16],
+    to: &mut [u8],
+    encoding: Encoding,
+) -> Result<usize, bun_core::Error> {
     match encoding {
         Encoding::Utf8 => encode_into_from16::<{ enc::UTF8 }, true>(input, to),
         Encoding::Ucs2 => encode_into_from16::<{ enc::UCS2 }, true>(input, to),
@@ -867,7 +873,11 @@ fn encode_into_from16_dyn(input: &[u16], to: &mut [u8], encoding: Encoding) -> R
 }
 
 /// Runtime-dispatch wrapper over [`encode_into_from8`].
-fn encode_into_from8_dyn(input: &[u8], to: &mut [u8], encoding: Encoding) -> Result<usize, bun_core::Error> {
+fn encode_into_from8_dyn(
+    input: &[u8],
+    to: &mut [u8],
+    encoding: Encoding,
+) -> Result<usize, bun_core::Error> {
     match encoding {
         Encoding::Utf8 => encode_into_from8::<{ enc::UTF8 }>(input, to),
         Encoding::Ucs2 => encode_into_from8::<{ enc::UCS2 }>(input, to),

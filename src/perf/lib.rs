@@ -63,7 +63,9 @@ static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 fn is_enabled_on_mac_os_once() {
     if bun_core::env_var::DYLD_ROOT_PATH.platform_get().is_some()
-        || bun_core::env_var::feature_flag::BUN_INSTRUMENTS.get().unwrap_or(false)
+        || bun_core::env_var::feature_flag::BUN_INSTRUMENTS
+            .get()
+            .unwrap_or(false)
     {
         IS_ENABLED.store(true, Ordering::SeqCst);
     }
@@ -71,7 +73,10 @@ fn is_enabled_on_mac_os_once() {
 
 #[allow(dead_code)]
 fn is_enabled_on_linux_once() {
-    if bun_core::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) {
+    if bun_core::env_var::feature_flag::BUN_TRACE
+        .get()
+        .unwrap_or(false)
+    {
         IS_ENABLED.store(true, Ordering::SeqCst);
     }
 }
@@ -142,7 +147,9 @@ mod darwin_impl {
     use super::*;
     use bun_sys::darwin::OSLog;
     // TODO(port): verify Rust path for `OSLog.Signpost.Interval` and `.PointsOfInterest` category
-    use bun_sys::darwin::os_log::signpost::{Category as SignpostCategory, Interval as SignpostInterval};
+    use bun_sys::darwin::os_log::signpost::{
+        Category as SignpostCategory, Interval as SignpostInterval,
+    };
 
     pub struct Darwin {
         interval: SignpostInterval,

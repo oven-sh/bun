@@ -103,7 +103,11 @@ struct Calibration {
 
 impl Default for Calibration {
     fn default() -> Self {
-        Self { start_counter: 0, start_ns: 0, mult: 0 }
+        Self {
+            start_counter: 0,
+            start_ns: 0,
+            mult: 0,
+        }
     }
 }
 
@@ -111,8 +115,11 @@ impl Default for Calibration {
 // `CALIBRATE_ONCE.call_once`, which establishes happens-before for readers.
 // `RacyCell` (not `OnceLock`) because `calibrate()` may early-return without
 // writing (freq==0) yet must still mark the Once as done.
-static CALIBRATION: bun_core::RacyCell<Calibration> =
-    bun_core::RacyCell::new(Calibration { start_counter: 0, start_ns: 0, mult: 0 });
+static CALIBRATION: bun_core::RacyCell<Calibration> = bun_core::RacyCell::new(Calibration {
+    start_counter: 0,
+    start_ns: 0,
+    mult: 0,
+});
 static CALIBRATE_ONCE: std::sync::Once = std::sync::Once::new();
 
 fn calibrate() {
@@ -217,7 +224,12 @@ fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
     // std intrinsic which handles the xchg dance internally instead of raw asm.
     // (`__cpuid_count` is a safe fn on x86_64 — cpuid is baseline.)
     let r = core::arch::x86_64::__cpuid_count(leaf, subleaf);
-    CpuidResult { eax: r.eax, ebx: r.ebx, ecx: r.ecx, edx: r.edx }
+    CpuidResult {
+        eax: r.eax,
+        ebx: r.ebx,
+        ecx: r.ecx,
+        edx: r.edx,
+    }
 }
 
 /// OS high-res monotonic clock. Used once as the calibration anchor, and as the
@@ -241,7 +253,10 @@ fn os_monotonic_ns() -> u64 {
         // `std.os.linux.clock_gettime` / `std.c.clock_gettime` directly. The Rust port
         // uses `libc::timespec` + `libc::clock_gettime` directly (same ABI) and
         // computes ns inline; `bun_core::Timespec` does not exist at this tier.
-        let mut spec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let mut spec = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         #[cfg(target_os = "linux")]
         {
             // CLOCK_MONOTONIC, not _RAW: guaranteed vDSO (no syscall). _RAW only
@@ -275,7 +290,10 @@ use bun_core::time::NS_PER_MS;
 const NS_PER_S: u64 = 1_000_000_000;
 
 // TODO(port): move to perf_sys / bun_sys
-#[cfg(all(target_arch = "x86_64", any(target_os = "macos", target_os = "freebsd")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "macos", target_os = "freebsd")
+))]
 unsafe extern "C" {
     fn sysctlbyname(
         name: *const c_char,
@@ -285,6 +303,5 @@ unsafe extern "C" {
         newlen: usize,
     ) -> c_int;
 }
-
 
 // ported from: src/perf/hw_timer.zig

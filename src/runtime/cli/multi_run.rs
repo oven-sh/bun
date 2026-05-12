@@ -4,23 +4,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::{self as bun, err, Error, Global, Output};
-use bun_io::{BufferedReader, ReadState};
+use bun_core::strings;
+use bun_core::{self as bun, Error, Global, Output, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_io::{BufferedReader, ReadState};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
-use bun_core::strings;
 
+use crate::Command;
 use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
-use crate::Command;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
 use crate::api::bun::process::{
-    self as spawn, event_loop_handle_to_ctx, Process, Rusage, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt as _, Status,
+    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, SpawnResultExt as _, Status,
+    event_loop_handle_to_ctx,
 };
 // TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
@@ -125,7 +125,12 @@ impl<'a> ProcessHandle<'a> {
         // spawnProcess. Using *const c_char placeholders.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
-            (if cfg!(unix) { b"-c\0".as_ptr() } else { b"exec\0".as_ptr() }).cast::<c_char>(),
+            (if cfg!(unix) {
+                b"-c\0".as_ptr()
+            } else {
+                b"exec\0".as_ptr()
+            })
+            .cast::<c_char>(),
             self.config.command.as_ptr().cast::<c_char>(),
             ptr::null(),
         ];
@@ -164,8 +169,7 @@ impl<'a> ProcessHandle<'a> {
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
         let stderr_fd = spawned.stderr;
-        let process =
-            spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
         self.stdout_reader.handle = std::ptr::from_ref(self);
         self.stderr_reader.handle = std::ptr::from_ref(self);
@@ -199,20 +203,35 @@ impl<'a> ProcessHandle<'a> {
         {
             if let Some(stdout_fd) = stdout_fd {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader.reader.start(stdout_fd, true).map_err(Error::from)?;
+                self.stdout_reader
+                    .reader
+                    .start(stdout_fd, true)
+                    .map_err(Error::from)?;
             }
             if let Some(stderr_fd) = stderr_fd {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader.reader.start(stderr_fd, true).map_err(Error::from)?;
+                self.stderr_reader
+                    .reader
+                    .start(stderr_fd, true)
+                    .map_err(Error::from)?;
             }
         }
         #[cfg(not(unix))]
         {
-            self.stdout_reader.reader.start_with_current_pipe().map_err(Error::from)?;
-            self.stderr_reader.reader.start_with_current_pipe().map_err(Error::from)?;
+            self.stdout_reader
+                .reader
+                .start_with_current_pipe()
+                .map_err(Error::from)?;
+            self.stderr_reader
+                .reader
+                .start_with_current_pipe()
+                .map_err(Error::from)?;
         }
 
-        self.process = Some(ProcessSlot { ptr: process, status: Status::Running });
+        self.process = Some(ProcessSlot {
+            ptr: process,
+            status: Status::Running,
+        });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // owner backref set before any reap callback can fire.
         let process = unsafe { &mut *process };
@@ -528,7 +547,9 @@ impl AbortHandler {
     }
 
     #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(dw_ctrl_type: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
+    extern "system" fn windows_ctrl_handler(
+        dw_ctrl_type: bun_sys::windows::DWORD,
+    ) -> bun_sys::windows::BOOL {
         if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
             SHOULD_ABORT.store(true, Ordering::SeqCst);
             return bun_sys::windows::TRUE;
@@ -547,8 +568,7 @@ impl AbortHandler {
                 let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
                 libc::sigemptyset(&raw mut action.sa_mask);
-                action.sa_flags =
-                    (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
+                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut());
             }
         }
@@ -700,9 +720,7 @@ fn add_script_configs(
                 || (cfg!(windows) && raw_name[0] == b'\\')
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
-            let bun_path: &[u8] = bun::self_exe_path()
-                .map(|z| z.as_bytes())
-                .unwrap_or(b"bun");
+            let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
             let mut v = Vec::with_capacity(bun_path.len() + raw_name.len() + 4);
@@ -751,9 +769,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     let mut script_names: Vec<Box<[u8]>> = Vec::new();
 
     let mut positionals: &[Box<[u8]>] = &ctx.positionals;
-    if !positionals.is_empty()
-        && (&*positionals[0] == b"run" || &*positionals[0] == b"r")
-    {
+    if !positionals.is_empty() && (&*positionals[0] == b"run" || &*positionals[0] == b"r") {
         positionals = &positionals[1..];
     }
     for pos in positionals {
@@ -786,10 +802,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
-    let event_loop = bun_event_loop::MiniEventLoop::init_global(
-        Some(unsafe { &mut *env_ptr }),
-        None,
-    );
+    let event_loop =
+        bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *env_ptr }), None);
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -848,9 +862,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
 
         while let Some(package_json_path) = package_json_iter.next()? {
-            let dirpath: Box<[u8]> = Box::from(
-                bun_core::dirname(&package_json_path).unwrap_or_else(|| Global::crash()),
-            );
+            let dirpath: Box<[u8]> =
+                Box::from(bun_core::dirname(&package_json_path).unwrap_or_else(|| Global::crash()));
             let pkg_path = strings::without_trailing_slash(&dirpath);
 
             // When using --workspaces, skip the root package to prevent recursion

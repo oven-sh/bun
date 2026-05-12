@@ -12,7 +12,11 @@ pub fn get_bun_server_all_closed_promise(
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments("getBunServerAllClosePromise", 1, arguments.len()));
+        return Err(global.throw_not_enough_arguments(
+            "getBunServerAllClosePromise",
+            1,
+            arguments.len(),
+        ));
     }
 
     let value = arguments[0];
@@ -49,7 +53,11 @@ pub fn set_max_http_header_size(global: &JSGlobalObject, frame: &CallFrame) -> J
     let value = arguments[0];
     let num = value.coerce_to_int64(global)?;
     if num <= 0 {
-        return Err(global.throw_invalid_argument_type_value("maxHeaderSize", "non-negative integer", value));
+        return Err(global.throw_invalid_argument_type_value(
+            "maxHeaderSize",
+            "non-negative integer",
+            value,
+        ));
     }
     bun_http::set_max_http_header_size(num as usize);
     Ok(JSValue::from(bun_http::max_http_header_size()))

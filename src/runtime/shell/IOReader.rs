@@ -131,7 +131,9 @@ impl IOReader {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
         {
-            reader.flags.remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
+            reader
+                .flags
+                .remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
         }
         #[cfg(windows)]
         {
@@ -443,9 +445,9 @@ fn dispatch_read_chunk(
     };
     let interp = interp.get();
     match child.tag {
-        ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
-            interp, child.node, chunk, remove,
-        ),
+        ReaderTag::Cat => {
+            crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk, remove)
+        }
     }
 }
 
@@ -470,7 +472,10 @@ pub fn on_read_chunk(interp: &Interpreter, child: ChildPtr, chunk: &[u8]) -> Yie
     let mut remove = false;
     match child.tag {
         ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
-            interp, child.node, chunk, &mut remove,
+            interp,
+            child.node,
+            chunk,
+            &mut remove,
         ),
     }
 }

@@ -79,7 +79,12 @@ pub fn if_none_match(
     // Parse comma-separated list of entity tags
     for tag_str in if_none_match.split(|&b| b == b',') {
         let parsed = parse(tag_str);
-        if weak_match(our_parsed.tag, our_parsed.is_weak, parsed.tag, parsed.is_weak) {
+        if weak_match(
+            our_parsed.tag,
+            our_parsed.is_weak,
+            parsed.tag,
+            parsed.is_weak,
+        ) {
             return true; // Condition is false, so we should return 304
         }
     }
@@ -238,7 +243,11 @@ pub mod wtf {
         // ≥`length` writable bytes"; encoding that as `&mut [u8; 32]` (thin pointer,
         // ABI-identical to `*mut u8`) plus a fixed `length = 32` discharges it at the
         // type level, so the declaration is `safe fn`.
-        safe fn Bun__writeHTTPDate(buffer: &mut [u8; 32], length: usize, timestamp_ms: u64) -> core::ffi::c_int;
+        safe fn Bun__writeHTTPDate(
+            buffer: &mut [u8; 32],
+            length: usize,
+            timestamp_ms: u64,
+        ) -> core::ffi::c_int;
     }
 
     /// Format `timestamp_ms` as an RFC 7231 IMF-fixdate into `buffer`.

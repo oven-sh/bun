@@ -16,9 +16,9 @@
 
 extern crate self as bun_collections;
 
+pub mod hive_array;
 pub mod multi_array_list;
 pub mod vec_ext;
-pub mod hive_array;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
 // `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
 // Re-exported here unchanged so existing `bun_collections::BoundedArray` /
@@ -39,15 +39,18 @@ pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
+pub use bounded_array::BoundedArray;
+pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveSlot};
+pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
-pub use hive_array::{HiveArray, HiveRef, HiveSlot, Fallback as HiveArrayFallback};
-pub use bounded_array::BoundedArray;
-pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
-pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
+pub use bit_set::{
+    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
+    StaticBitSet,
+};
 
 // Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import
 // from here); canonical impl lives in `bun_core::strings`.
@@ -55,8 +58,8 @@ pub use bun_core::strings::{const_bytes_eq, const_str_eq};
 
 /// `bun.bit_set` namespace alias (Zig: `bun.bit_set.List`).
 pub mod dynamic_bit_set {
-    pub use super::bit_set::DynamicBitSetList as List;
     pub use super::bit_set::DynamicBitSet;
+    pub use super::bit_set::DynamicBitSetList as List;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -72,13 +75,31 @@ pub struct PriorityQueue<T, C> {
     pub context: C,
 }
 impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self { Self { items: Vec::new(), context: C::default() } }
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            context: C::default(),
+        }
+    }
 }
 impl<T, C> PriorityQueue<T, C> {
-    pub fn init(context: C) -> Self { Self { items: Vec::new(), context } }
-    #[inline] pub fn count(&self) -> usize { self.items.len() }
-    #[inline] pub fn len(&self) -> usize { self.items.len() }
-    pub fn deinit(&mut self) { self.items.clear(); }
+    pub fn init(context: C) -> Self {
+        Self {
+            items: Vec::new(),
+            context,
+        }
+    }
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.items.len()
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn deinit(&mut self) {
+        self.items.clear();
+    }
 }
 impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
     /// Zig: `add(elem) !void` — push and sift-up.
@@ -87,7 +108,9 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
         let mut child = self.items.len() - 1;
         while child > 0 {
             let parent = (child - 1) / 2;
-            if self.context.compare(&self.items[child], &self.items[parent])
+            if self
+                .context
+                .compare(&self.items[child], &self.items[parent])
                 == core::cmp::Ordering::Less
             {
                 self.items.swap(child, parent);
@@ -100,7 +123,9 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
     }
     /// Zig: `removeOrNull()` — pop min, sift-down; `None` when empty.
     pub fn remove_or_null(&mut self) -> Option<T> {
-        if self.items.is_empty() { return None; }
+        if self.items.is_empty() {
+            return None;
+        }
         let last = self.items.len() - 1;
         self.items.swap(0, last);
         let out = self.items.pop();
@@ -123,22 +148,26 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
             {
                 smallest = r;
             }
-            if smallest == idx { break; }
+            if smallest == idx {
+                break;
+            }
             self.items.swap(idx, smallest);
             idx = smallest;
         }
         out
     }
 }
-pub use identity_context::{ArrayIdentityContext, ArrayIdentityContextU64, IdentityContext, IdentityHash, U64};
+pub use identity_context::{
+    ArrayIdentityContext, ArrayIdentityContextU64, IdentityContext, IdentityHash, U64,
+};
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    string_hash_map, ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
+    ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
     CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
     GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
     StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,
-    VacantEntry,
+    VacantEntry, string_hash_map,
 };
 /// Downstream crates name hashbrown's iterator/entry types in struct fields
 /// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a
@@ -162,7 +191,7 @@ pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
 // crates that already depend on `bun_collections` (logger, css, js_parser,
 // crash_handler, watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
-pub use bun_ptr::{detach_lifetime, detach_ref, RawSlice};
+pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
 
 // ──────────────────────────────────────────────────────────────────────────
 // SmallList — `bun.SmallList(T, N)` (Zig: src/css/small_list.zig).
@@ -493,10 +522,10 @@ pub mod array_list;
 // `Vec<T>` (global mimalloc) outside AST crates; Phase B may drop most of these
 // aliases once callers are migrated.
 pub use array_list::ArrayList; // any `std.mem.Allocator`
-pub use array_list::ArrayListDefault; // always default allocator (no overhead)
-pub use array_list::ArrayListIn; // specific type of generic allocator
 pub use array_list::ArrayListAligned;
 pub use array_list::ArrayListAlignedDefault;
 pub use array_list::ArrayListAlignedIn;
+pub use array_list::ArrayListDefault; // always default allocator (no overhead)
+pub use array_list::ArrayListIn; // specific type of generic allocator
 
 // ported from: src/collections/collections.zig

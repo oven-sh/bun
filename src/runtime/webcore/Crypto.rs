@@ -1,8 +1,10 @@
 use core::slice;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsError, JsResult, JsClass, StringJsc};
-use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_core::String as BunString;
+use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsError, JsResult, StringJsc,
+};
 
 use crate::node::Encoding;
 
@@ -94,8 +96,14 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
             return Ok(default);
         }
 
-        let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(bun_jsc::MIN_SAFE_INTEGER));
-        let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(bun_jsc::MAX_SAFE_INTEGER));
+        let min_t: i128 = range
+            .min
+            .max(T::MIN_I128)
+            .max(i128::from(bun_jsc::MIN_SAFE_INTEGER));
+        let max_t: i128 = range
+            .max
+            .min(T::MAX_I128)
+            .min(i128::from(bun_jsc::MAX_SAFE_INTEGER));
         // Zig: `comptime { if (min_t > max_t) @compileError(...) }` → debug_assert.
         debug_assert!(min_t <= max_t, "max must be less than min");
 
@@ -177,7 +185,10 @@ impl Default for Crypto {
 
 fn throw_invalid_parameter(global: &JSGlobalObject) -> JsError {
     global
-        .err(bun_jsc::ErrorCode::CRYPTO_SCRYPT_INVALID_PARAMETER, format_args!("Invalid scrypt parameters"))
+        .err(
+            bun_jsc::ErrorCode::CRYPTO_SCRYPT_INVALID_PARAMETER,
+            format_args!("Invalid scrypt parameters"),
+        )
         .throw()
 }
 
@@ -275,7 +286,9 @@ impl Crypto {
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
         // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
-        random_data(global, unsafe { bun_core::ffi::slice_mut(array.ptr(), array.len()) });
+        random_data(global, unsafe {
+            bun_core::ffi::slice_mut(array.ptr(), array.len())
+        });
         // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))) — encode the cell
         // pointer back into a JSValue.
         JSValue::from_encoded(std::ptr::from_ref::<JSUint8Array>(array) as usize)
@@ -292,15 +305,16 @@ impl Crypto {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
-        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
+        uuid.print(
+            (&mut bytes[0..36])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         str.transfer_to_js(global)
     }
 
     // DOMJIT fast path.
-    pub fn random_uuid_without_type_checks(
-        &self,
-        global: &JSGlobalObject,
-    ) -> JSValue {
+    pub fn random_uuid_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
         // `defer str.deref()` — BunString's Drop handles the deref.
 
@@ -310,14 +324,19 @@ impl Crypto {
         // NOTE(port): upstream lacks `rare_data_unchecked`; `rare_data()` lazy-inits anyway.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
-        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
+        uuid.print(
+            (&mut bytes[0..36])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         // DOMJIT fast path returns bare JSValue; OOM here is unrecoverable.
         str.to_js(global).unwrap_or(JSValue::ZERO)
     }
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
-        Err(bun_jsc::Error::ILLEGAL_CONSTRUCTOR.throw(global, format_args!("Crypto is not constructable")))
+        Err(bun_jsc::Error::ILLEGAL_CONSTRUCTOR
+            .throw(global, format_args!("Crypto is not constructable")))
     }
 }
 
@@ -328,7 +347,11 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-            let src = global.bun_vm().as_mut().rare_data().entropy_slice(slice.len());
+            let src = global
+                .bun_vm()
+                .as_mut()
+                .rare_data()
+                .entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
         _ => {
@@ -357,7 +380,9 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
                             return Err(global
                                 .err(
                                     bun_jsc::ErrorCode::UNKNOWN_ENCODING,
-                                    format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
+                                    format_args!(
+                                        "Encoding must be one of base64, base64url, hex, or buffer"
+                                    ),
                                 )
                                 .throw());
                         }
@@ -383,13 +408,15 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 let date = timestamp_value.get_unix_timestamp();
                 break 'brk date.max(0.0) as u64;
             }
-            break 'brk u64::try_from(
-                global.validate_integer_range::<i64>(
-                    timestamp_value,
-                    0,
-                    bun_jsc::IntegerRange { min: 0, field_name: b"timestamp", ..Default::default() },
-                )?,
-            )
+            break 'brk u64::try_from(global.validate_integer_range::<i64>(
+                timestamp_value,
+                0,
+                bun_jsc::IntegerRange {
+                    min: 0,
+                    field_name: b"timestamp",
+                    ..Default::default()
+                },
+            )?)
             .unwrap();
         }
 
@@ -403,7 +430,11 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
+        uuid.print(
+            (&mut bytes[0..36])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         return str.transfer_to_js(global);
     }
 
@@ -442,7 +473,9 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
                         return Err(global
                             .err(
                                 bun_jsc::ErrorCode::UNKNOWN_ENCODING,
-                                format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
+                                format_args!(
+                                    "Encoding must be one of base64, base64url, hex, or buffer"
+                                ),
                             )
                             .throw());
                     }
@@ -532,7 +565,11 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
+        uuid.print(
+            (&mut bytes[0..36])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         return str.transfer_to_js(global);
     }
 

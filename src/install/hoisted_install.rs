@@ -2,29 +2,29 @@ use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::{Global, Output};
-use bun_core::strings;
-use bun_sys::{self as sys, Dir, Fd};
-use bun_paths::SEP;
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
+use bun_core::strings;
+use bun_core::{Global, Output};
+use bun_paths::SEP;
+use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
+use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::bun_bunfig::Arguments as Command;
 
-use crate::{self as install, DependencyID, ExtractData, PackageID};
 use crate::lockfile::tree;
+use crate::{self as install, DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope (Zig: `slice.items(.field)`).
-use crate::bin_real as bin;
 use crate::PackageManager;
+use crate::bin_real as bin;
+use crate::package_install;
+use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
-use crate::package_install;
-use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
 
 /// `RunTasksCallbacks` impl for the hoisted-install loop. Mirrors the Zig
 /// anonymous-struct call shape `{ .onExtract = installEnqueuedPackagesAfterExtraction,
@@ -95,8 +95,7 @@ pub fn install_hoisted_packages(
         let log: *mut bun_ast::Log = this.log;
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile =
-            unsafe { &raw mut *(*mgr_ptr).lockfile };
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
         // SAFETY: `log` is the always-live logger backref (Zig: `*Log`, never
         // null); `mgr_ptr` see shadow-reborrow above.
         unsafe {
@@ -192,14 +191,22 @@ pub fn install_hoisted_packages(
         // Attempt to create a new node_modules folder
         if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), 0o755) {
             if err.errno != sys::E::EEXIST as _ {
-                Output::err(err, "could not create the <b>\"node_modules\"<r> directory", ());
+                Output::err(
+                    err,
+                    "could not create the <b>\"node_modules\"<r> directory",
+                    (),
+                );
                 Global::crash();
             }
         }
         match sys::open_dir(Dir::from_fd(cwd), b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(err) => {
-                Output::err(err, "could not open the <b>\"node_modules\"<r> directory", ());
+                Output::err(
+                    err,
+                    "could not open the <b>\"node_modules\"<r> directory",
+                    (),
+                );
                 Global::crash();
             }
         }
@@ -240,7 +247,9 @@ pub fn install_hoisted_packages(
             (
                 lockfile_ptr,
                 bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).trees)),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).hoisted_dependencies)),
+                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(
+                    (*buffers).hoisted_dependencies
+                )),
                 bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).dependencies)),
                 bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
             )
@@ -280,8 +289,7 @@ pub fn install_hoisted_packages(
                     let mut deps = Bitset::init_empty(trees.len())?;
                     for _curr in trees {
                         let mut curr = *_curr;
-                        tree_ids_to_trees_the_id_depends_on
-                            .set(curr.id as usize, curr.id as usize);
+                        tree_ids_to_trees_the_id_depends_on.set(curr.id as usize, curr.id as usize);
 
                         while curr.parent != tree::Tree::INVALID_ID {
                             deps.set(curr.id as usize);
@@ -298,7 +306,10 @@ pub fn install_hoisted_packages(
                     if trees.len() > 0 {
                         // last tree should only depend on one other
                         debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on.at(trees.len() - 1).count() == 1
+                            tree_ids_to_trees_the_id_depends_on
+                                .at(trees.len() - 1)
+                                .count()
+                                == 1
                         );
                         // and it should be itself
                         debug_assert!(
@@ -528,7 +539,11 @@ pub fn install_hoisted_packages(
             // both `sleep_until`'s `this` arg and `closure.manager` share the
             // same SRW tag (Zig spec stores `*PackageManager` non-exclusively).
             let mgr: *mut PackageManager = mgr_ptr;
-            let mut closure = Closure { installer: &mut installer, err: None, manager: mgr };
+            let mut closure = Closure {
+                installer: &mut installer,
+                err: None,
+                manager: mgr,
+            };
 
             // Whenever the event loop wakes up, we need to call `runTasks`
             // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts

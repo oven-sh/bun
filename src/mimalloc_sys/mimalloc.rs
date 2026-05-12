@@ -299,11 +299,8 @@ unsafe extern "C" {
     pub fn mi_theap_malloc(theap: *mut THeap, size: usize) -> *mut c_void;
     /// `mi_heap_malloc_aligned` minus the per-call `heap → theap` lookup.
     #[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
-    pub fn mi_theap_malloc_aligned(
-        theap: *mut THeap,
-        size: usize,
-        alignment: usize,
-    ) -> *mut c_void;
+    pub fn mi_theap_malloc_aligned(theap: *mut THeap, size: usize, alignment: usize)
+    -> *mut c_void;
 }
 
 #[repr(C)]
@@ -480,11 +477,7 @@ unsafe extern "C" {
     pub fn mi_wcsdup(s: *const c_ushort) -> *mut c_ushort;
     pub fn mi_mbsdup(s: *const c_char) -> *mut c_char;
     pub fn mi_dupenv_s(buf: *mut *mut c_char, size: *mut usize, name: *const c_char) -> c_int;
-    pub fn mi_wdupenv_s(
-        buf: *mut *mut c_ushort,
-        size: *mut usize,
-        name: *const c_ushort,
-    ) -> c_int;
+    pub fn mi_wdupenv_s(buf: *mut *mut c_ushort, size: *mut usize, name: *const c_ushort) -> c_int;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);
     pub fn mi_free_aligned(p: *mut c_void, alignment: usize);

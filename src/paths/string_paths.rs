@@ -6,11 +6,11 @@
 //! `bun_core::strings::paths::*` callers (rewritten to `crate::strings`)
 //! resolve unchanged.
 
+use crate::PathChar;
+use crate::resolve_path;
+use crate::windows;
 use bun_core::string::immutable as strings;
 use bun_core::{WStr, ZStr};
-use crate::windows;
-use crate::resolve_path;
-use crate::PathChar;
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
 // Zig used `comptime T: type`; bound on `crate::PathChar` (provides
@@ -287,7 +287,11 @@ pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS
 // TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
 // const-generic value can't be forwarded from a runtime call site without duplication.
 // PERF(port): was comptime monomorphization — profile in Phase B.
-pub fn normalize_slashes_only<'a>(buf: &'a mut [u8], utf8: &'a [u8], desired_slash: u8) -> &'a [u8] {
+pub fn normalize_slashes_only<'a>(
+    buf: &'a mut [u8],
+    utf8: &'a [u8],
+    desired_slash: u8,
+) -> &'a [u8] {
     debug_assert!(desired_slash == b'/' || desired_slash == b'\\');
     let undesired_slash: u8 = if desired_slash == b'/' { b'\\' } else { b'/' };
 
@@ -351,9 +355,7 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
 ) -> &'a WStr {
     debug_assert!(!wbuf.is_empty());
 
-    let cap = wbuf
-        .len()
-        .saturating_sub(1 + (ADD_TRAILING_LASH as usize));
+    let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
     // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
     // route through `crate::strings::convert_utf8_to_utf16_in_buffer` (same
     // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
@@ -427,12 +429,8 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
 
 pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
     // PERF(port): was comptime string concatenation
-    let needle: &'static [u8] = const_format::concatcp!(
-        crate::SEP_STR,
-        "node_modules",
-        crate::SEP_STR
-    )
-    .as_bytes();
+    let needle: &'static [u8] =
+        const_format::concatcp!(crate::SEP_STR, "node_modules", crate::SEP_STR).as_bytes();
     strings::index_of(path, needle).is_some()
 }
 
@@ -445,12 +443,10 @@ pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {
 
 #[inline(always)]
 pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
-    s.len() > 2
-        && s[1] == ch(b':')
-        && {
-            let c = s[0];
-            (c >= ch(b'a') && c <= ch(b'z')) || (c >= ch(b'A') && c <= ch(b'Z'))
-        }
+    s.len() > 2 && s[1] == ch(b':') && {
+        let c = s[0];
+        (c >= ch(b'a') && c <= ch(b'z')) || (c >= ch(b'A') && c <= ch(b'Z'))
+    }
 }
 
 pub use crate::strings::without_trailing_slash;
@@ -464,16 +460,13 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
 
     let mut path = input;
-    while path.len() > root_len
-        && matches!(path[path.len() - 1], b'/' | b'\\')
-    {
+    while path.len() > root_len && matches!(path[path.len() - 1], b'/' | b'\\') {
         path = &path[..path.len() - 1];
     }
 
     if cfg!(debug_assertions) {
         debug_assert!(
-            !crate::is_absolute(path)
-                || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
+            !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
         );
     }
 
@@ -506,9 +499,13 @@ pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
 #[inline]
 pub fn basename<T: Ch>(input: &[T]) -> &[T] {
     #[cfg(windows)]
-    { return crate::basename_windows::<T>(input); }
+    {
+        return crate::basename_windows::<T>(input);
+    }
     #[cfg(not(windows))]
-    { crate::basename_posix::<T>(input) }
+    {
+        crate::basename_posix::<T>(input)
+    }
 }
 
 // ported from: src/string/immutable/paths.zig

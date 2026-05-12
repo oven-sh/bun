@@ -72,21 +72,35 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         let root_end = match fmt {
             PathFormat::Posix => {
                 let mut i = 0;
-                while i < path.len() && fmt.is_sep(path[i]) { i += 1; }
+                while i < path.len() && fmt.is_sep(path[i]) {
+                    i += 1;
+                }
                 i
             }
             PathFormat::Windows => windows_root_end(path)?,
         };
-        Ok(Self { path, root_end, start: root_end, end: root_end, fmt })
+        Ok(Self {
+            path,
+            root_end,
+            start: root_end,
+            end: root_end,
+            fmt,
+        })
     }
 
     #[inline(always)]
-    fn is_sep(&self, c: T) -> bool { self.fmt.is_sep(c) }
+    fn is_sep(&self, c: T) -> bool {
+        self.fmt.is_sep(c)
+    }
 
     /// The root prefix (`/`, `C:\`, `\\server\share\`, …) or `None` if relative.
     #[inline]
     pub fn root(&self) -> Option<&'a [T]> {
-        if self.root_end == 0 { None } else { Some(&self.path[..self.root_end]) }
+        if self.root_end == 0 {
+            None
+        } else {
+            Some(&self.path[..self.root_end])
+        }
     }
 
     /// Returns the first component and seeks to it.
@@ -96,24 +110,39 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         while self.end < self.path.len() && !self.is_sep(self.path[self.end]) {
             self.end += 1;
         }
-        if self.end == self.start { return None; }
-        Some(Component { name: &self.path[self.start..self.end], path: &self.path[..self.end] })
+        if self.end == self.start {
+            return None;
+        }
+        Some(Component {
+            name: &self.path[self.start..self.end],
+            path: &self.path[..self.end],
+        })
     }
 
     /// Returns the last component and seeks to it.
     pub fn last(&mut self) -> Option<Component<'a, T>> {
         self.end = self.path.len();
         loop {
-            if self.end == self.root_end { self.start = self.end; return None; }
-            if !self.is_sep(self.path[self.end - 1]) { break; }
+            if self.end == self.root_end {
+                self.start = self.end;
+                return None;
+            }
+            if !self.is_sep(self.path[self.end - 1]) {
+                break;
+            }
             self.end -= 1;
         }
         self.start = self.end;
         while self.start > self.root_end && !self.is_sep(self.path[self.start - 1]) {
             self.start -= 1;
         }
-        if self.start == self.end { return None; }
-        Some(Component { name: &self.path[self.start..self.end], path: &self.path[..self.end] })
+        if self.start == self.end {
+            return None;
+        }
+        Some(Component {
+            name: &self.path[self.start..self.end],
+            path: &self.path[..self.end],
+        })
     }
 
     /// Advances forward; returns the component to the right of the current one.
@@ -127,11 +156,20 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// Like `next` but does not advance.
     pub fn peek_next(&self) -> Option<Component<'a, T>> {
         let mut start = self.end;
-        while start < self.path.len() && self.is_sep(self.path[start]) { start += 1; }
+        while start < self.path.len() && self.is_sep(self.path[start]) {
+            start += 1;
+        }
         let mut end = start;
-        while end < self.path.len() && !self.is_sep(self.path[end]) { end += 1; }
-        if start == end { return None; }
-        Some(Component { name: &self.path[start..end], path: &self.path[..end] })
+        while end < self.path.len() && !self.is_sep(self.path[end]) {
+            end += 1;
+        }
+        if start == end {
+            return None;
+        }
+        Some(Component {
+            name: &self.path[start..end],
+            path: &self.path[..end],
+        })
     }
 
     /// Advances backward; returns the component to the left of the current one.
@@ -146,14 +184,25 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     pub fn peek_previous(&self) -> Option<Component<'a, T>> {
         let mut end = self.start;
         loop {
-            if end == self.root_end { return None; }
-            if !self.is_sep(self.path[end - 1]) { break; }
+            if end == self.root_end {
+                return None;
+            }
+            if !self.is_sep(self.path[end - 1]) {
+                break;
+            }
             end -= 1;
         }
         let mut start = end;
-        while start > self.root_end && !self.is_sep(self.path[start - 1]) { start -= 1; }
-        if start == end { return None; }
-        Some(Component { name: &self.path[start..end], path: &self.path[..end] })
+        while start > self.root_end && !self.is_sep(self.path[start - 1]) {
+            start -= 1;
+        }
+        if start == end {
+            return None;
+        }
+        Some(Component {
+            name: &self.path[start..end],
+            path: &self.path[..end],
+        })
     }
 }
 
@@ -194,7 +243,9 @@ pub fn make_path_with<'a, T: PathChar, E>(
     mut it: ComponentIterator<'a, T>,
     mut mkdir: impl FnMut(&'a [T]) -> Result<MakePathStep<E>, E>,
 ) -> Result<(), E> {
-    let Some(mut comp) = it.last() else { return Ok(()) };
+    let Some(mut comp) = it.last() else {
+        return Ok(());
+    };
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
@@ -221,12 +272,18 @@ pub fn make_path_with<'a, T: PathChar, E>(
 
 fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
     #[inline(always)]
-    fn sep<T: PathChar>(c: T) -> bool { c == T::from_u8(b'/') || c == T::from_u8(b'\\') }
+    fn sep<T: PathChar>(c: T) -> bool {
+        c == T::from_u8(b'/') || c == T::from_u8(b'\\')
+    }
 
     // getNamespacePrefix != .none → BadPathName (`\\.\`, `\\?\`, `//?/`, `\??\`).
     if path.len() >= 4 {
-        let c0 = path[0]; let c1 = path[1]; let c2 = path[2]; let c3 = path[3];
-        let s0 = sep(c0); let s3 = sep(c3);
+        let c0 = path[0];
+        let c1 = path[1];
+        let c2 = path[2];
+        let c3 = path[3];
+        let s0 = sep(c0);
+        let s3 = sep(c3);
         let bs0 = c0 == T::from_u8(b'\\');
         let bs3 = c3 == T::from_u8(b'\\');
         if s0 && s3 {
@@ -245,7 +302,9 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
     }
 
     // getUnprefixedPathType
-    if path.is_empty() { return Ok(0); }
+    if path.is_empty() {
+        return Ok(0);
+    }
     if sep(path[0]) {
         if path.len() < 2 || !sep(path[1]) {
             // .rooted
@@ -260,10 +319,18 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
         if i < path.len() && sep(path[i]) {
             return Err(bun_core::err!("BadPathName"));
         }
-        while i < path.len() && !sep(path[i]) { i += 1; } // server
-        while i < path.len() && sep(path[i]) { i += 1; }
-        while i < path.len() && !sep(path[i]) { i += 1; } // share
-        while i < path.len() && sep(path[i]) { i += 1; }
+        while i < path.len() && !sep(path[i]) {
+            i += 1;
+        } // server
+        while i < path.len() && sep(path[i]) {
+            i += 1;
+        }
+        while i < path.len() && !sep(path[i]) {
+            i += 1;
+        } // share
+        while i < path.len() && sep(path[i]) {
+            i += 1;
+        }
         return Ok(i);
     }
     if path.len() < 2 || path[1] != T::from_u8(b':') {
@@ -273,7 +340,9 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
     if path.len() > 2 && sep(path[2]) {
         // .drive_absolute → consume `C:\` plus any extra seps.
         let mut i = 3usize;
-        while i < path.len() && sep(path[i]) { i += 1; }
+        while i < path.len() && sep(path[i]) {
+            i += 1;
+        }
         return Ok(i);
     }
     // .drive_relative
@@ -288,7 +357,9 @@ mod tests {
         let mut it = ComponentIterator::init(path, fmt).unwrap();
         let root = it.root();
         let mut out = vec![];
-        while let Some(c) = it.next() { out.push((c.name, c.path)); }
+        while let Some(c) = it.next() {
+            out.push((c.name, c.path));
+        }
         (root, out)
     }
 
@@ -296,11 +367,21 @@ mod tests {
     fn posix_basic() {
         let (root, parts) = collect(b"/a/b/c", PathFormat::Posix);
         assert_eq!(root, Some(&b"/"[..]));
-        assert_eq!(parts, vec![(&b"a"[..], &b"/a"[..]), (&b"b"[..], &b"/a/b"[..]), (&b"c"[..], &b"/a/b/c"[..])]);
+        assert_eq!(
+            parts,
+            vec![
+                (&b"a"[..], &b"/a"[..]),
+                (&b"b"[..], &b"/a/b"[..]),
+                (&b"c"[..], &b"/a/b/c"[..])
+            ]
+        );
 
         let (root, parts) = collect(b"a//b/", PathFormat::Posix);
         assert_eq!(root, None);
-        assert_eq!(parts, vec![(&b"a"[..], &b"a"[..]), (&b"b"[..], &b"a//b"[..])]);
+        assert_eq!(
+            parts,
+            vec![(&b"a"[..], &b"a"[..]), (&b"b"[..], &b"a//b"[..])]
+        );
 
         let mut it = ComponentIterator::init(b"///"[..].into(), PathFormat::Posix).unwrap();
         assert!(it.last().is_none());

@@ -1,27 +1,34 @@
 //! HTTP/2 frame parser — ported from h2_frame_parser.zig
-#![allow(non_camel_case_types, non_upper_case_globals, clippy::too_many_arguments)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::too_many_arguments
+)]
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong, StrongOptional};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::api::socket::{TCPSocket, TLSSocket};
+use crate::node::{Encoding, StringOrBuffer};
+use crate::socket::NativeCallbacks;
+use crate::webcore::AutoFlusher;
+use bstr::BStr;
+use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
+use bun_core::MutableString;
+use bun_core::{String as BunString, ZigString, strings};
+use bun_http::lshpack;
 use bun_jsc::AbortSignal;
-use bun_jsc::abort_signal::AbortListener;
-use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
-use crate::webcore::AutoFlusher;
-use crate::node::{Encoding, StringOrBuffer};
-use bun_core::{strings, String as BunString, ZigString};
-use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
+use bun_jsc::abort_signal::AbortListener;
+use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong,
+    StrongOptional,
+};
 use bun_ptr::IntrusiveRc;
-use bun_core::MutableString;
-use bun_http::lshpack;
-use crate::api::socket::{TCPSocket, TLSSocket};
-use crate::socket::NativeCallbacks;
-use bstr::BStr;
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -138,23 +145,42 @@ pub(crate) trait H2GlobalErrExt {
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
     fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE_RangeError, msg }
+        H2ErrBuilder {
+            global: self,
+            code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE_RangeError,
+            msg,
+        }
     }
     #[inline]
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE, msg }
+        H2ErrBuilder {
+            global: self,
+            code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE,
+            msg,
+        }
     }
     #[inline]
     fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_TOO_MANY_CUSTOM_SETTINGS, msg }
+        H2ErrBuilder {
+            global: self,
+            code: JscErrorCode::HTTP2_TOO_MANY_CUSTOM_SETTINGS,
+            msg,
+        }
     }
     #[inline]
     fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder { global: self, code: JscErrorCode::INVALID_ARG_TYPE, msg }
+        H2ErrBuilder {
+            global: self,
+            code: JscErrorCode::INVALID_ARG_TYPE,
+            msg,
+        }
     }
 }
 
-pub fn get_http2_common_string(global_object: &JSGlobalObject, hpack_index: u32) -> Option<JSValue> {
+pub fn get_http2_common_string(
+    global_object: &JSGlobalObject,
+    hpack_index: u32,
+) -> Option<JSValue> {
     if hpack_index == 255 {
         return None;
     }
@@ -462,7 +488,8 @@ pub struct FullSettingsPayload {
 unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
 unsafe impl bytemuck::Pod for FullSettingsPayload {}
-const _: () = assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
+const _: () =
+    assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 impl Default for FullSettingsPayload {
     fn default() -> Self {
         Self {
@@ -496,14 +523,42 @@ impl FullSettingsPayload {
         let max_frame_size = self.max_frame_size;
         let max_header_list_size = self.max_header_list_size;
         let enable_connect_protocol = self.enable_connect_protocol;
-        result.put(global_object, b"headerTableSize", JSValue::js_number(header_table_size as f64));
+        result.put(
+            global_object,
+            b"headerTableSize",
+            JSValue::js_number(header_table_size as f64),
+        );
         result.put(global_object, b"enablePush", JSValue::from(enable_push > 0));
-        result.put(global_object, b"maxConcurrentStreams", JSValue::js_number(max_concurrent_streams as f64));
-        result.put(global_object, b"initialWindowSize", JSValue::js_number(initial_window_size as f64));
-        result.put(global_object, b"maxFrameSize", JSValue::js_number(max_frame_size as f64));
-        result.put(global_object, b"maxHeaderListSize", JSValue::js_number(max_header_list_size as f64));
-        result.put(global_object, b"maxHeaderSize", JSValue::js_number(max_header_list_size as f64));
-        result.put(global_object, b"enableConnectProtocol", JSValue::from(enable_connect_protocol > 0));
+        result.put(
+            global_object,
+            b"maxConcurrentStreams",
+            JSValue::js_number(max_concurrent_streams as f64),
+        );
+        result.put(
+            global_object,
+            b"initialWindowSize",
+            JSValue::js_number(initial_window_size as f64),
+        );
+        result.put(
+            global_object,
+            b"maxFrameSize",
+            JSValue::js_number(max_frame_size as f64),
+        );
+        result.put(
+            global_object,
+            b"maxHeaderListSize",
+            JSValue::js_number(max_header_list_size as f64),
+        );
+        result.put(
+            global_object,
+            b"maxHeaderSize",
+            JSValue::js_number(max_header_list_size as f64),
+        );
+        result.put(
+            global_object,
+            b"enableConnectProtocol",
+            JSValue::from(enable_connect_protocol > 0),
+        );
         result
     }
 
@@ -511,11 +566,15 @@ impl FullSettingsPayload {
         match SettingsType(option.type_) {
             SettingsType::SETTINGS_HEADER_TABLE_SIZE => self.header_table_size = option.value,
             SettingsType::SETTINGS_ENABLE_PUSH => self.enable_push = option.value,
-            SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS => self.max_concurrent_streams = option.value,
+            SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS => {
+                self.max_concurrent_streams = option.value
+            }
             SettingsType::SETTINGS_INITIAL_WINDOW_SIZE => self.initial_window_size = option.value,
             SettingsType::SETTINGS_MAX_FRAME_SIZE => self.max_frame_size = option.value,
             SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE => self.max_header_list_size = option.value,
-            SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL => self.enable_connect_protocol = option.value,
+            SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL => {
+                self.enable_connect_protocol = option.value
+            }
             _ => {}
         }
     }
@@ -694,7 +753,10 @@ fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn]
-pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub fn js_get_unpacked_settings(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let mut settings = FullSettingsPayload::default();
 
     let args_list = callframe.arguments_old::<1>();
@@ -708,7 +770,9 @@ pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &Call
         let payload = array_buffer.byte_slice();
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if payload.len() < setting_byte_size || payload.len() % setting_byte_size != 0 {
-            return Err(global_object.throw(format_args!("Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes")));
+            return Err(global_object.throw(format_args!(
+                "Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes"
+            )));
         }
 
         let mut i: usize = 0;
@@ -727,7 +791,10 @@ pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &Call
 }
 
 #[bun_jsc::host_fn]
-pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub fn js_assert_settings(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let args_list = callframe.arguments_old::<1>();
     if args_list.len < 1 {
         return Err(global_object.throw(format_args!("Expected settings to be a object")));
@@ -743,16 +810,26 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if header_table_size.is_number() {
                 let value = header_table_size.as_number();
                 if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected headerTableSize to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected headerTableSize to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
             } else if !header_table_size.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected headerTableSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected headerTableSize to be a number",
+                    )
+                    .throw();
             }
         }
 
         if let Some(enable_push) = options.get(global_object, "enablePush")? {
             if !enable_push.is_boolean() && !enable_push.is_undefined() {
-                return global_object.err_http2_invalid_setting_value("Expected enablePush to be a boolean").throw();
+                return global_object
+                    .err_http2_invalid_setting_value("Expected enablePush to be a boolean")
+                    .throw();
             }
         }
 
@@ -760,10 +837,18 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if initial_window_size.is_number() {
                 let value = initial_window_size.as_number();
                 if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected initialWindowSize to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected initialWindowSize to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
             } else if !initial_window_size.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected initialWindowSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected initialWindowSize to be a number",
+                    )
+                    .throw();
             }
         }
 
@@ -771,10 +856,18 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if max_frame_size.is_number() {
                 let value = max_frame_size.as_number();
                 if value < 16384.0 || value > MAX_FRAME_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected maxFrameSize to be a number between 16,384 and 2^24-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected maxFrameSize to be a number between 16,384 and 2^24-1",
+                        )
+                        .throw();
                 }
             } else if !max_frame_size.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected maxFrameSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected maxFrameSize to be a number",
+                    )
+                    .throw();
             }
         }
 
@@ -782,10 +875,18 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if max_concurrent_streams.is_number() {
                 let value = max_concurrent_streams.as_number();
                 if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected maxConcurrentStreams to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected maxConcurrentStreams to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
             } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected maxConcurrentStreams to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected maxConcurrentStreams to be a number",
+                    )
+                    .throw();
             }
         }
 
@@ -793,10 +894,18 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if max_header_list_size.is_number() {
                 let value = max_header_list_size.as_number();
                 if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected maxHeaderListSize to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected maxHeaderListSize to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
             } else if !max_header_list_size.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected maxHeaderListSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected maxHeaderListSize to be a number",
+                    )
+                    .throw();
             }
         }
 
@@ -804,10 +913,18 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
             if max_header_size.is_number() {
                 let value = max_header_size.as_number();
                 if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected maxHeaderSize to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected maxHeaderSize to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
             } else if !max_header_size.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected maxHeaderSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected maxHeaderSize to be a number",
+                    )
+                    .throw();
             }
         }
     }
@@ -815,7 +932,10 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
 }
 
 #[bun_jsc::host_fn]
-pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub fn js_get_packed_settings(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let mut settings = FullSettingsPayload::default();
     let args_list = callframe.arguments_old::<1>();
 
@@ -830,11 +950,15 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if header_table_size.is_number() {
                 let v = header_table_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return Err(global_object.throw(format_args!("Expected headerTableSize to be a number between 0 and 2^32-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected headerTableSize to be a number between 0 and 2^32-1"
+                    )));
                 }
                 settings.header_table_size = u32::try_from(v).expect("int cast");
             } else if !header_table_size.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected headerTableSize to be a number")));
+                return Err(
+                    global_object.throw(format_args!("Expected headerTableSize to be a number"))
+                );
             }
         }
 
@@ -842,7 +966,9 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if enable_push.is_boolean() {
                 settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
             } else if !enable_push.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected enablePush to be a boolean")));
+                return Err(
+                    global_object.throw(format_args!("Expected enablePush to be a boolean"))
+                );
             }
         }
 
@@ -850,11 +976,15 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if initial_window_size.is_number() {
                 let v = initial_window_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return Err(global_object.throw(format_args!("Expected initialWindowSize to be a number between 0 and 2^32-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected initialWindowSize to be a number between 0 and 2^32-1"
+                    )));
                 }
                 settings.initial_window_size = u32::try_from(v).expect("int cast");
             } else if !initial_window_size.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected initialWindowSize to be a number")));
+                return Err(
+                    global_object.throw(format_args!("Expected initialWindowSize to be a number"))
+                );
             }
         }
 
@@ -862,11 +992,15 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_frame_size.is_number() {
                 let v = max_frame_size.to_int32();
                 if v as u32 > MAX_FRAME_SIZE || v < 16384 {
-                    return Err(global_object.throw(format_args!("Expected maxFrameSize to be a number between 16,384 and 2^24-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected maxFrameSize to be a number between 16,384 and 2^24-1"
+                    )));
                 }
                 settings.max_frame_size = u32::try_from(v).expect("int cast");
             } else if !max_frame_size.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected maxFrameSize to be a number")));
+                return Err(
+                    global_object.throw(format_args!("Expected maxFrameSize to be a number"))
+                );
             }
         }
 
@@ -874,11 +1008,14 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_concurrent_streams.is_number() {
                 let v = max_concurrent_streams.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return Err(global_object.throw(format_args!("Expected maxConcurrentStreams to be a number between 0 and 2^32-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
+                    )));
                 }
                 settings.max_concurrent_streams = u32::try_from(v).expect("int cast");
             } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected maxConcurrentStreams to be a number")));
+                return Err(global_object
+                    .throw(format_args!("Expected maxConcurrentStreams to be a number")));
             }
         }
 
@@ -886,11 +1023,15 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_header_list_size.is_number() {
                 let v = max_header_list_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return Err(global_object.throw(format_args!("Expected maxHeaderListSize to be a number between 0 and 2^32-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
+                    )));
                 }
                 settings.max_header_list_size = u32::try_from(v).expect("int cast");
             } else if !max_header_list_size.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected maxHeaderListSize to be a number")));
+                return Err(
+                    global_object.throw(format_args!("Expected maxHeaderListSize to be a number"))
+                );
             }
         }
 
@@ -898,11 +1039,15 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_header_size.is_number() {
                 let v = max_header_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return Err(global_object.throw(format_args!("Expected maxHeaderSize to be a number between 0 and 2^32-1")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected maxHeaderSize to be a number between 0 and 2^32-1"
+                    )));
                 }
                 settings.max_header_list_size = u32::try_from(v).expect("int cast");
             } else if !max_header_size.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!("Expected maxHeaderSize to be a number")));
+                return Err(
+                    global_object.throw(format_args!("Expected maxHeaderSize to be a number"))
+                );
             }
         }
     }
@@ -939,8 +1084,12 @@ impl Handlers {
         context: JSValue,
         data: &[JSValue],
     ) -> bool {
-        let Some(callback) = event.get(this_value) else { return false };
-        self.vm.event_loop_ref().run_callback(callback, &self.global(), context, data);
+        let Some(callback) = event.get(this_value) else {
+            return false;
+        };
+        self.vm
+            .event_loop_ref()
+            .run_callback(callback, &self.global(), context, data);
         true
     }
 
@@ -948,7 +1097,9 @@ impl Handlers {
         if !callback.is_callable() {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(callback, &self.global(), JSValue::UNDEFINED, data);
+        self.vm
+            .event_loop_ref()
+            .run_callback(callback, &self.global(), JSValue::UNDEFINED, data);
         true
     }
 
@@ -958,8 +1109,15 @@ impl Handlers {
         this_value: JSValue,
         data: &[JSValue],
     ) -> JSValue {
-        let Some(callback) = event.get(this_value) else { return JSValue::ZERO };
-        self.vm.event_loop_ref().run_callback_with_result(callback, &self.global(), this_value, data)
+        let Some(callback) = event.get(this_value) else {
+            return JSValue::ZERO;
+        };
+        self.vm.event_loop_ref().run_callback_with_result(
+            callback,
+            &self.global(),
+            this_value,
+            data,
+        )
     }
 
     pub fn from_js(
@@ -975,16 +1133,18 @@ impl Handlers {
         };
 
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected \"handlers\" to be an object")));
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("Expected \"handlers\" to be an object")));
         }
 
         macro_rules! handler_pair {
             ($field:ident, $key:literal) => {{
                 if let Some(callback_value) = opts.get_truthy(global_object, $key)? {
                     if !callback_value.is_cell() || !callback_value.is_callable() {
-                        return Err(global_object.throw_invalid_arguments(
-                            format_args!("Expected \"{}\" callback to be a function", $key),
-                        ));
+                        return Err(global_object.throw_invalid_arguments(format_args!(
+                            "Expected \"{}\" callback to be a function",
+                            $key
+                        )));
                     }
                     JSH2FrameParser::Gc::$field.set(
                         this_value,
@@ -1014,7 +1174,9 @@ impl Handlers {
 
         if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
             if !callback_value.is_cell() || !callback_value.is_callable() {
-                return Err(global_object.throw_invalid_arguments(format_args!("Expected \"error\" callback to be a function")));
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "Expected \"error\" callback to be a function"
+                )));
             }
             JSH2FrameParser::Gc::onError.set(
                 this_value,
@@ -1028,21 +1190,25 @@ impl Handlers {
             || JSH2FrameParser::Gc::onWrite.get(this_value).is_none()
         {
             // TODO(port): Zig compares to .zero; codegen may return None — check both
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
         }
 
         if let Some(binary_type_value) = opts.get_truthy(global_object, "binaryType")? {
             if !binary_type_value.is_string() {
-                return Err(global_object.throw_invalid_arguments(format_args!("Expected \"binaryType\" to be a string")));
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "Expected \"binaryType\" to be a string"
+                )));
             }
-            handlers.binary_type = match BinaryType::from_js_value(global_object, binary_type_value)? {
-                Some(bt) => bt,
-                None => {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'",
-                    )));
-                }
-            };
+            handlers.binary_type =
+                match BinaryType::from_js_value(global_object, binary_type_value)? {
+                    Some(bt) => bt,
+                    None => {
+                        return Err(global_object.throw_invalid_arguments(format_args!(
+                            "Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'",
+                        )));
+                    }
+                };
         }
 
         Ok(handlers)
@@ -1215,7 +1381,11 @@ pub struct StreamResumableIterator {
 impl StreamResumableIterator {
     pub fn init(parser: &H2FrameParser) -> Self {
         let ids = parser.streams.get().keys().copied().collect();
-        Self { parser: bun_ptr::ParentRef::new(parser), ids, index: 0 }
+        Self {
+            parser: bun_ptr::ParentRef::new(parser),
+            ids,
+            index: 0,
+        }
     }
     pub fn next(&mut self) -> Option<*mut Stream> {
         // R-2: `streams` is `JsCell`-backed (UnsafeCell), so the shared backref
@@ -1230,7 +1400,6 @@ impl StreamResumableIterator {
         None
     }
 }
-
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FlushState {
@@ -1315,7 +1484,9 @@ impl SignalRef {
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
-        let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else { return };
+        let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else {
+            return;
+        };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         if stream.state != StreamState::CLOSED {
@@ -1409,10 +1580,10 @@ impl PendingQueue {
 
 #[derive(Default)]
 struct PendingFrame {
-    end_stream: bool,        // end_stream flag
-    len: u32,                // actually payload size
-    offset: u32,             // offset into the buffer (if partial flush due to flow control)
-    buffer: Vec<u8>,         // allocated buffer if len > 0
+    end_stream: bool,         // end_stream flag
+    len: u32,                 // actually payload size
+    offset: u32,              // offset into the buffer (if partial flush due to flow control)
+    buffer: Vec<u8>,          // allocated buffer if len > 0
     callback: StrongOptional, // JSCallback for done
 }
 
@@ -1479,12 +1650,22 @@ impl Stream {
                 // Inline `frame.slice()` so the borrow is on `frame.buffer`
                 // alone — `frame.offset` / `frame.end_stream` stay disjoint
                 // and can be mutated/read below while the slice is live.
-                let frame_slice: &[u8] =
-                    &frame.buffer[frame.offset as usize..frame.len as usize];
+                let frame_slice: &[u8] = &frame.buffer[frame.offset as usize..frame.len as usize];
                 let max_size = frame_slice
                     .len()
-                    .min((self.remote_window_size.saturating_sub(self.remote_used_window_size)) as usize)
-                    .min((client.remote_window_size.get().saturating_sub(client.remote_used_window_size.get())) as usize)
+                    .min(
+                        (self
+                            .remote_window_size
+                            .saturating_sub(self.remote_used_window_size))
+                            as usize,
+                    )
+                    .min(
+                        (client
+                            .remote_window_size
+                            .get()
+                            .saturating_sub(client.remote_used_window_size.get()))
+                            as usize,
+                    )
                     .min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                 if max_size == 0 {
                     is_flow_control_limited = true;
@@ -1499,7 +1680,9 @@ impl Stream {
                         max_size
                     );
                     // we are flow control limited lets return backpressure if is limited in the connection so we short circuit the flush
-                    return if client.remote_window_size.get() == client.remote_used_window_size.get() {
+                    return if client.remote_window_size.get()
+                        == client.remote_used_window_size.get()
+                    {
                         FlushState::Backpressure
                     } else {
                         FlushState::NoAction
@@ -1510,18 +1693,30 @@ impl Stream {
                     // we need to break the frame into smaller chunks
                     frame.offset += u32::try_from(max_size).expect("int cast");
                     let able_to_send = &frame_slice[0..max_size];
-                    client.queued_data_size.set(client.queued_data_size.get() - able_to_send.len() as u64);
+                    client
+                        .queued_data_size
+                        .set(client.queued_data_size.get() - able_to_send.len() as u64);
                     *written += able_to_send.len();
 
                     let padding = self.get_padding(able_to_send.len(), max_size - 1);
-                    let payload_size = able_to_send.len() + if padding != 0 { padding as usize + 1 } else { 0 };
+                    let payload_size = able_to_send.len()
+                        + if padding != 0 {
+                            padding as usize + 1
+                        } else {
+                            0
+                        };
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "padding: {} size: {} max_size: {} payload_size: {}",
-                        padding, able_to_send.len(), max_size, payload_size
+                        padding,
+                        able_to_send.len(),
+                        max_size,
+                        payload_size
                     );
                     self.remote_used_window_size += payload_size as u64;
-                    client.remote_used_window_size.set(client.remote_used_window_size.get() + payload_size as u64);
+                    client
+                        .remote_used_window_size
+                        .set(client.remote_used_window_size.get() + payload_size as u64);
 
                     let mut flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                     if padding != 0 {
@@ -1552,18 +1747,30 @@ impl Stream {
                     }
                 } else {
                     // flush with some payload
-                    client.queued_data_size.set(client.queued_data_size.get() - frame_slice.len() as u64);
+                    client
+                        .queued_data_size
+                        .set(client.queued_data_size.get() - frame_slice.len() as u64);
                     *written += frame_slice.len();
 
                     let padding = self.get_padding(frame_slice.len(), max_size - 1);
-                    let payload_size = frame_slice.len() + if padding != 0 { padding as usize + 1 } else { 0 };
+                    let payload_size = frame_slice.len()
+                        + if padding != 0 {
+                            padding as usize + 1
+                        } else {
+                            0
+                        };
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "padding: {} size: {} max_size: {} payload_size: {}",
-                        padding, frame_slice.len(), max_size, payload_size
+                        padding,
+                        frame_slice.len(),
+                        max_size,
+                        payload_size
                     );
                     self.remote_used_window_size += payload_size as u64;
-                    client.remote_used_window_size.set(client.remote_used_window_size.get() + payload_size as u64);
+                    client
+                        .remote_used_window_size
+                        .set(client.remote_used_window_size.get() + payload_size as u64);
                     let mut flags: u8 = if frame.end_stream && !self.wait_for_trailers {
                         DataFrameFlags::END_STREAM as u8
                     } else {
@@ -1603,7 +1810,9 @@ impl Stream {
         if !is_flow_control_limited {
             // only call the callback + free the frame if we write to the socket the full frame
             let mut _frame = self.data_frame_queue.dequeue().unwrap();
-            client.outbound_queue_size.set(client.outbound_queue_size.get() - 1);
+            client
+                .outbound_queue_size
+                .set(client.outbound_queue_size.get() - 1);
 
             if let Some(callback_value) = _frame.callback.get() {
                 client.dispatch_write_callback(callback_value);
@@ -1631,7 +1840,11 @@ impl Stream {
             drop(_frame);
         }
 
-        if no_backpressure { FlushState::Flushed } else { FlushState::Backpressure }
+        if no_backpressure {
+            FlushState::Flushed
+        } else {
+            FlushState::Backpressure
+        }
     }
 
     pub fn queue_frame(
@@ -1700,7 +1913,9 @@ impl Stream {
                 lf!().len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
-                client.queued_data_size.set(client.queued_data_size.get() + consumed_len as u64);
+                client
+                    .queued_data_size
+                    .set(client.queued_data_size.get() + consumed_len as u64);
                 // lets fallthrough if we still have some data
                 let more_data = &bytes[consumed_len..];
                 if more_data.is_empty() {
@@ -1726,7 +1941,11 @@ impl Stream {
         bun_output::scoped_log!(
             H2FrameParser,
             "{} queued {} {}",
-            if client.is_server.get() { "server" } else { "client" },
+            if client.is_server.get() {
+                "server"
+            } else {
+                "client"
+            },
             bytes.len(),
             end_stream
         );
@@ -1753,8 +1972,12 @@ impl Stream {
         }
         bun_output::scoped_log!(H2FrameParser, "dataFrame enqueued {}", frame.len);
         self.data_frame_queue.enqueue(frame);
-        client.outbound_queue_size.set(client.outbound_queue_size.get() + 1);
-        client.queued_data_size.set(client.queued_data_size.get() + bytes.len() as u64);
+        client
+            .outbound_queue_size
+            .set(client.outbound_queue_size.get() + 1);
+        client
+            .queued_data_size
+            .set(client.queued_data_size.get() + bytes.len() as u64);
     }
 
     pub fn init(
@@ -1815,12 +2038,17 @@ impl Stream {
     }
 
     pub fn set_context(&mut self, value: JSValue, global_object: &JSGlobalObject) {
-        let old = core::mem::replace(&mut self.js_context, StrongOptional::create(value, global_object));
+        let old = core::mem::replace(
+            &mut self.js_context,
+            StrongOptional::create(value, global_object),
+        );
         drop(old);
     }
 
     pub fn get_identifier(&self) -> JSValue {
-        self.js_context.get().unwrap_or_else(|| JSValue::js_number(self.id as f64))
+        self.js_context
+            .get()
+            .unwrap_or_else(|| JSValue::js_number(self.id as f64))
     }
 
     pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
@@ -1861,14 +2089,18 @@ impl Stream {
             let frame = item;
             let len = frame.slice().len();
             bun_output::scoped_log!(H2FrameParser, "dataFrame dropped {}", len);
-            client.queued_data_size.set(client.queued_data_size.get() - len as u64);
+            client
+                .queued_data_size
+                .set(client.queued_data_size.get() - len as u64);
             if !FINALIZING {
                 if let Some(callback_value) = frame.callback.get() {
                     client.dispatch_write_callback(callback_value);
                 }
             }
             drop(frame);
-            client.outbound_queue_size.set(client.outbound_queue_size.get() - 1);
+            client
+                .outbound_queue_size
+                .set(client.outbound_queue_size.get() - 1);
         }
         // queue dropped here
     }
@@ -1933,7 +2165,13 @@ impl H2FrameParser {
         // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
         // bytes — the `?` early-return / corrupted-len hazard from the original port is gone.
         encoded_headers.resize(required, 0);
-        match self.encode(encoded_headers.as_mut_slice(), old_len, name, value, never_index) {
+        match self.encode(
+            encoded_headers.as_mut_slice(),
+            old_len,
+            name,
+            value,
+            never_index,
+        ) {
             Ok(bytes_written) => {
                 encoded_headers.truncate(old_len + bytes_written);
                 Ok(bytes_written)
@@ -1965,7 +2203,9 @@ impl H2FrameParser {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 // lets make sure the name is lowercase
-                return hpack.encode(name, value, never_index, dst_buffer, dst_offset).map_err(hpack_error_to_core);
+                return hpack
+                    .encode(name, value, never_index, dst_buffer, dst_offset)
+                    .map_err(hpack_error_to_core);
             }
             Err(bun_core::err!("UnableToEncode"))
         })
@@ -1974,23 +2214,43 @@ impl H2FrameParser {
     /// Calculate the new window size for the connection and the stream
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
     fn adjust_window_size(&self, stream: Option<&mut Stream>, payload_size: u32) {
-        self.used_window_size.set(self.used_window_size.get().saturating_add(payload_size as u64));
+        self.used_window_size.set(
+            self.used_window_size
+                .get()
+                .saturating_add(payload_size as u64),
+        );
         bun_output::scoped_log!(
             H2FrameParser,
             "adjustWindowSize {} {} {} {}",
-            self.used_window_size.get(), self.window_size.get(), self.is_server.get(), payload_size
+            self.used_window_size.get(),
+            self.window_size.get(),
+            self.is_server.get(),
+            payload_size
         );
         if self.used_window_size.get() > self.window_size.get() {
             // we are receiving more data than we are allowed to
-            self.send_go_away(0, ErrorCode::FLOW_CONTROL_ERROR, b"Window size overflow", self.last_stream_id.get(), true);
-            self.used_window_size.set(self.used_window_size.get() - payload_size as u64);
+            self.send_go_away(
+                0,
+                ErrorCode::FLOW_CONTROL_ERROR,
+                b"Window size overflow",
+                self.last_stream_id.get(),
+                true,
+            );
+            self.used_window_size
+                .set(self.used_window_size.get() - payload_size as u64);
         }
 
         if let Some(s) = stream {
             s.used_window_size += payload_size as u64;
             if s.used_window_size > s.window_size {
                 // we are receiving more data than we are allowed to
-                self.send_go_away(s.id, ErrorCode::FLOW_CONTROL_ERROR, b"Window size overflow", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    s.id,
+                    ErrorCode::FLOW_CONTROL_ERROR,
+                    b"Window size overflow",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 s.used_window_size -= payload_size as u64;
             }
         }
@@ -2005,7 +2265,10 @@ impl H2FrameParser {
             bun_output::scoped_log!(
                 H2FrameParser,
                 "incrementWindowSizeIfNeeded stream {} {} {} {}",
-                stream.id, stream.used_window_size, stream.window_size, self.is_server.get()
+                stream.id,
+                stream.used_window_size,
+                stream.window_size,
+                self.is_server.get()
             );
             if stream.used_window_size >= stream.window_size / 2 && stream.used_window_size > 0 {
                 let consumed = stream.used_window_size;
@@ -2013,7 +2276,9 @@ impl H2FrameParser {
                 bun_output::scoped_log!(
                     H2FrameParser,
                     "incrementWindowSizeIfNeeded stream {} {} {}",
-                    stream.id, stream.window_size, self.is_server.get()
+                    stream.id,
+                    stream.window_size,
+                    self.is_server.get()
                 );
                 updates.push((stream.id, consumed));
             }
@@ -2024,9 +2289,13 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "incrementWindowSizeIfNeeded connection {} {} {}",
-            self.used_window_size.get(), self.window_size.get(), self.is_server.get()
+            self.used_window_size.get(),
+            self.window_size.get(),
+            self.is_server.get()
         );
-        if self.used_window_size.get() >= self.window_size.get() / 2 && self.used_window_size.get() > 0 {
+        if self.used_window_size.get() >= self.window_size.get() / 2
+            && self.used_window_size.get() > 0
+        {
             let consumed = self.used_window_size.get();
             self.used_window_size.set(0);
             self.send_window_update(0, UInt31WithReserved::init(consumed as u32, false));
@@ -2037,7 +2306,13 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
-            self.send_go_away(0, ErrorCode::MAX_PENDING_SETTINGS_ACK, b"Maximum number of pending settings acknowledgements", self.last_stream_id.get(), true);
+            self.send_go_away(
+                0,
+                ErrorCode::MAX_PENDING_SETTINGS_ACK,
+                b"Maximum number of pending settings acknowledgements",
+                self.last_stream_id.get(),
+                true,
+            );
             return false;
         }
 
@@ -2051,7 +2326,8 @@ impl H2FrameParser {
         };
         let _ = settings_header.write(&mut stream);
 
-        self.outstanding_settings.set(self.outstanding_settings.get() + 1);
+        self.outstanding_settings
+            .set(self.outstanding_settings.get() + 1);
 
         self.local_settings.set(settings);
         let _ = self.local_settings.get().write(&mut stream);
@@ -2060,7 +2336,11 @@ impl H2FrameParser {
     }
 
     pub fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
-        bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_RST_STREAM id: {} code: CANCEL", stream.id);
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "HTTP_FRAME_RST_STREAM id: {} code: CANCEL",
+            stream.id
+        );
 
         abort_reason.ensure_still_alive();
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
@@ -2082,12 +2362,22 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
-        self.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, abort_reason, JSValue::js_number(old_state as u8 as f64));
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onAborted,
+            identifier,
+            abort_reason,
+            JSValue::js_number(old_state as u8 as f64),
+        );
         let _ = self.write(&buffer);
     }
 
     pub fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
-        bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_RST_STREAM id: {} code: {}", stream.id, rst_code.0);
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "HTTP_FRAME_RST_STREAM id: {} code: {}",
+            stream.id,
+            rst_code.0
+        );
         if stream.state == StreamState::CLOSED {
             return;
         }
@@ -2111,9 +2401,17 @@ impl H2FrameParser {
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
         if rst_code == ErrorCode::NO_ERROR {
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                identifier,
+                JSValue::js_number(stream.state as u8 as f64),
+            );
         } else {
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code.0 as f64));
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                identifier,
+                JSValue::js_number(rst_code.0 as f64),
+            );
         }
 
         let _ = self.write(&buffer);
@@ -2130,7 +2428,10 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
-            stream_identifier, rst_code.0, BStr::new(debug_data), emit_error
+            stream_identifier,
+            rst_code.0,
+            BStr::new(debug_data),
+            emit_error
         );
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
@@ -2156,7 +2457,10 @@ impl H2FrameParser {
         let chunk = match self.handlers.get().binary_type.to_js(debug_data, &global) {
             Ok(v) => v,
             Err(err) => {
-                self.dispatch(JSH2FrameParser::Gc::onError, self.global().take_exception(err));
+                self.dispatch(
+                    JSH2FrameParser::Gc::onError,
+                    self.global().take_exception(err),
+                );
                 return;
             }
         };
@@ -2170,7 +2474,11 @@ impl H2FrameParser {
                     chunk,
                 );
             }
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onEnd, JSValue::js_number(self.last_stream_id.get() as f64), chunk);
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onEnd,
+                JSValue::js_number(self.last_stream_id.get() as f64),
+                chunk,
+            );
         }
     }
 
@@ -2178,7 +2486,9 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
-            stream_identifier, BStr::new(origin_str), BStr::new(alt)
+            stream_identifier,
+            BStr::new(origin_str),
+            BStr::new(alt)
         );
 
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
@@ -2191,7 +2501,11 @@ impl H2FrameParser {
             length: u32::try_from(origin_str.len() + alt.len() + 2).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
-        let _ = stream.write_all(&u16::try_from(origin_str.len()).expect("int cast").to_be_bytes());
+        let _ = stream.write_all(
+            &u16::try_from(origin_str.len())
+                .expect("int cast")
+                .to_be_bytes(),
+        );
         let _ = self.write(&buffer);
         if !origin_str.is_empty() {
             let _ = self.write(origin_str);
@@ -2202,12 +2516,18 @@ impl H2FrameParser {
     }
 
     pub fn send_ping(&self, ack: bool, payload: &[u8]) {
-        bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_PING ack {} payload {}", ack, BStr::new(payload));
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "HTTP_FRAME_PING ack {} payload {}",
+            ack,
+            BStr::new(payload)
+        );
 
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
         if !ack {
-            self.out_standing_pings.set(self.out_standing_pings.get() + 1);
+            self.out_standing_pings
+                .set(self.out_standing_pings.get() + 1);
         }
         let mut frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_PING as u8,
@@ -2223,7 +2543,8 @@ impl H2FrameParser {
     pub fn send_preface_and_settings(&self) {
         bun_output::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
         // PREFACE + Settings Frame
-        let mut preface_buffer = [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
+        let mut preface_buffer =
+            [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
         let mut preface_stream = FixedBufferStream::new(&mut preface_buffer);
         let _ = preface_stream.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
         let mut settings_header = FrameHeader {
@@ -2232,7 +2553,8 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: FullSettingsPayload::BYTE_SIZE as u32,
         };
-        self.outstanding_settings.set(self.outstanding_settings.get() + 1);
+        self.outstanding_settings
+            .set(self.outstanding_settings.get() + 1);
         let _ = settings_header.write(&mut preface_stream);
         let _ = self.local_settings.get().write(&mut preface_stream);
         let _ = self.write(&preface_buffer);
@@ -2256,7 +2578,8 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_WINDOW_UPDATE stream {} size {}",
-            stream_identifier, window_size.uint31()
+            stream_identifier,
+            window_size.uint31()
         );
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut stream = FixedBufferStream::new(&mut buffer);
@@ -2273,16 +2596,31 @@ impl H2FrameParser {
 
     pub fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
         value.ensure_still_alive();
-        let Some(this_value) = self.strong_this.get().try_get() else { return };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return };
-        let _ = self.handlers.get().call_event_handler(event, this_value, ctx_value, &[ctx_value, value]);
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value],
+        );
     }
 
     pub fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
-        let Some(this_value) = self.strong_this.get().try_get() else { return JSValue::ZERO };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return JSValue::ZERO };
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return JSValue::ZERO;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return JSValue::ZERO;
+        };
         value.ensure_still_alive();
-        self.handlers.get().call_event_handler_with_result(event, this_value, &[ctx_value, value])
+        self.handlers
+            .get()
+            .call_event_handler_with_result(event, this_value, &[ctx_value, value])
     }
 
     pub fn dispatch_write_callback(&self, callback: JSValue) {
@@ -2290,20 +2628,44 @@ impl H2FrameParser {
     }
 
     pub fn dispatch_with_extra(&self, event: JSH2FrameParser::Gc, value: JSValue, extra: JSValue) {
-        let Some(this_value) = self.strong_this.get().try_get() else { return };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return };
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
         value.ensure_still_alive();
         extra.ensure_still_alive();
-        let _ = self.handlers.get().call_event_handler(event, this_value, ctx_value, &[ctx_value, value, extra]);
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra],
+        );
     }
 
-    pub fn dispatch_with_2_extra(&self, event: JSH2FrameParser::Gc, value: JSValue, extra: JSValue, extra2: JSValue) {
-        let Some(this_value) = self.strong_this.get().try_get() else { return };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return };
+    pub fn dispatch_with_2_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+        extra2: JSValue,
+    ) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
         value.ensure_still_alive();
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
-        let _ = self.handlers.get().call_event_handler(event, this_value, ctx_value, &[ctx_value, value, extra, extra2]);
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra, extra2],
+        );
     }
 
     pub fn dispatch_with_3_extra(
@@ -2314,13 +2676,22 @@ impl H2FrameParser {
         extra2: JSValue,
         extra3: JSValue,
     ) {
-        let Some(this_value) = self.strong_this.get().try_get() else { return };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return };
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
         value.ensure_still_alive();
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
         extra3.ensure_still_alive();
-        let _ = self.handlers.get().call_event_handler(event, this_value, ctx_value, &[ctx_value, value, extra, extra2, extra3]);
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra, extra2, extra3],
+        );
     }
 
     fn cork(&self) {
@@ -2344,11 +2715,18 @@ impl H2FrameParser {
     pub fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
-            let result: i32 = socket.write_maybe_corked(&self.write_buffer.get().slice()[self.write_buffer_offset.get()..]);
-            let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
+            let result: i32 = socket.write_maybe_corked(
+                &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
+            );
+            let written: u32 = if result < 0 {
+                0
+            } else {
+                u32::try_from(result).expect("int cast")
+            };
 
             if (written as usize) < buffer_len {
-                self.write_buffer_offset.set(self.write_buffer_offset.get() + written as usize);
+                self.write_buffer_offset
+                    .set(self.write_buffer_offset.get() + written as usize);
                 bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
                 return written as usize;
             }
@@ -2376,16 +2754,28 @@ impl H2FrameParser {
         let buffered_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffered_len > 0 {
             {
-                let result: i32 = socket.write_maybe_corked(&self.write_buffer.get().slice()[self.write_buffer_offset.get()..]);
-                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
+                let result: i32 = socket.write_maybe_corked(
+                    &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
+                );
+                let written: u32 = if result < 0 {
+                    0
+                } else {
+                    u32::try_from(result).expect("int cast")
+                };
                 if (written as usize) < buffered_len {
-                    self.write_buffer_offset.set(self.write_buffer_offset.get() + written as usize);
+                    self.write_buffer_offset
+                        .set(self.write_buffer_offset.get() + written as usize);
 
                     // we still have more to buffer and even more now
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
 
-                    bun_output::scoped_log!(H2FrameParser, "_genericWrite flushed {} and buffered more {}", written, bytes.len());
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "_genericWrite flushed {} and buffered more {}",
+                        written,
+                        bytes.len()
+                    );
                     return false;
                 }
             }
@@ -2394,14 +2784,22 @@ impl H2FrameParser {
             self.write_buffer.with_mut(|wb| wb.clear());
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
-                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
+                let written: u32 = if result < 0 {
+                    0
+                } else {
+                    u32::try_from(result).expect("int cast")
+                };
                 if (written as usize) < bytes.len() {
                     let pending = &bytes[written as usize..];
                     // ops not all data was sent, lets buffer again
                     let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
                     global.vm().deprecated_report_extra_memory(pending.len());
 
-                    bun_output::scoped_log!(H2FrameParser, "_genericWrite buffered more {}", pending.len());
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "_genericWrite buffered more {}",
+                        pending.len()
+                    );
                     return false;
                 }
             }
@@ -2414,7 +2812,11 @@ impl H2FrameParser {
             return true;
         }
         let result: i32 = socket.write_maybe_corked(bytes);
-        let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
+        let written: u32 = if result < 0 {
+            0
+        } else {
+            u32::try_from(result).expect("int cast")
+        };
         if (written as usize) < bytes.len() {
             let pending = &bytes[written as usize..];
             // ops not all data was sent, lets buffer again
@@ -2427,7 +2829,11 @@ impl H2FrameParser {
 
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
     fn flush_stream_queue(&self) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "flushStreamQueue {}", self.outbound_queue_size.get());
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "flushStreamQueue {}",
+            self.outbound_queue_size.get()
+        );
         let mut written: usize = 0;
         let mut something_was_flushed = true;
 
@@ -2474,7 +2880,12 @@ impl H2FrameParser {
                 let bytes_len = self.write_buffer.get().slice().len();
                 if bytes_len > 0 {
                     let global = self.handlers.get().global();
-                    let output_value = self.handlers.get().binary_type.to_js(self.write_buffer.get().slice(), &global).unwrap_or(JSValue::ZERO);
+                    let output_value = self
+                        .handlers
+                        .get()
+                        .binary_type
+                        .to_js(self.write_buffer.get().slice(), &global)
+                        .unwrap_or(JSValue::ZERO);
                     // TODO: properly propagate exception upwards
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
 
@@ -2522,10 +2933,19 @@ impl H2FrameParser {
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                let output_value = self.handlers.get().binary_type.to_js(bytes, &self.handlers.get().global()).unwrap_or(JSValue::ZERO);
+                let output_value = self
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(bytes, &self.handlers.get().global())
+                    .unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
-                let code = if result.is_number() { result.to_int32() } else { -1 };
+                let code = if result.is_number() {
+                    result.to_int32()
+                } else {
+                    -1
+                };
                 let r = match code {
                     -1 => {
                         // dropped
@@ -2587,7 +3007,9 @@ impl H2FrameParser {
         debug_assert!(!self.auto_flusher.get().registered);
         self.auto_flusher.with_mut(|af| af.registered = true);
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = self.global_this.bun_vm()
+        let found_existing = self
+            .global_this
+            .bun_vm()
             .event_loop_mut()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
@@ -2600,7 +3022,9 @@ impl H2FrameParser {
         }
         debug_assert!(self.auto_flusher.get().registered);
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = self.global_this.bun_vm()
+        let removed = self
+            .global_this
+            .bun_vm()
             .event_loop_mut()
             .deferred_tasks
             .unregister_task(ctx);
@@ -2726,14 +3150,23 @@ impl H2FrameParser {
     pub fn handle_incomming_payload(&self, data: &[u8], stream_identifier: u32) -> Option<Payload> {
         let end: usize = (self.remaining_length.get() as usize).min(data.len());
         let payload = &data[0..end];
-        self.remaining_length.set(self.remaining_length.get() - i32::try_from(end).expect("int cast"));
+        self.remaining_length
+            .set(self.remaining_length.get() - i32::try_from(end).expect("int cast"));
         if self.remaining_length.get() > 0 {
             // buffer more data
             let _ = self.read_buffer.with_mut(|rb| rb.append_slice(payload));
-            self.global().vm().deprecated_report_extra_memory(payload.len());
+            self.global()
+                .vm()
+                .deprecated_report_extra_memory(payload.len());
             return None;
         } else if self.remaining_length.get() < 0 {
-            self.send_go_away(stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"Invalid frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return None;
         }
 
@@ -2742,7 +3175,9 @@ impl H2FrameParser {
         if !self.read_buffer.get().list.is_empty() {
             // return buffered data
             let _ = self.read_buffer.with_mut(|rb| rb.append_slice(payload));
-            self.global().vm().deprecated_report_extra_memory(payload.len());
+            self.global()
+                .vm()
+                .deprecated_report_extra_memory(payload.len());
 
             // SAFETY contract for Payload::data: derive via Vec::as_mut_ptr() (raw-ptr method,
             // no intermediate &[u8]) so the provenance survives `read_buffer.reset()` —
@@ -2756,17 +3191,40 @@ impl H2FrameParser {
                 let list = &mut rb.list;
                 (list.as_mut_ptr().cast_const(), list.len())
             });
-            return Some(Payload { data_ptr, data_len, end });
+            return Some(Payload {
+                data_ptr,
+                data_len,
+                end,
+            });
         }
 
-        Some(Payload { data_ptr: payload.as_ptr(), data_len: payload.len(), end })
+        Some(Payload {
+            data_ptr: payload.as_ptr(),
+            data_len: payload.len(),
+            end,
+        })
     }
 
-    pub fn handle_window_update_frame(&self, frame: FrameHeader, data: &[u8], stream: Option<*mut Stream>) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "handleWindowUpdateFrame {}", frame.stream_identifier);
+    pub fn handle_window_update_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream: Option<*mut Stream>,
+    ) -> usize {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "handleWindowUpdateFrame {}",
+            frame.stream_identifier
+        );
         // must be always 4 bytes (https://datatracker.ietf.org/doc/html/rfc7540#section-6.9)
         if frame.length != 4 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid dataframe frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"Invalid dataframe frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -2779,9 +3237,15 @@ impl H2FrameParser {
                 // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*s).remote_window_size += window_size_increment.uint31() as u64 };
             } else {
-                self.remote_window_size.set(self.remote_window_size.get() + window_size_increment.uint31() as u64);
+                self.remote_window_size
+                    .set(self.remote_window_size.get() + window_size_increment.uint31() as u64);
             }
-            bun_output::scoped_log!(H2FrameParser, "windowSizeIncrement stream {} value {}", frame.stream_identifier, window_size_increment.uint31());
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "windowSizeIncrement stream {} value {}",
+                frame.stream_identifier,
+                window_size_increment.uint31()
+            );
             // at this point we try to send more data because we received a window update
             let _ = self.flush();
             return end;
@@ -2790,8 +3254,17 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn decode_header_block(&self, payload: &[u8], stream: &mut Stream, flags: u8) -> JsResult<Option<*mut Stream>> {
-        bun_output::scoped_log!(H2FrameParser, "decodeHeaderBlock isSever: {}", self.is_server.get());
+    pub fn decode_header_block(
+        &self,
+        payload: &[u8],
+        stream: &mut Stream,
+        flags: u8,
+    ) -> JsResult<Option<*mut Stream>> {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "decodeHeaderBlock isSever: {}",
+            self.is_server.get()
+        );
 
         let mut offset: usize = 0;
         let global_object = self.handlers.get().global();
@@ -2814,9 +3287,20 @@ impl H2FrameParser {
                 Err(_) => break,
             };
             offset += header.next;
-            bun_output::scoped_log!(H2FrameParser, "header {} {}", BStr::new(header.name), BStr::new(header.value));
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "header {} {}",
+                BStr::new(header.name),
+                BStr::new(header.value)
+            );
             if self.is_server.get() && header.name == b":status" {
-                self.send_go_away(stream_id, ErrorCode::PROTOCOL_ERROR, b"Server received :status header", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    stream_id,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Server received :status header",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(self.streams.get().get(&stream_id).copied());
             }
 
@@ -2828,7 +3312,13 @@ impl H2FrameParser {
             if header_list_size > self.local_settings.get().max_header_list_size as usize {
                 self.rejected_streams.set(self.rejected_streams.get() + 1);
                 if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(stream_id, ErrorCode::ENHANCE_YOUR_CALM, b"ENHANCE_YOUR_CALM", self.last_stream_id.get(), true);
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
                 } else {
                     self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
                 }
@@ -2839,16 +3329,27 @@ impl H2FrameParser {
             if (self.max_header_list_pairs.get() as usize) < count {
                 self.rejected_streams.set(self.rejected_streams.get() + 1);
                 if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(stream_id, ErrorCode::ENHANCE_YOUR_CALM, b"ENHANCE_YOUR_CALM", self.last_stream_id.get(), true);
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
                 } else {
                     self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
                 }
                 return Ok(self.streams.get().get(&stream_id).copied());
             }
 
-            if let Some(js_header_name) = get_http2_common_string(&global_object, header.well_know as u32) {
+            if let Some(js_header_name) =
+                get_http2_common_string(&global_object, header.well_know as u32)
+            {
                 headers.push(&global_object, js_header_name)?;
-                headers.push(&global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?)?;
+                headers.push(
+                    &global_object,
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?,
+                )?;
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
                         sensitive_headers = JSValue::create_empty_array(&global_object, 0)?;
@@ -2857,8 +3358,10 @@ impl H2FrameParser {
                     sensitive_headers.push(&global_object, js_header_name)?;
                 }
             } else {
-                let js_header_name = bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?;
-                let js_header_value = bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?;
+                let js_header_name =
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?;
+                let js_header_value =
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?;
 
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
@@ -2880,28 +3383,71 @@ impl H2FrameParser {
             }
         }
 
-        self.dispatch_with_3_extra(JSH2FrameParser::Gc::onStreamHeaders, stream.get_identifier(), headers, sensitive_headers, JSValue::js_number(flags as f64));
+        self.dispatch_with_3_extra(
+            JSH2FrameParser::Gc::onStreamHeaders,
+            stream.get_identifier(),
+            headers,
+            sensitive_headers,
+            JSValue::js_number(flags as f64),
+        );
         Ok(self.streams.get().get(&stream_id).copied())
     }
 
-    pub fn handle_data_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "handleDataFrame {} data.len: {}", if self.is_server.get() { "server" } else { "client" }, data.len());
+    pub fn handle_data_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> usize {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "handleDataFrame {} data.len: {}",
+            if self.is_server.get() {
+                "server"
+            } else {
+                "client"
+            },
+            data.len()
+        );
         self.read_buffer.with_mut(|rb| rb.reset());
 
         let Some(stream_ptr) = stream_ else {
-            bun_output::scoped_log!(H2FrameParser, "received data frame on stream that does not exist");
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Data frame on connection stream", self.last_stream_id.get(), true);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "received data frame on stream that does not exist"
+            );
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Data frame on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self.remote_settings.get().unwrap_or(self.local_settings.get());
+        let settings = self
+            .remote_settings
+            .get()
+            .unwrap_or(self.local_settings.get());
 
         let max_frame_size = settings.max_frame_size;
         if frame.length > max_frame_size {
-            bun_output::scoped_log!(H2FrameParser, "received data frame with length: {} and max frame size: {}", frame.length, max_frame_size);
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid dataframe frame size", self.last_stream_id.get(), true);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "received data frame with length: {} and max frame size: {}",
+                frame.length,
+                max_frame_size
+            );
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"Invalid dataframe frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -2913,13 +3459,20 @@ impl H2FrameParser {
         stream = unsafe { &mut *stream_ptr };
         let previous_remaining_length: isize = self.remaining_length.get() as isize;
 
-        self.remaining_length.set(self.remaining_length.get() - i32::try_from(end).expect("int cast"));
+        self.remaining_length
+            .set(self.remaining_length.get() - i32::try_from(end).expect("int cast"));
         let mut padding: u8 = 0;
         let padded = frame.flags & DataFrameFlags::PADDED as u8 != 0;
         if padded {
             if frame.length < 1 {
                 // PADDED flag set but no room for the Pad Length octet
-                self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid data frame size", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"Invalid data frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return data.len();
             }
             if let Some(p) = stream.padding {
@@ -2937,17 +3490,30 @@ impl H2FrameParser {
             // connection error of type PROTOCOL_ERROR. Validate before computing
             // `data_region_end = frame.length - padding` below to avoid underflow.
             if padding as usize >= frame.length as usize {
-                self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Invalid data frame padding", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Invalid data frame padding",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return data.len();
             }
         }
         if self.remaining_length.get() < 0 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid data frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"Invalid data frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
         let mut emitted = false;
 
-        let start_idx = (frame.length as usize) - usize::try_from(previous_remaining_length).expect("int cast");
+        let start_idx =
+            (frame.length as usize) - usize::try_from(previous_remaining_length).expect("int cast");
         if start_idx < 1 && padded && !payload.is_empty() {
             // Skip the Pad Length octet. Keyed on the PADDED flag rather than
             // `padding > 0` because Pad Length = 0 is valid (RFC 7540 Section 6.1)
@@ -2965,15 +3531,27 @@ impl H2FrameParser {
             bun_output::scoped_log!(
                 H2FrameParser,
                 "received_size: {} max_payload_size: {} padding: {} payload.len: {}",
-                received_size, max_payload_size, padding, payload.len()
+                received_size,
+                max_payload_size,
+                padding,
+                payload.len()
             );
 
             if !payload.is_empty() {
                 // no padding, just emit the data
                 let global = self.handlers.get().global();
-                let chunk = self.handlers.get().binary_type.to_js(payload, &global).unwrap_or(JSValue::ZERO);
+                let chunk = self
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(payload, &global)
+                    .unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream.get_identifier(), chunk);
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamData,
+                    stream.get_identifier(),
+                    chunk,
+                );
                 emitted = true;
             }
         }
@@ -2997,23 +3575,52 @@ impl H2FrameParser {
                 } else {
                     stream.state = StreamState::HALF_CLOSED_REMOTE;
                 }
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamEnd,
+                    identifier,
+                    JSValue::js_number(stream.state as u8 as f64),
+                );
             }
         }
 
         end
     }
 
-    pub fn handle_go_away_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "handleGoAwayFrame {} {}", frame.stream_identifier, BStr::new(data));
+    pub fn handle_go_away_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> usize {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "handleGoAwayFrame {} {}",
+            frame.stream_identifier,
+            BStr::new(data)
+        );
         if stream_.is_some() {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"GoAway frame on stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"GoAway frame on stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
-        let settings = self.remote_settings.get().unwrap_or(self.local_settings.get());
+        let settings = self
+            .remote_settings
+            .get()
+            .unwrap_or(self.local_settings.get());
 
         if frame.length < 8 || frame.length > settings.max_frame_size {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid GoAway frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid GoAway frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -3021,11 +3628,21 @@ impl H2FrameParser {
             let payload = content.data();
             let error_code = u32_from_bytes(&payload[4..8]);
             let global = self.handlers.get().global();
-            let chunk = self.handlers.get().binary_type.to_js(&payload[8..], &global).unwrap_or(JSValue::ZERO);
+            let chunk = self
+                .handlers
+                .get()
+                .binary_type
+                .to_js(&payload[8..], &global)
+                .unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            self.dispatch_with_2_extra(JSH2FrameParser::Gc::onGoAway, JSValue::js_number(error_code as f64), JSValue::js_number(self.last_stream_id.get() as f64), chunk);
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onGoAway,
+                JSValue::js_number(error_code as f64),
+                JSValue::js_number(self.last_stream_id.get() as f64),
+                chunk,
+            );
             return end;
         }
         data.len()
@@ -3039,14 +3656,31 @@ impl H2FrameParser {
         bun_jsc::bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 
-    pub fn handle_origin_frame(&self, frame: FrameHeader, data: &[u8], _: Option<*mut Stream>) -> JsResult<usize> {
+    pub fn handle_origin_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        _: Option<*mut Stream>,
+    ) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "handleOriginFrame {}", BStr::new(data));
         if self.is_server.get() {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"ORIGIN frame on server", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"ORIGIN frame on server",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
         if frame.stream_identifier != 0 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"ORIGIN frame on stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"ORIGIN frame on stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
@@ -3060,14 +3694,29 @@ impl H2FrameParser {
             while !payload.is_empty() {
                 // TODO(port): fixedBufferStream over const slice for reading u16 BE
                 if payload.len() < 2 {
-                    bun_output::scoped_log!(H2FrameParser, "error reading ORIGIN frame size: short read");
-                    self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid ORIGIN frame size", self.last_stream_id.get(), true);
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "error reading ORIGIN frame size: short read"
+                    );
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"invalid ORIGIN frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
                     return Ok(end);
                 }
                 let origin_length = u16::from_be_bytes([payload[0], payload[1]]) as usize;
                 let mut origin_str = &payload[2..];
                 if origin_str.len() < origin_length {
-                    self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid ORIGIN frame size", self.last_stream_id.get(), true);
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"invalid ORIGIN frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
                     return Ok(end);
                 }
                 origin_str = &origin_str[0..origin_length];
@@ -3095,11 +3744,22 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_altsvc_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> JsResult<usize> {
+    pub fn handle_altsvc_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "handleAltsvcFrame {}", BStr::new(data));
         if self.is_server.get() {
             // client should not send ALTSVC frame
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"ALTSVC frame on server", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"ALTSVC frame on server",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
@@ -3108,14 +3768,26 @@ impl H2FrameParser {
             self.read_buffer.with_mut(|rb| rb.reset());
 
             if payload.len() < 2 {
-                self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid ALTSVC frame size", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"invalid ALTSVC frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(end);
             }
             let origin_length = u16::from_be_bytes([payload[0], payload[1]]) as usize;
             let origin_and_value = &payload[2..];
 
             if origin_and_value.len() < origin_length {
-                self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid ALTSVC frame size", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"invalid ALTSVC frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(end);
             }
             if frame.stream_identifier != 0 && stream_.is_none() {
@@ -3134,22 +3806,45 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_rst_stream_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> usize {
+    pub fn handle_rst_stream_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> usize {
         bun_output::scoped_log!(H2FrameParser, "handleRSTStreamFrame {}", BStr::new(data));
         let Some(stream_ptr) = stream_ else {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"RST_STREAM frame on connection stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"RST_STREAM frame on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         if frame.length != 4 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid RST_STREAM frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid RST_STREAM frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
         if stream.is_waiting_more_headers {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Headers frame without continuation", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Headers frame without continuation",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -3164,23 +3859,48 @@ impl H2FrameParser {
             identifier.ensure_still_alive();
             stream.free_resources::<false>(self);
             if rst_code == ErrorCode::NO_ERROR.0 {
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamEnd,
+                    identifier,
+                    JSValue::js_number(stream.state as u8 as f64),
+                );
             } else {
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code as f64));
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamError,
+                    identifier,
+                    JSValue::js_number(rst_code as f64),
+                );
             }
             return end;
         }
         data.len()
     }
 
-    pub fn handle_ping_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> usize {
+    pub fn handle_ping_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> usize {
         if stream_.is_some() {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Ping frame on stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Ping frame on stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
         if frame.length != 8 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid ping frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"Invalid ping frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -3198,27 +3918,54 @@ impl H2FrameParser {
             if is_not_ack {
                 self.send_ping(true, &payload_owned);
             } else {
-                self.out_standing_pings.set(self.out_standing_pings.get().saturating_sub(1));
+                self.out_standing_pings
+                    .set(self.out_standing_pings.get().saturating_sub(1));
             }
             let global = self.handlers.get().global();
-            let buffer = self.handlers.get().binary_type.to_js(&payload_owned, &global).unwrap_or(JSValue::ZERO);
+            let buffer = self
+                .handlers
+                .get()
+                .binary_type
+                .to_js(&payload_owned, &global)
+                .unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(!is_not_ack));
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onPing,
+                buffer,
+                JSValue::from(!is_not_ack),
+            );
             return end;
         }
         data.len()
     }
 
-    pub fn handle_priority_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> usize {
+    pub fn handle_priority_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> usize {
         let Some(stream_ptr) = stream_ else {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Priority frame on connection stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Priority frame on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         if frame.length as usize != StreamPriority::BYTE_SIZE {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid Priority frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Priority frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
 
@@ -3232,7 +3979,13 @@ impl H2FrameParser {
 
             let stream_identifier = UInt31WithReserved::from(priority.stream_identifier);
             if stream_identifier.uint31() == stream.id {
-                self.send_go_away(stream.id, ErrorCode::PROTOCOL_ERROR, b"Priority frame with self dependency", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    stream.id,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Priority frame with self dependency",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return end;
             }
             stream.stream_dependency = stream_identifier.uint31();
@@ -3245,17 +3998,34 @@ impl H2FrameParser {
     }
 
     /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
-    pub fn handle_continuation_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> JsResult<usize> {
+    pub fn handle_continuation_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "handleContinuationFrame");
         let Some(stream_ptr) = stream_ else {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Continuation on connection stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Continuation on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
         if !stream.is_waiting_more_headers {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Continuation without headers", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Continuation without headers",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
@@ -3280,7 +4050,11 @@ impl H2FrameParser {
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
-                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+                    self.dispatch_with_extra(
+                        JSH2FrameParser::Gc::onStreamEnd,
+                        identifier,
+                        JSValue::js_number(stream.state as u8 as f64),
+                    );
                 }
             }
             return Ok(end);
@@ -3290,23 +4064,57 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_headers_frame(&self, frame: FrameHeader, data: &[u8], stream_: Option<*mut Stream>) -> JsResult<usize> {
-        bun_output::scoped_log!(H2FrameParser, "handleHeadersFrame {}", if self.is_server.get() { "server" } else { "client" });
+    pub fn handle_headers_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+        stream_: Option<*mut Stream>,
+    ) -> JsResult<usize> {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "handleHeadersFrame {}",
+            if self.is_server.get() {
+                "server"
+            } else {
+                "client"
+            }
+        );
         let Some(stream_ptr) = stream_ else {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Headers frame on connection stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Headers frame on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self.remote_settings.get().unwrap_or(self.local_settings.get());
+        let settings = self
+            .remote_settings
+            .get()
+            .unwrap_or(self.local_settings.get());
         if frame.length > settings.max_frame_size {
-            self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid Headers frame size", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Headers frame size",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
 
         if stream.is_waiting_more_headers {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Headers frame without continuation", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Headers frame without continuation",
+                self.last_stream_id.get(),
+                true,
+            );
             return Ok(data.len());
         }
 
@@ -3319,7 +4127,13 @@ impl H2FrameParser {
 
             if frame.flags & HeadersFrameFlags::PADDED as u8 != 0 {
                 if payload.len() < 1 {
-                    self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid Headers frame size", self.last_stream_id.get(), true);
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"invalid Headers frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
                     return Ok(end_);
                 }
                 // padding length
@@ -3331,11 +4145,23 @@ impl H2FrameParser {
                 offset += 5;
             }
             if offset > payload.len() {
-                self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"invalid Headers frame size", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"invalid Headers frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(end_);
             }
             if padding > payload.len() - offset {
-                self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"invalid Headers frame padding", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"invalid Headers frame padding",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(end_);
             }
             let end = payload.len() - padding;
@@ -3345,7 +4171,8 @@ impl H2FrameParser {
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
-            stream.is_waiting_more_headers = frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+            stream.is_waiting_more_headers =
+                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
             if stream.end_after_headers {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
@@ -3361,7 +4188,11 @@ impl H2FrameParser {
                         stream.state = StreamState::HALF_CLOSED_REMOTE;
                     }
                 }
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamEnd,
+                    identifier,
+                    JSValue::js_number(stream.state as u8 as f64),
+                );
             }
             return Ok(end_);
         }
@@ -3373,9 +4204,24 @@ impl H2FrameParser {
     pub fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
         let is_ack = frame.flags & SettingsFlags::ACK as u8 != 0;
 
-        bun_output::scoped_log!(H2FrameParser, "handleSettingsFrame {} isACK {}", if self.is_server.get() { "server" } else { "client" }, is_ack);
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "handleSettingsFrame {} isACK {}",
+            if self.is_server.get() {
+                "server"
+            } else {
+                "client"
+            },
+            is_ack
+        );
         if frame.stream_identifier != 0 {
-            self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Settings frame on connection stream", self.last_stream_id.get(), true);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Settings frame on connection stream",
+                self.last_stream_id.get(),
+                true,
+            );
             return data.len();
         }
         // defer if (!isACK) this.sendSettingsACK();
@@ -3385,8 +4231,16 @@ impl H2FrameParser {
         if frame.length > 0 {
             if is_ack || frame.length as usize % setting_byte_size != 0 {
                 bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
-                self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid settings frame size", self.last_stream_id.get(), true);
-                if send_ack_on_exit { self.send_settings_ack(); }
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"Invalid settings frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                if send_ack_on_exit {
+                    self.send_settings_ack();
+                }
                 return data.len();
             }
         } else {
@@ -3396,11 +4250,15 @@ impl H2FrameParser {
 
                 // we can now write any request
                 if self.outstanding_settings.get() > 0 {
-                    self.outstanding_settings.set(self.outstanding_settings.get() - 1);
+                    self.outstanding_settings
+                        .set(self.outstanding_settings.get() - 1);
 
                     // Per RFC 7540 Section 6.9.2: When INITIAL_WINDOW_SIZE changes, adjust
                     // all existing stream windows by the difference.
-                    if self.outstanding_settings.get() == 0 && self.local_settings.get().initial_window_size as u64 != DEFAULT_WINDOW_SIZE {
+                    if self.outstanding_settings.get() == 0
+                        && self.local_settings.get().initial_window_size as u64
+                            != DEFAULT_WINDOW_SIZE
+                    {
                         let old_size: i64 = DEFAULT_WINDOW_SIZE as i64;
                         let new_size: i64 = self.local_settings.get().initial_window_size as i64;
                         let delta = new_size - old_size;
@@ -3408,37 +4266,66 @@ impl H2FrameParser {
                             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
                             let stream = unsafe { &mut **item };
                             if delta >= 0 {
-                                stream.window_size = stream.window_size.saturating_add(u64::try_from(delta).expect("int cast"));
+                                stream.window_size = stream
+                                    .window_size
+                                    .saturating_add(u64::try_from(delta).expect("int cast"));
                             } else {
-                                stream.window_size = stream.window_size.saturating_sub(u64::try_from(-delta).expect("int cast"));
+                                stream.window_size = stream
+                                    .window_size
+                                    .saturating_sub(u64::try_from(-delta).expect("int cast"));
                             }
                         }
-                        bun_output::scoped_log!(H2FrameParser, "adjusted stream windows by delta {} (old: {}, new: {})", delta, old_size, new_size);
+                        bun_output::scoped_log!(
+                            H2FrameParser,
+                            "adjusted stream windows by delta {} (old: {}, new: {})",
+                            delta,
+                            old_size,
+                            new_size
+                        );
                     }
                 }
 
                 let global = self.handlers.get().global();
-                self.dispatch(JSH2FrameParser::Gc::onLocalSettings, self.local_settings.get().to_js(&global));
+                self.dispatch(
+                    JSH2FrameParser::Gc::onLocalSettings,
+                    self.local_settings.get().to_js(&global),
+                );
             } else {
-                bun_output::scoped_log!(H2FrameParser, "empty settings has remoteSettings? {}", self.remote_settings.get().is_some());
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "empty settings has remoteSettings? {}",
+                    self.remote_settings.get().is_some()
+                );
                 if self.remote_settings.get().is_none() {
                     // ok empty settings so default settings
                     let remote_settings = FullSettingsPayload::default();
                     self.remote_settings.set(Some(remote_settings));
                     let _iws = remote_settings.initial_window_size;
-                    bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", _iws, self.remote_used_window_size.get(), self.remote_window_size.get());
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "remoteSettings.initialWindowSize: {} {} {}",
+                        _iws,
+                        self.remote_used_window_size.get(),
+                        self.remote_window_size.get()
+                    );
 
                     if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
                         for (_, item) in self.streams.get().iter() {
                             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
                             let stream = unsafe { &mut **item };
-                            if remote_settings.initial_window_size as u64 >= stream.remote_window_size {
-                                stream.remote_window_size = remote_settings.initial_window_size as u64;
+                            if remote_settings.initial_window_size as u64
+                                >= stream.remote_window_size
+                            {
+                                stream.remote_window_size =
+                                    remote_settings.initial_window_size as u64;
                             }
                         }
                     }
                     let global = self.handlers.get().global();
-                    self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(&global));
+                    self.dispatch(
+                        JSH2FrameParser::Gc::onRemoteSettings,
+                        remote_settings.to_js(&global),
+                    );
                 }
                 // defer chain (reverse order)
                 self.increment_window_size_if_needed();
@@ -3446,11 +4333,14 @@ impl H2FrameParser {
             }
 
             self.current_frame.set(None);
-            if send_ack_on_exit { self.send_settings_ack(); }
+            if send_ack_on_exit {
+                self.send_settings_ack();
+            }
             return 0;
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            let mut remote_settings: FullSettingsPayload = self.remote_settings.get().unwrap_or_default();
+            let mut remote_settings: FullSettingsPayload =
+                self.remote_settings.get().unwrap_or_default();
             let mut i: usize = 0;
             let payload = content.data();
             while i < payload.len() {
@@ -3458,14 +4348,26 @@ impl H2FrameParser {
                 SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
                 remote_settings.update_with(unit);
                 let (_ut, _uv) = (unit.type_, unit.value);
-                bun_output::scoped_log!(H2FrameParser, "remoteSettings: {} {} isServer: {}", _ut, _uv, self.is_server.get());
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "remoteSettings: {} {} isServer: {}",
+                    _ut,
+                    _uv,
+                    self.is_server.get()
+                );
                 i += setting_byte_size;
             }
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
             self.remote_settings.set(Some(remote_settings));
             let _iws = remote_settings.initial_window_size;
-            bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", _iws, self.remote_used_window_size.get(), self.remote_window_size.get());
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "remoteSettings.initialWindowSize: {} {} {}",
+                _iws,
+                self.remote_used_window_size.get(),
+                self.remote_window_size.get()
+            );
             if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
                 for (_, item) in self.streams.get().iter() {
                     // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -3476,15 +4378,22 @@ impl H2FrameParser {
                 }
             }
             let global = self.handlers.get().global();
-            self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(&global));
+            self.dispatch(
+                JSH2FrameParser::Gc::onRemoteSettings,
+                remote_settings.to_js(&global),
+            );
             // defer chain
             self.increment_window_size_if_needed();
             let _ = self.flush();
-            if send_ack_on_exit { self.send_settings_ack(); }
+            if send_ack_on_exit {
+                self.send_settings_ack();
+            }
             return end;
         }
         // needs more data
-        if send_ack_on_exit { self.send_settings_ack(); }
+        if send_ack_on_exit {
+            self.send_settings_ack();
+        }
         data.len()
     }
 
@@ -3513,17 +4422,31 @@ impl H2FrameParser {
         let stream = bun_core::heap::into_raw(Box::new(Stream::init(
             stream_identifier,
             local_window_size,
-            self.remote_settings.get().map(|s| s.initial_window_size).unwrap_or(DEFAULT_WINDOW_SIZE as u32),
+            self.remote_settings
+                .get()
+                .map(|s| s.initial_window_size)
+                .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy.get(),
         )));
-        self.streams.with_mut(|s| s.insert(stream_identifier, stream));
+        self.streams
+            .with_mut(|s| s.insert(stream_identifier, stream));
 
-        let Some(this_value) = self.strong_this.get().try_get() else { return Some(stream) };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return Some(stream) };
-        let Some(callback) = JSH2FrameParser::Gc::onStreamStart.get(this_value) else { return Some(stream) };
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return Some(stream);
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return Some(stream);
+        };
+        let Some(callback) = JSH2FrameParser::Gc::onStreamStart.get(this_value) else {
+            return Some(stream);
+        };
 
         let global = self.handlers.get().global();
-        if let Err(err) = callback.call(&global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier as f64)]) {
+        if let Err(err) = callback.call(
+            &global,
+            ctx_value,
+            &[ctx_value, JSValue::js_number(stream_identifier as f64)],
+        ) {
             global.report_active_exception_as_unhandled(err);
         }
         Some(stream)
@@ -3535,22 +4458,40 @@ impl H2FrameParser {
             // Handle Server Preface
             let preface_missing: usize = 24 - self.preface_received_len.get() as usize;
             let preface_available = preface_missing.min(bytes.len());
-            let expected = &b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[self.preface_received_len.get() as usize..preface_available + self.preface_received_len.get() as usize];
+            let expected = &b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[self.preface_received_len.get()
+                as usize
+                ..preface_available + self.preface_received_len.get() as usize];
             if bytes[0..preface_available] != *expected {
                 // invalid preface
                 bun_output::scoped_log!(H2FrameParser, "invalid preface");
-                self.send_go_away(0, ErrorCode::PROTOCOL_ERROR, b"Invalid preface", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    0,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Invalid preface",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 return Ok(preface_available);
             }
-            self.preface_received_len.set(self.preface_received_len.get() + u8::try_from(preface_available).expect("int cast"));
+            self.preface_received_len.set(
+                self.preface_received_len.get()
+                    + u8::try_from(preface_available).expect("int cast"),
+            );
             return Ok(preface_available);
         }
         if let Some(header) = self.current_frame.get() {
             bun_output::scoped_log!(
                 H2FrameParser,
                 "current frame {} {} {} {} {}",
-                if self.is_server.get() { "server" } else { "client" },
-                header.type_, header.length, header.flags, header.stream_identifier
+                if self.is_server.get() {
+                    "server"
+                } else {
+                    "client"
+                },
+                header.type_,
+                header.length,
+                header.flags,
+                header.stream_identifier
             );
 
             let stream = self.handle_received_stream_id(header.stream_identifier);
@@ -3570,7 +4511,9 @@ impl H2FrameParser {
             if total < FrameHeader::BYTE_SIZE {
                 // buffer more data
                 let _ = self.read_buffer.with_mut(|rb| rb.append_slice(bytes));
-                self.global().vm().deprecated_report_extra_memory(bytes.len());
+                self.global()
+                    .vm()
+                    .deprecated_report_extra_memory(bytes.len());
                 return Ok(bytes.len());
             }
             // Zig writes the buffered prefix into the packed struct, then the
@@ -3590,7 +4533,14 @@ impl H2FrameParser {
 
             self.current_frame.set(Some(header));
             self.remaining_length.set(header.length as i32);
-            bun_output::scoped_log!(H2FrameParser, "new frame {} {} {} {}", header.type_, header.length, header.flags, header.stream_identifier);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "new frame {} {} {} {}",
+                header.type_,
+                header.length,
+                header.flags,
+                header.stream_identifier
+            );
             let stream = self.handle_received_stream_id(header.stream_identifier);
 
             return self.dispatch_frame(header, &bytes[needed..], stream, needed);
@@ -3599,48 +4549,102 @@ impl H2FrameParser {
         if bytes.len() < FrameHeader::BYTE_SIZE {
             // buffer more dheaderata
             let _ = self.read_buffer.with_mut(|rb| rb.append_slice(bytes));
-            self.global().vm().deprecated_report_extra_memory(bytes.len());
+            self.global()
+                .vm()
+                .deprecated_report_extra_memory(bytes.len());
             return Ok(bytes.len());
         }
 
-        let header = FrameHeader::decode(bytes[..FrameHeader::BYTE_SIZE].try_into().expect("infallible: size matches"));
+        let header = FrameHeader::decode(
+            bytes[..FrameHeader::BYTE_SIZE]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
 
         bun_output::scoped_log!(
             H2FrameParser,
             "new frame {} {} {} {} {}",
-            if self.is_server.get() { "server" } else { "client" },
-            header.type_, header.length, header.flags, header.stream_identifier
+            if self.is_server.get() {
+                "server"
+            } else {
+                "client"
+            },
+            header.type_,
+            header.length,
+            header.flags,
+            header.stream_identifier
         );
         self.current_frame.set(Some(header));
         self.remaining_length.set(header.length as i32);
         let stream = self.handle_received_stream_id(header.stream_identifier);
-        self.dispatch_frame(header, &bytes[FrameHeader::BYTE_SIZE..], stream, FrameHeader::BYTE_SIZE)
+        self.dispatch_frame(
+            header,
+            &bytes[FrameHeader::BYTE_SIZE..],
+            stream,
+            FrameHeader::BYTE_SIZE,
+        )
     }
 
     // PORT NOTE: hoisted from three identical switch blocks in read_bytes for borrowck/DRY.
     // The `add` parameter is the number of bytes already consumed before `bytes` (0, `needed`, or BYTE_SIZE).
-    fn dispatch_frame(&self, header: FrameHeader, bytes: &[u8], stream: Option<*mut Stream>, add: usize) -> JsResult<usize> {
+    fn dispatch_frame(
+        &self,
+        header: FrameHeader,
+        bytes: &[u8],
+        stream: Option<*mut Stream>,
+        add: usize,
+    ) -> JsResult<usize> {
         Ok(match header.type_ {
-            x if x == FrameType::HTTP_FRAME_SETTINGS as u8 => self.handle_settings_frame(header, bytes) + add,
-            x if x == FrameType::HTTP_FRAME_WINDOW_UPDATE as u8 => self.handle_window_update_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_HEADERS as u8 => self.handle_headers_frame(header, bytes, stream)? + add,
-            x if x == FrameType::HTTP_FRAME_DATA as u8 => self.handle_data_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_CONTINUATION as u8 => self.handle_continuation_frame(header, bytes, stream)? + add,
-            x if x == FrameType::HTTP_FRAME_PRIORITY as u8 => self.handle_priority_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_PING as u8 => self.handle_ping_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_GOAWAY as u8 => self.handle_go_away_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_RST_STREAM as u8 => self.handle_rst_stream_frame(header, bytes, stream) + add,
-            x if x == FrameType::HTTP_FRAME_ALTSVC as u8 => self.handle_altsvc_frame(header, bytes, stream)? + add,
-            x if x == FrameType::HTTP_FRAME_ORIGIN as u8 => self.handle_origin_frame(header, bytes, stream)? + add,
+            x if x == FrameType::HTTP_FRAME_SETTINGS as u8 => {
+                self.handle_settings_frame(header, bytes) + add
+            }
+            x if x == FrameType::HTTP_FRAME_WINDOW_UPDATE as u8 => {
+                self.handle_window_update_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_HEADERS as u8 => {
+                self.handle_headers_frame(header, bytes, stream)? + add
+            }
+            x if x == FrameType::HTTP_FRAME_DATA as u8 => {
+                self.handle_data_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_CONTINUATION as u8 => {
+                self.handle_continuation_frame(header, bytes, stream)? + add
+            }
+            x if x == FrameType::HTTP_FRAME_PRIORITY as u8 => {
+                self.handle_priority_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_PING as u8 => {
+                self.handle_ping_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_GOAWAY as u8 => {
+                self.handle_go_away_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_RST_STREAM as u8 => {
+                self.handle_rst_stream_frame(header, bytes, stream) + add
+            }
+            x if x == FrameType::HTTP_FRAME_ALTSVC as u8 => {
+                self.handle_altsvc_frame(header, bytes, stream)? + add
+            }
+            x if x == FrameType::HTTP_FRAME_ORIGIN as u8 => {
+                self.handle_origin_frame(header, bytes, stream)? + add
+            }
             _ => {
-                self.send_go_away(header.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Unknown frame type", self.last_stream_id.get(), true);
+                self.send_go_away(
+                    header.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Unknown frame type",
+                    self.last_stream_id.get(),
+                    true,
+                );
                 bytes.len() + add
             }
         })
     }
 
     fn to_writer(&self) -> DirectWriterStruct {
-        DirectWriterStruct { writer: bun_ptr::BackRef::new(self) }
+        DirectWriterStruct {
+            writer: bun_ptr::BackRef::new(self),
+        }
     }
 }
 
@@ -3655,7 +4659,11 @@ struct DirectWriterStruct {
 }
 impl bun_io::Write for DirectWriterStruct {
     fn write_all(&mut self, data: &[u8]) -> bun_io::Result<()> {
-        if self.writer.write(data) { Ok(()) } else { Err(bun_core::err!("SocketClosed")) }
+        if self.writer.write(data) {
+            Ok(())
+        } else {
+            Err(bun_core::err!("SocketClosed"))
+        }
     }
 }
 
@@ -3665,7 +4673,11 @@ impl bun_io::Write for DirectWriterStruct {
 
 impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
-    pub fn set_encoding(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_encoding(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected encoding argument")));
@@ -3673,7 +4685,9 @@ impl H2FrameParser {
         let bt = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
             Some(bt) => bt,
             None => {
-                let err = global_object.to_invalid_arguments(format_args!("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'"));
+                let err = global_object.to_invalid_arguments(format_args!(
+                    "Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'"
+                ));
                 return Err(global_object.throw_value(err));
             }
         };
@@ -3681,7 +4695,11 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn load_settings_from_js_value(&self, global_object: &JSGlobalObject, options: JSValue) -> JsResult<()> {
+    pub fn load_settings_from_js_value(
+        &self,
+        global_object: &JSGlobalObject,
+        options: JSValue,
+    ) -> JsResult<()> {
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
             return Err(global_object.throw(format_args!("Expected settings to be a object")));
         }
@@ -3695,25 +4713,39 @@ impl H2FrameParser {
                     if v.is_number() {
                         let value = v.as_number();
                         if value < ($min as f64) || value > $max {
-                            return global_object.err_http2_invalid_setting_value_range_error($err).throw();
+                            return global_object
+                                .err_http2_invalid_setting_value_range_error($err)
+                                .throw();
                         }
                         local_settings.$field = value as u32;
                     } else if !v.is_empty_or_undefined_or_null() {
-                        return global_object.err_http2_invalid_setting_value_range_error(
-                            concat!("Expected ", $key, " to be a number")
-                        ).throw();
+                        return global_object
+                            .err_http2_invalid_setting_value_range_error(concat!(
+                                "Expected ",
+                                $key,
+                                " to be a number"
+                            ))
+                            .throw();
                     }
                 }
             }};
         }
 
-        number_setting!("headerTableSize", header_table_size, 0, MAX_HEADER_TABLE_SIZE_F64, "Expected headerTableSize to be a number between 0 and 2^32-1");
+        number_setting!(
+            "headerTableSize",
+            header_table_size,
+            0,
+            MAX_HEADER_TABLE_SIZE_F64,
+            "Expected headerTableSize to be a number between 0 and 2^32-1"
+        );
 
         if let Some(enable_push) = options.get(global_object, "enablePush")? {
             if enable_push.is_boolean() {
                 local_settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
             } else if !enable_push.is_undefined() {
-                return global_object.err_http2_invalid_setting_value("Expected enablePush to be a boolean").throw();
+                return global_object
+                    .err_http2_invalid_setting_value("Expected enablePush to be a boolean")
+                    .throw();
             }
         }
 
@@ -3721,19 +4753,51 @@ impl H2FrameParser {
             if v.is_number() {
                 let value = v.as_number();
                 if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
-                    return global_object.err_http2_invalid_setting_value_range_error("Expected initialWindowSize to be a number between 0 and 2^32-1").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected initialWindowSize to be a number between 0 and 2^32-1",
+                        )
+                        .throw();
                 }
                 bun_output::scoped_log!(H2FrameParser, "initialWindowSize: {}", value as u32);
                 local_settings.initial_window_size = value as u32;
             } else if !v.is_empty_or_undefined_or_null() {
-                return global_object.err_http2_invalid_setting_value_range_error("Expected initialWindowSize to be a number").throw();
+                return global_object
+                    .err_http2_invalid_setting_value_range_error(
+                        "Expected initialWindowSize to be a number",
+                    )
+                    .throw();
             }
         }
 
-        number_setting!("maxFrameSize", max_frame_size, 16384, MAX_FRAME_SIZE_F64, "Expected maxFrameSize to be a number between 16,384 and 2^24-1");
-        number_setting!("maxConcurrentStreams", max_concurrent_streams, 0, MAX_HEADER_TABLE_SIZE_F64, "Expected maxConcurrentStreams to be a number between 0 and 2^32-1");
-        number_setting!("maxHeaderListSize", max_header_list_size, 0, MAX_HEADER_TABLE_SIZE_F64, "Expected maxHeaderListSize to be a number between 0 and 2^32-1");
-        number_setting!("maxHeaderSize", max_header_list_size, 0, MAX_HEADER_TABLE_SIZE_F64, "Expected maxHeaderSize to be a number between 0 and 2^32-1");
+        number_setting!(
+            "maxFrameSize",
+            max_frame_size,
+            16384,
+            MAX_FRAME_SIZE_F64,
+            "Expected maxFrameSize to be a number between 16,384 and 2^24-1"
+        );
+        number_setting!(
+            "maxConcurrentStreams",
+            max_concurrent_streams,
+            0,
+            MAX_HEADER_TABLE_SIZE_F64,
+            "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
+        );
+        number_setting!(
+            "maxHeaderListSize",
+            max_header_list_size,
+            0,
+            MAX_HEADER_TABLE_SIZE_F64,
+            "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
+        );
+        number_setting!(
+            "maxHeaderSize",
+            max_header_list_size,
+            0,
+            MAX_HEADER_TABLE_SIZE_F64,
+            "Expected maxHeaderSize to be a number between 0 and 2^32-1"
+        );
 
         self.local_settings.set(local_settings);
 
@@ -3741,32 +4805,51 @@ impl H2FrameParser {
         if let Some(custom_settings) = options.get(global_object, "customSettings")? {
             if !custom_settings.is_undefined() {
                 let Some(custom_settings_obj) = custom_settings.get_object() else {
-                    return global_object.err_http2_invalid_setting_value("Expected customSettings to be an object").throw();
+                    return global_object
+                        .err_http2_invalid_setting_value("Expected customSettings to be an object")
+                        .throw();
                 };
 
                 let mut count: usize = 0;
                 let mut iter = bun_jsc::JSPropertyIterator::init(
                     global_object,
                     custom_settings_obj,
-                    bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
+                    bun_jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: false,
+                        include_value: true,
+                        ..Default::default()
+                    },
                 )?;
 
                 while let Some(prop_name) = iter.next()? {
                     count += 1;
                     if count > MAX_CUSTOM_SETTINGS {
-                        return global_object.err_http2_too_many_custom_settings("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS").throw();
+                        return global_object
+                            .err_http2_too_many_custom_settings(
+                                "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
+                            )
+                            .throw();
                     }
 
                     // Validate setting ID (key) is in range [0, 0xFFFF]
                     let setting_id_str = prop_name.to_utf8();
                     // Parse bytes directly (ASCII decimal) — Zig: std.fmt.parseInt(u32, slice, 10).
                     // Do not insert UTF-8 validation on external data per PORTING.md §Strings.
-                    let Some(setting_id) = bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
+                    let Some(setting_id) =
+                        bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
                     else {
-                        return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting identifier").throw();
+                        return global_object
+                            .err_http2_invalid_setting_value_range_error(
+                                "Invalid custom setting identifier",
+                            )
+                            .throw();
                     };
                     if setting_id > 0xFFFF {
-                        return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting identifier").throw();
+                        return global_object
+                            .err_http2_invalid_setting_value_range_error(
+                                "Invalid custom setting identifier",
+                            )
+                            .throw();
                     }
 
                     // Validate setting value is in range [0, 2^32-1]
@@ -3774,10 +4857,18 @@ impl H2FrameParser {
                     if setting_value.is_number() {
                         let value = setting_value.as_number();
                         if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                            return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting value").throw();
+                            return global_object
+                                .err_http2_invalid_setting_value_range_error(
+                                    "Invalid custom setting value",
+                                )
+                                .throw();
                         }
                     } else {
-                        return global_object.err_http2_invalid_setting_value_range_error("Expected custom setting value to be a number").throw();
+                        return global_object
+                            .err_http2_invalid_setting_value_range_error(
+                                "Expected custom setting value to be a number",
+                            )
+                            .throw();
                     }
                 }
             }
@@ -3786,7 +4877,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn update_settings(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn update_settings(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected settings argument")));
@@ -3800,18 +4895,27 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_local_window_size(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_local_window_size(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected windowSize argument")));
+            return Err(
+                global_object.throw_invalid_arguments(format_args!("Expected windowSize argument"))
+            );
         }
         let window_size = args_list.ptr[0];
         if !window_size.is_number() {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
         }
         let window_size_value: u32 = window_size.to_u32();
         if this.used_window_size.get() > window_size_value as u64 {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected windowSize to be greater than usedWindowSize")));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected windowSize to be greater than usedWindowSize"
+            )));
         }
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
@@ -3836,27 +4940,71 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_current_state(this: &Self, global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_current_state(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
-        result.put(global_object, b"effectiveLocalWindowSize", JSValue::js_number(this.window_size.get() as f64));
-        result.put(global_object, b"effectiveRecvDataLength", JSValue::js_number((this.window_size.get() - this.used_window_size.get()) as f64));
-        result.put(global_object, b"nextStreamID", JSValue::js_number(this.get_next_stream_id() as f64));
-        result.put(global_object, b"lastProcStreamID", JSValue::js_number(this.last_stream_id.get() as f64));
+        result.put(
+            global_object,
+            b"effectiveLocalWindowSize",
+            JSValue::js_number(this.window_size.get() as f64),
+        );
+        result.put(
+            global_object,
+            b"effectiveRecvDataLength",
+            JSValue::js_number((this.window_size.get() - this.used_window_size.get()) as f64),
+        );
+        result.put(
+            global_object,
+            b"nextStreamID",
+            JSValue::js_number(this.get_next_stream_id() as f64),
+        );
+        result.put(
+            global_object,
+            b"lastProcStreamID",
+            JSValue::js_number(this.last_stream_id.get() as f64),
+        );
 
         let settings = this.remote_settings.get().unwrap_or_default();
         let remote_iws = settings.initial_window_size;
         let local_iws = this.local_settings.get().initial_window_size;
         let local_hts = this.local_settings.get().header_table_size;
-        result.put(global_object, b"remoteWindowSize", JSValue::js_number(remote_iws as f64));
-        result.put(global_object, b"localWindowSize", JSValue::js_number(local_iws as f64));
-        result.put(global_object, b"deflateDynamicTableSize", JSValue::js_number(local_hts as f64));
-        result.put(global_object, b"inflateDynamicTableSize", JSValue::js_number(local_hts as f64));
-        result.put(global_object, b"outboundQueueSize", JSValue::js_number(this.outbound_queue_size.get() as f64));
+        result.put(
+            global_object,
+            b"remoteWindowSize",
+            JSValue::js_number(remote_iws as f64),
+        );
+        result.put(
+            global_object,
+            b"localWindowSize",
+            JSValue::js_number(local_iws as f64),
+        );
+        result.put(
+            global_object,
+            b"deflateDynamicTableSize",
+            JSValue::js_number(local_hts as f64),
+        );
+        result.put(
+            global_object,
+            b"inflateDynamicTableSize",
+            JSValue::js_number(local_hts as f64),
+        );
+        result.put(
+            global_object,
+            b"outboundQueueSize",
+            JSValue::js_number(this.outbound_queue_size.get() as f64),
+        );
         Ok(result)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn goaway(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn goaway(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<3>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected errorCode argument")));
@@ -3877,11 +5025,15 @@ impl H2FrameParser {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
                 if !last_stream_arg.is_number() {
-                    return Err(global_object.throw(format_args!("Expected lastStreamId to be a number")));
+                    return Err(
+                        global_object.throw(format_args!("Expected lastStreamId to be a number"))
+                    );
                 }
                 let id = last_stream_arg.to_int32();
                 if id < 0 && id as u32 > MAX_STREAM_ID {
-                    return Err(global_object.throw(format_args!("Expected lastStreamId to be a number between 1 and 2147483647")));
+                    return Err(global_object.throw(format_args!(
+                        "Expected lastStreamId to be a number between 1 and 2147483647"
+                    )));
                 }
                 last_stream_id = u32::try_from(id).expect("int cast");
             }
@@ -3890,7 +5042,13 @@ impl H2FrameParser {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
                         let slice = array_buffer.byte_slice();
-                        this.send_go_away(0, ErrorCode(error_code as u32), slice, last_stream_id, false);
+                        this.send_go_away(
+                            0,
+                            ErrorCode(error_code as u32),
+                            slice,
+                            last_stream_id,
+                            false,
+                        );
                         return Ok(JSValue::UNDEFINED);
                     }
                 }
@@ -3902,14 +5060,21 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ping(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn ping(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected payload argument")));
         }
 
         if this.out_standing_pings.get() >= this.max_outstanding_pings.get() {
-            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_PING_CANCEL, format_args!("HTTP2 ping cancelled"));
+            let exception = global_object.to_type_error(
+                bun_jsc::ErrorCode::HTTP2_PING_CANCEL,
+                format_args!("HTTP2 ping cancelled"),
+            );
             return Err(global_object.throw_value(exception));
         }
 
@@ -3923,7 +5088,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn origin(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn origin(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let origin_arg = callframe.argument(0);
         if origin_arg.is_empty_or_undefined_or_null() {
             // empty origin frame
@@ -3945,7 +5114,10 @@ impl H2FrameParser {
             let origin_string = origin_arg.to_slice(global_object)?;
             let slice = origin_string.slice();
             if slice.len() + 2 > 16384 {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
+                let exception = global_object.to_type_error(
+                    bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
+                    format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
+                );
                 return Err(global_object.throw_value(exception));
             }
 
@@ -3973,17 +5145,28 @@ impl H2FrameParser {
 
             while let Some(item) = value_iter.next()? {
                 if !item.is_string() {
-                    return Err(global_object.throw_invalid_arguments(format_args!("Expected origin to be a string or an array of strings")));
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected origin to be a string or an array of strings"
+                    )));
                 }
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
-                if stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes()).is_err() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
+                if stream
+                    .write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes())
+                    .is_err()
+                {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
+                        format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
+                    );
                     return Err(global_object.throw_value(exception));
                 }
 
                 if stream.write_all(slice).is_err() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
+                        format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
+                    );
                     return Err(global_object.throw_value(exception));
                 }
             }
@@ -4003,7 +5186,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn altsvc(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn altsvc(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let mut origin_slice: Option<bun_core::zig_string::Slice> = None;
         let mut value_slice: Option<bun_core::zig_string::Slice> = None;
 
@@ -4013,7 +5200,11 @@ impl H2FrameParser {
         let origin_string = callframe.argument(0);
         if !origin_string.is_empty_or_undefined_or_null() {
             if !origin_string.is_string() {
-                return Err(global_object.throw_invalid_argument_type_value(b"origin", b"origin", origin_string));
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"origin",
+                    b"origin",
+                    origin_string,
+                ));
             }
             origin_slice = Some(origin_string.to_slice(global_object)?);
             origin_str = origin_slice.as_ref().unwrap().slice();
@@ -4022,7 +5213,11 @@ impl H2FrameParser {
         let value_string = callframe.argument(1);
         if !value_string.is_empty_or_undefined_or_null() {
             if !value_string.is_string() {
-                return Err(global_object.throw_invalid_argument_type_value(b"value", b"value", value_string));
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"value",
+                    b"value",
+                    value_string,
+                ));
             }
             value_slice = Some(value_string.to_slice(global_object)?);
             value_str = value_slice.as_ref().unwrap().slice();
@@ -4048,7 +5243,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_end_after_headers(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_end_after_headers(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -4073,7 +5272,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn is_stream_aborted(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn is_stream_aborted(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -4099,11 +5302,17 @@ impl H2FrameParser {
             return Ok(JSValue::from(signal_ref.is_aborted()));
         }
         // closed with cancel = aborted
-        Ok(JSValue::from(stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0))
+        Ok(JSValue::from(
+            stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0,
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_state(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_stream_state(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -4126,19 +5335,47 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
 
-        state.put(global_object, b"localWindowSize", JSValue::js_number(stream.window_size as f64));
-        state.put(global_object, b"state", JSValue::js_number(stream.state as u8 as f64));
-        state.put(global_object, b"localClose", JSValue::js_number(if stream.can_send_data() { 0.0 } else { 1.0 }));
-        state.put(global_object, b"remoteClose", JSValue::js_number(if stream.can_receive_data() { 0.0 } else { 1.0 }));
+        state.put(
+            global_object,
+            b"localWindowSize",
+            JSValue::js_number(stream.window_size as f64),
+        );
+        state.put(
+            global_object,
+            b"state",
+            JSValue::js_number(stream.state as u8 as f64),
+        );
+        state.put(
+            global_object,
+            b"localClose",
+            JSValue::js_number(if stream.can_send_data() { 0.0 } else { 1.0 }),
+        );
+        state.put(
+            global_object,
+            b"remoteClose",
+            JSValue::js_number(if stream.can_receive_data() { 0.0 } else { 1.0 }),
+        );
         // TODO: sumDependencyWeight
-        state.put(global_object, b"sumDependencyWeight", JSValue::js_number(0.0));
-        state.put(global_object, b"weight", JSValue::js_number(stream.weight as f64));
+        state.put(
+            global_object,
+            b"sumDependencyWeight",
+            JSValue::js_number(0.0),
+        );
+        state.put(
+            global_object,
+            b"weight",
+            JSValue::js_number(stream.weight as f64),
+        );
 
         Ok(state)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_priority(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_stream_priority(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and options arguments")));
@@ -4200,11 +5437,22 @@ impl H2FrameParser {
             if js_silent.is_boolean() {
                 silent = js_silent.as_boolean();
             } else {
-                return Err(global_object.err(bun_jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("options.silent must be a boolean")).throw());
+                return Err(global_object
+                    .err(
+                        bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("options.silent must be a boolean"),
+                    )
+                    .throw());
             }
         }
         if parent_id == stream.id {
-            this.send_go_away(stream.id, ErrorCode::PROTOCOL_ERROR, b"Stream with self dependency", this.last_stream_id.get(), true);
+            this.send_go_away(
+                stream.id,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Stream with self dependency",
+                this.last_stream_id.get(),
+                true,
+            );
             return Ok(JSValue::FALSE);
         }
 
@@ -4213,7 +5461,8 @@ impl H2FrameParser {
         stream.weight = weight;
 
         if !silent {
-            let stream_identifier = UInt31WithReserved::init(stream.stream_dependency, stream.exclusive);
+            let stream_identifier =
+                UInt31WithReserved::init(stream.stream_dependency, stream.exclusive);
 
             let mut priority = StreamPriority {
                 stream_identifier: stream_identifier.to_uint32(),
@@ -4234,7 +5483,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn rst_stream(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn rst_stream(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "rstStream");
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
@@ -4275,20 +5528,35 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        (self.write_buffer.get().len_u32() as usize + self.queued_data_size.get() as usize) / 1024 / 1024
+        (self.write_buffer.get().len_u32() as usize + self.queued_data_size.get() as usize)
+            / 1024
+            / 1024
     }
 
     // get memory in bytes
     #[bun_jsc::host_fn(method)]
-    pub fn get_buffer_size(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number((this.write_buffer.get().len_u32() as u64 + this.queued_data_size.get()) as f64))
+    pub fn get_buffer_size(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(
+            (this.write_buffer.get().len_u32() as u64 + this.queued_data_size.get()) as f64,
+        ))
     }
 
     fn send_data(&self, stream: &mut Stream, payload: &[u8], close: bool, callback: JSValue) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
-            if self.is_server.get() { "server" } else { "client" }, stream.id, payload.len(), close
+            if self.is_server.get() {
+                "server"
+            } else {
+                "client"
+            },
+            stream.id,
+            payload.len(),
+            close
         );
 
         let stream_id = stream.id;
@@ -4300,7 +5568,11 @@ impl H2FrameParser {
             // empty payload we still need to send a frame
             let mut data_header = FrameHeader {
                 type_: FrameType::HTTP_FRAME_DATA as u8,
-                flags: if can_close { DataFrameFlags::END_STREAM as u8 } else { 0 },
+                flags: if can_close {
+                    DataFrameFlags::END_STREAM as u8
+                } else {
+                    0
+                },
                 stream_identifier: stream_id,
                 length: 0,
             };
@@ -4317,8 +5589,19 @@ impl H2FrameParser {
             while offset < payload.len() {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
                 let mut max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
-                    .min((self.remote_window_size.get().saturating_sub(self.remote_used_window_size.get())) as usize)
-                    .min((stream.remote_window_size.saturating_sub(stream.remote_used_window_size)) as usize);
+                    .min(
+                        (self
+                            .remote_window_size
+                            .get()
+                            .saturating_sub(self.remote_used_window_size.get()))
+                            as usize,
+                    )
+                    .min(
+                        (stream
+                            .remote_window_size
+                            .saturating_sub(stream.remote_used_window_size))
+                            as usize,
+                    );
                 let mut is_flow_control_limited = false;
                 if max_size == 0 {
                     is_flow_control_limited = true;
@@ -4331,23 +5614,47 @@ impl H2FrameParser {
                 offset += size;
                 let end_stream = offset >= payload.len() && can_close;
 
-                if self.has_backpressure() || self.outbound_queue_size.get() > 0 || is_flow_control_limited {
+                if self.has_backpressure()
+                    || self.outbound_queue_size.get() > 0
+                    || is_flow_control_limited
+                {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended
                     stream.queue_frame(
                         self,
                         slice,
-                        if offset >= payload.len() { callback } else { JSValue::UNDEFINED },
+                        if offset >= payload.len() {
+                            callback
+                        } else {
+                            JSValue::UNDEFINED
+                        },
                         offset >= payload.len() && close,
                     );
                 } else {
                     let padding = stream.get_padding(size, max_size - 1);
-                    let payload_size = size + if padding != 0 { padding as usize + 1 } else { 0 };
-                    bun_output::scoped_log!(H2FrameParser, "padding: {} size: {} max_size: {} payload_size: {}", padding, size, max_size, payload_size);
+                    let payload_size = size
+                        + if padding != 0 {
+                            padding as usize + 1
+                        } else {
+                            0
+                        };
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "padding: {} size: {} max_size: {} payload_size: {}",
+                        padding,
+                        size,
+                        max_size,
+                        payload_size
+                    );
                     stream.remote_used_window_size += payload_size as u64;
-                    self.remote_used_window_size.set(self.remote_used_window_size.get() + payload_size as u64);
-                    let mut flags: u8 = if end_stream { DataFrameFlags::END_STREAM as u8 } else { 0 };
+                    self.remote_used_window_size
+                        .set(self.remote_used_window_size.get() + payload_size as u64);
+                    let mut flags: u8 = if end_stream {
+                        DataFrameFlags::END_STREAM as u8
+                    } else {
+                        0
+                    };
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
@@ -4363,7 +5670,11 @@ impl H2FrameParser {
                         SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
                             unsafe {
-                                core::ptr::copy(slice.as_ptr(), buffer.as_mut_ptr().add(1), slice.len());
+                                core::ptr::copy(
+                                    slice.as_ptr(),
+                                    buffer.as_mut_ptr().add(1),
+                                    slice.len(),
+                                );
                             }
                             buffer[0] = padding;
                             let _ = writer.write_all(&buffer[0..payload_size]);
@@ -4390,7 +5701,11 @@ impl H2FrameParser {
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
-                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+                    self.dispatch_with_extra(
+                        JSH2FrameParser::Gc::onStreamEnd,
+                        identifier,
+                        JSValue::js_number(stream.state as u8 as f64),
+                    );
                 }
             }
         }
@@ -4398,10 +5713,16 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn no_trailers(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn no_trailers(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return Err(global_object.throw(format_args!("Expected stream, headers and sensitiveHeaders arguments")));
+            return Err(global_object.throw(format_args!(
+                "Expected stream, headers and sensitiveHeaders arguments"
+            )));
         }
 
         let stream_arg = args_list.ptr[0];
@@ -4427,7 +5748,10 @@ impl H2FrameParser {
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    fn to_valid_header_name<'a>(
+        in_: &'a [u8],
+        out: &'a mut [u8],
+    ) -> Result<&'a [u8], bun_core::Error> {
         if in_.len() > 4096 {
             return Err(bun_core::err!("InvalidHeaderName"));
         }
@@ -4448,8 +5772,23 @@ impl H2FrameParser {
                         any = true;
                         continue 'begin;
                     }
-                    b'a'..=b'z' | b'0'..=b'9' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\''
-                    | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' => {}
+                    b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~' => {}
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
@@ -4471,10 +5810,16 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send_trailers(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn send_trailers(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<3>();
         if args_list.len < 3 {
-            return Err(global_object.throw(format_args!("Expected stream, headers and sensitiveHeaders arguments")));
+            return Err(global_object.throw(format_args!(
+                "Expected stream, headers and sensitiveHeaders arguments"
+            )));
         }
 
         let stream_arg = args_list.ptr[0];
@@ -4501,7 +5846,9 @@ impl H2FrameParser {
         };
 
         if !sensitive_arg.is_object() {
-            return Err(global_object.throw(format_args!("Expected sensitiveHeaders to be an object")));
+            return Err(
+                global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
+            );
         }
 
         // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
@@ -4515,7 +5862,11 @@ impl H2FrameParser {
         let mut iter = bun_jsc::JSPropertyIterator::init(
             global_object,
             headers_obj,
-            bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
+            bun_jsc::JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+                ..Default::default()
+            },
         )?;
 
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -4530,55 +5881,93 @@ impl H2FrameParser {
             let name = name_slice.slice();
 
             if name.first() == Some(&b':') {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
+                let exception = global_object.to_type_error(
+                    bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                    format_args!(
+                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                        BStr::new(name)
+                    ),
+                );
                 return Err(global_object.throw_value(exception));
             }
 
             let js_value = iter.value;
             if js_value.is_undefined_or_null() {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                let exception = global_object.to_type_error(
+                    bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                    format_args!("Invalid value for header \"{}\"", BStr::new(name)),
+                );
                 return Err(global_object.throw_value(exception));
             }
-            let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                Ok(n) => n,
-                Err(_) => {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
-                    return Err(global_object.throw_value(exception));
-                }
-            };
+            let validated_name =
+                match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received {}",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
 
             // closure for encode error handling
-            let mut handle_encode = |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
-                bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
-                match this.encode_header_into_list(&mut encoded_headers, validated_name, value, never_index) {
-                    Ok(_) => Ok(None),
-                    Err(err) if err == bun_core::err!("OutOfMemory") => {
-                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
+            let mut handle_encode =
+                |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "encode header {} {}",
+                        BStr::new(validated_name),
+                        BStr::new(value)
+                    );
+                    match this.encode_header_into_list(
+                        &mut encoded_headers,
+                        validated_name,
+                        value,
+                        never_index,
+                    ) {
+                        Ok(_) => Ok(None),
+                        Err(err) if err == bun_core::err!("OutOfMemory") => {
+                            Err(global_object
+                                .throw(format_args!("Failed to allocate header buffer")))
+                        }
+                        Err(_) => {
+                            stream.state = StreamState::CLOSED;
+                            let identifier = stream.get_identifier();
+                            identifier.ensure_still_alive();
+                            stream.free_resources::<false>(this);
+                            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
+                            this.dispatch_with_2_extra(
+                                JSH2FrameParser::Gc::onFrameError,
+                                identifier,
+                                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                            );
+                            this.dispatch_with_extra(
+                                JSH2FrameParser::Gc::onStreamError,
+                                identifier,
+                                JSValue::js_number(stream.rst_code as f64),
+                            );
+                            Ok(Some(JSValue::UNDEFINED))
+                        }
                     }
-                    Err(_) => {
-                        stream.state = StreamState::CLOSED;
-                        let identifier = stream.get_identifier();
-                        identifier.ensure_still_alive();
-                        stream.free_resources::<false>(this);
-                        stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
-                        this.dispatch_with_2_extra(
-                            JSH2FrameParser::Gc::onFrameError,
-                            identifier,
-                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                        );
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(stream.rst_code as f64));
-                        Ok(Some(JSValue::UNDEFINED))
-                    }
-                }
-            };
+                };
 
             if js_value.js_type().is_array() {
                 let mut value_iter = js_value.array_iterator(global_object)?;
 
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                            format_args!(
+                                "Header field \"{}\" must only have a single value",
+                                BStr::new(validated_name)
+                            ),
+                        );
                         return Err(global_object.throw_value(exception));
                     }
                     single_value_headers[idx] = true;
@@ -4586,7 +5975,13 @@ impl H2FrameParser {
 
                 while let Some(item) = value_iter.next()? {
                     if item.is_empty_or_undefined_or_null() {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        );
                         return Err(global_object.throw_value(exception));
                     }
 
@@ -4594,15 +5989,22 @@ impl H2FrameParser {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            );
                             return Err(global_object.throw_value(exception));
                         }
                     };
 
-                    let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
-                        Some(_) => true,
-                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                    };
+                    let never_index =
+                        match sensitive_arg.get_truthy(global_object, validated_name)? {
+                            Some(_) => true,
+                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                        };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
@@ -4614,7 +6016,13 @@ impl H2FrameParser {
             } else {
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if single_value_headers[idx] {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                            format_args!(
+                                "Header field \"{}\" must only have a single value",
+                                BStr::new(validated_name)
+                            ),
+                        );
                         return Err(global_object.throw_value(exception));
                     }
                     single_value_headers[idx] = true;
@@ -4623,7 +6031,13 @@ impl H2FrameParser {
                     Ok(s) => s,
                     Err(_) => {
                         global_object.clear_exception();
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        );
                         return Err(global_object.throw_value(exception));
                     }
                 };
@@ -4635,7 +6049,12 @@ impl H2FrameParser {
 
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
-                bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(name), BStr::new(value));
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "encode header {} {}",
+                    BStr::new(name),
+                    BStr::new(value)
+                );
 
                 if let Some(ret) = handle_encode(this, value, never_index)? {
                     return Ok(ret);
@@ -4648,7 +6067,11 @@ impl H2FrameParser {
         // RFC 7540 Section 8.1: Trailers are sent as a HEADERS frame with END_STREAM flag
         let base_flags: u8 = HeadersFrameFlags::END_STREAM as u8;
         // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload
-        let actual_max_frame_size = this.remote_settings.get().unwrap_or(this.local_settings.get()).max_frame_size as usize;
+        let actual_max_frame_size = this
+            .remote_settings
+            .get()
+            .unwrap_or(this.local_settings.get())
+            .max_frame_size as usize;
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
 
@@ -4665,7 +6088,12 @@ impl H2FrameParser {
             let _ = frame.write(&mut writer);
             let _ = writer.write_all(encoded_data);
         } else {
-            bun_output::scoped_log!(H2FrameParser, "Using CONTINUATION frames for trailers: encoded_size={} max_frame_size={}", encoded_size, actual_max_frame_size);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "Using CONTINUATION frames for trailers: encoded_size={} max_frame_size={}",
+                encoded_size,
+                actual_max_frame_size
+            );
 
             let first_chunk_size = actual_max_frame_size;
 
@@ -4686,7 +6114,11 @@ impl H2FrameParser {
 
                 let mut cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
-                    flags: if is_last { HeadersFrameFlags::END_HEADERS as u8 } else { 0 },
+                    flags: if is_last {
+                        HeadersFrameFlags::END_HEADERS as u8
+                    } else {
+                        0
+                    },
                     stream_identifier: stream.id,
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
@@ -4704,12 +6136,20 @@ impl H2FrameParser {
         } else {
             stream.state = StreamState::HALF_CLOSED_LOCAL;
         }
-        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
+        this.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamEnd,
+            identifier,
+            JSValue::js_number(stream.state as u8 as f64),
+        );
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write_stream(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn write_stream(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_undef::<5>();
         let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg] = args.ptr;
 
@@ -4738,20 +6178,33 @@ impl H2FrameParser {
                 break 'brk Encoding::Utf8;
             }
             if !encoding_arg.is_string() {
-                return Err(global_object.throw_invalid_argument_type_value(b"write", b"encoding", encoding_arg));
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"write",
+                    b"encoding",
+                    encoding_arg,
+                ));
             }
             match Encoding::from_js(encoding_arg, global_object)? {
                 Some(e) => break 'brk e,
                 None => {
-                    return Err(global_object.throw_invalid_argument_type_value(b"write", b"encoding", encoding_arg));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"write",
+                        b"encoding",
+                        encoding_arg,
+                    ));
                 }
             }
         };
 
-        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)? {
+        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)?
+        {
             Some(b) => b,
             None => {
-                return Err(global_object.throw_invalid_argument_type_value(b"write", b"Buffer or String", data_arg));
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"write",
+                    b"Buffer or String",
+                    data_arg,
+                ));
             }
         };
 
@@ -4781,7 +6234,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_next_stream_id(this: &Self, _global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_next_stream_id(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments();
         debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
@@ -4807,12 +6264,23 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_native_read(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::from(matches!(this.native_socket.get(), BunSocket::Tcp(_) | BunSocket::Tls(_))))
+    pub fn has_native_read(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::from(matches!(
+            this.native_socket.get(),
+            BunSocket::Tcp(_) | BunSocket::Tls(_)
+        )))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_next_stream(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_next_stream(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let id = this.get_next_stream_id();
         if id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
@@ -4824,7 +6292,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_context(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_stream_context(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream_id argument")));
@@ -4844,10 +6316,16 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_context(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_stream_context(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
-            return Err(global_object.throw(format_args!("Expected stream_id and context arguments")));
+            return Err(
+                global_object.throw(format_args!("Expected stream_id and context arguments"))
+            );
         }
 
         let stream_id_arg = args_list.ptr[0];
@@ -4868,26 +6346,45 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn for_each_stream(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn for_each_stream(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_callable() {
             return Ok(JSValue::UNDEFINED);
         }
         let callback = args[0];
-        let this_value: JSValue = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        let this_value: JSValue = if args.len() > 1 {
+            args[1]
+        } else {
+            JSValue::UNDEFINED
+        };
         let mut _count: u32 = 0;
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            let Some(value) = (unsafe { (*stream).js_context.get() }) else { continue };
-            this.handlers.get().vm.event_loop_mut().run_callback(callback, global_object, this_value, &[value]);
+            let Some(value) = (unsafe { (*stream).js_context.get() }) else {
+                continue;
+            };
+            this.handlers.get().vm.event_loop_mut().run_callback(
+                callback,
+                global_object,
+                this_value,
+                &[value],
+            );
             _count += 1;
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_abort_to_all_streams(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn emit_abort_to_all_streams(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -4897,7 +6394,9 @@ impl H2FrameParser {
             let stream = unsafe { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
             if this.is_server.get() {
-                if stream.id % 2 == 0 { continue; }
+                if stream.id % 2 == 0 {
+                    continue;
+                }
             } else if stream.id % 2 != 0 {
                 continue;
             }
@@ -4908,14 +6407,23 @@ impl H2FrameParser {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
-                this.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, JSValue::UNDEFINED, JSValue::js_number(old_state as u8 as f64));
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onAborted,
+                    identifier,
+                    JSValue::UNDEFINED,
+                    JSValue::js_number(old_state as u8 as f64),
+                );
             }
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_error_to_all_streams(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn emit_error_to_all_streams(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected error argument")));
@@ -4934,24 +6442,38 @@ impl H2FrameParser {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
-                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, args_list.ptr[0]);
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamError,
+                    identifier,
+                    args_list.ptr[0],
+                );
             }
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush_from_js(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn flush_from_js(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         Ok(JSValue::js_number(this.flush() as f64))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn request(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn request(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "request");
 
         let args_list = callframe.arguments_old::<5>();
         if args_list.len < 4 {
-            return Err(global_object.throw(format_args!("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments")));
+            return Err(global_object.throw(format_args!(
+                "Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments"
+            )));
         }
 
         let stream_id_arg = args_list.ptr[0];
@@ -4964,7 +6486,9 @@ impl H2FrameParser {
         };
 
         if !sensitive_arg.is_object() {
-            return Err(global_object.throw(format_args!("Expected sensitiveHeaders to be an object")));
+            return Err(
+                global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
+            );
         }
         // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
         let mut encoded_headers: Vec<u8> = Vec::new();
@@ -4973,11 +6497,12 @@ impl H2FrameParser {
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
-        let stream_id: u32 = if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
-            stream_id_arg.to_u32()
-        } else {
-            this.get_next_stream_id()
-        };
+        let stream_id: u32 =
+            if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
+                stream_id_arg.to_u32()
+            } else {
+                this.get_next_stream_id()
+            };
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
@@ -4991,7 +6516,11 @@ impl H2FrameParser {
             let mut iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
-                bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                    ..Default::default()
+                },
             )?;
 
             while let Some(header_name) = iter.next()? {
@@ -5002,13 +6531,20 @@ impl H2FrameParser {
                 let name_slice = header_name.to_utf8();
                 let name = name_slice.slice();
 
-                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+                let validated_name =
+                    match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
+                        Ok(n) => n,
+                        Err(_) => {
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                                format_args!(
+                                    "The arguments Header name is invalid. Received \"{}\"",
+                                    BStr::new(name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
+                        }
+                    };
 
                 if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {
@@ -5036,7 +6572,10 @@ impl H2FrameParser {
 
                 let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                        format_args!("Invalid value for header \"{}\"", BStr::new(name)),
+                    );
                     return Err(global_object.throw_value(exception));
                 }
 
@@ -5047,7 +6586,13 @@ impl H2FrameParser {
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             if !global_object.has_exception() {
-                                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                                let exception = global_object.to_type_error(
+                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                );
                                 return Err(global_object.throw_value(exception));
                             }
                             return Ok(JSValue::ZERO);
@@ -5058,7 +6603,15 @@ impl H2FrameParser {
                     while let Some(item) = value_iter.next()? {
                         if item.is_empty_or_undefined_or_null() {
                             if !global_object.has_exception() {
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw());
+                                return Err(global_object
+                                    .err(
+                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                        format_args!(
+                                            "Invalid value for header \"{}\"",
+                                            BStr::new(validated_name)
+                                        ),
+                                    )
+                                    .throw());
                             }
                             return Ok(JSValue::ZERO);
                         }
@@ -5067,34 +6620,60 @@ impl H2FrameParser {
                             Ok(s) => s,
                             Err(_) => {
                                 global_object.clear_exception();
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw());
+                                return Err(global_object
+                                    .err(
+                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                        format_args!(
+                                            "Invalid value for header \"{}\"",
+                                            BStr::new(validated_name)
+                                        ),
+                                    )
+                                    .throw());
                             }
                         };
 
-                        let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                        };
+                        let never_index =
+                            match sensitive_arg.get_truthy(global_object, validated_name)? {
+                                Some(_) => true,
+                                None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                            };
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
-                        bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
+                        bun_output::scoped_log!(
+                            H2FrameParser,
+                            "encode header {} {}",
+                            BStr::new(validated_name),
+                            BStr::new(value)
+                        );
 
-                        if let Err(err) = this.encode_header_into_list(&mut encoded_headers, validated_name, value, never_index) {
+                        if let Err(err) = this.encode_header_into_list(
+                            &mut encoded_headers,
+                            validated_name,
+                            value,
+                            never_index,
+                        ) {
                             if err == bun_core::err!("OutOfMemory") {
-                                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+                                return Err(global_object
+                                    .throw(format_args!("Failed to allocate header buffer")));
                             }
                             let Some(stream) = this.handle_received_stream_id(stream_id) else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                             let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
+                                && stream_ctx_arg.is_object()
+                            {
                                 stream.set_context(stream_ctx_arg, global_object);
                             }
                             stream.state = StreamState::CLOSED;
                             stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                            this.dispatch_with_extra(
+                                JSH2FrameParser::Gc::onStreamError,
+                                stream.get_identifier(),
+                                JSValue::js_number(stream.rst_code as f64),
+                            );
                             return Ok(JSValue::UNDEFINED);
                         }
                     }
@@ -5102,7 +6681,13 @@ impl H2FrameParser {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if single_value_headers[idx] {
-                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
                             return Err(global_object.throw_value(exception));
                         }
                         single_value_headers[idx] = true;
@@ -5111,22 +6696,42 @@ impl H2FrameParser {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name))).throw());
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     };
 
-                    let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
-                        Some(_) => true,
-                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                    };
+                    let never_index =
+                        match sensitive_arg.get_truthy(global_object, validated_name)? {
+                            Some(_) => true,
+                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                        };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
-                    bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "encode header {} {}",
+                        BStr::new(validated_name),
+                        BStr::new(value)
+                    );
 
-                    if let Err(err) = this.encode_header_into_list(&mut encoded_headers, validated_name, value, never_index) {
+                    if let Err(err) = this.encode_header_into_list(
+                        &mut encoded_headers,
+                        validated_name,
+                        value,
+                        never_index,
+                    ) {
                         if err == bun_core::err!("OutOfMemory") {
-                            return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+                            return Err(global_object
+                                .throw(format_args!("Failed to allocate header buffer")));
                         }
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
@@ -5134,11 +6739,17 @@ impl H2FrameParser {
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
                         stream.state = StreamState::CLOSED;
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
+                            && stream_ctx_arg.is_object()
+                        {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
                         stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            stream.get_identifier(),
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }
@@ -5167,7 +6778,11 @@ impl H2FrameParser {
             if !options.is_object() {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamError,
+                    stream.get_identifier(),
+                    JSValue::js_number(stream.rst_code as f64),
+                );
                 return Ok(JSValue::js_number(stream_id as f64));
             }
 
@@ -5192,7 +6807,11 @@ impl H2FrameParser {
                 if silent_js.is_boolean() {
                     silent = silent_js.as_boolean();
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.silent", b"boolean", silent_js));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.silent",
+                        b"boolean",
+                        silent_js,
+                    ));
                 }
             }
 
@@ -5206,7 +6825,11 @@ impl H2FrameParser {
                         }
                     }
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.endStream", b"boolean", end_stream_js));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.endStream",
+                        b"boolean",
+                        end_stream_js,
+                    ));
                 }
             }
 
@@ -5218,7 +6841,11 @@ impl H2FrameParser {
                         has_priority = true;
                     }
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.exclusive", b"boolean", exclusive_js));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.exclusive",
+                        b"boolean",
+                        exclusive_js,
+                    ));
                 }
             }
 
@@ -5229,12 +6856,20 @@ impl H2FrameParser {
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            stream.get_identifier(),
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
                         return Ok(JSValue::js_number(stream.id as f64));
                     }
                     stream.stream_dependency = u32::try_from(parent).expect("int cast");
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.parent", b"number", parent_js));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.parent",
+                        b"number",
+                        parent_js,
+                    ));
                 }
             }
 
@@ -5245,18 +6880,30 @@ impl H2FrameParser {
                     if weight < 1 || weight > u8::MAX as i32 {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            stream.get_identifier(),
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                     stream.weight = u16::try_from(weight).expect("int cast");
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.weight", b"number", weight_js));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.weight",
+                        b"number",
+                        weight_js,
+                    ));
                 }
 
                 if weight < 1 || weight > u8::MAX as i32 {
                     stream.state = StreamState::CLOSED;
                     stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                    this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                    this.dispatch_with_extra(
+                        JSH2FrameParser::Gc::onStreamError,
+                        stream.get_identifier(),
+                        JSValue::js_number(stream.rst_code as f64),
+                    );
                     return Ok(JSValue::js_number(stream_id as f64));
                 }
 
@@ -5275,7 +6922,11 @@ impl H2FrameParser {
                     }
                     stream.attach_signal(this, signal_);
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(b"options.signal", b"AbortSignal", signal_arg));
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.signal",
+                        b"AbortSignal",
+                        signal_arg,
+                    ));
                 }
             }
         }
@@ -5285,11 +6936,24 @@ impl H2FrameParser {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams.set(this.rejected_streams.get() + 1);
-            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
             if this.rejected_streams.get() >= this.max_rejected_streams.get() {
                 let global = this.handlers.get().global();
-                let chunk = this.handlers.get().binary_type.to_js(b"ENHANCE_YOUR_CALM", &global)?;
-                this.dispatch_with_2_extra(JSH2FrameParser::Gc::onError, JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64), JSValue::js_number(this.last_stream_id.get() as f64), chunk);
+                let chunk = this
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(b"ENHANCE_YOUR_CALM", &global)?;
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onError,
+                    JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64),
+                    JSValue::js_number(this.last_stream_id.get() as f64),
+                    chunk,
+                );
             }
             return Ok(JSValue::js_number(stream_id as f64));
         }
@@ -5302,7 +6966,9 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
         // Check if headers block exceeds maxSendHeaderBlockLength
-        if this.max_send_header_block_length.get() != 0 && encoded_size > this.max_send_header_block_length.get() as usize {
+        if this.max_send_header_block_length.get() != 0
+            && encoded_size > this.max_send_header_block_length.get() as usize
+        {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
 
@@ -5313,19 +6979,35 @@ impl H2FrameParser {
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
-            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        let actual_max_frame_size = this.remote_settings.get().unwrap_or(this.local_settings.get()).max_frame_size as usize;
-        let priority_overhead: usize = if has_priority { StreamPriority::BYTE_SIZE } else { 0 };
+        let actual_max_frame_size = this
+            .remote_settings
+            .get()
+            .unwrap_or(this.local_settings.get())
+            .max_frame_size as usize;
+        let priority_overhead: usize = if has_priority {
+            StreamPriority::BYTE_SIZE
+        } else {
+            0
+        };
         let available_payload = actual_max_frame_size - priority_overhead;
         let padding: u8 = if encoded_size > available_payload {
             0
         } else {
             stream.get_padding(encoded_size, available_payload)
         };
-        let padding_overhead: usize = if padding != 0 { padding as usize + 1 } else { 0 };
+        let padding_overhead: usize = if padding != 0 {
+            padding as usize + 1
+        } else {
+            0
+        };
         let headers_frame_max_payload = available_payload - padding_overhead;
 
         let mut writer = this.to_writer();
@@ -5334,7 +7016,14 @@ impl H2FrameParser {
         if encoded_size <= headers_frame_max_payload {
             // Single HEADERS frame - fits in one frame
             let payload_size = encoded_size + priority_overhead + padding_overhead;
-            bun_output::scoped_log!(H2FrameParser, "padding: {} size: {} max_size: {} payload_size: {}", padding, encoded_size, encoded_headers.len(), payload_size);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "padding: {} size: {} max_size: {} payload_size: {}",
+                padding,
+                encoded_size,
+                encoded_headers.len(),
+                payload_size
+            );
 
             if padding != 0 {
                 flags |= HeadersFrameFlags::PADDED as u8;
@@ -5350,7 +7039,8 @@ impl H2FrameParser {
 
             // Write priority data if present
             if has_priority {
-                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
+                let stream_identifier =
+                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let mut priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
@@ -5360,8 +7050,13 @@ impl H2FrameParser {
 
             // Handle padding
             if padding != 0 {
-                if encoded_headers.try_reserve(encoded_size + padding_overhead - encoded_headers.len()).is_err() {
-                    return Err(global_object.throw(format_args!("Failed to allocate padding buffer")));
+                if encoded_headers
+                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
+                    .is_err()
+                {
+                    return Err(
+                        global_object.throw(format_args!("Failed to allocate padding buffer"))
+                    );
                 }
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
                 // ensure the slice we hand to writer covers only initialized bytes.
@@ -5375,21 +7070,32 @@ impl H2FrameParser {
                 let _ = writer.write_all(&encoded_headers);
             }
         } else {
-            bun_output::scoped_log!(H2FrameParser, "Using CONTINUATION frames: encoded_size={} max_frame_payload={}", encoded_size, actual_max_frame_size);
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "Using CONTINUATION frames: encoded_size={} max_frame_payload={}",
+                encoded_size,
+                actual_max_frame_size
+            );
 
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
             let mut headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
-                flags: headers_flags | (if has_priority { HeadersFrameFlags::PRIORITY as u8 } else { 0 }),
+                flags: headers_flags
+                    | (if has_priority {
+                        HeadersFrameFlags::PRIORITY as u8
+                    } else {
+                        0
+                    }),
                 stream_identifier: stream.id,
                 length: u32::try_from(first_chunk_size + priority_overhead).expect("int cast"),
             };
             let _ = headers_frame.write(&mut writer);
 
             if has_priority {
-                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
+                let stream_identifier =
+                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let mut priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
@@ -5408,7 +7114,11 @@ impl H2FrameParser {
 
                 let mut cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
-                    flags: if is_last { HeadersFrameFlags::END_HEADERS as u8 } else { 0 },
+                    flags: if is_last {
+                        HeadersFrameFlags::END_HEADERS as u8
+                    } else {
+                        0
+                    },
                     stream_identifier: stream.id,
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
@@ -5440,7 +7150,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn read(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn read(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected 1 argument")));
@@ -5461,7 +7175,8 @@ impl H2FrameParser {
                 }
                 Ok(JSValue::UNDEFINED)
             } else {
-                Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
+                Err(global_object
+                    .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
             }
         })();
         this.increment_window_size_if_needed();
@@ -5494,7 +7209,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_native_socket_from_js(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_native_socket_from_js(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected socket argument")));
@@ -5504,13 +7223,15 @@ impl H2FrameParser {
         this.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            this.native_socket.set(this.attach_to_native_socket::<true>(socket));
+            this.native_socket
+                .set(this.attach_to_native_socket::<true>(socket));
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
             let _ = this.flush();
         } else if let Some(socket) = TCPSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            this.native_socket.set(this.attach_to_native_socket::<false>(socket));
+            this.native_socket
+                .set(this.attach_to_native_socket::<false>(socket));
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
             let _ = this.flush();
@@ -5542,10 +7263,18 @@ impl H2FrameParser {
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket_ref = bun_ptr::BackRef::from(socket_nn);
         if socket_ref.attach_native_callback(NativeCallbacks::H2(h2)) {
-            if SSL { BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>())) } else { BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>())) }
+            if SSL {
+                BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
+            } else {
+                BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
+            }
         } else {
             socket_ref.ref_();
-            if SSL { BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>())) } else { BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>())) }
+            if SSL {
+                BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
+            } else {
+                BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
+            }
         }
     }
 
@@ -5576,7 +7305,9 @@ impl H2FrameParser {
 
         let options = args_list.ptr[0];
         if options.is_empty_or_undefined_or_null() || options.is_boolean() || !options.is_object() {
-            return Err(global_object.throw_invalid_arguments(format_args!("expected options as argument")));
+            return Err(
+                global_object.throw_invalid_arguments(format_args!("expected options as argument"))
+            );
         }
 
         let Some(context_obj) = options.get(global_object, "context")? else {
@@ -5627,8 +7358,7 @@ impl H2FrameParser {
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
-                let pool =
-                    pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
+                let pool = pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
                 let slot = pool.try_get();
                 // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
                 // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
@@ -5655,11 +7385,15 @@ impl H2FrameParser {
         if let Some(socket_js) = options.get(global_object, "native")? {
             if let Some(socket) = TLSSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                this_ref.native_socket.set(this_ref.attach_to_native_socket::<true>(socket));
+                this_ref
+                    .native_socket
+                    .set(this_ref.attach_to_native_socket::<true>(socket));
                 let _ = this_ref.flush();
             } else if let Some(socket) = TCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                this_ref.native_socket.set(this_ref.attach_to_native_socket::<false>(socket));
+                this_ref
+                    .native_socket
+                    .set(this_ref.attach_to_native_socket::<false>(socket));
                 let _ = this_ref.flush();
             }
         }
@@ -5670,41 +7404,63 @@ impl H2FrameParser {
 
                 if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
                     if max_pings.is_number() {
-                        this_ref.max_outstanding_pings.set(max_pings.to_uint64_no_truncate());
+                        this_ref
+                            .max_outstanding_pings
+                            .set(max_pings.to_uint64_no_truncate());
                     }
                 }
                 if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {
                     if max_memory.is_number() {
-                        this_ref.max_session_memory.set((max_memory.to_uint64_no_truncate() as u32).max(1));
+                        this_ref
+                            .max_session_memory
+                            .set((max_memory.to_uint64_no_truncate() as u32).max(1));
                     }
                 }
-                if let Some(max_header_list_pairs) = settings_js.get(global_object, "maxHeaderListPairs")? {
+                if let Some(max_header_list_pairs) =
+                    settings_js.get(global_object, "maxHeaderListPairs")?
+                {
                     if max_header_list_pairs.is_number() {
-                        this_ref.max_header_list_pairs.set((max_header_list_pairs.to_uint64_no_truncate() as u32).max(4));
+                        this_ref
+                            .max_header_list_pairs
+                            .set((max_header_list_pairs.to_uint64_no_truncate() as u32).max(4));
                     }
                 }
-                if let Some(max_rejected_streams) = settings_js.get(global_object, "maxSessionRejectedStreams")? {
+                if let Some(max_rejected_streams) =
+                    settings_js.get(global_object, "maxSessionRejectedStreams")?
+                {
                     if max_rejected_streams.is_number() {
-                        this_ref.max_rejected_streams.set(max_rejected_streams.to_uint64_no_truncate() as u32);
+                        this_ref
+                            .max_rejected_streams
+                            .set(max_rejected_streams.to_uint64_no_truncate() as u32);
                     }
                 }
-                if let Some(max_outstanding_settings) = settings_js.get(global_object, "maxOutstandingSettings")? {
+                if let Some(max_outstanding_settings) =
+                    settings_js.get(global_object, "maxOutstandingSettings")?
+                {
                     if max_outstanding_settings.is_number() {
-                        this_ref.max_outstanding_settings.set((max_outstanding_settings.to_uint64_no_truncate() as u32).max(1));
+                        this_ref
+                            .max_outstanding_settings
+                            .set((max_outstanding_settings.to_uint64_no_truncate() as u32).max(1));
                     }
                 }
-                if let Some(max_send_header_block_length) = settings_js.get(global_object, "maxSendHeaderBlockLength")? {
+                if let Some(max_send_header_block_length) =
+                    settings_js.get(global_object, "maxSendHeaderBlockLength")?
+                {
                     if max_send_header_block_length.is_number() {
-                        this_ref.max_send_header_block_length.set(max_send_header_block_length.to_int32() as u32);
+                        this_ref
+                            .max_send_header_block_length
+                            .set(max_send_header_block_length.to_int32() as u32);
                     }
                 }
                 if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {
                     if padding_strategy.is_number() {
-                        this_ref.padding_strategy.set(match padding_strategy.to_u32() {
-                            1 => PaddingStrategy::Aligned,
-                            2 => PaddingStrategy::Max,
-                            _ => PaddingStrategy::None,
-                        });
+                        this_ref
+                            .padding_strategy
+                            .set(match padding_strategy.to_u32() {
+                                1 => PaddingStrategy::Aligned,
+                                2 => PaddingStrategy::Max,
+                                _ => PaddingStrategy::None,
+                            });
                     }
                 }
             }
@@ -5717,13 +7473,17 @@ impl H2FrameParser {
         this_ref.is_server.set(is_server);
         JSH2FrameParser::Gc::context.set(this_value, global_object, context_obj);
 
-        this_ref.strong_this.with_mut(|s| s.set_strong(this_value, global_object));
+        this_ref
+            .strong_this
+            .with_mut(|s| s.set_strong(this_value, global_object));
 
         // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
         // before freeing). Wrapping it in `heap::take` and letting `Box` drop
         // would `mi_free` the struct but leak the encoder/decoder internals.
-        this_ref.hpack.set(Some(lshpack::HpackHandle::new(this_ref.local_settings.get().header_table_size)));
+        this_ref.hpack.set(Some(lshpack::HpackHandle::new(
+            this_ref.local_settings.get().header_table_size,
+        )));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());
         } else {
@@ -5735,7 +7495,11 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn detach_from_js(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn detach_from_js(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);

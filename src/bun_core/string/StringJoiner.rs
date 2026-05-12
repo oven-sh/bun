@@ -3,9 +3,9 @@
 
 use core::ptr::{self, NonNull};
 
-use bun_alloc::AllocError;
 use crate::RawSlice;
 use crate::string::strings;
+use bun_alloc::AllocError;
 
 // PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
@@ -66,7 +66,6 @@ impl Node {
     fn slice(&self) -> &[u8] {
         self.slice.slice()
     }
-
 }
 
 // SAFETY: `Node` is a plain linked-list node; raw pointers are uniquely owned
@@ -251,7 +250,8 @@ impl StringJoiner {
     }
 
     pub fn contains(&self, slice: &[u8]) -> bool {
-        self.node_slices().any(|s| strings::index_of(s, slice).is_some())
+        self.node_slices()
+            .any(|s| strings::index_of(s, slice).is_some())
     }
 }
 

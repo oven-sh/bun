@@ -6,14 +6,14 @@ use std::sync::Arc;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_io::{self as Async};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
+use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
+use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
-use bun_core::{strings};
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
@@ -66,13 +66,18 @@ pub struct HotMapEntry {
 }
 impl Default for HotMapEntry {
     fn default() -> Self {
-        Self { tag: 0, ptr: core::ptr::null_mut() }
+        Self {
+            tag: 0,
+            ptr: core::ptr::null_mut(),
+        }
     }
 }
 
 impl HotMap {
     pub fn init() -> HotMap {
-        HotMap { _map: StringArrayHashMap::new() }
+        HotMap {
+            _map: StringArrayHashMap::new(),
+        }
     }
 
     pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
@@ -97,7 +102,9 @@ impl HotMap {
         // the aliasing assert (caller must not pass the map's own key storage).
         // Ordering doesn't matter for HotMap consumers — Zig's `orderedRemove`
         // was incidental, not load-bearing.
-        let Some(i) = self._map.get_index(key) else { return };
+        let Some(i) = self._map.get_index(key) else {
+            return;
+        };
         let stored = &self._map.keys()[i];
         let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
         debug_assert!(!is_same_slice);
@@ -115,7 +122,10 @@ pub struct EntropyCache {
 }
 impl Default for EntropyCache {
     fn default() -> Self {
-        Self { cache: [0u8; Self::SIZE], index: 0 }
+        Self {
+            cache: [0u8; Self::SIZE],
+            index: 0,
+        }
     }
 }
 impl EntropyCache {
@@ -186,7 +196,11 @@ impl CleanupHook {
         ctx: *mut c_void,
         func: CleanupHookFunction,
     ) -> CleanupHook {
-        CleanupHook { ctx, func, global_this: std::ptr::from_ref(global_this) }
+        CleanupHook {
+            ctx,
+            func,
+            global_this: std::ptr::from_ref(global_this),
+        }
     }
 }
 
@@ -305,7 +319,6 @@ pub struct RareData {
     // Zig code always reached it via `getMainThreadVM()`, so it was a
     // singleton in practice; hosting it in the consumer crate removes the
     // upward `s3_signing → jsc` hook.
-
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
@@ -392,11 +405,17 @@ impl PathBuf {
     // must revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
-            &mut **self.small.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
+            &mut **self
+                .small
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
         } else if min_len <= 8 * Self::S {
-            &mut **self.medium.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
+            &mut **self
+                .medium
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
         } else {
-            &mut **self.large.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
+            &mut **self
+                .large
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
         }
     }
 }
@@ -463,12 +482,36 @@ macro_rules! for_each_proxy_field {
         // Uppercase fields are declared first. On Windows the case-insensitive
         // eql matches the uppercase field for either input case and returns
         // before reaching lowercase.
-        { let $name: &'static [u8] = b"HTTP_PROXY";  let $field = &mut $self.HTTP_PROXY;  $body }
-        { let $name: &'static [u8] = b"http_proxy";  let $field = &mut $self.http_proxy;  $body }
-        { let $name: &'static [u8] = b"HTTPS_PROXY"; let $field = &mut $self.HTTPS_PROXY; $body }
-        { let $name: &'static [u8] = b"https_proxy"; let $field = &mut $self.https_proxy; $body }
-        { let $name: &'static [u8] = b"NO_PROXY";    let $field = &mut $self.NO_PROXY;    $body }
-        { let $name: &'static [u8] = b"no_proxy";    let $field = &mut $self.no_proxy;    $body }
+        {
+            let $name: &'static [u8] = b"HTTP_PROXY";
+            let $field = &mut $self.HTTP_PROXY;
+            $body
+        }
+        {
+            let $name: &'static [u8] = b"http_proxy";
+            let $field = &mut $self.http_proxy;
+            $body
+        }
+        {
+            let $name: &'static [u8] = b"HTTPS_PROXY";
+            let $field = &mut $self.HTTPS_PROXY;
+            $body
+        }
+        {
+            let $name: &'static [u8] = b"https_proxy";
+            let $field = &mut $self.https_proxy;
+            $body
+        }
+        {
+            let $name: &'static [u8] = b"NO_PROXY";
+            let $field = &mut $self.NO_PROXY;
+            $body
+        }
+        {
+            let $name: &'static [u8] = b"no_proxy";
+            let $field = &mut $self.no_proxy;
+            $body
+        }
     }};
 }
 
@@ -489,7 +532,10 @@ impl ProxyEnvSlots {
         };
         for_each_proxy_field!(self, |fname, field| {
             if eql(name, fname) {
-                return Some(Slot { key: fname, ptr: field });
+                return Some(Slot {
+                    key: fname,
+                    ptr: field,
+                });
             }
         });
         None
@@ -547,7 +593,9 @@ pub struct RefCountedEnvValue {
 
 impl RefCountedEnvValue {
     pub fn create(value: &[u8]) -> Arc<RefCountedEnvValue> {
-        Arc::new(RefCountedEnvValue { bytes: Box::<[u8]>::from(value) })
+        Arc::new(RefCountedEnvValue {
+            bytes: Box::<[u8]>::from(value),
+        })
     }
 }
 
@@ -564,20 +612,62 @@ pub use bun_s3_signing::credentials::AWSSignatureCache;
 /// Zig's `inline for (socket_group_fields) |f| @field(this, f)`.
 macro_rules! for_each_socket_group {
     ($self:ident, |$g:ident| $body:block) => {{
-        { let $g = &mut $self.spawn_ipc_group;         $body }
-        { let $g = &mut $self.test_parallel_ipc_group;  $body }
-        { let $g = &mut $self.bun_connect_group_tcp;   $body }
-        { let $g = &mut $self.bun_connect_group_tls;   $body }
-        { let $g = &mut $self.postgres_group;          $body }
-        { let $g = &mut $self.postgres_tls_group;      $body }
-        { let $g = &mut $self.mysql_group_;            $body }
-        { let $g = &mut $self.mysql_tls_group;         $body }
-        { let $g = &mut $self.valkey_group_;           $body }
-        { let $g = &mut $self.valkey_tls_group;        $body }
-        { let $g = &mut $self.ws_upgrade_group_;       $body }
-        { let $g = &mut $self.ws_upgrade_tls_group;    $body }
-        { let $g = &mut $self.ws_client_group_;        $body }
-        { let $g = &mut $self.ws_client_tls_group;     $body }
+        {
+            let $g = &mut $self.spawn_ipc_group;
+            $body
+        }
+        {
+            let $g = &mut $self.test_parallel_ipc_group;
+            $body
+        }
+        {
+            let $g = &mut $self.bun_connect_group_tcp;
+            $body
+        }
+        {
+            let $g = &mut $self.bun_connect_group_tls;
+            $body
+        }
+        {
+            let $g = &mut $self.postgres_group;
+            $body
+        }
+        {
+            let $g = &mut $self.postgres_tls_group;
+            $body
+        }
+        {
+            let $g = &mut $self.mysql_group_;
+            $body
+        }
+        {
+            let $g = &mut $self.mysql_tls_group;
+            $body
+        }
+        {
+            let $g = &mut $self.valkey_group_;
+            $body
+        }
+        {
+            let $g = &mut $self.valkey_tls_group;
+            $body
+        }
+        {
+            let $g = &mut $self.ws_upgrade_group_;
+            $body
+        }
+        {
+            let $g = &mut $self.ws_upgrade_tls_group;
+            $body
+        }
+        {
+            let $g = &mut $self.ws_client_group_;
+            $body
+        }
+        {
+            let $g = &mut $self.ws_client_tls_group;
+            $body
+        }
     }};
 }
 
@@ -628,11 +718,13 @@ impl RareData {
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
     pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
-        self.temp_pipe_read_buffer.get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
+        self.temp_pipe_read_buffer
+            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
     pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {
-        self.file_polls_.get_or_insert_with(|| Box::new(FilePollStore::init()))
+        self.file_polls_
+            .get_or_insert_with(|| Box::new(FilePollStore::init()))
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
@@ -640,7 +732,9 @@ impl RareData {
         // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
         // degrades to "no engine" rather than crashing. Debug-assert to surface
         // the divergence without altering release behavior.
-        let ptr = *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new());
+        let ptr = *self
+            .boring_ssl_engine
+            .get_or_insert_with(|| boring::ENGINE_new());
         debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
         ptr
     }
@@ -660,7 +754,9 @@ impl RareData {
         // appends 0), so strip the trailing NUL from the returned slice's length
         // to match `dupeZ` semantics. Callers needing a C string can still take
         // `.as_ptr()` — the NUL byte remains in storage one-past-the-end.
-        self.tls_default_ciphers.as_deref().map(|s| &s[..s.len() - 1])
+        self.tls_default_ciphers
+            .as_deref()
+            .map(|s| &s[..s.len() - 1])
     }
 
     pub fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
@@ -677,7 +773,8 @@ impl RareData {
         ctx: *mut c_void,
         func: CleanupHookFunction,
     ) {
-        self.cleanup_hooks.push(CleanupHook::from(global_this, ctx, func));
+        self.cleanup_hooks
+            .push(CleanupHook::from(global_this, ctx, func));
     }
 
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
@@ -686,7 +783,10 @@ impl RareData {
             // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
             // value must not move after init; allocate the Box first, init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(&mut *boxed, core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>());
+            SpawnSyncEventLoop::init(
+                &mut *boxed,
+                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
+            );
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
@@ -697,7 +797,9 @@ impl RareData {
         let table = self
             .mime_types
             .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
-        table.get(str_).map(|entry| mime_type::Compact::from(*entry).to_mime_type())
+        table
+            .get(str_)
+            .map(|entry| mime_type::Compact::from(*entry).to_mime_type())
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -726,10 +828,17 @@ impl RareData {
         watcher: *mut c_void,
         detach: unsafe fn(*mut c_void),
     ) {
-        self.fs_watchers_for_isolation.push(IsolationWatcher { ptr: watcher, close: detach });
+        self.fs_watchers_for_isolation.push(IsolationWatcher {
+            ptr: watcher,
+            close: detach,
+        });
     }
     pub fn remove_fs_watcher_for_isolation(&mut self, watcher: *mut c_void) {
-        if let Some(i) = self.fs_watchers_for_isolation.iter().position(|w| w.ptr == watcher) {
+        if let Some(i) = self
+            .fs_watchers_for_isolation
+            .iter()
+            .position(|w| w.ptr == watcher)
+        {
             self.fs_watchers_for_isolation.swap_remove(i);
         }
     }
@@ -738,10 +847,17 @@ impl RareData {
         watcher: *mut c_void,
         close: unsafe fn(*mut c_void),
     ) {
-        self.stat_watchers_for_isolation.push(IsolationWatcher { ptr: watcher, close });
+        self.stat_watchers_for_isolation.push(IsolationWatcher {
+            ptr: watcher,
+            close,
+        });
     }
     pub fn remove_stat_watcher_for_isolation(&mut self, watcher: *mut c_void) {
-        if let Some(i) = self.stat_watchers_for_isolation.iter().position(|w| w.ptr == watcher) {
+        if let Some(i) = self
+            .stat_watchers_for_isolation
+            .iter()
+            .position(|w| w.ptr == watcher)
+        {
             self.stat_watchers_for_isolation.swap_remove(i);
         }
     }
@@ -758,14 +874,18 @@ impl RareData {
         loop {
             // SAFETY: `this` is the unique live `RareData` (boxed by VM);
             // momentary `&mut` only, ended before the re-entrant close.
-            let Some(w) = (unsafe { &mut (*this).fs_watchers_for_isolation }).pop() else { break };
+            let Some(w) = (unsafe { &mut (*this).fs_watchers_for_isolation }).pop() else {
+                break;
+            };
             // SAFETY: registered via add_fs_watcher_for_isolation; still live.
             unsafe { (w.close)(w.ptr) };
             core::hint::black_box(this);
         }
         loop {
             // SAFETY: as above.
-            let Some(w) = (unsafe { &mut (*this).stat_watchers_for_isolation }).pop() else { break };
+            let Some(w) = (unsafe { &mut (*this).stat_watchers_for_isolation }).pop() else {
+                break;
+            };
             // SAFETY: registered via add_stat_watcher_for_isolation; still live.
             unsafe { (w.close)(w.ptr) };
             core::hint::black_box(this);
@@ -794,37 +914,61 @@ impl RareData {
     /// allocation that was the root of the SSL_CTX-per-connect leak.
     pub fn bun_connect_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.bun_connect_group_tls } else { &mut self.bun_connect_group_tcp },
+            if SSL {
+                &mut self.bun_connect_group_tls
+            } else {
+                &mut self.bun_connect_group_tcp
+            },
             vm,
         )
     }
     pub fn postgres_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.postgres_tls_group } else { &mut self.postgres_group },
+            if SSL {
+                &mut self.postgres_tls_group
+            } else {
+                &mut self.postgres_group
+            },
             vm,
         )
     }
     pub fn mysql_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.mysql_tls_group } else { &mut self.mysql_group_ },
+            if SSL {
+                &mut self.mysql_tls_group
+            } else {
+                &mut self.mysql_group_
+            },
             vm,
         )
     }
     pub fn valkey_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.valkey_tls_group } else { &mut self.valkey_group_ },
+            if SSL {
+                &mut self.valkey_tls_group
+            } else {
+                &mut self.valkey_group_
+            },
             vm,
         )
     }
     pub fn ws_upgrade_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.ws_upgrade_tls_group } else { &mut self.ws_upgrade_group_ },
+            if SSL {
+                &mut self.ws_upgrade_tls_group
+            } else {
+                &mut self.ws_upgrade_group_
+            },
             vm,
         )
     }
     pub fn ws_client_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
         Self::lazy_group(
-            if SSL { &mut self.ws_client_tls_group } else { &mut self.ws_client_group_ },
+            if SSL {
+                &mut self.ws_client_tls_group
+            } else {
+                &mut self.ws_client_group_
+            },
             vm,
         )
     }
@@ -893,12 +1037,14 @@ impl RareData {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
             };
-            let is_atty = Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
+            let is_atty =
+                Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stderr_store = NonNull::new(store);
             self.stderr_mode = mode;
         }
-        self.stderr_store.map_or(core::ptr::null_mut(), NonNull::as_ptr)
+        self.stderr_store
+            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
@@ -910,12 +1056,14 @@ impl RareData {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
             };
-            let is_atty = Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
+            let is_atty =
+                Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stdout_store = NonNull::new(store);
             self.stdout_mode = mode;
         }
-        self.stdout_store.map_or(core::ptr::null_mut(), NonNull::as_ptr)
+        self.stdout_store
+            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
@@ -934,7 +1082,8 @@ impl RareData {
             self.stdin_store = NonNull::new(store);
             self.stdin_mode = mode;
         }
-        self.stdin_store.map_or(core::ptr::null_mut(), NonNull::as_ptr)
+        self.stdin_store
+            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 }
 
@@ -989,14 +1138,22 @@ fn set_tls_default_ciphers_from_js(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    let ciphers = if !args.is_empty() { args[0] } else { JSValue::UNDEFINED };
+    let ciphers = if !args.is_empty() {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
     if !ciphers.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
     let sliced = ciphers.to_slice(global_this)?;
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
-    global_this.bun_vm().as_mut().rare_data().set_tls_default_ciphers(sliced.slice());
+    global_this
+        .bun_vm()
+        .as_mut()
+        .rare_data()
+        .set_tls_default_ciphers(sliced.slice());
     Ok(JSValue::UNDEFINED)
 }
 

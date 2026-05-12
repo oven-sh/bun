@@ -1,19 +1,34 @@
-#![allow(non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::upper_case_acronyms
+)]
 
 use core::ffi::c_int;
 
 // `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
 // module (their only external use is via `SystemErrno::init`, defined here).
+pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
 use bun_libuv_sys as uv;
-pub use self::windows::{Win32Error, Win32ErrorExt, NTSTATUS};
 
 // ──────────────────────────────────────────────────────────────────────────
 // E
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, strum::FromRepr, enum_map::Enum)]
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
+)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -433,7 +448,18 @@ pub fn get_errno<T>(_rc: T) -> E {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, strum::FromRepr, enum_map::Enum)]
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
+)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,
@@ -820,7 +846,8 @@ pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
+    #[inline]
+    fn into_system_errno(self) -> Option<SystemErrno> {
         // Zig `init(anytype)` only enters the Win32/uv mapping branch when
         // `@TypeOf(code) == u16` or `(@TypeOf(code) == c_int and code > 0)`.
         // For every other signed width (i64 here) it falls through to
@@ -844,10 +871,14 @@ impl SystemErrnoInit for i64 {
     }
 }
 impl SystemErrnoInit for i32 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self) }
+    #[inline]
+    fn into_system_errno(self) -> Option<SystemErrno> {
+        SystemErrno::init_c_int(self)
+    }
 }
 impl SystemErrnoInit for u32 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
+    #[inline]
+    fn into_system_errno(self) -> Option<SystemErrno> {
         // GetLastError()/WSAGetLastError() return DWORD; HRESULT-shaped facility
         // codes and some installer/WinHTTP errors exceed 0xFFFF. Those are
         // intentionally unmapped → None (matches Zig peer-widening, which would
@@ -857,10 +888,16 @@ impl SystemErrnoInit for u32 {
     }
 }
 impl SystemErrnoInit for u16 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_u16(self) }
+    #[inline]
+    fn into_system_errno(self) -> Option<SystemErrno> {
+        SystemErrno::init_u16(self)
+    }
 }
 impl SystemErrnoInit for Win32Error {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_win32_error(self) }
+    #[inline]
+    fn into_system_errno(self) -> Option<SystemErrno> {
+        SystemErrno::init_win32_error(self)
+    }
 }
 
 impl SystemErrno {
@@ -1051,7 +1088,9 @@ impl SystemErrno {
             // Zig compared the c_int against u16 constants via peer-type widening, so any
             // code > u16::MAX would simply fail every range check and return null. Avoid a
             // truncating `as u16` (which could wrap into a valid Win32/uv code) by gating here.
-            let Ok(code) = u16::try_from(code) else { return None };
+            let Ok(code) = u16::try_from(code) else {
+                return None;
+            };
             return Self::init_numeric(code);
         }
         if code < 0 {
@@ -1064,8 +1103,7 @@ impl SystemErrno {
     fn init_numeric(code: u16) -> Option<SystemErrno> {
         // Win32Error and WSA Error codes
         if code <= Win32Error::IO_REISSUE_AS_CACHED.0
-            || (code >= Win32Error::WSAEINTR.0
-                && code <= Win32Error::WSA_QOS_RESERVED_PETYPE.0)
+            || (code >= Win32Error::WSAEINTR.0 && code <= Win32Error::WSA_QOS_RESERVED_PETYPE.0)
         {
             return Self::init_win32_error(Win32Error::from_raw(code));
         }
@@ -1532,7 +1570,9 @@ pub mod windows {
         /// must use `to_system_errno()` and choose their own fallback.
         #[inline]
         fn to_e(self) -> E {
-            self.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::UNKNOWN)
+            self.to_system_errno()
+                .map(SystemErrno::to_e)
+                .unwrap_or(E::UNKNOWN)
         }
     }
     impl Win32ErrorExt for Win32Error {

@@ -5,10 +5,13 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_core::{strings, SliceWithUnderlyingString, String, Tag, ZigStringSlice};
+use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
 use crate::zig_string::{self, ZigString};
-use crate::{CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
+use crate::{
+    CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult,
+    ZigStringJsc as _,
+};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -121,16 +124,16 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 }
 
 #[track_caller]
-pub fn to_js_by_parse_json(self_: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn to_js_by_parse_json(
+    self_: &mut String,
+    global_object: &JSGlobalObject,
+) -> JsResult<JSValue> {
     // SAFETY: `self_` is a live `&mut String`.
     unsafe { crate::cpp::BunString__toJSON(global_object, self_) }
 }
 
 #[track_caller]
-pub fn create_utf8_for_js(
-    global_object: &JSGlobalObject,
-    utf8_slice: &[u8],
-) -> JsResult<JSValue> {
+pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; ptr/len from a live &[u8], global_object borrowed for call duration.
     unsafe {
         crate::cpp::BunString__createUTF8ForJS(
@@ -247,7 +250,11 @@ fn slice_with_underlying_string_to_js_with_options(
                 // external string; do not drop it here.
                 let mut utf16 = core::mem::ManuallyDrop::new(utf16);
                 utf16.shrink_to_fit();
-                return Ok(zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object));
+                return Ok(zig_string::to_external_u16(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    global_object,
+                ));
             } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
                 // PORT NOTE: ownership of utf8 bytes transferred to JSC via
                 // `to_external_value`; `take_owned_raw` already cleared `utf8`
@@ -348,23 +355,21 @@ pub mod unicode_testing_apis {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(global_this.throw(format_args!(
-                "toUTF16AllocSentinel: expected 1 argument"
-            )));
+            return Err(
+                global_this.throw(format_args!("toUTF16AllocSentinel: expected 1 argument"))
+            );
         }
         let Some(array_buffer) = arguments[0].as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!(
-                "toUTF16AllocSentinel: expected a Uint8Array"
-            )));
+            return Err(
+                global_this.throw(format_args!("toUTF16AllocSentinel: expected a Uint8Array"))
+            );
         };
         let bytes = array_buffer.byte_slice();
 
         let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
             Ok(r) => r,
             Err(err) => {
-                return Err(
-                    global_this.throw(format_args!("{err:?} toUTF16AllocForReal failed"))
-                );
+                return Err(global_this.throw(format_args!("{err:?} toUTF16AllocForReal failed")));
             }
         };
 

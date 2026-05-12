@@ -28,12 +28,10 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    JSValue, JSGlobalObject, GlobalRef, CallFrame, JSObject, JSCell, JsCell, JsError, JsResult, JSType,
-    MarkedArgumentBuffer, JSArrayIterator, ErrorCode, ErrorBuilder,
-    ExternColumnIdentifier, ExternColumnIdentifierValue,
-    StrongOptional, JsRef, CoerceTo, ThrowFmtArgs,
-    StringJsc, ZigStringJsc, bun_string_jsc, host_fn,
-    ArrayBuffer,
+    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
+    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
+    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -78,13 +76,22 @@ pub fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_erro
 // ──────────────────────────────────────────────────────────────────────────
 #[inline]
 fn from_js_host_call(global: &JSGlobalObject, v: JSValue) -> JsResult<JSValue> {
-    if global.has_exception() { return Err(JsError::Thrown); }
-    debug_assert!(!v.is_empty(), "fromJSHostCall: empty JSValue with no pending exception");
+    if global.has_exception() {
+        return Err(JsError::Thrown);
+    }
+    debug_assert!(
+        !v.is_empty(),
+        "fromJSHostCall: empty JSValue with no pending exception"
+    );
     Ok(v)
 }
 #[inline]
 fn from_js_host_call_generic<R>(global: &JSGlobalObject, r: R) -> JsResult<R> {
-    if global.has_exception() { Err(JsError::Thrown) } else { Ok(r) }
+    if global.has_exception() {
+        Err(JsError::Thrown)
+    } else {
+        Ok(r)
+    }
 }
 
 // `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
@@ -216,9 +223,9 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 // as the [VirtualMachineSqlExt] extension trait.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::virtual_machine::VirtualMachine;
-pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_io::KeepAlive;
+pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
+pub use bun_jsc::virtual_machine::VirtualMachine;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
@@ -352,7 +359,8 @@ impl VirtualMachineSqlExt for VirtualMachine {
         // raw-pointer split-borrow — `VirtualMachine::get()` is `&'static`
         // and doesn't borrow `self`, so borrowck is satisfied without a
         // per-site raw-pointer deref.
-        self.rare_data().postgres_group::<SSL>(VirtualMachine::get())
+        self.rare_data()
+            .postgres_group::<SSL>(VirtualMachine::get())
     }
     #[inline]
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
@@ -582,10 +590,11 @@ pub mod webcore {
             let mut len: usize = 0;
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
-            let ptr = unsafe {
-                (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len)
-            };
-            if ptr.is_null() || len == 0 { return &[]; }
+            let ptr =
+                unsafe { (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len) };
+            if ptr.is_null() || len == 0 {
+                return &[];
+            }
             // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
             unsafe { core::slice::from_raw_parts(ptr, len) }
         }
@@ -593,11 +602,19 @@ pub mod webcore {
     impl super::JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
             let p = Blob__fromJS(value);
-            if p.is_null() { None } else { Some(p.cast::<Self>()) }
+            if p.is_null() {
+                None
+            } else {
+                Some(p.cast::<Self>())
+            }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             let p = Blob__fromJSDirect(value);
-            if p.is_null() { None } else { Some(p.cast::<Self>()) }
+            if p.is_null() {
+                None
+            } else {
+                Some(p.cast::<Self>())
+            }
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
             // The opaque view is zero-sized and unconstructible (no `pub`
@@ -641,16 +658,30 @@ pub use bun_jsc::JsClass;
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
         as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
-    ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
-        as crate::postgres::PostgresSQLQuery, impl_js_class { binding, columns, pendingValue, target });
+    ::bun_jsc::js_class_module!(
+        JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
+        impl_js_class {
+            binding,
+            columns,
+            pendingValue,
+            target
+        }
+    );
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
         as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
     #[allow(non_snake_case)]
     pub use js_mysql_connection as JSMySQLConnection;
 
-    ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
-        as crate::mysql::js_mysql_query::JSMySQLQuery, impl_js_class { binding, columns, pendingValue, target });
+    ::bun_jsc::js_class_module!(
+        js_mysql_query = "MySQLQuery" as crate::mysql::js_mysql_query::JSMySQLQuery,
+        impl_js_class {
+            binding,
+            columns,
+            pendingValue,
+            target
+        }
+    );
     #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;
 }
@@ -664,7 +695,10 @@ pub mod codegen {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-pub struct JSFunction { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+pub struct JSFunction {
+    _opaque: [u8; 0],
+    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
 
 /// `jsc.JSHostFn` — the JSC-ABI host-function pointer JSC dispatches to
 /// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
@@ -675,12 +709,18 @@ pub type JSHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 pub trait IntoJSHostFn<Marker>: Sized {
     fn into_js_host_fn(self) -> JSHostFn;
 }
-#[doc(hidden)] pub struct HostFnRaw;
-#[doc(hidden)] pub struct HostFnResult;
-#[doc(hidden)] pub struct HostFnPlain;
+#[doc(hidden)]
+pub struct HostFnRaw;
+#[doc(hidden)]
+pub struct HostFnResult;
+#[doc(hidden)]
+pub struct HostFnPlain;
 
 impl IntoJSHostFn<HostFnRaw> for JSHostFn {
-    #[inline] fn into_js_host_fn(self) -> JSHostFn { self }
+    #[inline]
+    fn into_js_host_fn(self) -> JSHostFn {
+        self
+    }
 }
 // `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
 // thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
@@ -701,7 +741,11 @@ where
     F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
 {
     fn into_js_host_fn(self) -> JSHostFn {
-        debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
+        debug_assert_eq!(
+            core::mem::size_of::<F>(),
+            0,
+            "IntoJSHostFn: expected fn item (ZST)"
+        );
         let _ = self;
         sql_jsc_host_thunk! {
             thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
@@ -729,7 +773,11 @@ where
     F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
 {
     fn into_js_host_fn(self) -> JSHostFn {
-        debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
+        debug_assert_eq!(
+            core::mem::size_of::<F>(),
+            0,
+            "IntoJSHostFn: expected fn item (ZST)"
+        );
         let _ = self;
         sql_jsc_host_thunk! {
             thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
@@ -849,7 +897,10 @@ pub mod call_frame {
         /// dereferenced — it's only carried for API parity with the Zig
         /// `Node.ArgumentsSlice` shape — so it's accepted by-value and dropped.
         pub fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
-            Self { remaining: slice, _vm: core::ptr::null() }
+            Self {
+                remaining: slice,
+                _vm: core::ptr::null(),
+            }
         }
         /// Zig `len` (CallFrame.zig) — remaining argument count.
         #[inline]
@@ -915,9 +966,8 @@ impl SslCtxCache {
     ) -> Option<*mut bun_uws::SslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
-        let p = unsafe {
-            (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err)
-        };
+        let p =
+            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err) };
         if p.is_null() { None } else { Some(p) }
     }
 }

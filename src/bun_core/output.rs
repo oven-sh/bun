@@ -16,11 +16,14 @@ use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
 // inside this module doesn't matter for the early call sites.
 #[allow(unused_imports)]
-use crate::{pretty, prettyln, pretty_error, pretty_errorln, note, warn, err_generic, declare_scope, scoped_log};
+use crate::{
+    declare_scope, err_generic, note, pretty, pretty_error, pretty_errorln, prettyln, scoped_log,
+    warn,
+};
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
 
-use crate::env_var;
 use crate::Global;
+use crate::env_var;
 // MOVE_DOWN: bun_core::strings → bun_core (move-in pass).
 use crate::strings;
 // MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
@@ -55,7 +58,9 @@ pub struct QuietWriter {
     _opaque: [*mut (); 4],
 }
 impl QuietWriter {
-    pub const ZEROED: Self = Self { _opaque: [core::ptr::null_mut(); 4] };
+    pub const ZEROED: Self = Self {
+        _opaque: [core::ptr::null_mut(); 4],
+    };
 
     #[inline]
     pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
@@ -95,7 +100,9 @@ pub struct QuietWriterAdapter {
 impl QuietWriterAdapter {
     /// Zeroed placeholder; caller must overwrite via `adapt_to_new_api` before use.
     #[inline]
-    pub const fn uninit() -> Self { Self { _opaque: [0u8; 64] } }
+    pub const fn uninit() -> Self {
+        Self { _opaque: [0u8; 64] }
+    }
     #[inline]
     pub fn new_interface(&mut self) -> &mut io::Writer {
         // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
@@ -113,9 +120,13 @@ pub struct File(pub Fd);
 impl File {
     pub const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
-    pub const fn fd(&self) -> Fd { self.0 }
+    pub const fn fd(&self) -> Fd {
+        self.0
+    }
     #[inline]
-    pub fn handle(self) -> Fd { self.0 }
+    pub fn handle(self) -> Fd {
+        self.0
+    }
     /// `bun_sys::File::stderr()` via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
@@ -231,7 +242,9 @@ pub fn pretty_error(payload: impl PrettyFmtInput) {
 /// Test-harness initializer: configure the output sinks without touching the
 /// real stdio FDs (Zig: `Output.initTest`). Safe to call repeatedly.
 pub fn init_test() {
-    if SOURCE_SET.get() { return; }
+    if SOURCE_SET.get() {
+        return;
+    }
     let stdout = File::from(Fd::stdout());
     let stderr = File::from(Fd::stderr());
     Source::set_init(stdout, stderr);
@@ -277,7 +290,8 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 // the C declaration `int32_t bun_stdio_tty[3]`. Using atomics instead of
 // `RacyCell` makes Rust-side reads/writes fully safe (cell-get reduction).
 #[unsafe(no_mangle)]
-pub static bun_stdio_tty: [AtomicI32; 3] = [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
+pub static bun_stdio_tty: [AtomicI32; 3] =
+    [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
 
 /// Read `bun_stdio_tty[idx]`. Written once at startup (in `Source::set_init` /
 /// `bun_initialize_process`) before reader threads spawn, so `Relaxed` suffices.
@@ -290,7 +304,12 @@ fn stdio_tty_flag(idx: usize) -> bool {
 // `AtomicCell` because the SIGWINCH handler writes this from signal context
 // while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
 pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
-    crate::AtomicCell::new(crate::Winsize { row: 0, col: 0, xpixel: 0, ypixel: 0 });
+    crate::AtomicCell::new(crate::Winsize {
+        row: 0,
+        col: 0,
+        xpixel: 0,
+        ypixel: 0,
+    });
 
 // ──────────────────────────────────────────────────────────────────────────
 // Source
@@ -360,7 +379,7 @@ impl Source {
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
         // TODO(b2-blocked): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
-        
+
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
@@ -382,10 +401,14 @@ impl Source {
             .quiet_writer()
             .adapt_to_new_api(&mut out.stderr_buffer);
         out.buffered_stream = std::ptr::from_mut(out.buffered_stream_backing.new_interface());
-        out.buffered_error_stream = std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
+        out.buffered_error_stream =
+            std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
 
         out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
-        out.error_stream_backing = out.raw_error_stream.quiet_writer().adapt_to_new_api(&mut []);
+        out.error_stream_backing = out
+            .raw_error_stream
+            .quiet_writer()
+            .adapt_to_new_api(&mut []);
         out.stream = std::ptr::from_mut(out.stream_backing.new_interface());
         out.error_stream = std::ptr::from_mut(out.error_stream_backing.new_interface());
     }
@@ -396,7 +419,9 @@ impl Source {
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read()) });
+        SOURCE.with_borrow_mut(|s| unsafe {
+            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        });
         crate::StackCheck::configure_thread();
     }
 
@@ -422,7 +447,9 @@ impl Source {
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read()) });
+        SOURCE.with_borrow_mut(|s| unsafe {
+            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        });
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
 
@@ -595,12 +622,21 @@ pub mod windows_stdio {
         use crate::fd as fd_internals;
         let invalid = w::INVALID_HANDLE_VALUE;
         // Single-threaded startup; these statics are write-once caches.
-        let _ = fd_internals::WINDOWS_CACHED_STDERR
-            .set(if stderr != invalid { Fd::from_system(stderr) } else { Fd::INVALID });
-        let _ = fd_internals::WINDOWS_CACHED_STDOUT
-            .set(if stdout != invalid { Fd::from_system(stdout) } else { Fd::INVALID });
-        let _ = fd_internals::WINDOWS_CACHED_STDIN
-            .set(if stdin != invalid { Fd::from_system(stdin) } else { Fd::INVALID });
+        let _ = fd_internals::WINDOWS_CACHED_STDERR.set(if stderr != invalid {
+            Fd::from_system(stderr)
+        } else {
+            Fd::INVALID
+        });
+        let _ = fd_internals::WINDOWS_CACHED_STDOUT.set(if stdout != invalid {
+            Fd::from_system(stdout)
+        } else {
+            Fd::INVALID
+        });
+        let _ = fd_internals::WINDOWS_CACHED_STDIN.set(if stdin != invalid {
+            Fd::from_system(stdin)
+        } else {
+            Fd::INVALID
+        });
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
@@ -1160,7 +1196,10 @@ pub struct ElapsedFormatter {
 
 impl Default for ElapsedFormatter {
     fn default() -> Self {
-        Self { colors: false, duration_ns: 0 }
+        Self {
+            colors: false,
+            duration_ns: 0,
+        }
     }
 }
 
@@ -1181,9 +1220,17 @@ impl fmt::Display for ElapsedFormatter {
             }
             SLOW..=u64::MAX => {
                 if self.colors {
-                    write!(w, pretty_fmt!("<r><d>[<r><yellow>{:>.2}ms<r><d>]<r>", true), ms)
+                    write!(
+                        w,
+                        pretty_fmt!("<r><d>[<r><yellow>{:>.2}ms<r><d>]<r>", true),
+                        ms
+                    )
                 } else {
-                    write!(w, pretty_fmt!("<r><d>[<r><yellow>{:>.2}ms<r><d>]<r>", false), ms)
+                    write!(
+                        w,
+                        pretty_fmt!("<r><d>[<r><yellow>{:>.2}ms<r><d>]<r>", false),
+                        ms
+                    )
                 }
             }
             _ => {
@@ -1292,12 +1339,20 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
     // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => {
-            std::ptr::from_mut((if buffering { s.buffered_stream() } else { s.stream() }))
-        }
-        Destination::Stderr => {
-            std::ptr::from_mut((if buffering { s.buffered_error_stream() } else { s.error_stream() }))
-        }
+        Destination::Stdout => std::ptr::from_mut(
+            (if buffering {
+                s.buffered_stream()
+            } else {
+                s.stream()
+            }),
+        ),
+        Destination::Stderr => std::ptr::from_mut(
+            (if buffering {
+                s.buffered_error_stream()
+            } else {
+                s.error_stream()
+            }),
+        ),
     });
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
@@ -1452,7 +1507,11 @@ pub enum Visibility {
 impl Visibility {
     /// Show logs for this scope by default if and only if `condition` is true.
     pub const fn visible_if(condition: bool) -> Visibility {
-        if condition { Visibility::Visible } else { Visibility::Hidden }
+        if condition {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        }
     }
 }
 
@@ -1494,8 +1553,10 @@ impl ScopedLogger {
         } else if let Some(val) = env_var::BUN_DEBUG_ALL.get() {
             self.really_disable.store(!val, Ordering::Relaxed);
         } else if let Some(val) = env_var::BUN_DEBUG_QUIET_LOGS.get() {
-            self.really_disable
-                .store(self.really_disable.load(Ordering::Relaxed) || val, Ordering::Relaxed);
+            self.really_disable.store(
+                self.really_disable.load(Ordering::Relaxed) || val,
+                Ordering::Relaxed,
+            );
         } else {
             // --debug-<tagname> / --debug-all
             let pfx = b"--debug-";
@@ -1518,7 +1579,8 @@ impl ScopedLogger {
         if !Environment::ENABLE_LOGS {
             return false;
         }
-        self.is_visible_once.call_once(|| self.evaluate_is_visible());
+        self.is_visible_once
+            .call_once(|| self.evaluate_is_visible());
         !self.really_disable.load(Ordering::Relaxed)
     }
 
@@ -1582,20 +1644,18 @@ impl ScopedLogger {
 macro_rules! declare_scope {
     ($name:ident, hidden) => {
         #[allow(non_upper_case_globals)]
-        pub static $name: $crate::output::ScopedLogger =
-            $crate::output::ScopedLogger::new(
-                // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
-                stringify!($name),
-                $crate::output::Visibility::Hidden,
-            );
+        pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+            // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
+            stringify!($name),
+            $crate::output::Visibility::Hidden,
+        );
     };
     ($name:ident, visible) => {
         #[allow(non_upper_case_globals)]
-        pub static $name: $crate::output::ScopedLogger =
-            $crate::output::ScopedLogger::new(
-                stringify!($name),
-                $crate::output::Visibility::Visible,
-            );
+        pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+            stringify!($name),
+            $crate::output::Visibility::Visible,
+        );
     };
 }
 
@@ -1724,8 +1784,8 @@ pub mod color_map {
     }
 }
 
+pub use ansi::{BOLD, DIM, RESET};
 pub use bun_output_tags::ansi;
-pub use ansi::{RESET, BOLD, DIM};
 
 /// `bun.Output.pretty(fmt, args)` — write to stdout with `<tag>` color expansion.
 /// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
@@ -1829,10 +1889,16 @@ pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf 
 pub struct PrettyBuf(pub Vec<u8>);
 impl core::ops::Deref for PrettyBuf {
     type Target = [u8];
-    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl AsRef<[u8]> for PrettyBuf {
-    #[inline] fn as_ref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl AsRef<str> for PrettyBuf {
     #[inline]
@@ -1864,27 +1930,59 @@ pub trait FmtTuple {
     fn len(&self) -> usize;
 }
 impl FmtTuple for () {
-    #[inline] fn write_nth(&self, _: usize, _: &mut dyn fmt::Write) -> Result<bool, fmt::Error> { Ok(false) }
-    #[inline] fn len(&self) -> usize { 0 }
+    #[inline]
+    fn write_nth(&self, _: usize, _: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
+        Ok(false)
+    }
+    #[inline]
+    fn len(&self) -> usize {
+        0
+    }
 }
 impl FmtTuple for fmt::Arguments<'_> {
     #[inline]
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        if idx == 0 { f.write_fmt(*self)?; Ok(true) } else { Ok(false) }
+        if idx == 0 {
+            f.write_fmt(*self)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
-    #[inline] fn len(&self) -> usize { 1 }
+    #[inline]
+    fn len(&self) -> usize {
+        1
+    }
 }
 impl<T: fmt::Display> FmtTuple for &[T] {
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        match self.get(idx) { Some(v) => { write!(f, "{}", v)?; Ok(true) } None => Ok(false) }
+        match self.get(idx) {
+            Some(v) => {
+                write!(f, "{}", v)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
-    #[inline] fn len(&self) -> usize { (*self).len() }
+    #[inline]
+    fn len(&self) -> usize {
+        (*self).len()
+    }
 }
 impl<T: fmt::Display, const N: usize> FmtTuple for &[T; N] {
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        match self.get(idx) { Some(v) => { write!(f, "{}", v)?; Ok(true) } None => Ok(false) }
+        match self.get(idx) {
+            Some(v) => {
+                write!(f, "{}", v)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
-    #[inline] fn len(&self) -> usize { N }
+    #[inline]
+    fn len(&self) -> usize {
+        N
+    }
 }
 macro_rules! impl_fmt_tuple {
     ($($idx:tt $T:ident),+) => {
@@ -1926,7 +2024,9 @@ fn substitute_template(
             }
             // Find closing '}'.
             let mut j = i + 1;
-            while j < t.len() && t[j] != b'}' { j += 1; }
+            while j < t.len() && t[j] != b'}' {
+                j += 1;
+            }
             if j < t.len() {
                 // consume placeholder
                 if args.write_nth(argi, f)? {
@@ -2041,7 +2141,11 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     }
                 };
                 if is_enabled {
-                    out.extend_from_slice(if is_reset { RESET.as_bytes() } else { color_str.as_bytes() });
+                    out.extend_from_slice(if is_reset {
+                        RESET.as_bytes()
+                    } else {
+                        color_str.as_bytes()
+                    });
                 }
             }
             _ => {
@@ -2070,7 +2174,11 @@ pub fn enable_color_for(dest: Destination) -> bool {
 #[inline]
 pub const fn _needs_nl(fmt: &str) -> &'static str {
     let b = fmt.as_bytes();
-    if b.is_empty() || b[b.len() - 1] != b'\n' { "\n" } else { "" }
+    if b.is_empty() || b[b.len() - 1] != b'\n' {
+        "\n"
+    } else {
+        ""
+    }
 }
 
 /// Exposed for the `scoped_log!` macro so it can pick the colored / plain
@@ -2078,14 +2186,12 @@ pub const fn _needs_nl(fmt: &str) -> &'static str {
 #[doc(hidden)]
 #[inline]
 pub fn _scoped_use_ansi() -> bool {
-    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
-        && SOURCE_SET.get()
-        && {
-            // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
-            // init; `QuietWriter` is Copy POD so reading it is always sound.
-            let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
-            sw.context_handle() == raw_writer().handle()
-        }
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
+        // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
+        // init; `QuietWriter` is Copy POD so reading it is always sound.
+        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
+        sw.context_handle() == raw_writer().handle()
+    }
 }
 
 #[inline]
@@ -2394,7 +2500,9 @@ impl DebugTimer {
     pub fn start() -> DebugTimer {
         #[cfg(debug_assertions)]
         {
-            DebugTimer { timer: std::time::Instant::now() }
+            DebugTimer {
+                timer: std::time::Instant::now(),
+            }
         }
         #[cfg(not(debug_assertions))]
         {
@@ -2579,12 +2687,10 @@ pub mod scoped_debug_writer {
 
 pub fn disable_scoped_debug_writer() {
     // Zig: `if (!@inComptime())` — always runtime in Rust.
-    scoped_debug_writer::DISABLE_INSIDE_LOG
-        .set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() + 1);
+    scoped_debug_writer::DISABLE_INSIDE_LOG.set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() + 1);
 }
 pub fn enable_scoped_debug_writer() {
-    scoped_debug_writer::DISABLE_INSIDE_LOG
-        .set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() - 1);
+    scoped_debug_writer::DISABLE_INSIDE_LOG.set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() - 1);
 }
 
 // TODO(port): move to bun_core_sys
@@ -2708,7 +2814,9 @@ impl BufferedStdin {
     /// Zig `BufferedReader.reader()` — the std adapter just hands back `&mut
     /// Self` (which already exposes `read`/`read_byte`).
     #[inline]
-    pub fn reader(&mut self) -> &mut Self { self }
+    pub fn reader(&mut self) -> &mut Self {
+        self
+    }
 
     /// Zig `BufferedReader.read` — fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
@@ -2805,7 +2913,9 @@ impl StdinReader {
     }
     /// Alias for callers that spell it `read_byte`.
     #[inline]
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> { self.take_byte() }
+    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
+        self.take_byte()
+    }
 }
 
 /// `std.fs.File.stdin().readerStreaming(&buf)` — fresh, unbuffered stdin
@@ -2914,7 +3024,10 @@ mod output_macro_tests {
     fn pretty_binds_args_once() {
         if false {
             let mut n = 0i32;
-            crate::pretty!("{}", { n += 1; n });
+            crate::pretty!("{}", {
+                n += 1;
+                n
+            });
             let _ = n;
 
             let s = String::from("x");
@@ -2939,10 +3052,7 @@ mod output_macro_tests {
         const B: &str = _needs_nl(pretty_fmt!("hello", false));
         assert_eq!(B, "\n");
         // `note!("hi\n")` → `pretty_errorln!(concat!("<blue>note<r><d>:<r> ", "hi\n"))`
-        const C: &str = _needs_nl(pretty_fmt!(
-            concat!("<blue>note<r><d>:<r> ", "hi\n"),
-            false
-        ));
+        const C: &str = _needs_nl(pretty_fmt!(concat!("<blue>note<r><d>:<r> ", "hi\n"), false));
         assert_eq!(C, "", "note!(\"hi\\n\") would double-newline");
         // Trailing reset tag does not defeat the guard (the stripped template
         // is what's checked).
@@ -2956,7 +3066,7 @@ mod pretty_fmt_tests {
     //! Parity checks between the `pretty_fmt!` proc-macro (compile-time) and
     //! `pretty_fmt_runtime` (1:1 port of Zig `prettyFmt`). Guards against the
     //! macro leaking raw `<r>`/`<b>` markup into help text.
-    use super::{pretty_fmt_runtime, RESET};
+    use super::{RESET, pretty_fmt_runtime};
     use bun_core_macros::pretty_fmt;
 
     #[test]
@@ -2971,7 +3081,10 @@ mod pretty_fmt_tests {
     fn color_tags_emit_ansi() {
         assert_eq!(pretty_fmt!("<red>x<r>", true), "\x1b[31mx\x1b[0m");
         assert_eq!(pretty_fmt!("<red>x<r>", false), "x");
-        assert_eq!(pretty_fmt!("<b><green>bun<r>", true), "\x1b[1m\x1b[32mbun\x1b[0m");
+        assert_eq!(
+            pretty_fmt!("<b><green>bun<r>", true),
+            "\x1b[1m\x1b[32mbun\x1b[0m"
+        );
         assert_eq!(pretty_fmt!("<b><green>bun<r>", false), "bun");
     }
 
@@ -3037,19 +3150,23 @@ mod pretty_fmt_tests {
                 assert_eq!(
                     pretty_fmt!($s, true).as_bytes(),
                     pretty_fmt_runtime($s.as_bytes(), true).as_slice(),
-                    "enabled mismatch for {:?}", $s,
+                    "enabled mismatch for {:?}",
+                    $s,
                 );
                 assert_eq!(
                     pretty_fmt!($s, false).as_bytes(),
                     pretty_fmt_runtime($s.as_bytes(), false).as_slice(),
-                    "disabled mismatch for {:?}", $s,
+                    "disabled mismatch for {:?}",
+                    $s,
                 );
             }};
         }
         check!("<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>\n");
         check!("<r><d>[<b>{d:>.2}ms<r><d>]<r>");
         check!("<r><red>error<r><d>:<r> ");
-        check!("  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n");
+        check!(
+            "  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n"
+        );
     }
 }
 

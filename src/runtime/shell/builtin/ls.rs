@@ -3,16 +3,16 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
-use bun_sys::{dir_iterator, FdExt, E, O, S};
+use bun_sys::{E, FdExt, O, S, dir_iterator};
 
+use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    shell_openat, EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ShellTask,
+    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
+    shell_openat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Ls {
@@ -64,7 +64,12 @@ impl Ls {
         loop {
             // PORT NOTE: reshaped for borrowck — match on a tag, drop the
             // borrow, then act.
-            enum Tag { Idle, Exec, WaitingWriteErr, Done }
+            enum Tag {
+                Idle,
+                Exec,
+                WaitingWriteErr,
+                Done,
+            }
             let tag = match Self::state_mut(interp, cmd).state {
                 State::Idle => Tag::Idle,
                 State::Exec(_) => Tag::Exec,
@@ -128,8 +133,13 @@ impl Ls {
                         for i in start..argc {
                             let path = Builtin::of(interp, cmd).arg_bytes(i);
                             let task = ShellLsTask::create(
-                                cmd, opts, task_count_ptr, cwd,
-                                ZBox::from_bytes(path), evtloop, interp_ptr,
+                                cmd,
+                                opts,
+                                task_count_ptr,
+                                cwd,
+                                ZBox::from_bytes(path),
+                                evtloop,
+                                interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe {
@@ -139,8 +149,13 @@ impl Ls {
                         }
                     } else {
                         let task = ShellLsTask::create(
-                            cmd, opts, task_count_ptr, cwd,
-                            ZBox::from_bytes(b"."), evtloop, interp_ptr,
+                            cmd,
+                            opts,
+                            task_count_ptr,
+                            cwd,
+                            ZBox::from_bytes(b"."),
+                            evtloop,
+                            interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
                         unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
@@ -157,8 +172,7 @@ impl Ls {
                     };
                     if done {
                         let exit_code: ExitCode = {
-                            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state
-                            else {
+                            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                                 unreachable!()
                             };
                             let code = if exec.err.is_some() { 1 } else { 0 };
@@ -199,11 +213,7 @@ impl Ls {
     }
 
     /// Spec: ls.zig `onShellLsTaskDone`.
-    pub fn on_shell_ls_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellLsTask,
-    ) {
+    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -226,10 +236,7 @@ impl Ls {
 
     /// Spec: ls.zig `parseOpts` / `parseFlags`. Returns the index of the
     /// first non-flag arg, or `None` if there are no positional args.
-    fn parse_opts(
-        interp: &Interpreter,
-        cmd: NodeId,
-    ) -> Result<Option<usize>, LsParseError> {
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, LsParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Ok(None);
@@ -456,9 +463,10 @@ impl ShellLsTask {
             v.extend_from_slice(child);
             return ZBox::from_vec(v);
         }
-        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(
-            &[self.path.as_bytes(), child],
-        );
+        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&[
+            self.path.as_bytes(),
+            child,
+        ]);
         ZBox::from_bytes(out)
     }
 
@@ -469,12 +477,7 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        let fd = match shell_openat(
-            this.cwd,
-            this.path.as_zstr(),
-            O::RDONLY | O::DIRECTORY,
-            0,
-        ) {
+        let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(e) => {
                 match e.get_errno() {
                     E::ENOENT => {
@@ -498,7 +501,9 @@ impl ShellLsTask {
         // `defer fd.close()` — emulate with a scope guard.
         struct CloseOnDrop(bun_sys::Fd);
         impl Drop for CloseOnDrop {
-            fn drop(&mut self) { self.0.close(); }
+            fn drop(&mut self) {
+                self.0.close();
+            }
         }
         let _guard = CloseOnDrop(fd);
 
@@ -578,7 +583,8 @@ impl ShellLsTask {
         let stat = match bun_sys::lstatat(dir_fd, name_z.as_zstr()) {
             Err(_) => {
                 // If stat fails, just output the name with placeholders.
-                self.output.extend_from_slice(b"?????????? ? ? ? ?            ? ");
+                self.output
+                    .extend_from_slice(b"?????????? ? ? ? ?            ? ");
                 self.output.extend_from_slice(name);
                 self.output.push(b'\n');
                 return;
@@ -659,34 +665,70 @@ fn get_file_type_char(mode: u32) -> u8 {
 fn format_permissions(mode: u32) -> [u8; 9] {
     let mut perms = [b'-'; 9];
     // Owner permissions.
-    perms[0] = if mode & (S::IRUSR as u32) != 0 { b'r' } else { b'-' };
-    perms[1] = if mode & (S::IWUSR as u32) != 0 { b'w' } else { b'-' };
+    perms[0] = if mode & (S::IRUSR as u32) != 0 {
+        b'r'
+    } else {
+        b'-'
+    };
+    perms[1] = if mode & (S::IWUSR as u32) != 0 {
+        b'w'
+    } else {
+        b'-'
+    };
     // Owner execute with setuid handling.
     let owner_exec = mode & (S::IXUSR as u32) != 0;
     let setuid = mode & (S::ISUID as u32) != 0;
     perms[2] = if setuid {
         if owner_exec { b's' } else { b'S' }
-    } else if owner_exec { b'x' } else { b'-' };
+    } else if owner_exec {
+        b'x'
+    } else {
+        b'-'
+    };
 
     // Group permissions.
-    perms[3] = if mode & (S::IRGRP as u32) != 0 { b'r' } else { b'-' };
-    perms[4] = if mode & (S::IWGRP as u32) != 0 { b'w' } else { b'-' };
+    perms[3] = if mode & (S::IRGRP as u32) != 0 {
+        b'r'
+    } else {
+        b'-'
+    };
+    perms[4] = if mode & (S::IWGRP as u32) != 0 {
+        b'w'
+    } else {
+        b'-'
+    };
     // Group execute with setgid handling.
     let group_exec = mode & (S::IXGRP as u32) != 0;
     let setgid = mode & (S::ISGID as u32) != 0;
     perms[5] = if setgid {
         if group_exec { b's' } else { b'S' }
-    } else if group_exec { b'x' } else { b'-' };
+    } else if group_exec {
+        b'x'
+    } else {
+        b'-'
+    };
 
     // Other permissions.
-    perms[6] = if mode & (S::IROTH as u32) != 0 { b'r' } else { b'-' };
-    perms[7] = if mode & (S::IWOTH as u32) != 0 { b'w' } else { b'-' };
+    perms[6] = if mode & (S::IROTH as u32) != 0 {
+        b'r'
+    } else {
+        b'-'
+    };
+    perms[7] = if mode & (S::IWOTH as u32) != 0 {
+        b'w'
+    } else {
+        b'-'
+    };
     // Other execute with sticky bit handling.
     let other_exec = mode & (S::IXOTH as u32) != 0;
     let sticky = mode & (S::ISVTX as u32) != 0;
     perms[8] = if sticky {
         if other_exec { b't' } else { b'T' }
-    } else if other_exec { b'x' } else { b'-' };
+    } else if other_exec {
+        b'x'
+    } else {
+        b'-'
+    };
 
     perms
 }
@@ -695,8 +737,7 @@ fn format_permissions(mode: u32) -> [u8; 9] {
 /// (within ~6 months) or `"Mon DD  YYYY"` for older files.
 fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
     const MONTH_NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let mut buf = *b"??? ?? ??:??";
     let epoch_secs: u64 = if timestamp < 0 { 0 } else { timestamp as u64 };
@@ -750,7 +791,9 @@ impl bun_event_loop::Taskable for ShellLsTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) {
+        Self::run_from_thread_pool(this)
+    }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

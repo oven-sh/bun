@@ -1,17 +1,17 @@
-use crate::mal_prelude::*;
-use bun_collections::{ArrayHashMap, VecExt};
-use bun_alloc::ArenaVecExt as _;
-use bun_js_parser as js_ast;
-use bun_ast::{Part, Symbol};
-use bun_ast::ImportRecord;
 use crate::bun_renamer as renamer;
+use crate::mal_prelude::*;
+use bun_alloc::ArenaVecExt as _;
+use bun_ast::ImportRecord;
+use bun_ast::{Part, Symbol};
+use bun_collections::{ArrayHashMap, VecExt};
+use bun_js_parser as js_ast;
 
-use crate::linker_context_mod::{debug, ChunkMeta, ChunkMetaMap};
 use crate::LinkerContext;
 use crate::js_meta;
+use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    chunk, Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index,
-    IndexInt, JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind,
+    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt,
+    JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub fn compute_cross_chunk_dependencies(
@@ -57,9 +57,7 @@ pub fn compute_cross_chunk_dependencies(
         // `BackRef` from raw place addr (not `BackRef::new(&…)`) so no
         // intermediate `&` borrow is pushed before the `split_mut()` calls
         // below — matches the `ctx_ref` construction pattern just above.
-        let symbols_ref = bun_ptr::BackRef::from(
-            core::ptr::NonNull::from(&mut c.graph.symbols),
-        );
+        let symbols_ref = bun_ptr::BackRef::from(core::ptr::NonNull::from(&mut c.graph.symbols));
         let parse_graph = c.parse_graph;
 
         let ast = c.graph.ast.split_mut();
@@ -90,8 +88,7 @@ pub fn compute_cross_chunk_dependencies(
                     // SAFETY: each_ptr partitions `chunks` by index; `walk` only mutates
                     // chunk_meta[idx] / per-source columns disjointly (Zig shared-mutable
                     // pattern). See TODO(port) below re: UnsafeCell.
-                    let deps = &raw const **deps
-                        as *mut CrossChunkDependencies<'_>;
+                    let deps = &raw const **deps as *mut CrossChunkDependencies<'_>;
                     unsafe { (*deps).walk(&mut *chunk, idx) };
                 },
                 chunks,
@@ -203,8 +200,7 @@ impl<'a> CrossChunkDependencies<'a> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
-                        import_record.path.text =
-                            _chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         // TODO(port): Zig assigns the slice by pointer (no copy); decide
                         // ownership of `path.text` vs `unique_key` in Phase B.
                         import_record.source_index = Index::INVALID;
@@ -293,9 +289,9 @@ impl<'a> CrossChunkDependencies<'a> {
                 if flags.wrap != WrapKind::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index() as usize];
-                    let sorted_and_filtered_export_aliases =
-                        &deps.sorted_and_filtered_export_aliases
-                            [chunk.entry_point.source_index() as usize];
+                    let sorted_and_filtered_export_aliases = &deps
+                        .sorted_and_filtered_export_aliases
+                        [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
                         let export_ = resolved_exports.get(alias).unwrap();
                         let mut target_ref = export_.data.import_ref;
@@ -321,10 +317,7 @@ impl<'a> CrossChunkDependencies<'a> {
                         if cfg!(debug_assertions) {
                             // SAFETY: arena slice valid for the link pass.
                             let name = symbols.get_const(target_ref).unwrap().original_name.slice();
-                            debug!(
-                                "Cross-chunk export: {}",
-                                bstr::BStr::new(name),
-                            );
+                            debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
                         }
 
                         let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result (Zig: catch unreachable)
@@ -335,18 +328,20 @@ impl<'a> CrossChunkDependencies<'a> {
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
                     // Zig parity: result intentionally discarded
-                    let _ = chunk_meta
-                        .imports
-                        .put(deps.exports_refs[chunk.entry_point.source_index() as usize], ());
+                    let _ = chunk_meta.imports.put(
+                        deps.exports_refs[chunk.entry_point.source_index() as usize],
+                        (),
+                    );
                 }
 
                 // Include the wrapper if present
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if flags.wrap != WrapKind::None {
                     // Zig parity: result intentionally discarded
-                    let _ = chunk_meta
-                        .imports
-                        .put(deps.wrapper_refs[chunk.entry_point.source_index() as usize], ());
+                    let _ = chunk_meta.imports.put(
+                        deps.wrapper_refs[chunk.entry_point.source_index() as usize],
+                        (),
+                    );
                 }
             }
         }
@@ -385,9 +380,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         // SAFETY: arena slices valid for the link pass.
                         let name = symbol.original_name.slice();
                         let path = {
-                            &c.parse_graph()
-                                .input_files
-                                .items_source()[import_ref.source_index() as usize]
+                            &c.parse_graph().input_files.items_source()
+                                [import_ref.source_index() as usize]
                                 .path
                                 .text
                         };
@@ -400,9 +394,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                     {
                         let js = chunks[chunk_index].content.javascript_mut();
-                        let entry = js
-                            .imports_from_other_chunks
-                            .get_or_put_value(other_chunk_index, CrossChunkImportItemList::default())?;
+                        let entry = js.imports_from_other_chunks.get_or_put_value(
+                            other_chunk_index,
+                            CrossChunkImportItemList::default(),
+                        )?;
                         entry.value_ptr.push(CrossChunkImportItem {
                             r#ref: import_ref,
                             ..Default::default()
@@ -438,7 +433,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
 
-                if chunks[other_chunk_index].entry_bits.is_set(entry_point_id as usize) {
+                if chunks[other_chunk_index]
+                    .entry_bits
+                    .is_set(entry_point_id as usize)
+                {
                     let js = chunks[chunk_index].content.javascript_mut();
                     let _ = js.imports_from_other_chunks.get_or_put_value(
                         other_chunk_index as u32,
@@ -497,22 +495,33 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
                         Vec::<bun_ast::ClauseItem>::init_capacity(stable_ref_list.len());
-                    repr.exports_to_other_chunks
-                        .reserve(stable_ref_list.len());
+                    repr.exports_to_other_chunks.reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile in Phase B
                     r.clear_retaining_capacity();
 
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
-                        let original_name = c.graph.symbols.get_const(ref_).unwrap().original_name.slice();
+                        let original_name = c
+                            .graph
+                            .symbols
+                            .get_const(ref_)
+                            .unwrap()
+                            .original_name
+                            .slice();
                         // The alias is stored on the chunk (`exports_to_other_chunks`,
                         // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
                         // so it must live in the linker arena — `r`'s internal arena is
                         // reset per chunk and dropped at the end of this block.
                         let alias: bun_ast::StoreStr = if c.options.minify_identifiers {
-                            bun_ast::StoreStr::new(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
+                            bun_ast::StoreStr::new(
+                                c.arena()
+                                    .alloc_slice_copy(&r.next_minified_name().expect("OOM")),
+                            )
                         } else {
-                            bun_ast::StoreStr::new(c.arena().alloc_slice_copy(r.next_renamed_name(original_name)))
+                            bun_ast::StoreStr::new(
+                                c.arena()
+                                    .alloc_slice_copy(r.next_renamed_name(original_name)),
+                            )
                         };
 
                         clause_items.push(bun_ast::ClauseItem {
@@ -536,8 +545,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
                         // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr =
-                            bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
+                        let items_ptr = bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
                         core::mem::forget(clause_items);
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
@@ -581,7 +589,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     .javascript_mut()
                     .imports_from_other_chunks,
             );
-            let mut cross_chunk_imports = core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
+            let mut cross_chunk_imports =
+                core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
             // PORT NOTE: reshaped for borrowck — Zig copies the Vec by value, mutates,
             // then writes back; we `take` to express the same move-out/move-in.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
@@ -599,10 +608,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let import_record_index =
                             u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
 
-                        let mut clauses = bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
-                            cross_chunk_import.sorted_import_items.len() as usize,
-                            c.arena(),
-                        );
+                        let mut clauses =
+                            bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
+                                cross_chunk_import.sorted_import_items.len() as usize,
+                                c.arena(),
+                            );
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
@@ -620,8 +630,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             import_kind: bun_ast::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
                         });
-                        let items_ptr =
-                            bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
+                        let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.Import)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let import = c.arena().alloc(bun_ast::S::Import {

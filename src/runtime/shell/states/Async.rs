@@ -1,13 +1,15 @@
+use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{
+    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
-use crate::shell::states::pipeline::Pipeline;
 use crate::shell::states::r#if::If;
+use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 pub struct Async {
     pub base: Base,
@@ -26,7 +28,9 @@ pub enum AsyncState {
 }
 
 impl Default for AsyncState {
-    fn default() -> Self { AsyncState::Idle }
+    fn default() -> Self {
+        AsyncState::Idle
+    }
 }
 
 impl Async {
@@ -37,7 +41,9 @@ impl Async {
         parent: NodeId,
         io: IO,
     ) -> NodeId {
-        interp.async_commands_executing.set(interp.async_commands_executing.get() + 1);
+        interp
+            .async_commands_executing
+            .set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
         interp.alloc_node(Node::Async(Async {
             base: Base::new(StateKind::Async, parent, shell),
@@ -58,7 +64,11 @@ impl Async {
     }
 
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        log!("Async {} next {}", this, <&'static str>::from(&interp.as_async(this).state));
+        log!(
+            "Async {} next {}",
+            this,
+            <&'static str>::from(&interp.as_async(this).state)
+        );
         let action = {
             let me = interp.as_async_mut(this);
             match &mut me.state {

@@ -34,16 +34,16 @@ pub mod css_modules {
 // CssModule::reference_dashed. url.rs is real (struct +
 // is_absolute); parse/to_css gated on Parser::add_import_record + WriteAll
 // for Vec<u8>. position.rs stays gated on length::LengthPercentage.
-pub mod number;
 pub mod angle;
 pub mod css_string;
+pub mod number;
 pub use self::css_string as string;
 pub mod alpha;
+pub mod calc;
+pub mod percentage;
 pub mod ratio;
 pub mod resolution;
 pub mod time;
-pub mod calc;
-pub mod percentage;
 // ─── B-2 round 5: remaining lattice leaves un-gated ──────────────────────
 // length/position/size/rect/easing/syntax now compile for real (parse + to_css
 // + protocol-trait impls). `DimensionPercentage<D>` method block is real;
@@ -51,11 +51,11 @@ pub mod percentage;
 // are real. The `protocol` submodule below supplies the numeric protocol
 // traits (`Zero`/`MulF32`/`TryAdd`/`Parse`) that `crate::generics` only
 // defines inside its still-gated `parse_tocss_numeric_gated` block.
+pub mod easing;
 pub mod length;
 pub mod position;
-pub mod size;
 pub mod rect;
-pub mod easing;
+pub mod size;
 pub mod syntax;
 // ─── B-2 round 6: cross-module hubs un-gated ─────────────────────────────
 // color/gradient/image now compile as real `pub mod`s. `color.rs` exposes

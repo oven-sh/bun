@@ -3,8 +3,8 @@
 //! Referenced from `PathInlines.h`.
 
 use crate::JSGlobalObject;
-use bun_paths::resolve_path;
 use bun_core::String as BunString;
+use bun_paths::resolve_path;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(

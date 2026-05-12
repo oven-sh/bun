@@ -145,7 +145,11 @@ impl Binding {
 
 #[derive(Copy, Clone)]
 pub struct ToExprWrapper {
-    arena: *const Arena,
+    /// Back-reference to `P.arena`. `BackRef` invariant: the arena is owned by
+    /// `P<'a>` and outlives every `ToExprWrapper` (which is stored on `P` and
+    /// only used during the visit pass). `None` only for the pre-wire
+    /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
+    arena: Option<bun_ptr::BackRef<Arena>>,
     wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
 }
 
@@ -154,7 +158,7 @@ impl ToExprWrapper {
     /// arena + trampoline.
     pub const fn dangling() -> Self {
         Self {
-            arena: core::ptr::null(),
+            arena: None,
             wrap: |_, _, _| unreachable!("ToExprWrapper used before prepare_for_visit_pass"),
         }
     }
@@ -170,7 +174,7 @@ impl ToExprWrapper {
         arena: &Arena,
         wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
     ) -> Self {
-        Self { arena: std::ptr::from_ref::<Arena>(arena), wrap }
+        Self { arena: Some(bun_ptr::BackRef::new(arena)), wrap }
     }
 
     #[inline]
@@ -180,10 +184,12 @@ impl ToExprWrapper {
 
     #[inline]
     pub fn arena(&self) -> &Arena {
-        debug_assert!(!self.arena.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
-        // SAFETY: `arena` was `&'a Arena` (P.arena) at `new()` time and
-        // outlives every Binding produced during the visit pass.
-        unsafe { &*self.arena }
+        // `BackRef::get` encapsulates the deref under the owner-outlives-holder
+        // invariant; `expect` mirrors the prior `debug_assert!(!null)`.
+        self.arena
+            .as_ref()
+            .expect("ToExprWrapper not wired (prepare_for_visit_pass)")
+            .get()
     }
 }
 

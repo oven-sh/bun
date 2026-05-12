@@ -175,6 +175,17 @@ macro_rules! new_store {
                     }
                 }
 
+                /// Reborrow the active block. Centralises the raw `NonNull`
+                /// deref so `reset`/`allocate` stay safe at every bump.
+                #[inline]
+                fn current_mut(store: &mut Store) -> &mut Block {
+                    // SAFETY: `current` is initialised to `&first_block` in
+                    // `PreAlloc::zero` and every reassignment (`reset`,
+                    // `allocate`) stores a `NonNull` derived from a live block
+                    // in the owned `next` chain; the pointee outlives `store`.
+                    unsafe { store.current.as_mut() }
+                }
+
                 pub fn init() -> *mut Store {
                     /* scoped_log elided — debug_logs feature only */
                     // Avoid initializing the entire struct.
@@ -234,11 +245,11 @@ macro_rules! new_store {
 
                     #[cfg(debug_assertions)]
                     {
-                        let mut it: Option<NonNull<Block>> =
-                            Some(NonNull::from(Store::first_block(store)));
-                        while let Some(mut next) = it {
-                            // SAFETY: walking the owned block chain; no aliasing.
-                            let next = unsafe { next.as_mut() };
+                        // `next: Option<Box<Block>>` makes the chain a safe
+                        // singly-linked list; walk it via `&mut` reborrows
+                        // instead of round-tripping through `NonNull`.
+                        let mut it: Option<&mut Block> = Some(Store::first_block(store));
+                        while let Some(next) = it {
                             // Zig: `next.bytes_used = undefined; @memset(&next.buffer, undefined);`
                             // SAFETY: poisoning; buffer is MaybeUninit<u8>.
                             unsafe {
@@ -248,13 +259,12 @@ macro_rules! new_store {
                                     Block::SIZE,
                                 );
                             }
-                            it = next.next.as_deref_mut().map(NonNull::from);
+                            it = next.next.as_deref_mut();
                         }
                     }
 
                     store.current = NonNull::from(Store::first_block(store));
-                    // SAFETY: current was just set to a valid block.
-                    unsafe { store.current.as_mut() }.bytes_used = 0;
+                    Store::current_mut(store).bytes_used = 0;
                 }
 
                 fn allocate<T>(store: &mut Store) -> NonNull<T> {
@@ -262,8 +272,7 @@ macro_rules! new_store {
                     // TODO(port): `comptime if (!supportsType(T)) @compileError(...)` —
                     // enforce via a sealed trait generated over `$($T),+`.
 
-                    // SAFETY: `current` always points into the live block chain.
-                    let current = unsafe { store.current.as_mut() };
+                    let current = Store::current_mut(store);
                     if let Some(ptr) = Block::try_alloc::<T>(current) {
                         return ptr;
                     }
@@ -284,8 +293,7 @@ macro_rules! new_store {
 
                     store.current = next_block;
 
-                    // SAFETY: just assigned above.
-                    Block::try_alloc::<T>(unsafe { store.current.as_mut() })
+                    Block::try_alloc::<T>(Store::current_mut(store))
                         // newly initialized blocks must have enough space for at least one
                         .unwrap_or_else(|| unreachable!())
                 }

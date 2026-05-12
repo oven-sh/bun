@@ -649,6 +649,19 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test("many custom conditions does not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-api-many-conditions", {
+      "entry.js": "console.log(1)",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    });
+
+    expect(result.success).toBe(true);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

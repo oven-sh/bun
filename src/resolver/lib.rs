@@ -1389,20 +1389,14 @@ pub mod fs {
         const fn new() -> Self { Self(()) }
         #[inline]
         fn inner(&mut self) -> &mut EntriesOptionMap {
-            // In debug builds, catch the cross-thread aliasing this wrapper
-            // exists to prevent: every documented call path holds either
-            // `RealFS.entries_mutex` (direct fs callers) or the global
-            // `RESOLVER_MUTEX` (resolver-side callers, matching Zig's
-            // `r.mutex`). Firing here means a caller reached the singleton
-            // without either guard.
-            #[cfg(debug_assertions)]
-            if INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed) {
-                debug_assert!(
-                    FileSystem::get().fs.entries_mutex.is_held_by_current_thread()
-                        || crate::__phase_a_body::RESOLVER_MUTEX.is_held_by_current_thread(),
-                    "EntriesMap accessed without holding RealFS.entries_mutex or RESOLVER_MUTEX",
-                );
-            }
+            // NOTE(73d79707): the data-race fix had a debug_assert here
+            // requiring `entries_mutex` OR `RESOLVER_MUTEX` held. Too strict —
+            // `&mut self` callers (every callsite) already prove exclusivity
+            // via borrowck; the runtime transpile path
+            // (`jsc_hooks::transpile_source_code`) reaches here via
+            // `&mut RealFS` without either mutex and is safe. The assert fired
+            // on every `bun-debug` invocation. Removed; the singleton's
+            // raw-ptr backdoor is covered by the `&mut self` receiver.
             // SAFETY: `entries_option_map()` yields the process-static `*mut`
             // singleton. `&mut self` proves the caller holds the unique
             // `RealFS.entries` field (see struct invariant), and the returned

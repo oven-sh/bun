@@ -8,10 +8,9 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
+use bun_threading::unbounded_queue::{Link, Linked};
 use bun_threading::UnboundedQueue;
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
@@ -252,9 +251,14 @@ impl Taskable for crate::ManagedTask::ManagedTask {
 #[repr(C)]
 pub struct ConcurrentTask {
     pub task: Task,
-    /// Packed representation of the next pointer and auto_delete flag.
-    /// Uses the low bit to store auto_delete (since pointers are at least 2-byte aligned).
-    pub next: PackedNextPtr,
+    /// Intrusive MPSC link for [`Queue`]. Plain `AtomicPtr` so the enqueue hot
+    /// path (`atomic_store_next`, called once per completed work-pool task via
+    /// `enqueue_task_concurrent`) is a single release-store — no read-modify-write.
+    pub next: Link<ConcurrentTask>,
+    /// If `true`, the task is heap-owned and freed by the event loop after
+    /// dispatch. Immutable after construction; read only on the consumer thread,
+    /// so it does not need to share a word with the contended `next` link.
+    pub auto_delete: bool,
 }
 
 impl Default for ConcurrentTask {
@@ -262,128 +266,36 @@ impl Default for ConcurrentTask {
         Self {
             // SAFETY: matches Zig `task: Task = undefined` — caller must set before use.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
-            next: PackedNextPtr::NONE,
+            next: Link::new(),
+            auto_delete: false,
         }
     }
 }
 
-/// Packed next pointer that encodes both the next ConcurrentTask pointer and the auto_delete flag.
-/// Uses the low bit for auto_delete since ConcurrentTask pointers are at least 2-byte aligned.
-///
-/// Backed directly by `AtomicUsize` so the atomic accessors need no `&usize → &AtomicUsize`
-/// pointer-cast (the previous repr stored a plain `usize` and reinterpreted it per-call).
-/// Non-atomic call sites use `Relaxed` — same codegen as a plain word read/write on every
-/// target we ship, and matches Zig's `@atomicLoad(.Monotonic)` lower bound.
-#[repr(transparent)]
-pub struct PackedNextPtr(AtomicUsize);
-
-impl PackedNextPtr {
-    pub const NONE: Self = Self(AtomicUsize::new(0));
-    pub const AUTO_DELETE: Self = Self(AtomicUsize::new(1));
-
-    #[inline]
-    pub fn init(ptr: Option<*mut ConcurrentTask>, auto_del: bool) -> PackedNextPtr {
-        let ptr_bits = match ptr {
-            Some(p) => p as usize,
-            None => 0,
-        };
-        Self(AtomicUsize::new(ptr_bits | (auto_del as usize)))
-    }
-
-    #[inline]
-    pub fn get_ptr(&self) -> Option<*mut ConcurrentTask> {
-        let addr = self.0.load(Ordering::Relaxed) & !1usize;
-        if addr == 0 {
-            None
-        } else {
-            Some(addr as *mut ConcurrentTask)
-        }
-    }
-
-    #[inline]
-    pub fn set_ptr(&self, ptr: Option<*mut ConcurrentTask>) {
-        let auto_del = self.0.load(Ordering::Relaxed) & 1;
-        let ptr_bits = match ptr {
-            Some(p) => p as usize,
-            None => 0,
-        };
-        self.0.store(ptr_bits | auto_del, Ordering::Relaxed);
-    }
-
-    #[inline]
-    pub fn is_auto_delete(&self) -> bool {
-        (self.0.load(Ordering::Relaxed) & 1) != 0
-    }
-
-    #[inline]
-    pub fn atomic_load_ptr(&self, ordering: Ordering) -> Option<*mut ConcurrentTask> {
-        let addr = self.0.load(ordering) & !1usize;
-        if addr == 0 {
-            None
-        } else {
-            Some(addr as *mut ConcurrentTask)
-        }
-    }
-
-    #[inline]
-    pub fn atomic_store_ptr(&self, ptr: Option<*mut ConcurrentTask>, ordering: Ordering) {
-        let ptr_bits = match ptr {
-            Some(p) => p as usize,
-            None => 0,
-        };
-        // auto_delete is immutable after construction, so we can safely read it
-        // with a relaxed load and preserve it in the new value.
-        let auto_del_bit = self.0.load(Ordering::Relaxed) & 1;
-        self.0.store(ptr_bits | auto_del_bit, ordering);
-    }
-}
-
-// TODO(b0): Zig packed Task (tag+ptr) into one word via TaggedPointerUnion, so
-// ConcurrentTask was 16 bytes. Phase-B0 `Task` is two words; restore packing in
-// Phase B (e.g. `#[repr(transparent)] struct Task(usize)` with low-bits tag).
+// PORT NOTE: Zig packs `auto_delete` into bit 0 of `next` (`PackedNextPtr`) to
+// keep `ConcurrentTask` at 16 bytes. The Rust port deliberately splits it back
+// out: `Task` is already two words here (tag is not packed into the pointer),
+// so the struct was never 16B, and profiling (build/create-next benches) showed
+// the packed form costs a Relaxed load + OR on every `atomic_store_next` —
+// turning the MPSC enqueue's single release-store into a load-then-store on a
+// cache line that is bouncing between producer threads and the JS-thread
+// consumer. The extra word of padding is cheap; the contended RMW is not.
 const _: () = assert!(
     core::mem::size_of::<ConcurrentTask>()
-        == core::mem::size_of::<Task>() + core::mem::size_of::<usize>(),
-    "ConcurrentTask = Task + packed next ptr"
-);
-// PackedNextPtr stores a pointer in the upper bits and auto_delete in bit 0.
-// This requires ConcurrentTask to be at least 2-byte aligned.
-const _: () = assert!(
-    core::mem::align_of::<ConcurrentTask>() >= 2,
-    "ConcurrentTask must be at least 2-byte aligned for pointer packing"
+        == core::mem::size_of::<Task>() + 2 * core::mem::size_of::<usize>(),
+    "ConcurrentTask = Task + next ptr + auto_delete (padded)"
 );
 
-// TODO(port): UnboundedQueue's second param `.next` is the intrusive link field name.
-// Rust side will need an intrusive-link trait or `offset_of!(ConcurrentTask, next)`.
-//
-// SAFETY: all four accessors route through the same `next: PackedNextPtr` field;
-// the atomic variants delegate to `PackedNextPtr::atomic_*` which use
-// `AtomicUsize` over the repr(transparent) backing word.
-unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next.get_ptr().unwrap_or(core::ptr::null_mut()) }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe {
-            (*item)
-                .next
-                .set_ptr(if ptr.is_null() { None } else { Some(ptr) })
-        };
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            (*item)
-                .next
-                .atomic_load_ptr(ordering)
-                .unwrap_or(core::ptr::null_mut())
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            (*item)
-                .next
-                .atomic_store_ptr(if ptr.is_null() { None } else { Some(ptr) }, ordering)
-        };
+// SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
+// field; `UnboundedQueue` only calls it with a valid, non-null, aligned `item`.
+// The blanket `impl<T: Linked> Node for T` supplies the four accessors as
+// straight `AtomicPtr` load/store — no bit-masking, no preservation load.
+unsafe impl Linked for ConcurrentTask {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const Link<Self> {
+        // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
+        // form a raw pointer to the field, no intermediate `&`/`&mut`.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
@@ -415,7 +327,8 @@ impl ConcurrentTask {
     pub fn create(task: Task) -> *mut ConcurrentTask {
         ConcurrentTask::new(ConcurrentTask {
             task,
-            next: PackedNextPtr::AUTO_DELETE,
+            next: Link::new(),
+            auto_delete: true,
         })
     }
 
@@ -461,18 +374,16 @@ impl ConcurrentTask {
         // bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
-            next: if auto_deinit == AutoDeinit::AutoDeinit {
-                PackedNextPtr::AUTO_DELETE
-            } else {
-                PackedNextPtr::NONE
-            },
+            next: Link::new(),
+            auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
         };
         self
     }
 
     /// Returns whether this task should be automatically deallocated after execution.
+    #[inline]
     pub fn auto_delete(&self) -> bool {
-        self.next.is_auto_delete()
+        self.auto_delete
     }
 }
 

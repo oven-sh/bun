@@ -948,6 +948,22 @@ impl FileSink {
                     .lock()
                     .ok()
                     .and_then(|m| m.get(&(self as *const _ as usize)).cloned())
+                    // Cap the backtrace: a full Windows `Backtrace::force_capture()`
+                    // string easily exceeds the panic-format buffer, which made
+                    // the panic message (and thus the bun.report `0…` segment)
+                    // come out empty in CI #53811 — defeating the whole probe.
+                    .map(|s| {
+                        const CAP: usize = 2000;
+                        if s.len() > CAP {
+                            let mut end = CAP;
+                            while !s.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            format!("{}\n…(+{} bytes truncated)", &s[..end], s.len() - end)
+                        } else {
+                            s
+                        }
+                    })
                     .unwrap_or_else(|| "<no deinit backtrace recorded>".into());
                 #[cfg(not(windows))]
                 let freed_bt = String::from("<no FREED_AT entry — never reached deinit; m_sinkPtr was bogus from start OR deinit not called>");

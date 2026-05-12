@@ -200,31 +200,31 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
             true,
         ) orelse {
             if (isExcludedByName(name_str, manager.options.minimum_release_age_excludes)) continue;
-            manager.log.addErrorFmt(
+            bun.handleOom(manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
                 manager.allocator,
                 "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (manifest unavailable)",
                 .{ name_str, resolution.value.npm.version.fmt(string_buf) },
-            ) catch bun.outOfMemory();
+            ));
             continue;
         };
 
         if (manifest.shouldExcludeFromAgeFilter(manager.options.minimum_release_age_excludes)) continue;
 
         const find_result = manifest.findByVersion(resolution.value.npm.version) orelse {
-            manager.log.addErrorFmt(
+            bun.handleOom(manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
                 manager.allocator,
                 "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (version not in manifest)",
                 .{ name_str, resolution.value.npm.version.fmt(string_buf) },
-            ) catch bun.outOfMemory();
+            ));
             continue;
         };
         if (!Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) continue;
 
-        manager.log.addErrorFmt(
+        bun.handleOom(manager.log.addErrorFmt(
             null,
             logger.Loc.Empty,
             manager.allocator,
@@ -234,7 +234,7 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
                 resolution.value.npm.version.fmt(string_buf),
                 min_age_seconds,
             },
-        ) catch bun.outOfMemory();
+        ));
     }
 }
 

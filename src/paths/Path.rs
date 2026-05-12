@@ -333,9 +333,7 @@ impl PathUnit for u8 {
     }
     #[inline]
     fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
-        strings::convert_utf16_to_utf8_in_buffer(dest, src)
-            .expect("unreachable")
-            .len()
+        strings::convert_utf16_to_utf8_in_buffer(dest, src).len()
     }
 }
 
@@ -759,10 +757,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Err(bun_core::Error::intern("FileNotFound"));
                 }
                 let wide = &wslice[..n as usize];
-                let written = match strings::convert_utf16_to_utf8_in_buffer(buf, wide) {
-                    Ok(s) => s.len(),
-                    Err(r) => r.written as usize,
-                };
+                let written = strings::convert_utf16_to_utf8_in_buffer(buf, wide).len();
                 let raw = &buf[..written];
                 let trimmed = trim_input(TrimInputKind::Abs, raw);
                 this._buf.len = trimmed.len();
@@ -1213,10 +1208,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 let mut path_buf = crate::path_buffer_pool::get();
                 let part_u16: &[u16] = C::id_u16(part);
                 let converted =
-                    match strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16) {
-                        Ok(c) => c,
-                        Err(_) => return Err(PathError::MaxPathExceeded),
-                    };
+                    strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16);
                 return self.append_join::<u8>(converted);
             }
         }
@@ -1257,10 +1249,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let mut to_buf = crate::path_buffer_pool::get();
             let mut rel_buf = crate::path_buffer_pool::get();
 
-            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16)
-                .expect("unreachable");
-            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16)
-                .expect("unreachable");
+            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16);
+            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16);
 
             let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());

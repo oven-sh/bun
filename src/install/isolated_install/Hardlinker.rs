@@ -177,18 +177,15 @@ impl Hardlinker {
                                             );
                                         }
 
-                                        'try_delete: {
+                                        {
                                             let mut delete_tree_buf =
                                                 bun_paths::path_buffer_pool::get();
 
-                                            let Ok(delete_tree_path) =
+                                            let delete_tree_path =
                                                 bun_core::convert_utf16_to_utf8_in_buffer(
                                                     &mut delete_tree_buf[..],
                                                     self.dest.slice(),
-                                                )
-                                            else {
-                                                break 'try_delete;
-                                            };
+                                                );
                                             let _ = Fd::cwd().delete_tree(delete_tree_path);
                                         }
                                         match sys::link_w(self.src.slice_z(), destfile_path) {

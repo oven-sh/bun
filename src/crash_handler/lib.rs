@@ -2457,9 +2457,9 @@ mod draft {
                         // or bare drive prefix, so the std.fs.path.basenameWindows
                         // stripping is a no-op on this domain.
                         let basename = bun_paths::basename_windows(name);
-                        strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename)
-                            .ok()
-                            .map(|s| Box::<[u8]>::from(s))
+                        Some(Box::<[u8]>::from(
+                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                        ))
                     } else {
                         None
                     },

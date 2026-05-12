@@ -438,7 +438,14 @@ impl<'a> Writable<'a> {
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
                     pipe.on_attached_process_exit(&subprocess.process().status);
-                    pipe.to_js(global_this)
+                    // Rust `FileSink::to_js` takes its own per-wrapper +1 (Zig's
+                    // `toJS` *transfers* the create-time +1). Release the
+                    // enum's create-time +1 now that the wrapper holds its own
+                    // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
+                    // to `Ignore` above so `on_close` won't double-release.
+                    let js = pipe.to_js(global_this);
+                    Self::pipe_release(pipe_nn);
+                    js
                 } else {
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
@@ -458,12 +465,17 @@ impl<'a> Writable<'a> {
                     {
                         pipe.signal.with_mut(|s| s.clear());
                     }
-                    pipe.to_js_with_destructor(
+                    // Rust `FileSink::to_js_with_destructor` takes its own
+                    // per-wrapper +1; release the enum's create-time +1 (see
+                    // the has-exited arm above and Blob.rs:1899-1902).
+                    let js = pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
                             subprocess.as_ctx_ptr().cast::<c_void>(),
                         )),
-                    )
+                    );
+                    Self::pipe_release(pipe_nn);
+                    js
                 }
             }
         }

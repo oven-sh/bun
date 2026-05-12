@@ -53,8 +53,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         let mut convert_buf = w_path_buffer_pool::get();
         let result = which_win(&mut *convert_buf, path, cwd, bin)?;
         let result_converted =
-            bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result)
-                .expect("unreachable");
+            bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result);
         // PORT NOTE: reshaped for borrowck — capture len/ptr before re-borrowing buf
         let result_converted_len = result_converted.len();
         let result_converted_ptr = result_converted.as_ptr();

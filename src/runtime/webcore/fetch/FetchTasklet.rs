@@ -187,12 +187,13 @@ impl HTTPRequestBody {
         }
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
-                // just grab the ref
-                // TODO(port): partial move out of body_value.Locked.readable
-                if let BodyValue::Locked(l) = body_value {
-                    return Ok(HTTPRequestBody::ReadableStream(l.readable));
-                }
-                unreachable!();
+                // PORT NOTE: `BodyValue` now has `Drop` (H3), so we cannot move
+                // `l.readable` out by value (E0509). `mem::take` leaves a default
+                // readable; `Value::drop` on the residual `Locked` then runs
+                // `readable.deinit()` on that default — a no-op.
+                return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                    &mut locked.readable,
+                )));
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
@@ -200,10 +201,10 @@ impl HTTPRequestBody {
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
-                        if let BodyValue::Locked(l) = body_value {
-                            return Ok(HTTPRequestBody::ReadableStream(l.readable));
-                        }
-                        unreachable!();
+                        // See PORT NOTE above re: E0509 and `Value::drop`.
+                        return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                            &mut l.readable,
+                        )));
                     }
                 }
             }

@@ -190,9 +190,10 @@ export function dummyRegistryForContext(
     if (url.endsWith(".tgz")) {
       return new Response(file(join(import.meta.dir, basename(url).toLowerCase())), { status });
     }
-    expect(request.headers.get("accept")).toBe(
+    expect([
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
+      "application/json, */*",
+    ]).toContain(request.headers.get("accept"));
     if (check_npm_auth_type.check) {
       expect(request.headers.get("npm-auth-type")).toBe(null);
     }
@@ -267,9 +268,10 @@ export function dummyRegistry(
       const tgzPath = join(tgzDir ?? import.meta.dir, basename(url).toLowerCase());
       return new Response(file(tgzPath), { status });
     }
-    expect(request.headers.get("accept")).toBe(
+    expect([
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
+      "application/json, */*",
+    ]).toContain(request.headers.get("accept"));
     if (check_npm_auth_type.check) {
       expect(request.headers.get("npm-auth-type")).toBe(null);
     }

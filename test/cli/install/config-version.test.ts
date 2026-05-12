@@ -42,7 +42,7 @@ describe("configVersion", () => {
     expect(lockfile).toMatchInlineSnapshot(`
       "{
         "lockfileVersion": 1,
-        "configVersion": 1,
+        "configVersion": 2,
         "workspaces": {
           "": {
             "name": "new-proj",
@@ -90,7 +90,7 @@ describe("configVersion", () => {
     expect(lockfile).toMatchInlineSnapshot(`
       "{
         "lockfileVersion": 1,
-        "configVersion": 1,
+        "configVersion": 2,
         "workspaces": {
           "": {
             "name": "new-proj",

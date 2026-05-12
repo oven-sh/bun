@@ -767,9 +767,10 @@ describe("Large payload via ipc pipe", () => {
         if (url.endsWith(".tgz")) {
           return new Response(Bun.file(join(tgzTempDir, url.slice(url.lastIndexOf("/") + 1).toLowerCase())));
         }
-        expect(request.headers.get("accept")).toBe(
+        expect([
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-        );
+          "application/json, */*",
+        ]).toContain(request.headers.get("accept"));
         expect(request.headers.get("npm-auth-type")).toBe(null);
         expect(await request.text()).toBe("");
         const name = new URL(url).pathname.replace(`/${ctx.id}/`, "");

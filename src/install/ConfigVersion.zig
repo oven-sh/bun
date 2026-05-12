@@ -1,8 +1,9 @@
 pub const ConfigVersion = enum {
     v0,
     v1,
+    v2,
 
-    pub const current: ConfigVersion = .v1;
+    pub const current: ConfigVersion = .v2;
 
     pub fn fromExpr(expr: bun.ast.Expr) ?ConfigVersion {
         if (expr.data != .e_number) {
@@ -14,6 +15,8 @@ pub const ConfigVersion = enum {
             return .v0;
         } else if (version == 1) {
             return .v1;
+        } else if (version == 2) {
+            return .v2;
         }
 
         if (@trunc(version) != version) {
@@ -31,6 +34,7 @@ pub const ConfigVersion = enum {
         return switch (int) {
             0 => .v0,
             1 => .v1,
+            2 => .v2,
             else => {
                 if (int > @intFromEnum(current)) {
                     return current;

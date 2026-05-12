@@ -3,7 +3,7 @@
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: basic-dependencies 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "basic-test",
@@ -34,7 +34,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: canary-versions 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "canary-test",
@@ -59,7 +59,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: monorepo-workspaces 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "monorepo-root",
@@ -113,7 +113,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: patches-overrides 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "patches-test",
@@ -138,7 +138,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: file-link-deps 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "file-links-test",
@@ -160,7 +160,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: custom-registries 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "registries-test",
@@ -182,7 +182,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: peer-dependencies 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "peer-deps-test",
@@ -211,7 +211,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: duplicate-packages 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "duplicates-test",
@@ -243,7 +243,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: catalogs 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "catalogs-test",
@@ -277,7 +277,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: integrity-hashes 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "integrity-test",
@@ -299,7 +299,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: version-zero 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "version-zero-test",
@@ -318,7 +318,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: mixed-dependency-types 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "mixed-deps-test",
@@ -350,7 +350,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: circular-workspaces 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "circular-test",

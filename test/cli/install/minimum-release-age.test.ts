@@ -1317,6 +1317,223 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@3.0.0");
     });
 
+    test("CLI flag accepts ms-style duration string", async () => {
+      using dir = tempDir("cli-ms-string", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 5 days -> 2.1.0 (6 days old) passes, 3.0.0 (1 day old) blocked
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("CLI flag accepts ms-style duration string with space", async () => {
+      using dir = tempDir("cli-ms-string-space", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "1 week", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 7 days -> 2.0.0 (10 days old) passes, 2.1.0 (6 days) and 3.0.0 (1 day) blocked
+      expect(lockfile).toContain("regular-package@2.0.0");
+      expect(lockfile).not.toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("CLI flag rejects invalid duration string", async () => {
+      using dir = tempDir("cli-ms-invalid", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "banana"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("--minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("bunfig accepts ms-style duration string", async () => {
+      using dir = tempDir("bunfig-ms-string", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "5 days"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("bunfig rejects invalid duration string", async () => {
+      using dir = tempDir("bunfig-ms-invalid", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "nope"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("minimumReleaseAge");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("new projects default to 2-day minimum release age", async () => {
+      using dir = tempDir("default-age-new", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Default 2 days -> 3.0.0 (1 day old) blocked, 2.1.0 (6 days) selected
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+      expect(lockfile).toContain('"configVersion": 2');
+    });
+
+    test("existing configVersion 1 projects have no default minimum release age", async () => {
+      using dir = tempDir("default-age-v1", {
+        "package.json": JSON.stringify({
+          name: "foo",
+          dependencies: { "regular-package": "*" },
+        }),
+        // Existing lockfile at configVersion 1 without the new dependency;
+        // bun install will detect the diff and resolve it.
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: {
+            "": {
+              name: "foo",
+            },
+          },
+          packages: {},
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // No default filter on v1 -> latest (3.0.0)
+      expect(lockfile).toContain("regular-package@3.0.0");
+      expect(lockfile).toContain('"configVersion": 1');
+    });
+
+    test("bunfig minimumReleaseAge = 0 disables the default", async () => {
+      using dir = tempDir("default-age-bunfig-zero", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = 0
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // New project would default to 2 days, but bunfig 0 disables it -> latest
+      expect(lockfile).toContain("regular-package@3.0.0");
+    });
+
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {
@@ -1807,7 +2024,7 @@ registry = "${mockRegistryUrl}"`,
 
       // First install without minimum-release-age to get latest
       let proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "0"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1979,7 +2196,7 @@ linker = "${linker}"
       expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
           "{
             "lockfileVersion": 1,
-            "configVersion": 1,
+            "configVersion": 2,
             "workspaces": {
               "": {
                 "name": "my-monorepo",

@@ -3,7 +3,7 @@
 exports[`should write plaintext lockfiles 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "test-package",
@@ -22,7 +22,7 @@ exports[`should write plaintext lockfiles 1`] = `
 exports[`should escape names 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "quote-in-dependency-name",
@@ -49,7 +49,7 @@ exports[`should escape names 1`] = `
 exports[`should be the default save format 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "jquery-4",
@@ -68,7 +68,7 @@ exports[`should be the default save format 1`] = `
 exports[`should be the default save format 2`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "jquery-4",
@@ -90,7 +90,7 @@ exports[`should be the default save format 2`] = `
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "test-pkg",
@@ -109,7 +109,7 @@ exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile 
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 2`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "test-pkg",
@@ -301,7 +301,7 @@ exports[`should not deduplicate bundled packages with un-bundled packages 2`] = 
 exports[`should not change formatting unexpectedly 2`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "pkg-root",
@@ -401,7 +401,7 @@ exports[`should not change formatting unexpectedly 2`] = `
 exports[`should sort overrides before comparing 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "pkg-with-overrides",
@@ -439,7 +439,7 @@ exports[`should sort overrides before comparing 1`] = `
 exports[`should include unused resolutions in the lockfile 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "workspaces": {
     "": {
       "name": "pkg-with-unused-override",

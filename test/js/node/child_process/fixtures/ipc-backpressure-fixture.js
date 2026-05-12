@@ -26,8 +26,11 @@ if (process.argv[2] === "child") {
   let count = 0;
   let ok;
   // Hard upper bound guards against the broken behaviour: if backpressure
-  // never triggers, we bail out so the test fails instead of hanging.
-  const LIMIT = 10_000;
+  // never triggers we want to bail out fast so the test fails on the
+  // `NEVER_BACKPRESSURED` assertion rather than on a wall-clock timeout.
+  // 500 * 64 KiB = 32 MiB of IPC traffic, which completes in a few seconds
+  // even under the debug + ASAN build the gate uses.
+  const LIMIT = 500;
   do {
     pending++;
     ok = process.send({ count: ++count, filler }, drain);

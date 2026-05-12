@@ -19,7 +19,6 @@
 //! with the previous `Arena = bumpalo::Bump` alias.
 
 use core::alloc::{AllocError, Allocator, Layout};
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
@@ -97,17 +96,6 @@ pub struct MimallocArena {
     /// Zig's `default_allocator` shape for callers that just need an `&Arena`
     /// without paying `mi_heap_new` + `mi_heap_destroy`.
     owns: bool,
-    /// Approximate bytes requested from this heap since the last
-    /// `reset()`/`mi_heap_destroy`. Tracked so [`Self::reset_retain_with_limit`]
-    /// can match Zig's `std.heap.ArenaAllocator.reset(.{.retain_with_limit = N})`
-    /// (keep up to N bytes of capacity warm; only pay the `mi_heap_destroy` +
-    /// `mi_heap_new` round-trip when accumulated garbage exceeds the limit).
-    /// `Cell` because the `Allocator` trait takes `&self`; the per-alloc cost
-    /// is one non-atomic load+add+store on the same cache line as `heap`.
-    /// Counts *requested* `Layout::size`, not mimalloc's rounded-up usable
-    /// size, so this is a lower bound on the heap's actual footprint — fine
-    /// for a soft retain limit.
-    bytes_since_reset: Cell<usize>,
     /// Zig: `thread_lock: bun.safety.ThreadLock` (debug-only). Stamped on
     /// `new()`/`reset()`; asserted on every `mi_heap_*` alloc/realloc path.
     /// Compiles out in release so the struct stays one pointer wide.
@@ -150,7 +138,6 @@ impl MimallocArena {
         Self {
             heap,
             owns: true,
-            bytes_since_reset: Cell::new(0),
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
         }
@@ -175,9 +162,6 @@ impl MimallocArena {
         Self {
             heap,
             owns: false,
-            // Unused for borrowed-default — `reset_retain_with_limit` debug-
-            // asserts `owns` like `reset()` does.
-            bytes_since_reset: Cell::new(0),
             #[cfg(debug_assertions)]
             // `mi_heap_main()` is safe to allocate from on any thread, so the
             // owning-thread assert is disabled by stamping 0 — see
@@ -254,7 +238,6 @@ impl MimallocArena {
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
-        self.bytes_since_reset.set(0);
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
         // allocate on that worker (Zig has no equivalent because its
@@ -264,95 +247,39 @@ impl MimallocArena {
             .store(debug_thread_stamp(), Ordering::Relaxed);
     }
 
-    /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})` for
-    /// the per-module transpile arena (`ModuleLoader.transpile_source_code_arena`).
+    /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})`.
     ///
-    /// When the heap's committed footprint exceeds `limit`, do a full
-    /// `mi_heap_destroy` + `mi_heap_new` (= [`Self::reset`]). When ≤ `limit`,
-    /// keep the heap (warm pages, no page faults on the next parse) and just
-    /// clear the soft counter; allocations from the previous cycle stay live in
-    /// the heap and count toward `heap_committed_exceeds` on the *next* call,
-    /// so they are eventually reclaimed by the over-limit branch.
+    /// **PORT NOTE — always a full [`Self::reset`]; `_limit` is ignored.**
     ///
-    /// `bytes_since_reset` is a cheap fast-positive; the authoritative check is
-    /// [`heap_committed_exceeds`](Self::heap_committed_exceeds), which also
-    /// sees `AstAlloc`'s direct-to-heap allocations (those bypass `track_alloc`
-    /// entirely).
+    /// Zig's `std.heap.ArenaAllocator` is a bump allocator: `.retain_with_limit`
+    /// rewinds the bump cursor to offset 0 (bulk-freeing every allocation) and
+    /// retains up to `limit` bytes of *backing buffer capacity*, so the next
+    /// cycle's allocations reuse the same committed pages. A `mi_heap_t` is not
+    /// a bump allocator and has no rewind primitive — the only bulk-free is
+    /// `mi_heap_destroy`. The previous implementation's under-limit branch kept
+    /// the live heap and zeroed a soft counter, which retained *garbage*, not
+    /// capacity: every previous cycle's blocks (never `mi_free`d — callers use
+    /// arena semantics, and `AstAlloc::deallocate` is a no-op by design) stayed
+    /// resident and the next cycle allocated fresh pages on top. RSS saw-toothed
+    /// 0→limit→destroy instead of plateauing at one cycle's footprint; smaps
+    /// showed the mimalloc 1 GB arena at 28.4 MB (port) vs 23.6 MB (Zig) on
+    /// lint/create-vite, and `--smol` (which forced full `reset()`) collapsed
+    /// the port-vs-Zig RSS delta to noise.
     ///
-    /// Returns whether a full destroy+new (vs. retain) happened.
-    pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
-        debug_assert!(
-            self.owns,
-            "MimallocArena::reset_retain_with_limit() on a borrowing_default() arena"
-        );
-        if self.bytes_since_reset.get() > limit || self.heap_committed_exceeds(limit) {
-            self.reset();
-            true
-        } else {
-            // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
-            // that was *under* the limit can still allocate on the new thread.
-            #[cfg(debug_assertions)]
-            self.owning_thread
-                .store(debug_thread_stamp(), Ordering::Relaxed);
-            self.bytes_since_reset.set(0);
-            false
-        }
-    }
-
-    /// Returns whether the heap's committed memory exceeds `limit`, by walking
-    /// `mi_heap_area_t`s (one per mimalloc page) and summing `committed`. The
-    /// walk early-exits once the sum crosses `limit`, so the cost is bounded
-    /// by `limit / 64 KiB` callbacks (≈128 for the 8 MiB module-arena limit) —
-    /// negligible per-module compared to parse cost. Under-limit heaps walk
-    /// every page they own (≪128 for small modules).
+    /// The "warm pages" goal the retain branch was chasing is already provided
+    /// by mimalloc itself: `mi_heap_destroy` returns pages to the per-thread
+    /// segment cache and `mi_heap_new`'s first alloc pulls from there, so the
+    /// destroy+new round-trip reuses the same committed memory without holding
+    /// dead blocks live. There is no correctness- or performance-preserving way
+    /// to map `.retain_with_limit` onto `mi_heap_t`; the correct mapping is
+    /// plain `reset()`.
     ///
-    /// Unlike [`Self::bytes_since_reset`], this sees all allocations made on
-    /// `self.heap` regardless of which Rust-side wrapper issued them.
-    fn heap_committed_exceeds(&self, limit: usize) -> bool {
-        #[repr(C)]
-        struct State {
-            sum: usize,
-            limit: usize,
-        }
-        extern "C" fn visit(
-            _heap: *const mimalloc::Heap,
-            area: *const mimalloc::mi_heap_area_t,
-            _block: *mut c_void,
-            _block_size: usize,
-            arg: *mut c_void,
-        ) -> bool {
-            // SAFETY: mimalloc passes a valid `mi_heap_area_t*` per page when
-            // `visit_blocks=false`, and `arg` is the `&mut State` we supplied.
-            let st = unsafe { &mut *arg.cast::<State>() };
-            let committed = unsafe { (*area).committed };
-            st.sum = st.sum.saturating_add(committed);
-            // `false` stops the walk early.
-            st.sum <= st.limit
-        }
-        let mut st = State { sum: 0, limit };
-        // SAFETY: `self.heap` is a live heap; `visit` matches the
-        // `mi_block_visit_fun` signature; `&mut st` is valid for the call.
-        unsafe {
-            mimalloc::mi_heap_visit_blocks(
-                self.heap_ptr(),
-                false,
-                Some(visit),
-                (&raw mut st).cast(),
-            );
-        }
-        st.sum > limit
-    }
-
-    #[inline(always)]
-    fn track_alloc(&self, len: usize) {
-        // Non-atomic: alloc paths already require the owning thread (asserted
-        // by `assert_owning_thread`), and `Cell` is `!Sync` so the only other
-        // reader is `reset_retain_with_limit` which takes `&mut self`.
-        // Saturating because this is a soft-limit hint, not accounting.
-        // Kept as a fast-positive for `reset_retain_with_limit`; the
-        // authoritative check is `heap_committed_exceeds`.
-        self.bytes_since_reset
-            .set(self.bytes_since_reset.get().saturating_add(len));
+    /// Kept as a separate entry point (rather than deleting) so existing callers
+    /// compile unchanged; new code should call [`Self::reset`] directly.
+    #[inline]
+    pub fn reset_retain_with_limit(&mut self, _limit: usize) -> bool {
+        self.reset();
+        true
     }
 
     /// Zig: `MimallocArena.gc()` → `mi_heap_collect(heap, false)`.
@@ -417,7 +344,6 @@ impl MimallocArena {
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
-        self.track_alloc(len);
         // SAFETY: `self.heap_ptr()` is live (`mi_heap_new()` or
         // `mi_heap_main()`, see struct invariant).
         unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
@@ -434,9 +360,8 @@ impl MimallocArena {
 
     /// `mi_heap_realloc_aligned` on this arena's heap.
     #[inline]
-    fn remap(&self, ptr: NonNull<u8>, old_len: usize, new_len: usize, align: usize) -> *mut u8 {
+    fn remap(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
-        self.track_alloc(new_len.saturating_sub(old_len));
         // SAFETY: `self.heap` is live; `ptr` is a real mimalloc block head
         // allocated by this arena (caller contract). `mi_heap_realloc_aligned`
         // preserves the `min(old, new)` prefix.
@@ -572,12 +497,10 @@ impl MimallocArena {
     #[inline]
     pub fn std_allocator(&self) -> crate::StdAllocator {
         // `ctx` is `*const MimallocArena` (not the inner `*mut Heap`) so the
-        // vtable thunks can reach `bytes_since_reset` for retain-with-limit
-        // accounting. The thunks load `heap_ptr()` from it on every call;
-        // this is one extra indirection vs Zig (`ctx == heap`), but it lets
-        // the parser's Zig-compat `StdAllocator` path participate in
-        // `reset_retain_with_limit`. The only consumer of `ctx` is this
-        // vtable; `is_instance()` compares the *vtable* pointer, not `ctx`.
+        // vtable thunks can reach `assert_owning_thread()`. They load
+        // `heap_ptr()` from it on every call; this is one extra indirection vs
+        // Zig (`ctx == heap`). The only consumer of `ctx` is this vtable;
+        // `is_instance()` compares the *vtable* pointer, not `ctx`.
         crate::StdAllocator {
             ptr: ptr::from_ref(self).cast_mut().cast(),
             vtable: &HEAP_ALLOCATOR_VTABLE,
@@ -659,7 +582,6 @@ unsafe impl Allocator for &MimallocArena {
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.assert_owning_thread();
-        self.track_alloc(layout.size());
         // SAFETY: `self.heap_ptr()` is live (struct invariant).
         let p = unsafe {
             mimalloc::mi_heap_zalloc_auto_align(self.heap_ptr(), layout.size(), layout.align())

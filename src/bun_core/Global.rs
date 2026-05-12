@@ -603,6 +603,23 @@ pub fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
+// libc process-termination entry points used by `exit` /
+// `raise_ignoring_panic_handler_raw` below. All take by-value `c_int` or no
+// args and are `noreturn`/kernel-validated — no memory-safety preconditions,
+// so `safe fn` discharges the link-time proof and the call sites are plain
+// calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+unsafe extern "C" {
+    #[link_name = "abort"]
+    safe fn libc_abort() -> !;
+    #[link_name = "raise"]
+    safe fn libc_raise(sig: c_int) -> c_int;
+    #[cfg(unix)]
+    #[link_name = "exit"]
+    safe fn libc_exit(code: c_int) -> !;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    safe fn quick_exit(code: c_int) -> !;
+}
+
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
@@ -626,8 +643,7 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: libc exit is noreturn.
-        unsafe { libc::exit(code as i32) }
+        libc_exit(code as i32)
     }
     #[cfg(windows)]
     {
@@ -638,24 +654,13 @@ pub fn exit(code: u32) -> ! {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         if env::ENABLE_ASAN {
-            // SAFETY: libc exit is noreturn.
-            unsafe { libc::exit(code as i32) };
-            // SAFETY: abort is noreturn; unreachable fallback if exit returns.
+            libc_exit(code as i32);
             #[allow(unreachable_code)]
-            unsafe {
-                libc::abort()
-            };
-        }
-        unsafe extern "C" {
-            // safe: arg by-value; noreturn.
-            safe fn quick_exit(code: c_int) -> !;
+            libc_abort();
         }
         quick_exit(code as c_int);
-        // SAFETY: abort is noreturn; unreachable fallback if quick_exit returns.
         #[allow(unreachable_code)]
-        unsafe {
-            libc::abort()
-        };
+        libc_abort();
     }
 }
 
@@ -711,12 +716,9 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
         }
     }
 
-    // kill self
-    // SAFETY: raise + abort are well-defined; abort is the noreturn fallback.
-    unsafe {
-        let _ = libc::raise(sig);
-        libc::abort();
-    }
+    // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).
+    let _ = libc_raise(sig);
+    libc_abort();
 }
 
 #[derive(Default)]
@@ -728,8 +730,8 @@ pub struct AllocatorConfiguration {
 #[inline]
 pub fn mimalloc_cleanup(force: bool) {
     if USE_MIMALLOC {
-        // SAFETY: mi_collect is safe to call at any time.
-        unsafe { bun_alloc::mimalloc::mi_collect(force) };
+        // `mi_collect` is declared `safe fn` in `bun_mimalloc_sys` (no preconditions).
+        bun_alloc::mimalloc::mi_collect(force);
     }
 }
 // Versions are now handled by build-generated header (bun_dependency_versions.h)

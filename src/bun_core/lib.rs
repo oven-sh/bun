@@ -2001,34 +2001,21 @@ pub mod ffi {
     /// and writes are sound but the caller must not send it across threads.
     #[inline(always)]
     pub unsafe fn errno_ptr() -> *mut core::ffi::c_int {
-        #[cfg(target_os = "linux")]
-        return unsafe { libc::__errno_location() };
-        #[cfg(target_os = "android")]
-        return unsafe { libc::__errno() };
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        return unsafe { libc::__error() };
-        #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-        return unsafe { libc::__error() };
-        #[cfg(all(
-            unix,
-            not(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "freebsd",
-                target_os = "dragonfly"
-            ))
-        ))]
-        return unsafe { libc::__errno_location() };
-        #[cfg(windows)]
-        {
-            // Windows CRT: `int *_errno(void)` — thread-local errno for the
-            // C runtime (distinct from Win32 `GetLastError()`). No args, no
-            // preconditions; the returned pointer is never null.
-            unsafe extern "C" { safe fn _errno() -> *mut core::ffi::c_int; }
-            return _errno();
+        // Per-libc TLS errno accessor: no args, never null, no preconditions.
+        // `safe fn` discharges the link-time proof so the body is a plain
+        // call; only the per-platform symbol *name* varies, expressed via
+        // `#[cfg_attr(.., link_name = ..)]` on a single declaration.
+        unsafe extern "C" {
+            #[cfg_attr(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"), link_name = "__error")]
+            #[cfg_attr(target_os = "android", link_name = "__errno")]
+            #[cfg_attr(windows, link_name = "_errno")]
+            #[cfg_attr(
+                all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "android"))),
+                link_name = "__errno_location"
+            )]
+            safe fn errno_location() -> *mut core::ffi::c_int;
         }
+        errno_location()
     }
 
     /// Read the calling thread's libc `errno` (Zig: `std.c._errno().*`).

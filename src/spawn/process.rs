@@ -2892,6 +2892,9 @@ pub mod sync {
         safe fn isatty(fd: c_int) -> c_int;
         safe fn raise(sig: c_int) -> c_int;
         safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        /// No args; returns -1/errno on failure. macOS-only caller below.
+        #[cfg(target_os = "macos")]
+        safe fn kqueue() -> c_int;
     }
 
     #[cfg(unix)]
@@ -3045,8 +3048,7 @@ pub mod sync {
         let mut no_orphans_kq = AutoCloseFd::invalid();
         #[cfg(target_os = "macos")]
         if no_orphans {
-            // SAFETY: kqueue syscall
-            let kq = unsafe { libc::kqueue() };
+            let kq = kqueue();
             if kq >= 0 {
                 no_orphans_kq = AutoCloseFd::new(Fd::from_native(kq));
             }

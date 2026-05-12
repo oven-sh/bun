@@ -109,11 +109,12 @@ impl DevServer {
         crate::bake::dev_server::memory_cost_body::memory_cost_detailed(self)
     }
 
-    /// Recover `&VirtualMachine` from the JSC_BORROW `vm` field.
-    /// SAFETY: vm is valid for DevServer's entire lifetime (DevServer.zig:315).
+    /// Recover `&VirtualMachine` from the JSC_BORROW `vm` back-reference.
+    /// Safe `Deref` via [`BackRef`](bun_ptr::BackRef): vm is valid for
+    /// DevServer's entire lifetime (DevServer.zig:315).
     #[inline]
     pub(crate) fn vm(&self) -> &VirtualMachine {
-        unsafe { &*self.vm }
+        self.vm.get()
     }
 
     /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
@@ -130,7 +131,7 @@ impl DevServer {
     /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(self.vm, VirtualMachine::get()));
+        debug_assert!(::core::ptr::eq(self.vm.as_ptr(), VirtualMachine::get()));
         VirtualMachine::get_mut()
     }
 
@@ -347,10 +348,12 @@ pub struct DevServer {
     pub configuration_hash_key: [u8; 16],
     /// The virtual machine (global object) to execute code in.
     /// JSC_BORROW (LIFETIMES.tsv): passed in via `Options.vm`; deinit no-op.
-    /// Stored as raw ptr (not `&'a`) so `DevServer` is not lifetime-generic
-    /// — it is `Box`-owned by `ServerInstance` which outlives the VM anyway.
-    // SAFETY: vm is valid for DevServer's entire lifetime (DevServer.zig:315).
-    pub vm: *const VirtualMachine,
+    /// [`BackRef`](bun_ptr::BackRef) (not `&'a`) so `DevServer` is not
+    /// lifetime-generic — it is `Box`-owned by `ServerInstance` which outlives
+    /// the VM anyway. The back-reference invariant (pointee outlives holder)
+    /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
+    /// lifetime (DevServer.zig:315).
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -582,7 +585,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
-        w!(vm, std::ptr::from_ref::<VirtualMachine>(options.vm));
+        w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -2284,8 +2287,9 @@ impl DevServer {
         params_js_value: JSValue,
         first_request: bool,
     ) -> JsResult<FrameworkRequestArgs> {
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime.
-        let global = unsafe { &*(*(*this).vm).global };
+        // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
+        // is valid for VM lifetime.
+        let global = unsafe { &*(&(*this).vm).global };
         // SAFETY: place projections off `*this` — `router` / `server_graph` /
         // `route_bundles` are disjoint fields; each reborrow is scoped to its
         // expression so no two `&mut` overlap. `framework_bundle` lives in

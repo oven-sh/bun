@@ -931,10 +931,10 @@ impl WatcherAtomics {
                     task: bun_event_loop::Task::init(ev),
                     ..Default::default()
                 };
-                // SAFETY: `owner` BACKREF is valid; `vm` is JSC_BORROW valid for DevServer's
-                // lifetime; `event_loop` points at a sibling field of `VirtualMachine`.
+                // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
+                // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(*(*ev_ref.owner).vm).event_loop)
+                    (*(&(*ev_ref.owner).vm).event_loop)
                         .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
                 }
             }

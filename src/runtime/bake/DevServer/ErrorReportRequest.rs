@@ -65,15 +65,14 @@ impl BodyReaderHandler for ErrorReportRequest {
 
 impl ErrorReportRequest {
     pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
+        // Use the caller's `&mut DevServer` directly (matches
+        // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
+        // freshly-allocated ctx's `BackRef` under `unsafe`.
+        dev.server.as_mut().expect("server bound").on_pending_request();
         let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
             dev: bun_ptr::BackRef::new_mut(dev),
             body: uws::BodyReaderMixin::init(),
         }));
-        // SAFETY: ctx was just allocated and is non-null; BackRef exclusivity —
-        // JS-thread only, sole `&mut DevServer` in scope.
-        unsafe {
-            (*ctx).dev.get_mut().server.as_mut().unwrap().on_pending_request();
-        }
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
     }
 

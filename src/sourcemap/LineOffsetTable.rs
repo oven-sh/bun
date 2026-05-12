@@ -209,7 +209,7 @@ impl LineOffsetTable {
             if !columns_for_non_ascii.is_empty() {
                 let line_bytes_so_far = offset - line_byte_offset;
                 let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
-                bun_core::vec::push_n(&mut columns_for_non_ascii, column, need);
+                columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
                 column_byte_offset = line_bytes_so_far + 1;
             } else {
                 match c {
@@ -283,7 +283,7 @@ impl LineOffsetTable {
         if !columns_for_non_ascii.is_empty() {
             let line_bytes_so_far = contents.len() as u32 - line_byte_offset;
             let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
-            bun_core::vec::push_n(&mut columns_for_non_ascii, column, need);
+            columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
         }
         {
             let owned = if columns_for_non_ascii.is_empty() {

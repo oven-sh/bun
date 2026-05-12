@@ -61,13 +61,14 @@ pub struct AsyncModule {
     specifier_len: u32,
     pub fd: Option<Fd>,
     // PORT NOTE: `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
-    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). Stored as raw
-    // ptrs so `AsyncModule` is `'static`-embeddable in `Queue`/`VirtualMachine`
-    // without a phantom lifetime; reborrowed via `global_this()` at use sites.
+    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
+    // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
+    // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
+    // [`crate::GlobalRef`] which encapsulates the single audited deref.
     pub package_json: Option<core::ptr::NonNull<PackageJSON>>,
     pub loader: api::Loader,
     pub hash: u32, // default = u32::MAX
-    pub global_this: core::ptr::NonNull<JSGlobalObject>,
+    pub global_this: crate::GlobalRef,
     pub arena: Box<ArenaAllocator>,
 
     // This is the specific state for making it async
@@ -137,18 +138,6 @@ impl bun_event_loop::Taskable for Queue {
 }
 
 impl AsyncModule {
-    /// Reborrow the per-thread `JSGlobalObject` without tying the returned
-    /// reference to `&self` — `self.global_this` is a VM-lifetime backref
-    /// (BACKREF/JSC_BORROW), so outlives every `AsyncModule`. Returning a
-    /// detached `&'a JSGlobalObject` lets callers hold it across `&mut self`
-    /// reborrows (`self.promise.swap()`, `self.poll_ref.unref()`).
-    #[inline]
-    fn global_this<'a>(&self) -> &'a JSGlobalObject {
-        // SAFETY: see doc comment — `global_this` set in `init` from the live
-        // per-thread global; never null, never freed before this struct.
-        unsafe { self.global_this.as_ref() }
-    }
-
     #[inline]
     pub fn referrer(&self) -> &[u8] {
         &self.string_buf[..self.referrer_len as usize]
@@ -698,7 +687,7 @@ impl AsyncModule {
             hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
-            global_this: core::ptr::NonNull::from(global_object),
+            global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
@@ -736,7 +725,12 @@ impl AsyncModule {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
-        let global_this = this.global_this();
+        // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
+        // before `&mut this` reborrows below; deref via the local for the rest
+        // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
+        // lifetime invariant, so no raw-pointer deref is open-coded here.
+        let global_ref = this.global_this;
+        let global_this: &JSGlobalObject = &global_ref;
         // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
         // thread); the Zig `globalThis.bunVM()` returns the same pointer.
         let jsc_vm = VirtualMachine::get().as_mut();
@@ -798,7 +792,11 @@ impl AsyncModule {
         import_record_id: u32,
         result: PackageResolveError<'_>,
     ) -> Result<(), bun_core::Error> {
-        let global_this = self.global_this();
+        // Copy the `GlobalRef` out so the borrow of `self` ends before
+        // `&mut self` reborrows below; `GlobalRef::deref` is the safe
+        // JSC_BORROW accessor.
+        let global_ref = self.global_this;
+        let global_this: &JSGlobalObject = &global_ref;
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
@@ -1010,7 +1008,11 @@ impl AsyncModule {
         import_record_id: u32,
         result: PackageDownloadError<'_>,
     ) -> Result<(), bun_core::Error> {
-        let global_this = self.global_this();
+        // Copy the `GlobalRef` out so the borrow of `self` ends before
+        // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
+        // safe JSC_BORROW accessor.
+        let global_ref = self.global_this;
+        let global_this: &JSGlobalObject = &global_ref;
 
         // `string_bytes` borrows the per-VM lockfile arena which outlives this
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't

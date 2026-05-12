@@ -317,8 +317,10 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
   for (const kind of ["String"] as const) {
     // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
     // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-    test.todo(kind, async () => {
-      const script = `
+    test.todo(
+      kind,
+      async () => {
+        const script = `
         const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
         const str = payload.toString("latin1");
         const sharedBlob = new Blob([payload]);
@@ -358,18 +360,20 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         }
       `;
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      console.log(stdout.trim());
-      if (exitCode !== 0) console.error(stderr);
-      expect(stderr).not.toContain("leaked");
-      expect(exitCode).toBe(0);
-    }, 60000);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        console.log(stdout.trim());
+        if (exitCode !== 0) console.error(stderr);
+        expect(stderr).not.toContain("leaked");
+        expect(exitCode).toBe(0);
+      },
+      60000,
+    );
   }
 });
 

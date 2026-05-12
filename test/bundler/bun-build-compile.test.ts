@@ -498,11 +498,7 @@ if (process.platform === "android") {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExit] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect(buildStderr).not.toContain("error:");
       expect(buildExit).toBe(0);
 
@@ -512,11 +508,7 @@ if (process.platform === "android") {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // If the Rust cfg-gate diverges from Zig's `Environment.isLinux`, the
       // process panics with `internal error: entered unreachable code` before

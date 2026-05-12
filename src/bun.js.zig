@@ -537,6 +537,10 @@ pub const Run = struct {
                 // resumed body scheduled more work, run it and re-dispatch
                 // `beforeExit` (Node fires it every time the loop drains).
                 if (vm.pending_internal_promise) |p| {
+                    // Only do any of this if the entry promise is still pending
+                    // here — a module that already settled (including one that
+                    // rejected at initial load and was handled by the `.rejected`
+                    // path above) must not be re-reported.
                     if (p.status() == .pending) {
                         vm.tick();
                         if (vm.isEventLoopAlive()) {
@@ -546,26 +550,26 @@ pub const Run = struct {
                             }
                             vm.onBeforeExit();
                         }
-                    }
-                    switch (p.status()) {
-                        .pending => if (vm.exit_handler.exit_code == 0) {
-                            vm.exit_handler.exit_code = 13;
-                            Output.prettyErrorln(
-                                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await",
-                                .{},
-                            );
-                            Output.flush();
-                        },
-                        // The resumed module body threw. The module-loader
-                        // pipeline promise is pre-marked handled so it never
-                        // reaches `handleRejectedPromises()`; report manually
-                        // like the initial-load `.rejected` path above.
-                        .rejected => {
-                            _ = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
-                            p.setHandled();
-                            if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
-                        },
-                        .fulfilled => {},
+                        switch (p.status()) {
+                            .pending => if (vm.exit_handler.exit_code == 0) {
+                                vm.exit_handler.exit_code = 13;
+                                Output.prettyErrorln(
+                                    "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await",
+                                    .{},
+                                );
+                                Output.flush();
+                            },
+                            // The resumed module body threw. The module-loader
+                            // pipeline promise is pre-marked handled so it never
+                            // reaches `handleRejectedPromises()`; report manually
+                            // like the initial-load `.rejected` path above.
+                            .rejected => {
+                                _ = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                                p.setHandled();
+                                if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                            },
+                            .fulfilled => {},
+                        }
                     }
                 }
             }

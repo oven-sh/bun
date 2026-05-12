@@ -1357,7 +1357,7 @@ impl<'a> Parser<'a> {
                                 };
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(js_ast::Ast {
+                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         // Borrow the arena/Vec-backed records as a Vec view
                                         // (matches `P::to_ast`); `p` is dropped immediately
                                         // after this return so no double-ownership.
@@ -1367,7 +1367,7 @@ impl<'a> Parser<'a> {
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
                                         ..Default::default()
-                                    }));
+                                    })));
                                 }
                             }
                         }
@@ -1541,7 +1541,7 @@ impl<'a> Parser<'a> {
                     };
 
                     if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(js_ast::Ast {
+                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // See note on the matching arm above re double-ownership.
                             import_records:
@@ -1550,7 +1550,7 @@ impl<'a> Parser<'a> {
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),
                             ..Default::default()
-                        }));
+                        })));
                     }
                 }
             }

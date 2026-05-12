@@ -799,10 +799,10 @@ macro_rules! platform_specific_new {
                 let cached_result = CACHE.get_cached();
 
                 match cached_result {
-                    CacheOutput::Unknown => {
-                        crate::hint::cold();
-                        get_force_reload()
-                    }
+                    // First lookup is *always* Unknown (CACHE starts zeroed),
+                    // so don't cold-hint this arm — it pessimises the only
+                    // call that happens on the startup path.
+                    CacheOutput::Unknown => get_force_reload(),
                     CacheOutput::NotSet => {
                         if let Some(d) = DEFAULT {
                             return Some(d);

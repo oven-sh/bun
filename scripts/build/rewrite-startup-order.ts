@@ -198,8 +198,17 @@ if (mapPath !== undefined && existsSync(mapPath)) {
   const map = readFileSync(mapPath, "utf8");
   // lld map: `<vma> <lma> <size> <align> <obj>:(.text.<sym>)` for input
   // sections. We only care about `.text.*` — that's what the order file
-  // places.
-  const sec = /\.text\.((?:_R|_Z)[A-Za-z0-9_$.]+)\)/g;
+  // places. LLVM's hot/cold splitting and `-fno-reorder-functions` land
+  // some bodies in `.text.unlikely.<sym>` / `.text.hot.<sym>` /
+  // `.text.startup.<sym>` instead of bare `.text.<sym>`; the symbol name
+  // (and thus the order-file key) is the same, so accept the optional
+  // section-kind prefix and harvest those too. Every harvested name lands
+  // in the canon multimap alongside the staticlib's pre-LTO bare name, so
+  // the template emits *all* live variants (bare + `.llvm.<N>`-suffixed +
+  // section-split) — lld silently drops whichever ones don't apply under
+  // `--no-warn-symbol-ordering`, so over-emitting is free and a stale
+  // suffix from last build's CGU partitioning never masks the fresh one.
+  const sec = /\.text\.(?:unlikely\.|hot\.|startup\.)?((?:_R|_Z)[A-Za-z0-9_$.]+)\)/g;
   for (let m; (m = sec.exec(map)); ) {
     const sym = m[1];
     defined.add(sym);

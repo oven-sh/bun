@@ -2219,7 +2219,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;
-            Ok(Some(ast))
+            Ok(Some(*ast))
         }
         // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
         _ => unreachable!("to_lazy_export_ast returns Result::Ast"),

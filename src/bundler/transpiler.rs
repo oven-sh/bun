@@ -1666,7 +1666,7 @@ impl<'a> Transpiler<'a> {
                 };
                 return Some(match parsed {
                     js_ast::Result::Ast(value) => ParseResult {
-                        ast: value,
+                        ast: *value,
                         source: source.clone(),
                         loader,
                         input_fd,

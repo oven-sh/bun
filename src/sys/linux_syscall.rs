@@ -189,11 +189,42 @@ pub fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
     retry(|| rustix::fs::statat(dir, zcstr(path), at)).map(stat_to_libc)
 }
 
-/// Map rustix's kernel `struct stat` → `libc::stat`. Field-by-field copy by
-/// name — both are the Linux UAPI `struct stat` so every public `st_*` field
-/// is present on both, but padding/reserved field names differ per-arch so a
-/// blind transmute is not portable. This compiles to straight moves.
+/// Map rustix's kernel `struct stat` → `libc::stat`.
+///
+/// On Bun's tier-1 Linux targets (x86_64, aarch64 — gnu/musl/bionic alike),
+/// `rustix::fs::Stat` (= `linux_raw_sys::general::stat`, bindgen'd from the
+/// kernel UAPI `asm/stat.h`) and `libc::stat` are *the same struct*: every
+/// libc on those arches defines its userspace `struct stat` as a verbatim
+/// copy of the kernel layout so the syscall can write into it directly. The
+/// conversion is therefore a no-op `transmute` — no `zeroed()` memset, no
+/// 16-field move chain — matching Zig's single `fstat(fd, &out)` with zero
+/// post-processing. The const assert turns any future layout divergence into
+/// a compile error rather than silent field corruption.
+///
+/// (Perf: the previous field-by-field copy showed up in `bun install` profiles
+/// as `write_bytes<stat>` — the 144-byte memset behind `zeroed()` — plus the
+/// move chain, on a path that runs once per installed file.)
+#[inline(always)]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
+    const _: () = assert!(
+        core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>()
+            && core::mem::align_of::<rustix::fs::Stat>() == core::mem::align_of::<libc::stat>(),
+        "rustix::fs::Stat / libc::stat layout mismatch on this target — \
+         drop it from the cfg above so it takes the field-copy fallback",
+    );
+    // SAFETY: identical layout (both are the per-arch kernel UAPI `struct stat`;
+    // see doc comment + const assert). All-integer POD — every bit-pattern is
+    // valid for every field, so no invalid-value hazard either way.
+    unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
+}
+
+/// Fallback for arches where userspace `libc::stat` is *not* guaranteed
+/// layout-identical to the kernel struct (e.g. mips64 glibc reorders fields).
+/// Field-by-field copy by name — both expose every public `st_*` field, only
+/// padding/reserved names differ. Compiles to straight moves.
 #[inline]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     // SAFETY: `libc::stat` is POD; zero is a valid bit-pattern for every field
     // (all integers). We overwrite every meaningful field below.

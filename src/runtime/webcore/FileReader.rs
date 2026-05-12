@@ -360,14 +360,11 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // SAFETY: `StoreRef::as_ptr` yields `*mut Store` with mutable provenance
-            // (originating from `heap::alloc`). Store is single-threaded here and we
-            // hold the only mutating handle; matches Zig's `*Blob.Store` direct field
-            // access. No `&` to `*store_ptr` is live across this `&mut` — `store` only
-            // borrows the `StoreRef` wrapper (the `NonNull`), not the pointee.
-            let store_ptr: *mut blob::Store = store.as_ptr();
-            let store_data = unsafe { &mut (*store_ptr).data };
-            match store_data {
+            // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
+            // `StoreRef` liveness invariant (single-threaded JS event loop; we
+            // hold the only mutating handle). Matches Zig's `*Blob.Store`
+            // direct field access.
+            match store.data_mut() {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }

@@ -558,8 +558,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     };
     let mut static_route_visitor = StaticRouteVisitor {
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
-        // long-lived shared borrow doesn't conflict with `&mut *c.log` inside the
-        // chunk loop below. `c` outlives `static_route_visitor`.
+        // long-lived shared borrow doesn't conflict with `c.log_disjoint()` inside
+        // the chunk loop below. `c` outlives `static_route_visitor`.
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
@@ -892,11 +892,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         } else {
                             // an error
                             // logger OOM-only (Zig: catch unreachable)
-                            // SAFETY: split-borrow — `static_route_visitor.c` holds a
-                            // detached `&LinkerContext`; raw-deref the `*mut Log`
-                            // backref instead of `c.log_mut()` so no `&mut c` is
-                            // materialized. See `LinkerContext::log_mut`.
-                            let _ = unsafe { &mut *c.log }.add_error_fmt(
+                            // Split-borrow — `static_route_visitor.c` holds a
+                            // detached `&LinkerContext`; `log_disjoint` returns the
+                            // disjoint `Transpiler.log` backref so no `&mut c` is
+                            // materialized.
+                            let _ = c.log_disjoint().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(

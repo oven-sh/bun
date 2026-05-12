@@ -6212,15 +6212,17 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.dev }
     }
 
-    /// Reborrow the GC-heap `JSPromise` set in [`ensure_promise`]. Single
-    /// `unsafe` site for the set-once `p: Option<*mut JSPromise>` self-borrow
-    /// field; both deref callers (`on_loaded` / `on_plugin_error`) call
-    /// `ensure_promise` immediately before this.
+    /// Reborrow the GC-heap `JSPromise` recorded in `self.p`. Single `unsafe`
+    /// site for the set-once `p: Option<*mut JSPromise>` self-borrow field;
+    /// callers (`on_loaded` / `on_plugin_error` / the `to_js()` epilogue in
+    /// `js_get_route_bundle_promise`) reach this only after `ensure_promise`
+    /// or `on_defer` has populated `p`.
     #[inline]
     fn promise_mut(&mut self) -> &mut jsc::JSPromise {
-        // SAFETY: `p` is `Some(ptr::from_mut(strong.get()))` after
-        // `ensure_promise`; the JSPromise GC cell is rooted by
-        // `self.promise: JSPromiseStrong` for the lifetime of `self`.
+        // SAFETY: `p` is `Some(strong.get())` after `ensure_promise`/`on_defer`;
+        // the JSPromise GC cell is rooted for the lifetime of `self` by either
+        // `self.promise: JSPromiseStrong` or the bundle's `promise.strong`
+        // (`current_bundle`/`next_bundle`), so the pointee outlives the borrow.
         unsafe { &mut *self.p.expect("infallible: promise bound") }
     }
 
@@ -6442,8 +6444,9 @@ fn bundle_new_route_js_function_impl(
     }
 
     debug_assert!(ctx.p.is_some());
-    // SAFETY: p was set above
-    array.put_index(global, 1, unsafe { &*ctx.p.expect("infallible: promise bound") }.to_js())?;
+    // Route through the single `promise_mut()` accessor (one audited deref for
+    // the set-once `p` field) instead of open-coding the raw deref here.
+    array.put_index(global, 1, ctx.promise_mut().to_js())?;
 
     Ok(array)
 }

@@ -35,12 +35,20 @@ unsafe extern "C" {
 pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
-/// Raw pointer to the (lazily-initialized) JS-thread singleton. Callers
-/// reborrow per-access — PORTING.md §Global mutable state.
+/// `&mut` to the (lazily-initialized) JS-thread singleton.
+///
+/// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
+/// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
+/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
+/// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
-fn child_singleton() -> *mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread; mirrors Zig `pub var` access.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) as *mut _ }
+fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
+    // SAFETY: only called on the single JS thread; mirrors Zig `pub var`
+    // access. `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
+    // `'static` storage so the returned `&mut` is valid for any caller-chosen
+    // `'a`. Aliasing: each of the three callers borrows for a single
+    // statement/block with no nested call to this fn.
+    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
 #[bun_jsc::host_fn]
@@ -67,8 +75,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
-    // SAFETY: JS-thread only; sole live `&mut` for the block below.
-    let singleton = unsafe { &mut *child_singleton() };
+    let singleton = child_singleton();
     if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
@@ -133,8 +140,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
-    // SAFETY: JS-thread only; sole live `&mut` for the block below.
-    let singleton = unsafe { &mut *child_singleton() };
+    let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(arguments[0], global);
     singleton.cb = StrongOptional::create(arguments[1], global);
@@ -145,8 +151,7 @@ pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> 
 pub fn handle_internal_message_child(global: &JSGlobalObject, message: JSValue) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    // SAFETY: JS-thread only; per-call reborrow.
-    unsafe { &mut *child_singleton() }.dispatch(message, global)
+    child_singleton().dispatch(message, global)
 }
 
 #[bun_jsc::host_fn]

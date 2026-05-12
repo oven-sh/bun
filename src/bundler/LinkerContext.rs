@@ -341,13 +341,38 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Exclusive accessor for the bundler log. See [`Self::log`] for the
-    /// lifetime invariant. Prefer the raw `self.log` field for split-borrow
+    /// lifetime invariant. Prefer [`Self::log_disjoint`] for split-borrow
     /// patterns that interleave `&mut Log` with other `self` borrows.
     #[inline]
     pub fn log_mut(&mut self) -> &mut Log {
         debug_assert!(!self.log.is_null(), "LinkerContext.log accessed before load()");
         // SAFETY: non-null backref valid for the link step; `&mut self`
         // excludes other safe borrows of the linker.
+        unsafe { &mut *self.log }
+    }
+
+    /// Detached mutable borrow of the bundler log for split-borrow contexts.
+    ///
+    /// `self.log` is a backref into `Transpiler.log`, a sibling allocation of
+    /// `BundleV2.linker` (= `*self`) — it is allocation-disjoint from every
+    /// `self.graph` / `self.parse_graph` / `self.mangled_props` borrow. This
+    /// accessor exists for the diagnostic paths (`match_import_with_export`,
+    /// `scan_imports_and_exports`, CSS validation) that hold SoA-column borrows
+    /// of `self.graph` while emitting an error; [`Self::log_mut`] would
+    /// needlessly conflict on `&mut self`.
+    ///
+    /// `#[allow(clippy::mut_from_ref)]` follows the same precedent as
+    /// [`GenerateChunkCtx::c`]: the pointee is a set-once GRAPHBACKED backref,
+    /// not interior storage of `*self`, so `&self` cannot alias the returned
+    /// `&mut Log`. Do not call this twice with overlapping live borrows.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn log_disjoint(&self) -> &mut Log {
+        debug_assert!(!self.log.is_null(), "LinkerContext.log accessed before load()");
+        // SAFETY: non-null backref into `Transpiler.log`, valid for the link
+        // step, allocation-disjoint from `*self` (= `BundleV2.linker`). All
+        // call sites previously open-coded the raw deref under the same
+        // invariant; centralised here so the proof obligation lives once.
         unsafe { &mut *self.log }
     }
 
@@ -1829,9 +1854,9 @@ impl<'a> LinkerContext<'a> {
                             write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
                         }
 
-                        // SAFETY: split-borrow with `source`/`record` (parse_graph
-                        // backref slices) — see `Self::log_mut`.
-                        unsafe { &mut *self.log }.add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice());
+                        // Split-borrow with `source`/`record` (parse_graph backref
+                        // slices) — `log_disjoint` returns the disjoint backref.
+                        self.log_disjoint().add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice());
                     }
                 }
             }
@@ -3205,9 +3230,9 @@ impl<'a> LinkerContext<'a> {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import.alias.expect("infallible: alias present").slice();
-                        // SAFETY: split-borrow with `named_import` (`&self.graph`)
-                        // — raw-deref the `*mut Log` backref. See `Self::log_mut`.
-                        unsafe { &mut *self.log }.add_range_warning_fmt(
+                        // Split-borrow with `named_import` (`&self.graph`) —
+                        // `log_disjoint` returns the disjoint `Transpiler.log` backref.
+                        self.log_disjoint().add_range_warning_fmt(
                             Some(source),
                             source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present")),
                             format_args!(
@@ -3261,10 +3286,7 @@ impl<'a> LinkerContext<'a> {
                     // Report mismatched imports and exports
                     // The mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
-                    // `*self.log`) — all separate allocations.
-                    // SAFETY (for `&mut *self.log` below): split-borrow with
-                    // `named_import`/`symbol` — raw-deref the `*mut Log` backref.
-                    // See `Self::log_mut`.
+                    // `log_disjoint`) — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
@@ -3293,7 +3315,7 @@ impl<'a> LinkerContext<'a> {
                                 bun_resolve_builtins::Cfg::default(),
                             )
                         {
-                            unsafe { &mut *self.log }.add_range_warning_fmt_with_note(
+                            self.log_disjoint().add_range_warning_fmt_with_note(
                                 Some(source), r,
                                 format_args!(
                                     "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
@@ -3304,7 +3326,7 @@ impl<'a> LinkerContext<'a> {
                                 r,
                             );
                         } else {
-                            unsafe { &mut *self.log }.add_range_warning_fmt(
+                            self.log_disjoint().add_range_warning_fmt(
                                 Some(source), r,
                                 format_args!(
                                     "Import \"{}\" will always be undefined because there is no matching export in \"{}\"",
@@ -3316,7 +3338,7 @@ impl<'a> LinkerContext<'a> {
                     } else if self.resolver().opts.target == Target::Browser
                         && next_source.path.text.starts_with(NodeFallbackModules::IMPORT_PATH)
                     {
-                        unsafe { &mut *self.log }.add_range_error_fmt_with_note(
+                        self.log_disjoint().add_range_error_fmt_with_note(
                             Some(source), r,
                             format_args!(
                                 "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
@@ -3327,7 +3349,7 @@ impl<'a> LinkerContext<'a> {
                             r,
                         );
                     } else {
-                        unsafe { &mut *self.log }.add_range_error_fmt(
+                        self.log_disjoint().add_range_error_fmt(
                             Some(source), r,
                             format_args!(
                                 "No matching export in \"{}\" for import \"{}\"",
@@ -3530,8 +3552,9 @@ impl<'a> LinkerContext<'a> {
                     let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import.alias.expect("infallible: alias present").slice();
-                    // SAFETY: split-borrow with `named_import` — see `Self::log_mut`.
-                    unsafe { &mut *self.log }.add_range_error_fmt(
+                    // Split-borrow with `named_import` — `log_disjoint` returns
+                    // the disjoint `Transpiler.log` backref.
+                    self.log_disjoint().add_range_error_fmt(
                         Some(source), r,
                         format_args!(
                             "Detected cycle while resolving import \"{}\"",
@@ -3552,15 +3575,13 @@ impl<'a> LinkerContext<'a> {
 
                     // The mutated symbol slot is disjoint from `source`/`r`
                     // (parse_graph), `named_import`/`alias` (arena slices), and
-                    // `*self.log` — all separate allocations.
-                    // SAFETY (for `&mut *self.log` below): split-borrow with
-                    // `named_import`/`symbol` — see `Self::log_mut`.
+                    // `log_disjoint` — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(import_ref) };
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import.alias.expect("infallible: alias present").slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
-                        unsafe { &mut *self.log }.add_range_warning_fmt(
+                        self.log_disjoint().add_range_warning_fmt(
                             Some(source), r,
                             format_args!(
                                 "Import \"{}\" will always be undefined because there are multiple matching exports",
@@ -3568,7 +3589,7 @@ impl<'a> LinkerContext<'a> {
                             ),
                         );
                     } else {
-                        unsafe { &mut *self.log }.add_range_error_fmt(
+                        self.log_disjoint().add_range_error_fmt(
                             Some(source), r,
                             format_args!(
                                 "Ambiguous import \"{}\" has multiple matching exports",

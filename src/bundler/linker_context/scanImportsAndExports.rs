@@ -155,9 +155,8 @@ pub fn scan_imports_and_exports(
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
-                    // SAFETY: `*mut Log` backref valid for the link step; see
-                    // `LinkerContext::log_mut`.
-                    unsafe { &mut *this.log },
+                    // `log_disjoint`: split-borrow with the SoA column refs above.
+                    this.log_disjoint(),
                 );
 
                 // Validate cross-file "composes: ... from" named imports and
@@ -1423,8 +1422,8 @@ mod __css_validation {
                         .local_scope
                         .contains_adapted(name_v, SliceBoxAdapter)
                     {
-                        // SAFETY: split-borrow — see `LinkerContext::log_mut`.
-                        let _ = unsafe { &mut *this.log }.add_error_fmt(
+                        // Split-borrow — see `LinkerContext::log_disjoint`.
+                        let _ = this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
@@ -1683,9 +1682,9 @@ mod __css_validation {
             all_css_asts,
             all_symbols: &this.graph.symbols,
             all_sources: input.source,
-            // SAFETY: split-borrow with `&this.graph.symbols` above; raw-deref
-            // the `*mut Log` backref. See `LinkerContext::log_mut`.
-            log: unsafe { &mut *this.log },
+            // Split-borrow with `&this.graph.symbols` above —
+            // `log_disjoint` returns the disjoint `Transpiler.log` backref.
+            log: this.log_disjoint(),
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();

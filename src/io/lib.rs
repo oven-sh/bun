@@ -1695,11 +1695,24 @@ impl FilePollRef {
     pub fn set_owner(self, owner: Owner) { self.inner().owner = owner; }
     #[inline]
     pub fn deinit_force_unregister(self) { self.inner().deinit_force_unregister(); }
+    /// Single nonnull-asref accessor for the process-global uWS loop pointer.
+    ///
+    /// Type invariant (encapsulated `unsafe`): every caller of
+    /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
+    /// passes `Loop::get()` (the per-thread uWS loop singleton), which is
+    /// non-null after init and lives for the program. The event loop is
+    /// single-threaded so the returned `&mut` is the sole live borrow at the
+    /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
+    /// those wrappers into one.
+    #[inline(always)]
+    fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
+        debug_assert!(!loop_.is_null());
+        // SAFETY: type invariant — see doc comment above.
+        unsafe { &mut *loop_ }
+    }
     #[inline]
     pub fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        // SAFETY: `loop_` is the process-global uWS loop pointer (`Loop::get()`),
-        // live for the program; single-threaded access.
-        let loop_ = unsafe { &mut *loop_ };
+        let loop_ = Self::uws_loop_mut(loop_);
         #[cfg(not(windows))]
         { self.inner().unregister(loop_, force) }
         #[cfg(windows)]
@@ -1725,8 +1738,7 @@ impl FilePollRef {
         };
         #[cfg(not(windows))]
         {
-            // SAFETY: `loop_` is the process-global uWS loop (`Loop::get()`).
-            self.inner().register_with_fd(unsafe { &mut *loop_ }, flag, OneShotFlag::Dispatch, fd)
+            self.inner().register_with_fd(Self::uws_loop_mut(loop_), flag, OneShotFlag::Dispatch, fd)
         }
         #[cfg(windows)]
         {

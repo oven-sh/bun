@@ -1508,12 +1508,30 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// Type invariant (encapsulated `unsafe`): see
     /// [`PosixBufferedWriter::parent_on_error`] — same shape, same proof.
     /// Laundered (`(*this)`) sites in `on_write_complete` /
-    /// `on_fs_write_complete` keep their raw-pointer dispatch and do **not**
-    /// route through this accessor.
+    /// `on_fs_write_complete` route through [`r_on_error`](Self::r_on_error)
+    /// instead so no `&self` protector is held across re-entry.
     #[inline]
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_error(self.parent(), err) }
+    }
+
+    /// Laundered-receiver variant of [`parent_on_error`](Self::parent_on_error).
+    ///
+    /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
+    /// [`set_parent`](BaseWindowsPipeWriter::set_parent) before any write path
+    /// is reached, and the writer is an intrusive field of `*parent` so the
+    /// pointee strictly outlives `self`. Takes the R-2 `*mut Self` so the field
+    /// read completes before dispatch and no Rust borrow of `*this` is live
+    /// across the (re-entrant) `Parent::on_error` call. Collapses the two
+    /// identical dispatch blocks in `on_write_complete` /
+    /// `on_fs_write_complete` into one — mirrors
+    /// [`WindowsStreamingWriter::r_on_error`].
+    #[inline(always)]
+    fn r_on_error(this: *mut Self, err: sys::Error) {
+        let parent = Self::r(this).parent;
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_error(parent, err) }
     }
 
     /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
@@ -1549,8 +1567,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         Self::r(this).pending_payload_size = 0;
         if let Some(err) = status.to_error(sys::Tag::write) {
             Self::r(this).close();
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(Self::r(this).parent(), err) };
+            Self::r_on_error(this, err);
             return;
         }
         let pending = Self::r(this).get_buffer_internal();
@@ -1625,8 +1642,8 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             // close() may re-enter JS.
             Self::r(this).close();
             core::hint::black_box(this);
-            // SAFETY: parent BACKREF valid; re-read after close() re-entry.
-            unsafe { Parent::on_error(Self::r(this).parent(), err) };
+            // `r_on_error` re-reads `.parent` after the close() re-entry.
+            Self::r_on_error(this, err);
             return;
         }
 

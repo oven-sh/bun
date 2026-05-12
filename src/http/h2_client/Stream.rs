@@ -78,8 +78,9 @@ impl Stream {
     /// HTTP-thread-only.
     #[inline]
     pub fn client_mut(&mut self) -> Option<&mut HTTPClient<'static>> {
-        // SAFETY: see INVARIANT above.
-        self.client.map(|mut c| unsafe { c.as_mut() })
+        // Delegates to the shared accessor in `client_session`; see INVARIANT
+        // above (identical to `stream_client_mut`'s invariant).
+        self.client.map(super::client_session::stream_client_mut)
     }
 
     /// Shared access to the owning `HTTPClient` while `client` is `Some`.

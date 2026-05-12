@@ -11,7 +11,7 @@ use bun_uws::quic::context::ConnectResult;
 use bun_uws::Loop as UwsLoop;
 
 use super::callbacks;
-use super::client_session::ClientSession;
+use super::client_session::{session_mut, ClientSession};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::h3_client as H3;
@@ -104,8 +104,10 @@ impl ClientContext {
     pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
-            // SAFETY: sessions vec holds live ClientSession pointers; removed via unregister() before destroy.
-            let s = unsafe { &mut *s };
+            // sessions vec holds live ClientSession pointers; removed via
+            // unregister() before destroy — `session_mut` centralises that
+            // backref upgrade.
+            let s = session_mut(s);
             if s.matches(hostname, port, reject) && s.has_headroom() {
                 bun_core::scoped_log!(
                     h3_client,
@@ -125,25 +127,22 @@ impl ClientContext {
         };
         let session = ClientSession::new(hostname.to_vec(), port, reject);
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: session was just allocated by ClientSession::new and is live.
-        unsafe {
-            (*session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
-        }
+        // `session` was just allocated by ClientSession::new — `session_mut`
+        // upgrades the fresh heap pointer (sole owner) for these set-up writes.
+        session_mut(session).registry_index =
+            u32::try_from(self.sessions.len()).expect("int cast");
         self.sessions.push(session);
-        // SAFETY: session is live (just pushed into registry).
-        unsafe { (*session).enqueue(client) };
+        session_mut(session).enqueue(client);
 
         let result = self
             .qctx_mut()
             .connect(&host_z, port, &host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
-                // SAFETY: session is live; qs is a fresh quic socket whose ext slot
-                // was sized to hold a *mut ClientSession in get_or_create().
-                unsafe {
-                    (*session).qsocket = NonNull::new(qs);
-                    *(*qs).ext::<ClientSession>() = NonNull::new(session);
-                }
+                session_mut(session).qsocket = NonNull::new(qs);
+                // SAFETY: qs is a fresh quic socket whose ext slot was sized to
+                // hold a *mut ClientSession in get_or_create().
+                unsafe { *(*qs).ext::<ClientSession>() = NonNull::new(session) };
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",
@@ -168,8 +167,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // SAFETY: session was just allocated above and is live.
-                self.unregister(unsafe { &mut *session });
+                self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
                 return false;
             }
@@ -184,8 +182,8 @@ impl ClientContext {
         }
         let _ = self.sessions.swap_remove(i);
         if i < self.sessions.len() {
-            // SAFETY: the swapped-in element is a live registered session.
-            unsafe { (*self.sessions[i]).registry_index = u32::try_from(i).expect("int cast") };
+            // The swapped-in element is a live registered session.
+            session_mut(self.sessions[i]).registry_index = u32::try_from(i).expect("int cast");
         }
         session.registry_index = u32::MAX;
     }
@@ -200,8 +198,8 @@ impl ClientContext {
         // calls back into `unregister`, so `sessions` is stable across the loop.
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
-            // SAFETY: registry only holds live sessions.
-            if unsafe { (*s).abort_by_http_id(async_http_id) } {
+            // Registry only holds live sessions — `session_mut` upgrade.
+            if session_mut(s).abort_by_http_id(async_http_id) {
                 return true;
             }
         }
@@ -215,8 +213,8 @@ impl ClientContext {
         // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
-            // SAFETY: registry only holds live sessions.
-            unsafe { (*s).stream_body_by_http_id(async_http_id, ended) };
+            // Registry only holds live sessions — `session_mut` upgrade.
+            session_mut(s).stream_body_by_http_id(async_http_id, ended);
         }
     }
 }

@@ -179,6 +179,21 @@ pub struct PooledSocket<const SSL: bool> {
     pub h2_session: Option<NonNull<h2::ClientSession>>,
 }
 
+/// Upgrade an `Option<NonNull<h2::ClientSession>>` held by a pool / found-slot
+/// to `Option<&'a mut h2::ClientSession>`.
+///
+/// INVARIANT: while the holder stores `Some`, it owns one strong intrusive ref
+/// on the session (taken in `release_socket`, released in
+/// `add_memory_back_to_pool` / `existing_socket`); the session is a distinct
+/// heap allocation that outlives the holder. HTTP-thread-only, so no
+/// concurrent `&mut`. Centralises the SAFETY argument shared by both
+/// `PooledSocket::h2_session_mut` and `ExistingSocket::h2_session_mut`.
+#[inline]
+fn h2_session_as_mut<'a>(s: Option<NonNull<h2::ClientSession>>) -> Option<&'a mut h2::ClientSession> {
+    // SAFETY: see INVARIANT above.
+    s.map(|mut s| unsafe { s.as_mut() })
+}
+
 impl<const SSL: bool> PooledSocket<SSL> {
     /// Mutable access to the parked HTTP/2 session.
     ///
@@ -187,8 +202,7 @@ impl<const SSL: bool> PooledSocket<SSL> {
     /// `existing_socket`); the pointee outlives `self`.
     #[inline]
     pub fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        // SAFETY: see INVARIANT above. HTTP-thread-only; no concurrent &mut.
-        self.h2_session.map(|mut s| unsafe { s.as_mut() })
+        h2_session_as_mut(self.h2_session)
     }
 
     /// Drop the strong refs the pool holds while a socket is parked
@@ -234,8 +248,7 @@ impl<const SSL: bool> ExistingSocket<SSL> {
     /// `as_ptr()` reads (e.g. `register_h2`) without a spanning Unique tag.
     #[inline]
     fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        // SAFETY: see INVARIANT above.
-        self.h2_session.map(|mut s| unsafe { s.as_mut() })
+        h2_session_as_mut(self.h2_session)
     }
 }
 

@@ -399,6 +399,23 @@ pub(super) fn stream_ref<'a>(p: *mut Stream) -> &'a Stream {
     unsafe { &*p }
 }
 
+/// Upgrade a `*mut ClientSession` (a `ClientContext.sessions` registry entry,
+/// or a freshly `ClientSession::new`-allocated handle) to `&mut ClientSession`.
+///
+/// INVARIANT: the registry only holds live intrusive-refcounted sessions
+/// (removed via `ClientContext::unregister` before destroy); a fresh `new()`
+/// result is the sole reference to its allocation. Either way the session is a
+/// `heap::into_raw`-boxed allocation disjoint from `ClientContext`, and all
+/// access is HTTP-thread-only, so the returned `&mut` is the sole live borrow
+/// for its scope. Mirrors [`client_mut`]/[`stream_mut`] — centralises the
+/// `unsafe { &mut *p }` backref upgrade repeated across `ClientContext` /
+/// `PendingConnect`.
+#[inline]
+pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *p }
+}
+
 fn apply_headers(
     stream: &mut Stream,
     client: &mut HTTPClient,

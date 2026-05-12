@@ -3927,8 +3927,10 @@ pub mod c {
     /// `bun.c.dlsymWithHandle` — see macro `dlsym_with_handle!` for the cached
     /// per-symbol form. This is the uncached runtime variant.
     pub unsafe fn dlsym_with_handle(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+        // SAFETY: `name` is NUL-terminated and live for the call; `handle`
+        // is a live `dlopen` handle or null/RTLD_DEFAULT (caller contract).
         #[cfg(unix)] { unsafe { libc::dlsym(handle, name) } }
-        #[cfg(windows)] { unsafe { core::ptr::null_mut() } /* GetProcAddress in windows mod */ }
+        #[cfg(windows)] { let _ = (handle, name); core::ptr::null_mut() /* GetProcAddress in windows mod */ }
     }
 
     /// `fork(2)` — POSIX only.

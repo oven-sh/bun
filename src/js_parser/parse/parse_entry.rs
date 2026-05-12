@@ -48,13 +48,13 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 ///
 /// On `init` `Err`, the slot is still uninitialized so the guard's
 /// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
-/// guard. (`P::init` itself only fails before `out.write` — see its SAFETY.)
+/// guard. (`P::init` itself only fails before `out.write` — see its doc.)
 macro_rules! init_p {
     ($ty:ty; $($arg:expr),* $(,)?) => {{
         let mut __slot = MaybeUninit::<$ty>::uninit();
-        // SAFETY: fresh `MaybeUninit` is properly aligned + uninitialized;
-        // `P::init` writes a fully-initialized value on `Ok`.
-        unsafe { <$ty>::init(__slot.as_mut_ptr(), $($arg),*) }?;
+        // `P::init` takes `&mut MaybeUninit<Self>` and writes a
+        // fully-initialized value on `Ok` (safe call; type guarantees align).
+        <$ty>::init(&mut __slot, $($arg),*)?;
         // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
         // guard's drop closure is the sole owner of the slot from here.
         scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })

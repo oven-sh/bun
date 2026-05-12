@@ -7732,11 +7732,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// single `out.write(Self { .. })` so there is no stack temporary `Self`
     /// to relocate.
     ///
-    /// SAFETY: `out` must point to writable, properly-aligned, uninitialized
-    /// storage for `Self`. On `Ok(())`, `*out` is fully initialized and the
-    /// caller owns dropping it; on `Err`, `*out` is left untouched.
-    pub unsafe fn init(
-        out: *mut Self,
+    /// On `Ok(())`, `*out` is fully initialized and the caller owns dropping
+    /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
+    /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
+    /// alignment/writability precondition a type guarantee, so this fn is safe.
+    pub fn init(
+        out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source,
@@ -7805,9 +7806,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             fn_or_arrow_data_parse.is_top_level = true;
         }
 
-        // SAFETY: caller contract on `out` (see fn doc). Single placement
-        // write — no separate stack temp for `Self`.
-        unsafe { out.write(Self {
+        // Single placement write — no separate stack temp for `Self`.
+        // `MaybeUninit::write` is safe; it overwrites without dropping.
+        out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
@@ -7949,7 +7950,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             options: opts,
 
             _jsx: core::marker::PhantomData,
-        }) };
+        });
 
         // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. In Rust
         // the recursion lives as inherent `P::maybe_transpose_if_*` methods

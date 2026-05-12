@@ -589,21 +589,18 @@ impl<'a> Snapshots<'a> {
                     // (that macro is crate-local).
                     let mut __parser_slot =
                         core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
-                    // SAFETY: fresh `MaybeUninit` is properly aligned + uninitialized;
                     // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
                     // `?`-return before arming the drop guard, so the slot stays
                     // uninitialized and untouched.
-                    unsafe {
-                        js_parser::TSXParser::init(
-                            __parser_slot.as_mut_ptr(),
-                            &arena,
-                            core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
-                            &source,
-                            &vm.transpiler.options.define,
-                            lexer,
-                            opts,
-                        )
-                    }?;
+                    js_parser::TSXParser::init(
+                        &mut __parser_slot,
+                        &arena,
+                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
+                        &source,
+                        &vm.transpiler.options.define,
+                        lexer,
+                        opts,
+                    )?;
                     // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
                     // the guard's drop closure is the sole owner of the slot from here.
                     let mut __parser_guard =

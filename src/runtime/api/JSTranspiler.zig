@@ -551,7 +551,10 @@ pub const TransformTask = struct {
 
         var printer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var capture = SourceMapCapture.init(bun.default_allocator);
+        var capture = SourceMapCapture.init(
+            bun.default_allocator,
+            this.transpiler.options.target.isBun(),
+        );
         defer capture.deinit();
 
         if (!parse_result.empty) {
@@ -1041,9 +1044,18 @@ const SourceMapCapture = struct {
     /// v3 JSON map filled in by `onChunk`. Owned by the caller (lives for
     /// the duration of the transform call).
     json: bun.MutableString,
+    /// `true` when the transpiler is targeting `bun`, which flips the
+    /// printer's sourcemap builder into the packed `InternalSourceMap`
+    /// format (see `getSourceMapBuilder` in js_printer.zig). In that
+    /// case we must re-encode the chunk buffer from internal → VLQ
+    /// before emitting the v3 JSON map.
+    is_internal_format: bool,
 
-    pub fn init(allocator: std.mem.Allocator) SourceMapCapture {
-        return .{ .json = bun.MutableString.initEmpty(allocator) };
+    pub fn init(allocator: std.mem.Allocator, is_internal_format: bool) SourceMapCapture {
+        return .{
+            .json = bun.MutableString.initEmpty(allocator),
+            .is_internal_format = is_internal_format,
+        };
     }
 
     pub fn deinit(this: *SourceMapCapture) void {
@@ -1055,10 +1067,16 @@ const SourceMapCapture = struct {
     }
 
     fn onChunk(this: *SourceMapCapture, chunk: bun.SourceMap.Chunk, source: *const logger.Source) anyerror!void {
-        // `chunk.buffer` holds standard VLQ (the transform printer path does
-        // not use the prepend-count Bun-runtime format), so we can call
-        // `printSourceMapContents` directly.
-        try chunk.printSourceMapContents(source, &this.json, true, false);
+        if (this.is_internal_format) {
+            // `target: "bun"` routes through getSourceMapBuilder with
+            // is_bun_platform=true, which stores mappings as Bun's
+            // packed binary format in chunk.buffer instead of VLQ.
+            // `printSourceMapContentsFromInternal` re-encodes to VLQ
+            // before emitting JSON so the result is a valid v3 map.
+            try chunk.printSourceMapContentsFromInternal(source, &this.json, true, false);
+        } else {
+            try chunk.printSourceMapContents(source, &this.json, true, false);
+        }
     }
 
     /// Emit a valid but empty v3 map for `source` — used when there is
@@ -1068,6 +1086,9 @@ const SourceMapCapture = struct {
     pub fn writeEmpty(this: *SourceMapCapture, source: *const logger.Source) !void {
         var empty_chunk: bun.SourceMap.Chunk = .initEmpty();
         defer empty_chunk.deinit();
+        // An empty chunk's buffer is zero-length in either format, so
+        // `printSourceMapContents` works regardless of
+        // `is_internal_format`.
         try empty_chunk.printSourceMapContents(source, &this.json, true, false);
     }
 };
@@ -1183,7 +1204,10 @@ pub fn transformSync(
     const source_map_mode = this.config.transform.source_map orelse .none;
     const want_source_map = source_map_mode != .none;
 
-    var capture = SourceMapCapture.init(arena.backingAllocator());
+    var capture = SourceMapCapture.init(
+        arena.backingAllocator(),
+        this.transpiler.options.target.isBun(),
+    );
     defer capture.deinit();
 
     if (want_source_map) {

@@ -2166,6 +2166,29 @@ pub const TestCommand = struct {
 
                     return;
                 },
+                .pending => {
+                    // Top-level await never settled and the event loop drained. Report it as a
+                    // load error for this file and move on instead of hanging forever.
+                    reporter.jest.current_file.printIfNeeded();
+                    Output.prettyErrorln(
+                        "<r><red>error<r><d>:<r> Top-level await in <b>{s}<r> never resolved and nothing is keeping the event loop alive.",
+                        .{file_title},
+                    );
+                    Output.flush();
+                    reporter.summary().fail += 1;
+
+                    if (reporter.jest.bail == reporter.summary().fail) {
+                        reporter.printSummary();
+                        Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
+                        reporter.writeJUnitReportIfNeeded();
+
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
+                    }
+
+                    return;
+                },
                 else => {},
             }
 

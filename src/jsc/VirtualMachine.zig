@@ -1039,6 +1039,32 @@ pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) void {
     this.eventLoop().waitForPromise(promise);
 }
 
+/// Wait for a module's top-level await promise to settle.
+///
+/// Unlike `waitForPromise`, this breaks out when nothing remains that could
+/// settle the promise (no active handles/refs, no pending tasks or
+/// immediates). Without this, a module containing e.g.
+/// `await new Promise(() => {})` causes the loader to busy-spin forever in
+/// `tick()` + `autoTick()` once the last timer fires and `autoTick` degrades
+/// to a non-blocking `tickWithoutIdle`.
+///
+/// Callers must handle a still-`.pending` status on return: for `bun run` this
+/// matches Node's exit code 13 behavior; for `bun test` the file is reported
+/// as a load error.
+fn waitForModulePromise(this: *VirtualMachine, promise: *JSInternalPromise) void {
+    while (promise.status() == .pending) {
+        this.eventLoop().tick();
+
+        if (promise.status() != .pending) return;
+
+        // After draining tasks + microtasks, if nothing is keeping the loop
+        // alive the promise can never settle. Break instead of busy-spinning.
+        if (!this.isEventLoopAlive()) return;
+
+        this.eventLoop().autoTick();
+    }
+}
+
 pub fn waitForTasks(this: *VirtualMachine) void {
     while (this.isEventLoopAlive()) {
         this.eventLoop().tick();
@@ -2262,9 +2288,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(jsc.AnyPromise{
-                .internal = promise,
-            });
+            this.waitForModulePromise(promise);
         }
 
         if (promise.status() == .rejected)
@@ -2445,7 +2469,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        this.waitForModulePromise(promise);
     }
 
     this.eventLoop().autoTick();
@@ -2477,7 +2501,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        this.waitForModulePromise(promise);
     }
 
     return this.pending_internal_promise.?;

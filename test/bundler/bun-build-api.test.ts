@@ -1484,6 +1484,51 @@ describe("Bun.build chains inline input sourcemaps", () => {
     expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
   });
 
+  // Inner map whose VLQ references `source_index >= sources.len` is
+  // malformed per the spec. Accepting it would alias the next input
+  // file's slot in the output `sources[]` (Chunk.Builder emits
+  // `1 + inner.source_index` unclamped; LinkerContext reserves exactly
+  // `1 + external_source_names.len` slots per file). Pass the real
+  // source count to `Mapping.parse` so the map gets rejected and we
+  // fall back to the intermediate.
+  test("inline map with out-of-range inner source_index is rejected", async () => {
+    // VLQ "AAAA;ACAA" = line 0: (0, 0, 0, 0); line 1: (0, +1, 0, 0)
+    // → second mapping references source_index = 1, but sources has
+    // only one entry.
+    const innerMap = {
+      version: 3,
+      sources: ["authored.ts"],
+      sourcesContent: ["// authored\n"],
+      names: [],
+      mappings: "AAAA;ACAA",
+    };
+    const inline = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-oob", {
+      "intermediate.js": "export const x = 1;\nexport const y = 2;\n" + inline,
+      "entry.ts": `import { x } from './intermediate.js';\nconsole.log(x);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // The malformed map must be rejected — no `authored.ts` slot
+    // appears in the output, and no neighboring file's slot got
+    // aliased away.
+    expect(parsed.sources.some((s: string) => s.endsWith("authored.ts"))).toBe(false);
+    expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
+  });
+
   // Guard the last-line anchoring — a file that has a fully-valid
   // `//# sourceMappingURL=` marker embedded EARLIER in the body (inside
   // a template literal / multi-line string) but NO trailing comment must

@@ -23,7 +23,7 @@ unsafe extern "C" {
     safe fn WebCore__DOMFormData__toQueryString(
         arg0: &mut DOMFormData,
         arg1: *mut c_void,
-        arg2: unsafe extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
+        arg2: extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
     );
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
@@ -46,7 +46,7 @@ unsafe extern "C" {
     fn DOMFormData__toQueryString(
         this: *mut DOMFormData,
         ctx: *mut c_void,
-        callback: unsafe extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),
+        callback: extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),
     );
 
     // safe: same opaque-handle/round-trip-ctx contract as `toQueryString` above.
@@ -75,7 +75,7 @@ impl DOMFormData {
     where
         F: FnMut(ZigString),
     {
-        unsafe extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
+        extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
             // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
             let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
             cb(unsafe { *str_ });
@@ -134,7 +134,7 @@ impl DOMFormData {
     where
         F: FnMut(ZigString, FormDataEntry<'_, B>),
     {
-        unsafe extern "C" fn for_each_wrapper<B, F>(
+        extern "C" fn for_each_wrapper<B, F>(
             ctx_ptr: *mut c_void,
             name_: *mut ZigString,
             value_ptr: *mut c_void,
@@ -178,7 +178,7 @@ impl DOMFormData {
     }
 }
 
-type ForEachFunction = unsafe extern "C" fn(
+type ForEachFunction = extern "C" fn(
     ctx_ptr: *mut c_void,
     name: *mut ZigString,
     value_ptr: *mut c_void,

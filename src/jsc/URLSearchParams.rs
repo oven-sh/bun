@@ -20,7 +20,7 @@ unsafe extern "C" {
     safe fn URLSearchParams__toString(
         self_: &mut URLSearchParams,
         ctx: *mut c_void,
-        callback: unsafe extern "C" fn(ctx: *mut c_void, str: *const ZigString),
+        callback: extern "C" fn(ctx: *mut c_void, str: *const ZigString),
     );
 }
 
@@ -43,7 +43,7 @@ impl URLSearchParams {
             callback: fn(&mut Ctx, ZigString),
         }
 
-        unsafe extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
+        extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; `str` is a valid
             // *const ZigString for the duration of this callback (borrowed from C++).
             let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };

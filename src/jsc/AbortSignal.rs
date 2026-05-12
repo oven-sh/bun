@@ -80,7 +80,7 @@ pub trait AbortListener {
 
 impl AbortSignal {
     pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
-        unsafe extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
+        extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
             // the same thread before `cleanNativeBindings` removes it.
             let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };

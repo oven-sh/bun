@@ -465,7 +465,7 @@ impl Debugger {
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
                 unsafe { (*timer).init(uv_loop) };
 
-                unsafe extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
+                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
                     // SAFETY: `vm` is the per-thread singleton; called on the
                     // JS thread (libuv timer callback). Spec `.?` would panic;
                     // unwinding across `extern "C"` is UB so we early-return.
@@ -478,7 +478,7 @@ impl Debugger {
                         uv::uv_close(handle.cast(), Some(deinit_timer));
                     }
                 }
-                unsafe extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
+                extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
                     // SAFETY: `handle` is the `Box<Timer>` allocated above
                     // (cast through `uv_handle_t` at offset 0); this is the
                     // sole owner reclaiming it after `uv_close` completes.

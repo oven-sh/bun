@@ -1761,6 +1761,8 @@ impl ZigString {
         if self.len == 0 { return &[]; }
         // ZigString.zig:436 — only panics when `len > 0 and !is16Bit()`.
         debug_assert!(self.is_16bit());
+        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
+        // for `self.len` u16 units; flag bits stripped by `untagged`.
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr).cast(), self.len) }
     }
     /// `ZigString.utf16SliceAligned` — same as `utf16_slice`; the Zig variant
@@ -1775,6 +1777,9 @@ impl ZigString {
     pub fn byte_slice(&self) -> &[u8] {
         if self.len == 0 { return &[]; }
         let bytes = if self.is_16bit() { self.len * 2 } else { self.len };
+        // SAFETY: constructor stored a valid ptr for `len` elements of the
+        // tagged width; `bytes` is exactly that element count times element
+        // size. Flag bits stripped by `untagged`.
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr), bytes) }
     }
     /// `ZigString.substringWithLen` (ZigString.zig:166) — re-wrap a sub-range

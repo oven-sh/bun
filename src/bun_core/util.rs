@@ -1823,6 +1823,13 @@ unsafe extern "C" {
     safe fn Bun__StackCheck__initialize();
     /// No preconditions; returns the cached stack-bound pointer for this thread.
     safe fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
+    /// `&mut libc::timespec` is ABI-identical to libc's `struct timespec *`
+    /// (thin non-null pointer to a `#[repr(C)]` struct); the type encodes the
+    /// only pointer-validity precondition, so `safe fn` discharges the
+    /// link-time proof and `nano_timestamp`/`Timespec::now_real` call it
+    /// directly.
+    #[cfg(unix)]
+    safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
 }
 impl Default for StackCheck {
     /// Zig `.{}` — `cached_stack_end` defaults to `0`, so
@@ -2432,8 +2439,7 @@ pub mod time {
         #[cfg(unix)]
         {
             let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            // SAFETY: ts is valid for write.
-            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &raw mut ts) };
+            super::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
             (ts.tv_sec as i128) * NS_PER_S + (ts.tv_nsec as i128)
         }
         #[cfg(not(unix))]
@@ -4131,9 +4137,9 @@ impl Timespec {
 
     fn now_real() -> Timespec {
         #[cfg(unix)]
-        unsafe {
+        {
             let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts);
+            clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
             Timespec { sec: ts.tv_sec as i64, nsec: ts.tv_nsec as i64 }
         }
         #[cfg(not(unix))]

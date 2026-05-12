@@ -564,6 +564,29 @@ pub fn processSubtree(
             }
 
             if (pkg_resolutions[pkg_id].tag == .folder) {
+                // Folder dependencies are never hoisted. However, a folder dependency
+                // can resolve to a package that already appears in the current tree
+                // ancestry — for example, a `workspace:<path>` dependency inside a
+                // folder-installed package that resolves (via FolderResolution path
+                // reuse) back to that same folder package, or to another already-
+                // resolved folder package that transitively depends on this one.
+                // Placing and re-enqueueing it would loop forever, so detect the
+                // cycle by walking the parent trees and skip placement.
+                // https://github.com/oven-sh/bun/issues/25202
+                if (pkg_id == parent_pkg_id) {
+                    break :hoisted .dependency_loop;
+                }
+                var ancestor_id = this.id;
+                while (ancestor_id != invalid_id) : (ancestor_id = trees[ancestor_id].parent) {
+                    const ancestor_dep_id = trees[ancestor_id].dependency_id;
+                    const ancestor_pkg_id: PackageID = if (ancestor_dep_id == root_dep_id)
+                        0
+                    else
+                        builder.resolutions[ancestor_dep_id];
+                    if (ancestor_pkg_id == pkg_id) {
+                        break :hoisted .dependency_loop;
+                    }
+                }
                 break :hoisted .{ .placement = .{ .id = next.id } };
             }
 

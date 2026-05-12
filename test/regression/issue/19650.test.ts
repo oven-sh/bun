@@ -6,6 +6,10 @@ import { bunEnv, bunExe } from "harness";
 // overflow), the callback previously returned an empty JSValue, which JSC's
 // reifyStaticProperty passes straight to putDirect without an exception
 // check, crashing on a null JSCell dereference.
+//
+// Each subprocess must write "OK" to stdout after the pathological access
+// pattern completes. Without the fix, release builds segfault and ASAN/UBSan
+// builds abort on a null-pointer member call, so "OK" is never written.
 test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
   "accessing Bun.%s near stack overflow does not crash",
   async key => {
@@ -16,15 +20,16 @@ test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
       }
       try { new F(); } catch {}
       Bun.gc(true);
+      process.stdout.write("OK");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
       env: bunEnv,
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "ignore",
     });
-    const exitCode = await proc.exited;
-    expect(proc.signalCode).toBeNull();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "OK", signalCode: null });
     expect([0, 1]).toContain(exitCode);
   },
 );
@@ -32,20 +37,24 @@ test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
 test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
   "accessing Bun.%s after clobbering Symbol does not crash",
   async key => {
+    // process.stdout is lazily initialized via internal:primordials which
+    // reads globalThis.Symbol, so take a reference before clobbering it.
     const src = `
+      const stdout = process.stdout;
       globalThis.Symbol = NaN;
       try { Bun[${JSON.stringify(key)}]; } catch {}
       try { Bun[${JSON.stringify(key)}]; } catch {}
       Bun.gc(true);
+      stdout.write("OK");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
       env: bunEnv,
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "ignore",
     });
-    const exitCode = await proc.exited;
-    expect(proc.signalCode).toBeNull();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "OK", signalCode: null });
     expect([0, 1]).toContain(exitCode);
   },
 );

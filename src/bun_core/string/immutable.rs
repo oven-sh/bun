@@ -1338,7 +1338,9 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // wrappers above.
 #[inline]
 pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    crate::strings::eql_case_insensitive_ascii(a, b, check_len)
+    // NOTE: must call `strings_impl` directly — `crate::strings::eql_case_insensitive_ascii`
+    // re-exports *this* function (177f671a9046), so routing through it recurses.
+    crate::strings_impl::eql_case_insensitive_ascii(a, b, check_len)
 }
 
 pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
@@ -1657,10 +1659,12 @@ macro_rules! w {
 }
 
 /// Index of first non-ASCII byte. Thin `u32` view over the canonical
-/// `crate::strings::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
+/// `crate::strings_impl::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
+/// NOTE: must call `strings_impl` directly — `crate::strings::first_non_ascii`
+/// re-exports *this* function (177f671a9046), so routing through it recurses.
 #[inline]
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
-    crate::strings::first_non_ascii(slice).map(|i| i as u32)
+    crate::strings_impl::first_non_ascii(slice).map(|i| i as u32)
 }
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check (immutable.zig).

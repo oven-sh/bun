@@ -716,9 +716,9 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer; valid for the lifetime of the store (process-static).
-        let result = unsafe { &*result_ptr };
-        let basename = result.base();
+        let lookup = EntryLookup { entry: result_ptr, diff_case: None };
+        // EntryStore-owned pointer; safe read via the encapsulated backref accessor.
+        let basename = lookup.entry().base();
         if !strings::eql_long(basename, query_, true) {
             return Some(EntryLookup {
                 entry: result_ptr,
@@ -730,7 +730,7 @@ impl DirEntry {
             });
         }
 
-        Some(EntryLookup { entry: result_ptr, diff_case: None })
+        Some(lookup)
     }
 
     // TODO(port): getComptimeQuery used comptime string lowering + comptime hash; Rust port
@@ -738,9 +738,9 @@ impl DirEntry {
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
         // PERF(port): was comptime hash precompute — profile in Phase B
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; valid for the lifetime of the store (process-static).
-        let result = unsafe { &*result_ptr };
-        let basename = result.base();
+        let lookup = EntryLookup { entry: result_ptr, diff_case: None };
+        // EntryStore-owned pointer; safe read via the encapsulated backref accessor.
+        let basename = lookup.entry().base();
 
         if basename != query_lower {
             return Some(EntryLookup {
@@ -753,7 +753,7 @@ impl DirEntry {
             });
         }
 
-        Some(EntryLookup { entry: result_ptr, diff_case: None })
+        Some(lookup)
     }
 
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
@@ -848,12 +848,19 @@ pub struct EntryLookup<'a> {
 }
 
 impl<'a> EntryLookup<'a> {
-    /// Convenience: dereference `entry` as a shared borrow.
-    /// SAFETY: `entry` points into the process-static `EntryStore`; caller must
-    /// not hold a concurrent `&mut` to the same `Entry`.
+    /// Shared borrow of the looked-up `Entry`.
+    ///
+    /// # Safety (encapsulated)
+    /// `self.entry` is a slot in the process-static `EntryStore` BSSList
+    /// singleton (BACKREF/ARENA — never freed, never moved). No `&mut Entry`
+    /// is materialized concurrently with a read: the lazy-stat path
+    /// (`entry_mut`) carries a caller-side exclusivity contract, so safe code
+    /// cannot alias. Returned as `&'a` (the lookup's nominal
+    /// lifetime, tied to the `DirEntry` it came from) rather than `&self` so
+    /// callers may move/consume the `EntryLookup` while keeping the borrow.
     #[inline]
-    pub unsafe fn entry_ref(&self) -> &Entry {
-        // SAFETY: see fn doc
+    pub fn entry(&self) -> &'a Entry {
+        // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
     }
     /// Convenience: dereference `entry` as a mutable borrow for the lazy-stat

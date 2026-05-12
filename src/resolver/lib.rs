@@ -970,9 +970,10 @@ pub mod fs {
 
             let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
             let &result_ptr = self.data.get(query)?;
-            // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-            // borrow here only to compare basename — never overlaps a writer.
-            let basename = unsafe { &*result_ptr }.base();
+            let lookup = EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData };
+            // EntryStore-owned pointer; read-only basename via the encapsulated
+            // backref accessor (see `EntryLookup::entry` SAFETY doc).
+            let basename = lookup.entry().base();
             if !strings::eql_long(basename, query_, true) {
                 return Some(EntryLookup {
                     entry: result_ptr,
@@ -989,7 +990,7 @@ pub mod fs {
                 });
             }
 
-            Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
+            Some(lookup)
         }
 
         /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
@@ -998,8 +999,10 @@ pub mod fs {
         pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
             // PERF(port): was comptime hash precompute — profile in Phase B
             let &result_ptr = self.data.get(query_lower)?;
-            // SAFETY: EntryStore-owned pointer; read-only basename compare.
-            let basename = unsafe { &*result_ptr }.base();
+            let lookup = EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData };
+            // EntryStore-owned pointer; read-only basename via the encapsulated
+            // backref accessor (see `EntryLookup::entry` SAFETY doc).
+            let basename = lookup.entry().base();
 
             if basename != query_lower {
                 return Some(EntryLookup {
@@ -1014,7 +1017,7 @@ pub mod fs {
                 });
             }
 
-            Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
+            Some(lookup)
         }
 
         /// Port of `DirEntry.addEntry` in `fs.zig`.

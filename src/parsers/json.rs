@@ -848,20 +848,17 @@ static EMPTY_STRING: bun_core::RacyCell<E::String> = bun_core::RacyCell::new(E::
 
 #[inline]
 fn empty_string_data() -> js_ast::expr::Data {
-    // SAFETY: EMPTY_STRING is never mutated; `StoreRef::from_raw` requires
-    // non-null aligned and outliving the next Store reset — a `static`
-    // trivially satisfies both.
-    js_ast::expr::Data::EString(unsafe { js_ast::StoreRef::from_raw(EMPTY_STRING.get()) })
+    // EMPTY_STRING is a never-mutated static; `StoreRef::from_raw` checks
+    // non-null and the static trivially outlives any Store reset.
+    js_ast::expr::Data::EString(js_ast::StoreRef::from_raw(EMPTY_STRING.get()))
 }
 #[inline]
 fn empty_object_data() -> js_ast::expr::Data {
-    // SAFETY: see above.
-    js_ast::expr::Data::EObject(unsafe { js_ast::StoreRef::from_raw(EMPTY_OBJECT.get()) })
+    js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get()))
 }
 #[inline]
 fn empty_array_data() -> js_ast::expr::Data {
-    // SAFETY: see above.
-    js_ast::expr::Data::EArray(unsafe { js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()) })
+    js_ast::expr::Data::EArray(js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

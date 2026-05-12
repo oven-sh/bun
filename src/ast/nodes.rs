@@ -44,11 +44,13 @@ impl<T> StoreRef<T> {
     pub const fn from_non_null(p: NonNull<T>) -> Self {
         StoreRef(p)
     }
-    /// SAFETY: `p` must be non-null, aligned, and outlive the next Store reset.
+    /// Wrap a raw pointer. Panics if `p` is null. Alignment and arena-lifetime
+    /// are caller-tracked just like the already-safe `from_non_null` /
+    /// `From<NonNull<T>>` constructors — the only invariant `unsafe` was
+    /// guarding here was non-null, which we now check.
     #[inline]
-    pub const unsafe fn from_raw(p: *mut T) -> Self {
-        // SAFETY: caller contract.
-        StoreRef(unsafe { NonNull::new_unchecked(p) })
+    pub fn from_raw(p: *mut T) -> Self {
+        StoreRef(NonNull::new(p).expect("StoreRef::from_raw: null pointer"))
     }
     /// Wrap a `bumpalo::Bump::alloc` result.
     #[inline]

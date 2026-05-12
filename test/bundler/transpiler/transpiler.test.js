@@ -3809,7 +3809,14 @@ const y: number = 10;`;
       let shift = 0;
       let cont = true;
       while (cont) {
-        const digit = charset.indexOf(seg[offset++]);
+        const ch = seg[offset++];
+        const digit = charset.indexOf(ch);
+        if (digit === -1) {
+          // Fail fast on malformed VLQ. Without this guard, (digit & 32)
+          // stays truthy for `-1` and we loop forever — a test assertion
+          // failure would manifest as a CI hang, not a useful error.
+          throw new Error(`Invalid VLQ digit ${JSON.stringify(ch)} in segment ${JSON.stringify(seg)} at offset ${offset - 1}`);
+        }
         cont = (digit & 32) !== 0;
         value += (digit & 31) << shift;
         shift += 5;
@@ -3862,13 +3869,11 @@ const y: number = 10;`;
     expect(out).not.toContain("sourceMappingURL");
   });
 
-  it("returns a plain string when sourcemap is false or 'none'", () => {
-    for (const value of [false, "none"]) {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: value });
-      const out = t.transformSync(input);
-      expect(typeof out).toBe("string");
-      expect(out).not.toContain("sourceMappingURL");
-    }
+  it.each([false, "none"])("returns a plain string when sourcemap is %p", value => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: value });
+    const out = t.transformSync(input);
+    expect(typeof out).toBe("string");
+    expect(out).not.toContain("sourceMappingURL");
   });
 
   it("'inline' appends a data URL and returns a string", () => {
@@ -4005,51 +4010,48 @@ const y: number = 10;`;
   // `.d.ts`-style sources) and empty inputs produce zero output bytes.
   // The documented contract for `sourcemap: "external"` / `"linked"` is
   // `{ code, map }` regardless, and the sync and async paths must agree.
-  const emptyInputs = [
-    { name: "empty input", src: "" },
-    { name: "type-only input", src: "interface Foo { x: number }" },
-  ];
-
-  for (const { name, src } of emptyInputs) {
-    it(`'external' returns { code, map } for ${name} (sync)`, () => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+  describe.each([
+    ["empty input", ""],
+    ["type-only input", "interface Foo { x: number }"],
+  ])("%s", (_name, src) => {
+    it.each(["external", "linked"])("'%s' returns { code, map } (sync)", mode => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
       const out = t.transformSync(src);
       expect(typeof out).toBe("object");
-      expect(out.code).toBe("");
+      expect(out.code.replace(/\n\/\/# sourceMappingURL=.*/s, "")).toBe("");
       expect(typeof out.map).toBe("string");
       const map = JSON.parse(out.map);
       expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
     });
 
-    it(`'external' returns { code, map } for ${name} (async)`, async () => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
-      const out = await t.transform(src);
+    it.each(["external", "linked"])("'%s' returns { code, map } (async)", async mode => {
       // Pre-fix, the async path silently fell back to `""` for empty
       // output while the sync path returned `{ code, map }` — see
       // oven-sh/bun#30540 review.
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
+      const out = await t.transform(src);
       expect(typeof out).toBe("object");
-      expect(out.code).toBe("");
       expect(typeof out.map).toBe("string");
       const map = JSON.parse(out.map);
       expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
     });
 
-    it(`'linked' returns { code, map } for ${name} (async)`, async () => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "linked" });
-      const out = await t.transform(src);
-      expect(typeof out).toBe("object");
-      expect(out.code).toMatch(/\/\/# sourceMappingURL=[^\s]+\.map/);
-      expect(typeof out.map).toBe("string");
+    it("'inline' returns a string with a trailing newline (sync)", () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+      const out = t.transformSync(src);
+      expect(typeof out).toBe("string");
+      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+      expect(out.endsWith("\n")).toBe(true);
     });
 
-    it(`'inline' returns a string with a trailing newline for ${name} (async)`, async () => {
+    it("'inline' returns a string with a trailing newline (async)", async () => {
       const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
       const out = await t.transform(src);
       expect(typeof out).toBe("string");
       expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
       expect(out.endsWith("\n")).toBe(true);
     });
-  }
+  });
 
   // Sync and async must agree on the synthetic source filename even
   // when the caller passes a per-call loader that differs from the
@@ -4075,5 +4077,38 @@ const y: number = 10;`;
     const asyncFooter = async_.code.match(/sourceMappingURL=[^\s]+/)?.[0];
     expect(syncFooter).toBe(asyncFooter);
     expect(syncFooter).toBe("sourceMappingURL=input.ts.map");
+  });
+
+  // `target: "bun"` flips the printer's sourcemap builder into the
+  // packed InternalSourceMap binary format. The transform path has to
+  // re-encode that to standard VLQ before emitting the v3 JSON map,
+  // otherwise JSON.parse chokes on the raw binary bytes embedded in
+  // the `mappings` field.
+  it.each(["ts", "tsx", "jsx", "js"])(
+    'target: "bun" emits valid VLQ mappings for loader=%s (sync)',
+    loader => {
+      const t = new Bun.Transpiler({ loader, target: "bun", sourcemap: "external" });
+      const out = t.transformSync("const x = 1;\nconst y = 2;");
+      const parsed = JSON.parse(out.map);
+      // decodeMappings would throw on an invalid VLQ segment; a
+      // successful decode is our proof that the format is correct.
+      const decoded = decodeMappings(parsed.mappings);
+      expect(decoded.length).toBeGreaterThan(0);
+      for (const m of decoded) {
+        expect(m.originalLine).toBeGreaterThanOrEqual(0);
+        expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+      }
+    },
+  );
+
+  it('target: "bun" with sourcemap: "inline" produces a parseable embedded map', () => {
+    const t = new Bun.Transpiler({ loader: "ts", target: "bun", sourcemap: "inline" });
+    const out = t.transformSync("const x: number = 1;");
+    const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+    expect(match).not.toBeNull();
+    const map = JSON.parse(atob(match[1]));
+    expect(map.version).toBe(3);
+    // No non-VLQ characters in the mappings field.
+    expect(map.mappings).toMatch(/^[A-Za-z0-9+/,;]*$/);
   });
 });

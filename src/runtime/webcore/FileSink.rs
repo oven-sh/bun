@@ -143,7 +143,7 @@ const FILESINK_DEAD: u32 = 0xDEAD_51A1;
 /// looks it up so the next CI hit prints the actual `ref_count→0` path
 /// instead of the (uninformative) lazy-sweep stack. Windows debug only;
 /// removed with the rest of the probe once root-caused.
-#[cfg(all(windows, debug_assertions))]
+#[cfg(windows)]
 static FREED_AT: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<usize, String>>,
 > = std::sync::LazyLock::new(Default::default);
@@ -950,7 +950,7 @@ impl FileSink {
                     .and_then(|m| m.get(&(self as *const _ as usize)).cloned())
                     .unwrap_or_else(|| "<no deinit backtrace recorded>".into());
                 #[cfg(not(debug_assertions))]
-                let freed_bt = String::from("<release build>");
+                let freed_bt = String::from("<no FREED_AT entry — never reached deinit; m_sinkPtr was bogus from start OR deinit not called>");
                 panic!(
                     "FileSink::finalize: bad magic {m:#x} (LIVE={:#x} DEAD={:#x}) at self={:p}; \
                      m_sinkPtr is stale (UAF). head[0..64]={:02x?} | decode: @8 fd={} @16 data={:#x} \
@@ -1176,7 +1176,7 @@ impl FileSink {
         // #53265 probe v5: record the freeing call stack BEFORE poisoning, so a
         // later finalize-on-stale-m_sinkPtr can name the over-deref site (the
         // GC-sweep stack at finalize time is uninformative). See `FREED_AT`.
-        #[cfg(all(windows, debug_assertions))]
+        #[cfg(windows)]
         if let Ok(mut m) = FREED_AT.lock() {
             m.insert(
                 this as usize,

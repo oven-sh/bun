@@ -4246,15 +4246,21 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        // C++ adopts both out-params (+1 → `res.result.value.deref()` /
+        // `queryString.deref()` in `moduleLoaderResolve` /
+        // `moduleLoaderImportModule`, ZigGlobalObject.cpp), so account for the
+        // FFI transfer in `RUST_WTF_REF_BALANCE` without touching refcounts.
         if let Some(query) = query_string {
             *query = if !result.query_string.is_empty() {
-                bun_string::String::clone_utf8(result.query_string)
+                bun_string::String::clone_utf8(result.query_string).track_ffi_transfer()
             } else {
                 bun_string::String::empty()
             };
         }
 
-        *res = ErrorableString::ok(bun_string::String::clone_utf8(result.path));
+        *res = ErrorableString::ok(
+            bun_string::String::clone_utf8(result.path).track_ffi_transfer(),
+        );
         Ok(())
     }
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec

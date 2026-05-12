@@ -14,6 +14,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
         ("arrayBufferToString", __jsc_host_array_buffer_to_string),
         ("mimallocDump", __jsc_host_dump_mimalloc),
         ("heapStats", __jsc_host_heap_stats),
+        ("heapStatsTrace", __jsc_host_heap_stats_trace),
     ];
     for &(name, func) in FIELDS {
         object.put(
@@ -136,6 +137,34 @@ fn heap_stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> 
         JSValue::js_number(bun_alloc::live_arena_heaps() as f64),
     );
     Ok(obj)
+}
+
+/// `Bun.unsafe.heapStatsTrace(enable?)` — debug-only per-callsite ref trace.
+///
+/// `heapStatsTrace(true)` arms tracing; subsequent `heapStatsTrace()` (no
+/// arg) drains and returns `[{net, site:"file:line"}]` aggregated since the
+/// last drain. Release builds return `[]`.
+#[bun_jsc::host_fn]
+fn heap_stats_trace(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arg0 = frame.argument(0);
+    if arg0.is_boolean() {
+        bun_string::rust_wtf_ref_trace_enable(arg0.to_boolean());
+        return Ok(JSValue::UNDEFINED);
+    }
+    let entries = bun_string::rust_wtf_ref_trace_drain();
+    let arr = jsc::JSArray::create_empty(global, entries.len()).map_err(|_| jsc::JsError::Thrown)?;
+    for (i, (net, site)) in entries.into_iter().enumerate() {
+        let row = JSValue::create_empty_object(global, 2);
+        row.put(global, b"net", JSValue::js_number(net as f64));
+        row.put(
+            global,
+            b"site",
+            jsc::ZigString::init_utf8(site.as_bytes()).to_js(global),
+        );
+        // SAFETY: `i < entries.len()` and `arr` was sized to `entries.len()`.
+        unsafe { arr.put_index(global, i as u32, row) };
+    }
+    Ok(arr.into())
 }
 
 #[bun_jsc::host_fn]

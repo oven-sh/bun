@@ -109,10 +109,21 @@ impl OwnedResolvedSource {
     /// per `headers-handwritten.h` `BunString::deref` callers in
     /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
     /// strings.
+    ///
+    /// All four `BunString` fields leave Rust's books here (C++ derefs
+    /// `source_code` in `SourceProvider::create` / `ResolvedSourceCodeHolder`;
+    /// `specifier`/`source_url`/`bytecode_origin_path` in `~SourceProvider()`),
+    /// so account for them in [`bun_string::RUST_WTF_REF_BALANCE`] without
+    /// touching refcounts.
     #[inline]
+    #[track_caller]
     pub fn into_ffi(self) -> ResolvedSource {
         let rs = self.0;
         core::mem::forget(self);
+        rs.source_code.track_ffi_transfer();
+        rs.specifier.track_ffi_transfer();
+        rs.source_url.track_ffi_transfer();
+        rs.bytecode_origin_path.track_ffi_transfer();
         rs
     }
 

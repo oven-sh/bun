@@ -2291,7 +2291,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             this.waitForModulePromise(promise);
         }
 
-        if (promise.status() == .rejected)
+        // Propagate both rejection and still-pending (unsettled TLA on an
+        // idle loop) so callers report it instead of silently continuing to
+        // later preloads / the entry point.
+        if (promise.status() != .fulfilled)
             return promise;
     }
 

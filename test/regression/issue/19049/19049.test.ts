@@ -118,6 +118,18 @@ describe.concurrent("bun run: unsettled top-level await", () => {
     expect(r.exitCode).toBe(13);
   });
 
+  test("warns and exits with code 13 when a --preload has unsettled TLA", async () => {
+    using dir = tempDir("issue-19049-preload", {
+      "preload.mjs": `await new Promise(() => {});`,
+      "entry.mjs": `console.log("unreachable");`,
+    });
+    const r = await run({ cmd: [bunExe(), "--preload", "./preload.mjs", "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.stdout).not.toContain("unreachable");
+    expect(r.exitCode).toBe(13);
+  });
+
   test("beforeExit fires first and can resolve the await", async () => {
     using dir = tempDir("issue-19049-beforeexit", {
       "entry.mjs": `

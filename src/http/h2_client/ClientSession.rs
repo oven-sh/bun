@@ -133,11 +133,16 @@ pub(super) fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
     unsafe { &mut *ptr }
 }
 
-/// Shared variant of [`stream_mut`].
+/// Shared variant of [`stream_mut`]. Returns a [`bun_ptr::ParentRef`] so the
+/// shared deref goes through the safe `Deref` impl instead of an open-coded
+/// raw-ptr reborrow; same INVARIANT as [`stream_mut`] (heap-boxed, owned by
+/// `streams`, HTTP-thread-only) ⇒ the stream outlives the handle. Mirrors
+/// [`crate::http_context::HTTPContext::h2_session_ref`].
 #[inline(always)]
-pub(super) fn stream_ref<'a>(ptr: *const Stream) -> &'a Stream {
-    // SAFETY: see [`stream_mut`] INVARIANT.
-    unsafe { &*ptr }
+pub(super) fn stream_ref(ptr: *const Stream) -> bun_ptr::ParentRef<Stream> {
+    bun_ptr::ParentRef::from(
+        NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"),
+    )
 }
 
 /// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.

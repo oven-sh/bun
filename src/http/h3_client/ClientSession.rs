@@ -419,11 +419,13 @@ pub(super) fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
 /// `Copy` fields without forming `&mut Stream`. Same liveness invariant as
 /// [`stream_mut`]; used where the caller holds an iterator over `pending` and
 /// only needs a read.
+///
+/// Returns a [`bun_ptr::ParentRef`] (the session owns the stream ⇒ it
+/// outlives the handle) so the shared deref goes through the safe `Deref`
+/// impl instead of an open-coded raw-ptr reborrow.
 #[inline]
-pub(super) fn stream_ref<'a>(p: *mut Stream) -> &'a Stream {
-    // SAFETY: see [`stream_mut`] — heap-allocated, live until `detach()`,
-    // HTTP-thread only. `&T` is `SharedReadOnly`.
-    unsafe { &*p }
+pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
+    bun_ptr::ParentRef::from(NonNull::new(p).expect("pending entry is non-null"))
 }
 
 /// Upgrade a `*mut ClientSession` (a `ClientContext.sessions` registry entry,

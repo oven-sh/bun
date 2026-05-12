@@ -1085,17 +1085,14 @@ impl JSValkeyClient {
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
-    fn add_timer(&self, timer: *mut Timer::EventLoopTimer, next_timeout_ms: u32) {
-        // PORT NOTE: reshaped for borrowck — `timer` aliases a `JsCell` field
-        // of self (via `JsCell::as_ptr()`), so use raw ptr.
+    fn add_timer(&self, timer: &JsCell<Timer::EventLoopTimer>, next_timeout_ms: u32) {
+        // `timer` is `&self.timer` or `&self.reconnect_timer`; `JsCell` gives
+        // us closure-scoped `&mut` without an open-coded raw deref.
         self.ref_();
         let _d = deref_guard(self);
 
-        // SAFETY: caller passes self.timer.as_ptr() or self.reconnect_timer.as_ptr()
-        let timer_ref = unsafe { &mut *timer };
-
         // If the timer is already active, we need to remove it first
-        if timer_ref.state == Timer::State::ACTIVE {
+        if timer.get().state == Timer::State::ACTIVE {
             self.remove_timer(timer);
         }
 
@@ -1105,34 +1102,31 @@ impl JSValkeyClient {
         }
 
         // Set up timer and add to event loop
-        let timer_ref = unsafe { &mut *timer };
         let now = bun_core::Timespec::ms_from_now(
             bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
         // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until B-2 unifies them.
-        timer_ref.next = Timer::Timespec { sec: now.sec, nsec: now.nsec };
+        timer.with_mut(|t| t.next = Timer::Timespec { sec: now.sec, nsec: now.nsec });
         // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
         // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
         let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
         // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
         // until `remove_timer`/`stop_timers` unlinks it).
-        unsafe { VirtualMachine::timer_insert(vm, timer) };
+        unsafe { VirtualMachine::timer_insert(vm, timer.as_ptr()) };
         self.ref_();
     }
 
     /// Safely remove a timer with proper reference counting and event loop keepalive
-    fn remove_timer(&self, timer: *mut Timer::EventLoopTimer) {
-        // SAFETY: caller passes a `JsCell` field of self
-        let timer_ref = unsafe { &mut *timer };
-        if timer_ref.state == Timer::State::ACTIVE {
+    fn remove_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) {
+        if timer.get().state == Timer::State::ACTIVE {
             // Remove the timer from the event loop
             let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
             // SAFETY: `vm` is the live per-thread VM; `timer` is currently
             // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, timer) };
+            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
@@ -1147,18 +1141,18 @@ impl JSValkeyClient {
 
         // First remove existing timer if active
         if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(self.timer.as_ptr());
+            self.remove_timer(&self.timer);
         }
 
         // Add new timer if interval is non-zero
         if interval > 0 {
-            self.add_timer(self.timer.as_ptr(), interval);
+            self.add_timer(&self.timer, interval);
         }
     }
 
     pub fn disable_connection_timeout(&self) {
         if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(self.timer.as_ptr());
+            self.remove_timer(&self.timer);
         }
         self.timer.with_mut(|t| t.state = Timer::State::CANCELLED);
     }
@@ -1397,12 +1391,12 @@ impl JSValkeyClient {
     pub fn on_valkey_reconnect(&self) {
         // Schedule reconnection using our safe timer methods
         if self.reconnect_timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(self.reconnect_timer.as_ptr());
+            self.remove_timer(&self.reconnect_timer);
         }
 
         let delay_ms = self.client.get().get_reconnect_delay();
         if delay_ms > 0 {
-            self.add_timer(self.reconnect_timer.as_ptr(), delay_ms);
+            self.add_timer(&self.reconnect_timer, delay_ms);
         }
     }
 
@@ -1548,10 +1542,10 @@ impl JSValkeyClient {
     pub fn stop_timers(&self) {
         // Use safe timer removal methods to ensure proper reference counting
         if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(self.timer.as_ptr());
+            self.remove_timer(&self.timer);
         }
         if self.reconnect_timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(self.reconnect_timer.as_ptr());
+            self.remove_timer(&self.reconnect_timer);
         }
     }
 

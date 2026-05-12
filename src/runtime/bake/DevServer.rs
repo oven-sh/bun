@@ -6095,12 +6095,11 @@ impl UnrefSourceMapRequest {
     where
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
+        dev.server.as_mut().expect("server bound").on_pending_request();
         let ctx = Box::new(UnrefSourceMapRequest {
             dev: std::ptr::from_mut::<DevServer>(dev),
             body: uws::BodyReaderMixin::init(),
         });
-        // SAFETY: dev outlives the request
-        unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
         let raw = bun_core::heap::into_raw(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }

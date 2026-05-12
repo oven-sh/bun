@@ -339,17 +339,14 @@ impl Timeout {
         this
     }
 
-    /// # Safety
-    /// `this` is a live boxed `Timeout`; must be called on the JS thread.
-    unsafe fn cancel(this: *mut Timeout, vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract.
-        if unsafe { (*this).event_loop_timer.state } == TimerState::ACTIVE {
-            // SAFETY: state == ACTIVE ⇒ node is currently linked into the heap.
+    /// Unlink `this.event_loop_timer` from the per-VM heap if currently
+    /// scheduled. Must be called on the JS thread.
+    fn cancel(this: &mut Timeout, vm: *mut VirtualMachine) {
+        if this.event_loop_timer.state == TimerState::ACTIVE {
+            // SAFETY: state == ACTIVE ⇒ node is currently linked into the heap;
+            // `vm` is the live per-thread VM (JS-thread-only call site).
             unsafe {
-                VirtualMachine::timer_remove(
-                    vm,
-                    core::ptr::addr_of_mut!((*this).event_loop_timer),
-                );
+                VirtualMachine::timer_remove(vm, &raw mut this.event_loop_timer);
             }
         }
     }
@@ -364,7 +361,7 @@ impl Timeout {
         // `dispatch`, which may free it.
         unsafe {
             (*this).event_loop_timer.state = TimerState::FIRED;
-            Self::cancel(this, vm);
+            Self::cancel(&mut *this, vm);
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
@@ -401,7 +398,7 @@ impl Timeout {
     unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
-            Self::cancel(this, vm);
+            Self::cancel(&mut *this, vm);
             drop(bun_core::heap::take(this));
         }
     }

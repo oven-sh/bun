@@ -661,8 +661,8 @@ pub fn compute_chunks(
                 match dir_file.get_path(&mut real_path_buf) {
                     Ok(p) => break 'dir p,
                     Err(err) => {
-                        // SAFETY: split-borrow — see `LinkerContext::log_mut`.
-                        unsafe { &mut *this.log }.add_error_fmt(
+                        // Split-borrow — see `LinkerContext::log_disjoint`.
+                        this.log_disjoint().add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(

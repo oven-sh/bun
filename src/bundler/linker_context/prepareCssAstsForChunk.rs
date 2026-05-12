@@ -264,10 +264,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    // SAFETY: split-borrow — `parse_graph`/`asts` hold
-                                    // borrows derived from `c`; raw-deref the `*mut Log`
-                                    // backref. See `LinkerContext::log_mut`.
-                                    unsafe { &mut *c.log }.add_error_fmt(
+                                    // Split-borrow — `parse_graph`/`asts` hold borrows
+                                    // derived from `c`; `log_disjoint` returns the
+                                    // disjoint `Transpiler.log` backref.
+                                    c.log_disjoint().add_error_fmt(
                                         None,
                                         Loc::EMPTY,
                                         format_args!("Error generating CSS for import: {}", e),

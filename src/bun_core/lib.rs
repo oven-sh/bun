@@ -177,13 +177,13 @@ pub mod vec {
     /// might. After the producer writes `n` bytes to the front of this
     /// slice, call [`commit_spare`]`(v, n)` to expose them.
     #[inline]
-    pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
+    pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] { unsafe {
         let spare = v.spare_capacity_mut();
         // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
         // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
         // the write-only contract above.
         core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
-    }
+    }}
 
     /// Advance `v.len()` by `n` after a producer has initialized the first
     /// `n` bytes of [`spare_bytes_mut`]`(v)`.
@@ -192,10 +192,10 @@ pub mod vec {
     /// `n <= v.capacity() - v.len()` and `v[len .. len+n]` must have been
     /// fully initialized (typically by the FFI/syscall that just returned `n`).
     #[inline]
-    pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
+    pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) { unsafe {
         debug_assert!(n <= v.capacity() - v.len());
         v.set_len(v.len() + n);
-    }
+    }}
 
     /// One-shot "reserve → hand spare bytes to producer → commit" combinator.
     ///
@@ -215,14 +215,14 @@ pub mod vec {
         v: &mut Vec<u8>,
         min_spare: usize,
         f: impl FnOnce(&mut [u8]) -> (usize, R),
-    ) -> R {
+    ) -> R { unsafe {
         if min_spare > 0 {
             v.reserve(min_spare);
         }
         let (n, r) = f(spare_bytes_mut(v));
         commit_spare(v, n);
         r
-    }
+    }}
 }
 
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────

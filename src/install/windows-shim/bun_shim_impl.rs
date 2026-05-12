@@ -1082,10 +1082,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     length_of_filename_u8,
                 )
             };
-            // SAFETY: filename has even length (UTF-16); reinterpret as [u16].
-            let filename_u16: &[u16] = unsafe {
-                bun_core::ffi::slice(filename.as_ptr().cast::<u16>(), filename.len() / 2)
-            };
+            // `filename` is a UTF-16 byte view: its base is `buf1_u8 + 2*NT_OBJECT_PREFIX.len()`
+            // (even offset from a `*mut u16`-derived pointer ⇒ 2-aligned) and its length is the
+            // difference of two `*mut u16`-derived addresses minus an even constant ⇒ even.
+            // `bytemuck::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
+            let filename_u16: &[u16] = bytemuck::cast_slice(filename);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
                 if !filename_u16.is_empty() {

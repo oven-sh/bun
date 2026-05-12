@@ -128,13 +128,6 @@ fn init_modules() {
 }
 
 #[inline]
-fn modules() -> &'static [FallbackEntry] {
-    INIT.call_once(init_modules);
-    // SAFETY: `INIT` guarantees `MODULES` is `Some` and never written again.
-    unsafe { (*MODULES.get()).as_deref().unwrap() }
-}
-
-#[inline]
 pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.

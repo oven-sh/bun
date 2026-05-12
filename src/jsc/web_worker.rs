@@ -214,14 +214,19 @@ unsafe extern "C" {
     // ABI-identical to non-null `*const`); C++ mutating VM state through it is
     // interior to the cell.
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
-    fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // safe: `cpp_worker` is an opaque round-trip pointer owned by C++ (allocated
+    // there, stored in `WebWorker.cpp_worker`, and only ever passed back to C++
+    // — never dereferenced as Rust data); same contract as `JSC__VM__holdAPILock`'s
+    // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
+    // by-value scalars/`#[repr(C)]` PODs.
+    safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see PORT NOTE there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
-    fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: *const JSGlobalObject);
-    fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: *const JSGlobalObject);
-    fn WebWorker__dispatchError(
-        global: *const JSGlobalObject,
+    safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__dispatchError(
+        global: &JSGlobalObject,
         cpp_worker: *mut c_void,
         message: BunString,
         err: JSValue,
@@ -1109,12 +1114,10 @@ impl WebWorker {
         // queuing). It is placed after the entry point has loaded so the parent
         // observes 'online' only once the worker's top-level code has completed;
         // moving it earlier would change that observable ordering.
-        // SAFETY: cpp_worker valid for the lifetime of this struct;
-        // `vm.global` is the live `*mut JSGlobalObject` published in start_vm.
-        unsafe {
-            WebWorker__dispatchOnline(self.cpp_worker, vm.global);
-            WebWorker__fireEarlyMessages(self.cpp_worker, vm.global);
-        }
+        // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
+        // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
+        WebWorker__dispatchOnline(self.cpp_worker, vm.global());
+        WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
@@ -1252,8 +1255,8 @@ impl WebWorker {
         live_workers::unregister(self);
 
         // ---- 4. Post close task to parent ----------------------------------
-        // SAFETY: cpp_worker valid (snapshot taken above).
-        unsafe { WebWorker__dispatchExit(cpp_worker, exit_code) };
+        // `cpp_worker` is the opaque C++-owned handle (snapshot taken above).
+        WebWorker__dispatchExit(cpp_worker, exit_code);
         // `this` may be freed past this point.
 
         // ---- 5. Free worker-thread resources -------------------------------
@@ -1360,8 +1363,8 @@ impl WebWorker {
         // RAII: Zig's `defer str.deref()` — released on scope exit.
         scopeguard::defer! { str.deref(); }
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: `global`/`cpp_worker` valid; `str` reffed for the call.
-            unsafe { WebWorker__dispatchError(global, self.cpp_worker, str, err) }
+            // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
+            WebWorker__dispatchError(global, self.cpp_worker, str, err)
         });
         if let Err(e) = dispatch {
             // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
@@ -1437,16 +1440,13 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
-        // SAFETY: cpp_worker valid; global_object is a live opaque FFI handle
-        // (`&JSGlobalObject` coerces to `*const JSGlobalObject`).
-        unsafe {
-            WebWorker__dispatchError(
-                global_object,
-                worker.cpp_worker,
-                BunString::clone_utf8(&array),
-                error_instance,
-            );
-        }
+        // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
+        WebWorker__dispatchError(
+            global_object,
+            worker.cpp_worker,
+            BunString::clone_utf8(&array),
+            error_instance,
+        );
     })
     .is_err()
     {

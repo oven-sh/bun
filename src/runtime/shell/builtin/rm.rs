@@ -946,17 +946,17 @@ impl ShellRmTask {
     /// same race; the Rust port closes it.
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
-        let mut vtable = RemoveFileVTable {
-            task: self,
-            child_of_dir: false,
-            need_to_wait_out: &mut waiting,
-        };
         let mut buf = bun_paths::PathBuffer::uninit();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
             EntryKindHint::Idk | EntryKindHint::File => {
+                let mut vtable = RemoveFileVTable {
+                    task: self,
+                    child_of_dir: false,
+                    need_to_wait_out: Some(&mut waiting),
+                };
                 self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
             }
             EntryKindHint::Dir => {
@@ -1056,7 +1056,7 @@ impl ShellRmTask {
             child_of_dir: true,
             // Never read: `child_of_dir == true` makes both vtable callbacks
             // enqueue and return early before reaching `remove_entry_dir`.
-            need_to_wait_out: core::ptr::null_mut(),
+            need_to_wait_out: None,
         };
 
         let mut i: usize = 0;
@@ -1576,9 +1576,9 @@ struct RemoveFileVTable<'a> {
     /// Out-param forwarded to [`ShellRmTask::remove_entry_dir`] on the
     /// `child_of_dir == false` path so [`ShellRmTask::remove_entry`] learns
     /// — without re-reading the (possibly already-freed) DirTask — that
-    /// `need_to_wait` was published. Null when `child_of_dir == true`, where
+    /// `need_to_wait` was published. `None` when `child_of_dir == true`, where
     /// both callbacks return before the recursive call.
-    need_to_wait_out: *mut bool,
+    need_to_wait_out: Option<&'a mut bool>,
 }
 impl RemoveFileHandler for RemoveFileVTable<'_> {
     fn on_is_dir(
@@ -1593,9 +1593,12 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
                 .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
             return Ok(());
         }
-        // SAFETY: `child_of_dir == false` is only constructed in
-        // `remove_entry`, which sets `need_to_wait_out` to a live stack bool.
-        let out = unsafe { &mut *self.need_to_wait_out };
+        // `child_of_dir == false` is only constructed in `remove_entry`, which
+        // sets `need_to_wait_out` to `Some(&mut waiting)`.
+        let out = self
+            .need_to_wait_out
+            .as_deref_mut()
+            .expect("set when child_of_dir == false");
         self.task.remove_entry_dir(parent, is_absolute, buf, out)
     }
     fn on_dir_not_empty(
@@ -1610,8 +1613,11 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
                 .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
             return Ok(());
         }
-        // SAFETY: see `on_is_dir`.
-        let out = unsafe { &mut *self.need_to_wait_out };
+        // See `on_is_dir`.
+        let out = self
+            .need_to_wait_out
+            .as_deref_mut()
+            .expect("set when child_of_dir == false");
         self.task.remove_entry_dir(parent, is_absolute, buf, out)
     }
 }

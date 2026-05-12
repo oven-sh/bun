@@ -1347,16 +1347,15 @@ impl JSGlobalObject {
         // SAFETY: caller passes the live VM under construction; event_loop()
         // returns a raw self-pointer that we mutate once to install the waker.
         unsafe { (*(*v).event_loop()).ensure_waker() };
-        // SAFETY: C++ creates and returns a non-null global object.
-        let global = unsafe {
-            Zig__GlobalObject__create(
-                console,
-                context_id,
-                mini_mode,
-                eval_mode,
-                worker_ptr.unwrap_or(core::ptr::null_mut()),
-            )
-        };
+        // C++ creates and returns a non-null global object; `console`/`worker_ptr`
+        // are opaque round-trip pointers C++ stores into the new global.
+        let global = Zig__GlobalObject__create(
+            console,
+            context_id,
+            mini_mode,
+            eval_mode,
+            worker_ptr.unwrap_or(core::ptr::null_mut()),
+        );
 
         // JSC might mess with the stack size.
         StackCheck::configure_thread();
@@ -1373,9 +1372,9 @@ impl JSGlobalObject {
     }
 
     pub fn reset_module_registry_map(global: &JSGlobalObject, map: *mut c_void) -> bool {
-        // SAFETY: FFI — `global` is a valid JSGlobalObject*; `map` was previously returned
-        // by `get_module_registry_map` (caller invariant).
-        unsafe { Zig__GlobalObject__resetModuleRegistryMap(global, map) }
+        // `map` is an opaque round-trip pointer previously returned by
+        // `get_module_registry_map` (C++ owns it; never dereferenced as Rust data).
+        Zig__GlobalObject__resetModuleRegistryMap(global, map)
     }
 
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
@@ -1596,10 +1595,10 @@ unsafe extern "C" {
     );
 
     fn JSC__JSGlobalObject__createAggregateError(
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: *const bun_core::ZigString,
+        message: &bun_core::ZigString,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
@@ -1635,7 +1634,11 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
     safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
 
-    fn Zig__GlobalObject__create(
+    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
+    // the new ZigGlobalObject (never dereferenced as Rust data here — same
+    // contract as `Zig__GlobalObject__createForTestIsolation` below); remaining
+    // args are by-value scalars.
+    safe fn Zig__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -1652,7 +1655,9 @@ unsafe extern "C" {
     ) -> *mut JSGlobalObject;
 
     safe fn Zig__GlobalObject__getModuleRegistryMap(global: &JSGlobalObject) -> *mut c_void;
-    fn Zig__GlobalObject__resetModuleRegistryMap(global: *const JSGlobalObject, map: *mut c_void) -> bool;
+    // safe: `map` is the opaque round-trip pointer returned by
+    // `getModuleRegistryMap` (C++ owns it; never dereferenced as Rust data).
+    safe fn Zig__GlobalObject__resetModuleRegistryMap(global: &JSGlobalObject, map: *mut c_void) -> bool;
 
     safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
 }

@@ -255,8 +255,10 @@ impl ClientSession {
             registry_index: Cell::new(u32::MAX),
         }));
         super::live_sessions.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: ctx is a live back-ref to the owning context.
-        unsafe { (*ctx).h2_register(this) };
+        // `ctx` is a live back-ref to the owning context (set-once,
+        // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
+        // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
+        HTTPClient::ssl_ctx_mut(ctx).h2_register(this);
         this
     }
 
@@ -865,15 +867,16 @@ impl ClientSession {
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).
             let self_ptr = NonNull::from(&mut *self);
-            // SAFETY: ctx back-ref is valid for the session's lifetime. Unlike
+            // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
             // into `maybe_release` has `encoder_poisoned`, `!has_headroom()`
             // (goaway/fatal/stream-id-exhausted), or `streams.count() > 0` —
             // all of which short-circuit before reaching `can_pool()`. So no
             // ancestor frame holds `&mut NewHTTPContext` here and forming one
-            // from the backref is sound.
-            unsafe { &mut *self.ctx }.release_socket(
+            // from the backref is sound — route through the centralised
+            // [`HTTPClient::ssl_ctx_mut`] accessor (same set-once invariant).
+            HTTPClient::ssl_ctx_mut(self.ctx).release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
                 &self.hostname,

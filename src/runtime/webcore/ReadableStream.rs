@@ -194,9 +194,9 @@ impl ReadableStream {
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
-            Source::Bytes(bytes) => {
-                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let bytes = unsafe { &mut *bytes };
+            Source::Bytes(_) => {
+                // BACKREF: see `Source::bytes()` — payload valid while stream alive.
+                let bytes = self.ptr.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
@@ -538,6 +538,29 @@ pub enum Source {
     /// That means we can turn it into whatever we want
     Direct,
     Bytes(*mut ByteStream),
+}
+
+impl Source {
+    /// Shared borrow of the `Bytes` payload as a [`BackRef`](bun_ptr::BackRef).
+    ///
+    /// The pointer is the JS wrapper's `m_ctx` heap allocation returned by
+    /// `ReadableStreamTag__tagged` and is non-null and live while the owning
+    /// `ReadableStream` JSValue is rooted (caller's `Strong`/stack root) — the
+    /// BACKREF outlives-holder invariant. R-2: every `ByteStream` field touched
+    /// through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS that
+    /// re-derives a fresh `&ByteStream` from `m_ctx` aliases shared-only.
+    ///
+    /// Centralises the per-site raw-pointer deref so call sites are
+    /// unsafe-free; the one audited deref lives in [`bun_ptr::BackRef::get`].
+    #[inline]
+    pub fn bytes(self) -> Option<bun_ptr::BackRef<ByteStream>> {
+        match self {
+            Source::Bytes(p) => Some(bun_ptr::BackRef::from(
+                NonNull::new(p).expect("Source::Bytes payload is non-null"),
+            )),
+            _ => None,
+        }
+    }
 }
 
 // ─── NewSource ───────────────────────────────────────────────────────────────

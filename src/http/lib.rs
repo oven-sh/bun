@@ -1945,9 +1945,10 @@ impl<'a> HTTPClient<'a> {
     /// `&self` borrow used to compute the call's other arguments.
     /// HTTP-thread-only — sole live `&mut`. Centralises the raw
     /// `(*ctx).release_socket(..)` deref open-coded at the three
-    /// `release_socket` sites and the `resolve_pending_h2` upgrade.
+    /// `release_socket` sites and the `resolve_pending_h2` upgrade, and reused
+    /// by `h2::ClientSession` for its `ctx` backref (same set-once invariant).
     #[inline]
-    fn ssl_ctx_mut<'c, const IS_SSL: bool>(
+    pub(crate) fn ssl_ctx_mut<'c, const IS_SSL: bool>(
         ctx: *mut GenHttpContext<IS_SSL>,
     ) -> &'c mut GenHttpContext<IS_SSL> {
         // SAFETY: see INVARIANT above.

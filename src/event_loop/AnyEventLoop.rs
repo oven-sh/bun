@@ -289,8 +289,26 @@ pub enum EventLoopHandle {
     // (`init_global`) or an `AnyEventLoop::Mini`-owned loop, both of which
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
-    // `&mut`-taking dispatch sites use the documented `get_mut()` escape hatch.
+    // `&mut`-taking dispatch sites go through [`mini_mut`] (single deref site).
     Mini(BackRef<MiniEventLoop<'static>>),
+}
+
+/// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
+/// the half-dozen identical `unsafe { mini.get_mut() }` dispatch sites below.
+///
+/// Soundness: the `MiniEventLoop` behind every `EventLoopHandle::Mini` is the
+/// per-thread `!Send` singleton (see [`EventLoopHandle::init_mini`] /
+/// `MiniEventLoop::GLOBAL`) or an `AnyEventLoop::Mini`-owned loop accessed only
+/// on its owning thread. Dispatch is single-threaded and every caller below
+/// immediately invokes a method then drops the borrow, so no other `&`/`&mut`
+/// to the loop is live for the returned borrow's lifetime — exactly the
+/// [`BackRef::get_mut`] precondition, discharged once here instead of at each
+/// dispatch site. Private to this module so the invariant is local.
+#[inline]
+fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop<'static>>) -> &'a mut MiniEventLoop<'static> {
+    // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
+    // returned borrow's duration.
+    unsafe { mini.get_mut() }
 }
 
 /// Untagged pointer to either kind of concurrent task. Tag is the surrounding
@@ -476,10 +494,7 @@ impl EventLoopHandle {
     pub fn stdout(self) -> *mut () {
         match self {
             EventLoopHandle::Js { owner } => owner.stdout(),
-            // SAFETY: `BackRef::get_mut` — the per-thread `MiniEventLoop` is
-            // `!Send` and no other `&`/`&mut` to it is live for this call's
-            // duration (handle is `Copy`, but dispatch is single-threaded).
-            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().stdout() },
+            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stdout(),
         }
     }
 
@@ -487,8 +502,7 @@ impl EventLoopHandle {
     pub fn stderr(self) -> *mut () {
         match self {
             EventLoopHandle::Js { owner } => owner.stderr(),
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().stderr() },
+            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stderr(),
         }
     }
 
@@ -519,9 +533,7 @@ impl EventLoopHandle {
     pub fn file_polls(self) -> *mut bun_io::file_poll::Store {
         match self {
             EventLoopHandle::Js { owner } => owner.file_polls(),
-            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
-            // this call's duration.
-            EventLoopHandle::Mini(mut mini) => unsafe { std::ptr::from_mut(mini.get_mut().file_polls()) },
+            EventLoopHandle::Mini(mut mini) => std::ptr::from_mut(mini_mut(&mut mini).file_polls()),
         }
     }
 
@@ -531,14 +543,13 @@ impl EventLoopHandle {
             .contains(bun_io::file_poll::Flags::WasEverRegistered);
         match self {
             EventLoopHandle::Js { owner } => owner.put_file_poll(poll, was_ever_registered),
-            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
-            // this call's duration. Same disjoint-field reasoning as
-            // `AnyEventLoop::put_file_poll` — the ctx only touches
-            // `after_event_loop_callback{,_ctx}`, not `file_polls_`.
-            EventLoopHandle::Mini(mini) => unsafe {
+            // Same disjoint-field reasoning as `AnyEventLoop::put_file_poll` —
+            // the ctx only touches `after_event_loop_callback{,_ctx}`, not
+            // `file_polls_`.
+            EventLoopHandle::Mini(mini) => {
                 let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
-                mini.get_mut().file_polls().put(poll, ctx, was_ever_registered);
-            },
+                mini_mut(mini).file_polls().put(poll, ctx, was_ever_registered);
+            }
         }
     }
 
@@ -546,9 +557,9 @@ impl EventLoopHandle {
         match self {
             // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
             EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
-            // SAFETY: caller guarantees `task.mini` is active; `BackRef::get_mut`
-            // exclusivity holds (see `stdout`).
-            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().enqueue_task_concurrent(task.mini) },
+            // SAFETY: caller guarantees `task.mini` is the active union member
+            // when `self` is `Mini`.
+            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini }),
         }
     }
 
@@ -592,9 +603,7 @@ impl EventLoopHandle {
     pub fn pipe_read_buffer(self) -> *mut [u8] {
         match self {
             EventLoopHandle::Js { owner } => owner.pipe_read_buffer(),
-            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
-            // this call's duration.
-            EventLoopHandle::Mini(mut mini) => unsafe { std::ptr::from_mut::<[u8]>(mini.get_mut().pipe_read_buffer()) },
+            EventLoopHandle::Mini(mut mini) => std::ptr::from_mut::<[u8]>(mini_mut(&mut mini).pipe_read_buffer()),
         }
     }
 

@@ -190,14 +190,15 @@ pub struct PooledSocket<const SSL: bool> {
 }
 
 /// Upgrade an `Option<NonNull<h2::ClientSession>>` held by a pool / found-slot
-/// to `Option<&'a mut h2::ClientSession>`.
+/// / `active_h2_sessions` registry entry to `Option<&'a mut h2::ClientSession>`.
 ///
 /// INVARIANT: while the holder stores `Some`, it owns one strong intrusive ref
-/// on the session (taken in `release_socket`, released in
-/// `add_memory_back_to_pool` / `existing_socket`); the session is a distinct
-/// heap allocation that outlives the holder. HTTP-thread-only, so no
-/// concurrent `&mut`. Centralises the SAFETY argument shared by both
-/// `PooledSocket::h2_session_mut` and `ExistingSocket::h2_session_mut`.
+/// on the session (taken in `release_socket` / `register_h2`, released in
+/// `add_memory_back_to_pool` / `existing_socket` / `unregister_h2`); the
+/// session is a distinct heap allocation that outlives the holder.
+/// HTTP-thread-only, so no concurrent `&mut`. Centralises the SAFETY argument
+/// shared by `PooledSocket::h2_session_mut`, `ExistingSocket::h2_session_mut`,
+/// and the `active_h2_sessions` registry scan in `connect`.
 #[inline]
 fn h2_session_as_mut<'a>(s: Option<NonNull<h2::ClientSession>>) -> Option<&'a mut h2::ClientSession> {
     // SAFETY: see INVARIANT above.
@@ -874,10 +875,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
                 for &session in &self.active_h2_sessions {
-                    // SAFETY: active sessions are kept alive by registry refs;
-                    // `&mut` is unique here (registry is iterated read-only and
-                    // adopt() does not reenter the registry).
-                    let s = unsafe { &mut *session };
+                    // Active sessions are kept alive by registry refs; `&mut`
+                    // is unique here (registry is iterated read-only and
+                    // adopt() does not reenter the registry). Route through
+                    // the centralised [`h2_session_as_mut`] accessor — same
+                    // strong-ref-held invariant as the pool/found-slot cases.
+                    let s = h2_session_as_mut(NonNull::new(session)).unwrap();
                     if s.has_headroom() && s.matches(hostname, port, cfg) {
                         s.adopt(client);
                         return Ok(None);

@@ -62,12 +62,7 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
-        if let Some(stmt) = self.statement.take() {
-            // SAFETY: `stmt` was produced by `heap::alloc` (in `do_run` or
-            // PostgresSQLConnection's statements map) and was ref'd when stored
-            // into `self.statement`.
-            unsafe { PostgresSQLStatement::deref(stmt) };
-        }
+        self.release_statement();
         self.query.deref();
         self.cursor_name.deref();
     }
@@ -186,6 +181,21 @@ impl PostgresSQLQuery {
         // SAFETY: see doc comment — intrusive ref held by `self` keeps the
         // pointee alive; single-JS-thread exclusivity.
         self.statement.get().map(|p| unsafe { &mut *p })
+    }
+
+    /// Release the intrusive ref this query holds on its `statement`, clearing
+    /// the field. One audited deref here replaces the per-site
+    /// `this.statement.set(None)` + `PostgresSQLStatement::deref(stmt)` pair on
+    /// `Drop` and `do_run`'s error paths (6 callers).
+    #[inline]
+    pub fn release_statement(&self) {
+        if let Some(stmt) = self.statement.take() {
+            // SAFETY: when `Some`, `stmt` is a live `heap::alloc` payload kept
+            // alive by the intrusive ref this query took when it was stored
+            // into `self.statement` (`ref_()` / `init_exact_refs`). This
+            // releases exactly that ref; may free if no other refs remain.
+            unsafe { PostgresSQLStatement::deref(stmt) };
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -492,11 +502,9 @@ impl PostgresSQLQuery {
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    // fail to run do cleanup
-                    this.statement.set(None);
-                    // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
-                    // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
-                    unsafe { PostgresSQLStatement::deref(stmt) };
+                    // fail to run do cleanup — sole owner just created above
+                    // (rc=1); `release_statement` decrements → 0 frees.
+                    this.release_statement();
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                     unsafe { Self::deref(this_ptr) };
 
@@ -520,11 +528,9 @@ impl PostgresSQLQuery {
                 this.status.set(Status::Pending);
             }
             if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
-                // fail to run do cleanup
-                this.statement.set(None);
-                // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
-                // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
-                unsafe { PostgresSQLStatement::deref(stmt) };
+                // fail to run do cleanup — sole owner just created above
+                // (rc=1); `release_statement` decrements → 0 frees.
+                this.release_statement();
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref(this_ptr) };
 
@@ -619,10 +625,8 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
-                                    // fail to run do cleanup
-                                    this.statement.set(None);
-                                    // SAFETY: drop the ref we took above.
-                                    unsafe { PostgresSQLStatement::deref(stmt_ptr) };
+                                    // fail to run do cleanup — drop the ref we took above.
+                                    this.release_statement();
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                                     unsafe { Self::deref(this_ptr) };
 
@@ -671,10 +675,7 @@ impl PostgresSQLQuery {
                             let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
-                        if let Some(stmt) = this.statement.take() {
-                            // SAFETY: `stmt` was previously ref'd for `this.statement`.
-                            unsafe { PostgresSQLStatement::deref(stmt) };
-                        }
+                        this.release_statement();
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
@@ -709,10 +710,7 @@ impl PostgresSQLQuery {
                             let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
-                        if let Some(stmt) = this.statement.take() {
-                            // SAFETY: `stmt` was previously ref'd for `this.statement`.
-                            unsafe { PostgresSQLStatement::deref(stmt) };
-                        }
+                        this.release_statement();
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref(this_ptr) };
                         if !global_object.has_exception() {

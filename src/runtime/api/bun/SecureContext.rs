@@ -150,8 +150,9 @@ impl SecureContext {
             // enum is still `.none`; surface the library error stack instead of
             // throwing an empty placeholder.
             if err == uws::create_bun_socket_error_t::none {
-                // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue, no preconditions.
-                let code = unsafe { boringssl::ERR_get_error() };
+                // `ERR_get_error` is declared `safe fn` in `boringssl_sys` (no
+                // preconditions; reads the thread-local error queue).
+                let code = boringssl::ERR_get_error();
                 if code != 0 {
                     return Err(global.throw_value(err_to_js(global, code)));
                 }

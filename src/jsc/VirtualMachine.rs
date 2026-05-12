@@ -1856,7 +1856,10 @@ unsafe extern "C" {
     // `Zig__GlobalObject__create` and takes 5 args (no leading `vm`); the Zig
     // wrapper `JSGlobalObject.create` accepts `vm` only to call
     // `vm.eventLoop().ensureWaker()` before the FFI.
-    fn Zig__GlobalObject__create(
+    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
+    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
+    // args are by-value scalars.
+    safe fn Zig__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -2061,18 +2064,16 @@ impl VirtualMachine {
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
-        // SAFETY: extern "C" FFI; `console` valid. `worker_ptr` is the C++
-        // `WebCore::Worker*` (or null on the main thread) — spec
-        // VirtualMachine.zig:1477-1484 / JSGlobalObject.zig:876.
-        let global = unsafe {
-            Zig__GlobalObject__create(
-                console.cast(),
-                context_id,
-                opts.mini_mode,
-                opts.eval_mode,
-                opts.worker_ptr,
-            )
-        };
+        // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
+        // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
+        // the main thread) — spec VirtualMachine.zig:1477-1484 / JSGlobalObject.zig:876.
+        let global = Zig__GlobalObject__create(
+            console.cast(),
+            context_id,
+            opts.mini_mode,
+            opts.eval_mode,
+            opts.worker_ptr,
+        );
         // JSC may mess with the stack size (spec JSGlobalObject.zig:879).
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
@@ -2899,8 +2900,9 @@ crate::jsc_abi_extern! {
     fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
 }
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal` keeps a raw
-// `*mut c_void` console ptr and stays `unsafe`.
+// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
+// `console_ptr` is an opaque round-trip pointer C++ stores into the new global
+// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
@@ -2910,7 +2912,7 @@ unsafe extern "C" {
         promise: JSValue,
     );
     safe fn Bun__noSideEffectsToString(vm: &VM, global: &JSGlobalObject, reason: JSValue) -> JSValue;
-    fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
+    safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
@@ -3566,8 +3568,8 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        // SAFETY: extern "C" FFI; `console` valid.
-        let new_global = unsafe { BakeCreateProdGlobal(vm_ref.console.cast()) };
+        // `console` is the opaque round-trip pointer C++ stores into the new global.
+        let new_global = BakeCreateProdGlobal(vm_ref.console.cast());
         vm_ref.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
         vm_ref.regular_event_loop.global = NonNull::new(new_global);

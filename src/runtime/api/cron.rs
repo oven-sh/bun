@@ -2242,8 +2242,9 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
 pub fn get_uid() -> u32 {
     #[cfg(unix)]
     {
-        // SAFETY: getuid(2) is always successful and has no preconditions.
-        unsafe { libc::getuid() as u32 }
+        // `bun_sys::c::getuid` is declared `safe fn` (no args, never fails) —
+        // discharges the per-site proof the raw `libc` decl required.
+        sys::c::getuid() as u32
     }
     #[cfg(not(unix))]
     {

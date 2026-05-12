@@ -269,7 +269,11 @@ pub mod bun_core {
                 assert!(len == 0, "ffi::slice: null ptr with non-zero len");
                 &[]
             } else {
-                // SAFETY: caller contract.
+                // SAFETY: this is the irreducible FFI primitive — `ptr` originates
+                // from Win32 (PEB CommandLine/ImagePathName, NtReadFile output) where
+                // no Rust-owned `&[T]`/Vec exists to slice safely. Caller upholds
+                // `from_raw_parts`'s contract (non-null, aligned, `len` initialized
+                // `T`s readable for `'a`, total size ≤ isize::MAX).
                 unsafe { core::slice::from_raw_parts(ptr, len) }
             }
         }
@@ -285,7 +289,8 @@ pub mod bun_core {
                 // Empty mut slice literal: `'static`, no backing needed — no unsafe required.
                 &mut []
             } else {
-                // SAFETY: caller contract.
+                // SAFETY: irreducible FFI primitive (see `slice` above) — caller
+                // additionally guarantees exclusive access to `ptr[..len]` for `'a`.
                 unsafe { core::slice::from_raw_parts_mut(ptr, len) }
             }
         }
@@ -311,7 +316,10 @@ pub mod bun_core {
         /// As [`wcslen`]; borrow must not outlive `p`'s allocation.
         #[inline(always)]
         pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
-            // SAFETY: forwarded to `wcslen`.
+            // SAFETY: irreducible FFI primitive — `p` is a NUL-terminated wide
+            // string from Win32 (e.g. assembled CreateProcessW command line); no
+            // Rust slice exists to borrow. `wcslen` proves `p[..n]` is readable
+            // and initialized; caller guarantees the allocation outlives `'a`.
             unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
         }
     }

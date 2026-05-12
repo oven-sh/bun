@@ -339,22 +339,6 @@ impl FetchTasklet {
             .map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// Upgrade a `Source::Bytes` raw pointer (from `ReadableStreamTag__tagged`)
-    /// to `&mut ByteStream`. The pointee is owned by the JSC ReadableStream and
-    /// is valid while the stream's Strong ref is held; every call site here is
-    /// inside a `readable_stream_ref.get()` scope, so the stream is alive.
-    #[inline]
-    fn bytes_mut<'a>(ptr: readable_stream::Source) -> Option<&'a crate::webcore::ByteStream> {
-        match ptr {
-            // SAFETY: see doc comment.
-            // R-2: deref shared — `on_data` re-enters JS (`pending.run()`),
-            // which can re-derive a fresh `&ByteStream` from `m_ctx`; aliased
-            // `&` is sound, aliased `&mut` is not.
-            readable_stream::Source::Bytes(b) => Some(unsafe { &*b }),
-            _ => None,
-        }
-    }
-
     pub fn ref_(&self) {
         let count = self.ref_count.fetch_add(1, Ordering::Relaxed);
         debug_assert!(count > 0);
@@ -568,7 +552,7 @@ impl FetchTasklet {
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(&global_this) {
-                if let Some(bytes) = Self::bytes_mut(readable.ptr) {
+                if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
                     bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
@@ -597,7 +581,7 @@ impl FetchTasklet {
 
         if let Some(readable) = self.readable_stream_ref.get(&global_this) {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
-            if let Some(bytes) = Self::bytes_mut(readable.ptr) {
+            if let Some(bytes) = readable.ptr.bytes() {
                 bytes.size_hint.set(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
@@ -622,7 +606,7 @@ impl FetchTasklet {
             response.set_size_hint(size_hint);
             if let Some(readable) = response.get_body_readable_stream(&global_this) {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived CurrentResponse BodyReadableStream");
-                if let Some(bytes) = Self::bytes_mut(readable.ptr) {
+                if let Some(bytes) = readable.ptr.bytes() {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
@@ -1280,7 +1264,7 @@ impl FetchTasklet {
     /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
     fn clear_stream_cancel_handler(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
-            if let Some(bytes) = Self::bytes_mut(readable.ptr) {
+            if let Some(bytes) = readable.ptr.bytes() {
                 // R-2: project to the parent `NewSource` via `&self`; the two
                 // fields are `Cell`-wrapped for exactly this caller.
                 let source = bytes.parent_const();

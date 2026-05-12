@@ -1422,9 +1422,10 @@ pub fn user_info(global_this: &JSGlobalObject, options: gen_::UserInfoOptions) -
 
         result.put(global_this, b"username", ZigString::init(username).with_encoding().to_js(global_this));
         result.put(global_this, b"shell", ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
-        // SAFETY: pure FFI getters
-        result.put(global_this, b"uid", JSValue::js_number(unsafe { libc::getuid() } as f64));
-        result.put(global_this, b"gid", JSValue::js_number(unsafe { libc::getgid() } as f64));
+        // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
+        // fail) — discharges the per-site proof the raw `libc` re-export needed.
+        result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
+        result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
     }
 
     Ok(result)

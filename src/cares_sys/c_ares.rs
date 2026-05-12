@@ -805,18 +805,13 @@ impl Channel {
         ctx: &mut T,
     ) {
         let mut host_buf = [0u8; 1024];
-        let mut port_buf = [0u8; 52];
+        let mut port_buf = [0u8; 21];
         let host_ptr = copy_nul_terminated(&mut host_buf, host);
 
-        let port_ptr: *const c_char = 'brk: {
-            if port == 0 {
-                break 'brk ptr::null();
-            }
-            use std::io::Write;
-            let mut cursor = &mut port_buf[..];
-            // bufPrintZ "{d}" + NUL
-            write!(cursor, "{}\0", port).expect("unreachable");
-            port_buf.as_ptr().cast::<c_char>()
+        let port_ptr: *const c_char = if port > 0 {
+            bun_core::fmt::itoa_z(&mut port_buf, port as u64).as_ptr()
+        } else {
+            ptr::null()
         };
 
         let mut hints_buf = [AddrInfo_hints::default(); 3];

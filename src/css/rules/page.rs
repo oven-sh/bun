@@ -132,15 +132,7 @@ impl PageRule {
             if !dest.minify && firstsel.name.is_some() {
                 dest.write_char(b' ')?;
             }
-            let mut first = true;
-            for selector in &self.selectors {
-                if first {
-                    first = false;
-                } else {
-                    dest.delim(b',', false)?;
-                }
-                selector.to_css(dest)?;
-            }
+            dest.write_comma_separated(&self.selectors, |d, sel| sel.to_css(d))?;
         }
 
         dest.whitespace()?;
@@ -173,18 +165,16 @@ impl PageRule {
             }
             dest.newline()?;
 
-            let mut first = true;
-            for rule in &self.rules {
-                if first {
-                    first = false;
-                } else {
-                    if !dest.minify {
-                        dest.write_char(b'\n')?;
+            dest.write_separated(
+                &self.rules,
+                |d| {
+                    if !d.minify {
+                        d.write_char(b'\n')?;
                     }
-                    dest.newline()?;
-                }
-                rule.to_css(dest)?;
-            }
+                    d.newline()
+                },
+                |d, rule| rule.to_css(d),
+            )?;
         }
 
         dest.dedent();

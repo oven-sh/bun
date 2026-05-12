@@ -14,28 +14,14 @@ pub fn to_have_last_returned_with(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let this_value = callframe.this();
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
-    // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
-    let this = scopeguard::guard(this, |t| t.post_match(global_this));
-    let this: &Expect = *this;
-
-    let value: JSValue =
-        this.get_value(global_this, this_value, "toHaveBeenLastReturnedWith", "<green>expected<r>")?;
-
     let expected = callframe.arguments_as_array::<1>()[0];
-    this.increment_expect_call_counter();
-
-    let returns = JSMockFunction__getReturns(global_this, value)?;
-    if !returns.js_type().is_array() {
-        let mut formatter = Formatter::new(global_this).with_quote_strings(true);
-        return Err(global_this.throw(format_args!(
-            "Expected value must be a mock function: {}",
-            value.to_fmt(&mut formatter),
-        )));
-    }
+    let (this, returns, _value) = this.mock_prologue(
+        global_this,
+        callframe.this(),
+        "toHaveBeenLastReturnedWith",
+        "<green>expected<r>",
+        super::mock::MockKind::Returns,
+    )?;
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
     let mut pass = false;

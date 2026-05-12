@@ -49,14 +49,7 @@ pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
-/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
-#[inline]
-fn timer_all<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-}
+use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
@@ -92,6 +85,8 @@ pub struct WindowsNamedPipe {
     pub current_timeout: u32,
     pub flags: Flags,
 }
+
+bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -1377,42 +1372,22 @@ pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::
     unsafe { (*this.cast::<WindowsNamedPipe>()).ssl().unwrap_or(core::ptr::null_mut()) }
 }
 
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
-        // SAFETY: BACKREF set via `set_parent`; shared-only read of `vm`.
-        unsafe { (*this).vm.uv_loop() }
-    }
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: see loop_. Forwards to the embedding socket's refcount.
-        unsafe { &mut *this }.r#ref()
-    }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see loop_. May free the owning context.
-        unsafe { &mut *this }.deref()
-    }
-}
-
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
-    const HAS_ON_WRITABLE: bool = true;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: BACKREF set via `set_parent`; unique for the callback's
-        // duration (StreamingWriter never holds `&mut Parent`).
-        WindowsNamedPipe::on_write(unsafe { &mut *this }, amount, status)
-    }
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_error(unsafe { &mut *this }, err)
-    }
-    unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_writable(unsafe { &mut *this })
-    }
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_close(unsafe { &mut *this })
-    }
+// Windows-only at runtime; the POSIX impl exists purely so the
+// `StreamingWriter<Self>` field type-checks (poll_tag::NULL keeps the
+// dispatch table from being silently wrong if a poll is ever created).
+bun_io::impl_streaming_writer_parent! {
+    WindowsNamedPipe;
+    poll_tag   = bun_io::posix_event_loop::poll_tag::NULL,
+    borrow     = mut,
+    on_write   = on_write,
+    on_error   = on_error,
+    on_ready   = on_writable,
+    on_close   = on_close,
+    event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
+    uws_loop   = |this| (*this).vm.uws_loop(),
+    uv_loop    = |this| (*this).vm.uv_loop(),
+    ref_       = |this| (&mut *this).r#ref(),
+    deref      = |this| (&mut *this).deref(),
 }
 
 /// Port of the three `comptime` fn-pointer args to Zig `stream.readStart(this,
@@ -1447,49 +1422,6 @@ impl uv::StreamReader for WindowsNamedPipe {
         // SAFETY: `this` is the live context stashed in `handle.data` by
         // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
         WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
-    }
-}
-
-// `StreamingWriter<P>` resolves to `PosixStreamingWriter<P>` on non-Windows
-// targets, which carries a `P: PosixStreamingWriterParent` bound. This type is
-// Windows-only at runtime, but the struct field still needs to type-check on
-// POSIX, so provide the trait impl forwarding to the same handlers the Zig
-// `StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
-// binds.
-#[cfg(unix)]
-impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
-    // Never registered as a `FilePoll` owner on POSIX (Windows-only at
-    // runtime); the impl exists purely so the `StreamingWriter<Self>` field
-    // type-checks. NULL keeps the dispatch table from being silently wrong if
-    // a poll is ever (incorrectly) created.
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::NULL;
-    const HAS_ON_READY: bool = true;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: `this` is the BACKREF set via `set_parent`; unique for the
-        // callback's duration (StreamingWriter never holds `&mut Parent`).
-        WindowsNamedPipe::on_write(unsafe { &mut *this }, amount, status)
-    }
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_error(unsafe { &mut *this }, err)
-    }
-    unsafe fn on_ready(this: *mut Self) {
-        // Zig `.onWritable` slot.
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_writable(unsafe { &mut *this })
-    }
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        WindowsNamedPipe::on_close(unsafe { &mut *this })
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write. Shared-only read of `event_loop_handle`.
-        // SAFETY: see on_write.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: see on_write. Shared-only read of `vm`.
-        unsafe { (*this).vm.uws_loop() }
     }
 }
 

@@ -698,11 +698,6 @@ impl TSConfigJSON {
         Ok(parts.into_boxed_slice())
     }
 
-    #[inline]
-    pub fn is_slash(c: u8) -> bool {
-        c == b'/' || c == b'\\'
-    }
-
     pub fn is_valid_tsconfig_path_no_base_url_pattern(
         text: &[u8],
         log: &mut bun_ast::Log,
@@ -735,12 +730,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (Self::is_slash(c1) || (c1 == b'.' && Self::is_slash(c2))) {
+        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && Self::is_slash(c2) {
+        if c1 == b':' && bun_paths::is_sep_any(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -750,7 +745,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if Self::is_slash(c0) {
+        if bun_paths::is_sep_any(c0) {
             return true;
         }
 

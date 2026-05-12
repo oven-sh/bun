@@ -173,11 +173,7 @@ pub(crate) mod sql_hooks {
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
     unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `timer` is the
-        // embedded `timer::All` with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).timer).cast::<c_void>() }
+        crate::jsc_hooks::timer_all().cast()
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`

@@ -689,6 +689,122 @@ impl SocketConfig {
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
+// Thin host-fn forwarders for `cache: true` properties.
+//
+// `js_class_module!` / `generate-classes.ts` already emit
+// `${prop}_get_cached`/`${prop}_set_cached` (and a `Gc` enum) per cached prop.
+// Several JS classes (MySQLConnection, PostgresSQLConnection, RedisClient)
+// then hand-write the *other* half — the `get_*`/`set_*` host-fns that the
+// `.classes.ts` getter/setter thunks dispatch to — as pure forwarding shims.
+// This macro stamps those out so the per-class `impl` block is one line per
+// prop instead of ~10.
+//
+// `($get, $set => $prop)` maps the codegen-expected host-fn idents (snake-
+// cased from the `.classes.ts` getter/setter names, e.g. `get_on_connect`)
+// to the cached-accessor prop ident (`onconnect`). The two namings are NOT
+// derivable from each other (`on_connect` vs `onconnect`), hence the explicit
+// mapping. `lazy_array($get => $prop)` covers the `queries`-style getter that
+// lazily seeds the slot with an empty `JSArray` on first read.
+//
+// The emitted setter returns `()` — `host_fn_setter_this[_shared]` accepts
+// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI), so this is
+// drop-in for both `sharedThis` and `&mut`-receiver classes.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Stamp out trivial cached-prop getter/setter host-fns inside an `impl` block.
+///
+/// ```ignore
+/// bun_jsc::cached_prop_hostfns! {
+///     crate::jsc::codegen::JSPostgresSQLConnection;
+///     lazy_array(get_queries => queries),
+///     (get_on_connect, set_on_connect => onconnect),
+///     (get_on_close,   set_on_close   => onclose),
+/// }
+/// ```
+#[macro_export]
+macro_rules! cached_prop_hostfns {
+    ($gen:path; $($rest:tt)*) => {
+        $crate::cached_prop_hostfns!(@loop $gen; $($rest)*);
+    };
+    (@loop $gen:path;) => {};
+    // lazy-array getter (seeds an empty `JSArray` on first read).
+    // `$gc/$sc` are the codegen'd `${prop}_get_cached`/`${prop}_set_cached`
+    // free fns in `$gen` — passed explicitly because `macro_rules!` can't
+    // camelCase→snake_case the prop ident.
+    (@loop $gen:path; lazy_array($get:ident => $gc:ident, $sc:ident) $(, $($rest:tt)*)?) => {
+        pub fn $get(
+            _this: &Self,
+            this_value: $crate::JSValue,
+            global: &$crate::JSGlobalObject,
+        ) -> $crate::JsResult<$crate::JSValue> {
+            use $gen as __g;
+            if let ::core::option::Option::Some(v) = __g::$gc(this_value) {
+                return ::core::result::Result::Ok(v);
+            }
+            let array = $crate::JSValue::create_empty_array(global, 0)?;
+            __g::$sc(this_value, global, array);
+            ::core::result::Result::Ok(array)
+        }
+        $crate::cached_prop_hostfns!(@loop $gen; $($($rest)*)?);
+    };
+    // plain getter+setter pair
+    (@loop $gen:path; ($get:ident, $set:ident => $gc:ident, $sc:ident) $(, $($rest:tt)*)?) => {
+        pub fn $get(
+            _this: &Self,
+            this_value: $crate::JSValue,
+            _global: &$crate::JSGlobalObject,
+        ) -> $crate::JSValue {
+            use $gen as __g;
+            __g::$gc(this_value).unwrap_or($crate::JSValue::UNDEFINED)
+        }
+        pub fn $set(
+            _this: &Self,
+            this_value: $crate::JSValue,
+            global: &$crate::JSGlobalObject,
+            value: $crate::JSValue,
+        ) {
+            use $gen as __g;
+            __g::$sc(this_value, global, value);
+        }
+        $crate::cached_prop_hostfns!(@loop $gen; $($($rest)*)?);
+    };
+}
+
+/// Stamp out the `do_ref`/`do_unref` host-fn pair that forwards to a
+/// `JsCell<KeepAlive>`-shaped field. Expands inside an `impl` block.
+///
+/// ```ignore
+/// bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
+/// bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx,
+///     after = |this: &Self| this.update_has_pending_activity());
+/// ```
+#[macro_export]
+macro_rules! poll_ref_hostfns {
+    (field = $field:ident, ctx = $ctx:ident $(, after = $after:expr)? $(,)?) => {
+        pub fn do_ref(
+            this: &Self,
+            _: &$crate::JSGlobalObject,
+            _: &$crate::CallFrame,
+        ) -> $crate::JsResult<$crate::JSValue> {
+            let ctx = this.$ctx();
+            this.$field.with_mut(|p| p.ref_(ctx));
+            $( ($after)(this); )?
+            ::core::result::Result::Ok($crate::JSValue::UNDEFINED)
+        }
+        pub fn do_unref(
+            this: &Self,
+            _: &$crate::JSGlobalObject,
+            _: &$crate::CallFrame,
+        ) -> $crate::JsResult<$crate::JSValue> {
+            let ctx = this.$ctx();
+            this.$field.with_mut(|p| p.unref(ctx));
+            $( ($after)(this); )?
+            ::core::result::Result::Ok($crate::JSValue::UNDEFINED)
+        }
+    };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // `impl_js_class_via_generated!` — single-source `JsClass` impl that delegates
 // to a per-type generated accessor module (any module exposing the standard
 // `from_js` / `from_js_direct` / `to_js` [/ `get_constructor`] free-fn surface:

@@ -78,6 +78,26 @@ pub use posix_event_loop::{FilePoll, Loop};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, Loop};
 
+/// Project a `*mut bun_uws_sys::Loop` (the uws wrapper — `PosixLoop` /
+/// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
+/// `uv_loop_t*` on Windows).
+///
+/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
+/// this is the identity. On Windows the wrapper stores the libuv loop in its
+/// `uv_loop` field — set once in C at `us_create_loop` and immutable
+/// thereafter — which we project here so callers needn't open an `unsafe`
+/// block per site just to read a set-once field.
+#[inline]
+pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
+    #[cfg(not(windows))]
+    { uws }
+    #[cfg(windows)]
+    // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
+    // `uv_loop` is initialised in C before any Rust caller can observe the
+    // handle and is never mutated.
+    { unsafe { (*uws).uv_loop } }
+}
+
 pub use posix_event_loop::{get_vm_ctx, js_vm_ctx, AllocatorType, Owner, PollTag};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
@@ -207,6 +227,10 @@ impl EventLoopCtx {
     pub fn is_js(&self) -> bool { self.is(EventLoopCtxKind::Js) }
     #[inline]
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop { self.platform_event_loop_ptr() }
+    /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
+    /// [`uws_to_native`].
+    #[inline]
+    pub fn native_loop(&self) -> *mut Loop { uws_to_native(self.platform_event_loop_ptr()) }
     #[inline]
     pub fn init(h: EventLoopCtx) -> EventLoopCtx { h }
     #[inline]
@@ -259,6 +283,7 @@ pub mod write;
 // crates name these as `bun_io::Write` / `bun_io::BufWriter` /
 // `bun_io::FmtAdapter` / `bun_io::Result`.
 pub use write::{AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write};
+pub use bun_core::fmt::SliceCursor;
 
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
@@ -294,6 +319,120 @@ bun_dispatch::link_interface! {
         fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }
+
+/// One-stop generator for a `BufferedReader` parent: emits **both** the
+/// `impl BufferedReaderParent for $T` block and the matching
+/// `link_impl_BufferedReaderParentLink!` registration. Direct port of the Zig
+/// comptime thunk-generator `BufferedReaderVTable.Fn.init(comptime Type)`
+/// (PipeReader.zig:7-45) — every parent type just declares same-named inherent
+/// methods and writes one macro invocation.
+///
+/// ## Shape
+///
+/// ```ignore
+/// bun_io::impl_buffered_reader_parent! {
+///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
+///     has_on_read_chunk = true|false;
+///     // ↓ omit when has_on_read_chunk = false (trait default fires)
+///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+///     on_reader_done   = |this| (*this).on_reader_done();
+///     on_reader_error  = |this, err| (*this).on_reader_error(err);
+///     loop_            = |this| (*this).loop_();
+///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
+///     // ↓ optional — only `SubprocessPipeReader` overrides this
+///     on_max_buffer_overflow = |this, maxbuf| { ... };
+/// }
+/// ```
+///
+/// Each `|this, ..|` body runs inside the generated
+/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `unsafe {}`
+/// block — `this` is the raw `*mut Self` registered via `set_parent` (see the
+/// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
+/// to `$T` inside every body. Autoref via `(*this).method()` covers the common
+/// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
+/// stay raw-pointer (e.g. `Arc::from_raw` keepalive in shell `PipeReader`)
+/// forward as `<Self>::method(this)` instead.
+#[macro_export]
+macro_rules! impl_buffered_reader_parent {
+    // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
+    (
+        $variant:ident for $T:ident<$lt:lifetime>;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T<'static>);
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; $($rest)* }
+    };
+    // Non-generic.
+    (
+        $variant:ident for $T:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T);
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; $($rest)* }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_buffered_reader_parent_body {
+    (
+        [$($lt:lifetime)?] [$T:ty] $variant:ident;
+        has_on_read_chunk = $has:expr;
+        $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
+        on_reader_done = |$rd_this:ident| $rd:expr;
+        on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
+        loop_ = |$l_this:ident| $lp:expr;
+        event_loop = |$e_this:ident| $ev:expr;
+        $( on_max_buffer_overflow = |$mb_this:ident, $mb_buf:ident| $mb:block; )?
+    ) => {
+        // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
+        // contract — `this` is the `*mut Self` registered via `set_parent`; a
+        // `&mut` to the embedded reader may be live on the caller's stack.
+        impl $(<$lt>)? $crate::pipe_reader::BufferedReaderParent for $T {
+            const KIND: $crate::BufferedReaderParentLinkKind =
+                $crate::BufferedReaderParentLinkKind::$variant;
+            const HAS_ON_READ_CHUNK: bool = $has;
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn on_read_chunk(
+                    $rc_this: *mut Self,
+                    $rc_chunk: &[u8],
+                    $rc_more: $crate::ReadState,
+                ) -> bool {
+                    unsafe { $rc }
+                }
+            )?
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn on_reader_done($rd_this: *mut Self) {
+                unsafe { $rd }
+            }
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
+                unsafe { $re }
+            }
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+                unsafe { $lp }
+            }
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+                unsafe { $ev }
+            }
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn on_max_buffer_overflow(
+                    $mb_this: *mut Self,
+                    $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
+                ) {
+                    unsafe { $mb }
+                }
+            )?
+        }
+    };
+}
+
+#[doc(hidden)]
+pub use bun_sys as __bun_sys;
 
 /// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
 /// already implements [`pipe_reader::BufferedReaderParent`]. Used once per
@@ -812,13 +951,13 @@ impl IoRequestLoop {
             {
                 let mut pending = self.pending.pop_batch().iterator();
                 events_list.reserve(pending.batch.count);
-                // SAFETY: zero the spare capacity; EventType is POD.
-                unsafe {
-                    core::ptr::write_bytes(
-                        events_list.as_mut_ptr(),
-                        0,
-                        events_list.capacity(),
-                    );
+                // Zig: `addOneAssumeCapacity`. `reserve` above ⇒ no realloc; apply_kqueue
+                // fully overwrites the slot so the zero is a safe placeholder.
+                #[inline(always)]
+                fn add_one(list: &mut Vec<EventType>) -> &mut EventType {
+                    debug_assert!(list.len() < list.capacity());
+                    list.push(bun_core::ffi::zeroed());
+                    list.last_mut().unwrap()
                 }
 
                 loop {
@@ -829,47 +968,33 @@ impl IoRequestLoop {
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
-                            let i = events_list.len();
-                            debug_assert!(i + 1 <= events_list.capacity());
-                            // SAFETY: capacity reserved above; slot zeroed.
-                            unsafe { events_list.set_len(i + 1) };
-
                             Poll::apply_kqueue(
                                 ApplyAction::Readable,
                                 readable.tag,
                                 readable.poll,
                                 readable.fd,
-                                &mut events_list[i],
+                                add_one(&mut events_list),
                             );
                         }
                         Action::Writable(writable) => {
-                            let i = events_list.len();
-                            debug_assert!(i + 1 <= events_list.capacity());
-                            // SAFETY: capacity reserved above; slot zeroed.
-                            unsafe { events_list.set_len(i + 1) };
-
                             Poll::apply_kqueue(
                                 ApplyAction::Writable,
                                 writable.tag,
                                 writable.poll,
                                 writable.fd,
-                                &mut events_list[i],
+                                add_one(&mut events_list),
                             );
                         }
                         Action::Close(close) => {
                             if close.poll.flags.contains(Flags::PollReadable)
                                 || close.poll.flags.contains(Flags::PollWritable)
                             {
-                                let i = events_list.len();
-                                debug_assert!(i + 1 <= events_list.capacity());
-                                // SAFETY: capacity reserved above; slot zeroed.
-                                unsafe { events_list.set_len(i + 1) };
                                 Poll::apply_kqueue(
                                     ApplyAction::Cancel,
                                     close.tag,
                                     close.poll,
                                     close.fd,
-                                    &mut events_list[i],
+                                    add_one(&mut events_list),
                                 );
                             }
                             (close.on_done)(close.ctx);

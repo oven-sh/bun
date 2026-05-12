@@ -115,7 +115,9 @@ impl<'a> CommandTag<'a> {
                     };
                     let second_space = second_space as usize;
                     remaining = &remaining[(second_space + 1).min(remaining.len())..];
-                    match parse_int_u64(remaining) {
+                    // Postgres wire is pure base-10 ASCII so radix-0/`_`/sign
+                    // widening is unreachable; @errorName parity via .name().
+                    match bun_core::fmt::parse_int::<u64>(remaining, 0) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
                             bun_core::scoped_log!(
@@ -129,7 +131,7 @@ impl<'a> CommandTag<'a> {
                 }
                 _ => {
                     let after_tag = &tag[(first_space_index + 1).min(tag.len())..];
-                    match parse_int_u64(after_tag) {
+                    match bun_core::fmt::parse_int::<u64>(after_tag, 0) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
                             bun_core::scoped_log!(
@@ -155,31 +157,6 @@ impl<'a> CommandTag<'a> {
             KnownCommand::Copy => CommandTag::Copy(number),
         }
     }
-}
-
-// TODO(port): std.fmt.parseInt(u64, s, 0) auto-detects radix (0x/0o/0b prefixes)
-// and accepts a leading '+' and '_' digit separators. Postgres command tags are
-// always plain base-10 in practice; revisit if needed.
-#[inline]
-fn parse_int_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
-    // Hand-rolled ASCII-digit parse — `s` is postgres wire data; do NOT
-    // round-trip through `core::str::from_utf8` (PORTING.md §Strings).
-    // Mirrors std.fmt.parseInt's error set: error{InvalidCharacter, Overflow}
-    // so the scoped_log @errorName output matches Zig.
-    if s.is_empty() {
-        return Err(bun_core::err!("InvalidCharacter"));
-    }
-    let mut acc: u64 = 0;
-    for &b in s {
-        if !b.is_ascii_digit() {
-            return Err(bun_core::err!("InvalidCharacter"));
-        }
-        acc = acc
-            .checked_mul(10)
-            .and_then(|a| a.checked_add((b - b'0') as u64))
-            .ok_or(bun_core::err!("Overflow"))?;
-    }
-    Ok(acc)
 }
 
 // ported from: src/sql/postgres/CommandTag.zig

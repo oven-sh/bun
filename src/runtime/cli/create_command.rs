@@ -2250,18 +2250,8 @@ impl Example {
             _ => return Err(bun_core::err!("HTTPError")),
         }
 
-        let mut is_expected_content_type = false;
-        let mut content_type: &[u8] = b"";
-        for header in response.headers.list.iter() {
-            if strings::eql_case_insensitive_ascii(header.name(), b"content-type", true) {
-                content_type = header.value();
-
-                if header.value() == b"application/x-gzip" {
-                    is_expected_content_type = true;
-                    break;
-                }
-            }
-        }
+        let content_type: &[u8] = response.headers.get(b"content-type").unwrap_or(b"");
+        let is_expected_content_type = content_type == b"application/x-gzip";
 
         if !is_expected_content_type {
             progress.end();

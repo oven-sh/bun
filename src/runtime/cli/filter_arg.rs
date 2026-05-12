@@ -218,11 +218,7 @@ impl FilterSet {
                 let joined =
                     resolve_path::join_abs_string_buf::<platform::Loose>(cwd, &mut buf[..], &parts);
                 let mut filter_utf8_temp = Box::<[u8]>::from(joined);
-                for b in filter_utf8_temp.iter_mut() {
-                    if *b == b'\\' {
-                        *b = b'/';
-                    }
-                }
+                bun_paths::slashes_to_posix_in_place(&mut filter_utf8_temp[..]);
                 list.push(Pattern {
                     pattern: filter_utf8_temp,
                     kind: PatternKind::Path,

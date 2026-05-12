@@ -436,10 +436,7 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
     strings::index_of(path, needle).is_some()
 }
 
-#[inline(always)]
-pub fn char_is_any_slash(char: u8) -> bool {
-    char == b'/' || char == b'\\'
-}
+pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
 pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {

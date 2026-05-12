@@ -5323,7 +5323,7 @@ pub mod formatter {
                 {
                     b"SharedArrayBuffer"
                 } else {
-                    typed_array_type_name(array_buffer.typed_array_type)
+                    array_buffer.typed_array_type.typed_array_name()
                 },
             );
             if slice.is_empty() {
@@ -5473,30 +5473,6 @@ pub mod formatter {
         const IS_FLOAT: bool = true;
         type Display = bun_core::fmt::DoubleFormatter;
         fn display(self) -> Self::Display { bun_core::fmt::double(f64::from(self)) }
-    }
-
-    /// Port of Zig `@tagName(arrayBuffer.typed_array_type)` — `JSType` is a
-    /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
-    /// Covers every typed-array-ish `JSType` (`isTypedArrayOrArrayBuffer`).
-    fn typed_array_type_name(t: jsc::JSType) -> &'static [u8] {
-        use jsc::JSType as T;
-        match t {
-            T::ArrayBuffer => b"ArrayBuffer",
-            T::Int8Array => b"Int8Array",
-            T::Uint8Array => b"Uint8Array",
-            T::Uint8ClampedArray => b"Uint8ClampedArray",
-            T::Int16Array => b"Int16Array",
-            T::Uint16Array => b"Uint16Array",
-            T::Int32Array => b"Int32Array",
-            T::Uint32Array => b"Uint32Array",
-            T::Float16Array => b"Float16Array",
-            T::Float32Array => b"Float32Array",
-            T::Float64Array => b"Float64Array",
-            T::BigInt64Array => b"BigInt64Array",
-            T::BigUint64Array => b"BigUint64Array",
-            T::DataView => b"DataView",
-            _ => b"TypedArray",
-        }
     }
 }
 

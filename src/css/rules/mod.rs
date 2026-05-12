@@ -50,8 +50,77 @@ pub mod tailwind;
 // kept lifetime-free here (the gated bodies re-introduce `'bump` when they
 // un-gate alongside `bumpalo::collections::Vec` storage).
 
-/// A single CSS rule (at-rule or style rule).
-pub enum CssRule<R> {
+// ─── CssRule variant table ────────────────────────────────────────────────
+// Single source of truth for the 20 typed at-rule payloads. Adding a new
+// at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
+// arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
+// their `to_css` arms are special-cased (see PORT NOTE on `Custom`).
+macro_rules! css_rule_variants {
+    ( $( $(#[$doc:meta])* $Variant:ident($Payload:ty) ),+ $(,)? ) => {
+        /// A single CSS rule (at-rule or style rule).
+        pub enum CssRule<R> {
+            $( $(#[$doc])* $Variant($Payload), )+
+            /// A placeholder for a rule that was removed.
+            Ignored,
+            /// An unknown at-rule.
+            Unknown(unknown::UnknownAtRule),
+            /// A custom at-rule.
+            Custom(R),
+        }
+
+        impl<R> CssRule<R> {
+            pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+                match self {
+                    $( CssRule::$Variant(x) => x.to_css(dest), )+
+                    CssRule::Unknown(x) => x.to_css(dest),
+                    // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
+                    //
+                    // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
+                    // `DefaultAtRule` (whose `toCss` errors unconditionally) and
+                    // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
+                    // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
+                    // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
+                    // diverges from the spec for `R = TailwindAtRule`: it fails
+                    // serialization where the spec round-trips.
+                    //
+                    // The correct port threads a `ToCss`-style bound (or per-`R`
+                    // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
+                    // maps the error path via `add_fmt_error()`. That bound cascades
+                    // through every nested `CssRuleList<R>` printer (media, supports,
+                    // layer, document, nesting, starting_style, style, scope,
+                    // container) — deferred to the patch that un-gates
+                    // `BundlerAtRule = TailwindAtRule`.
+                    // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
+                    // equivalent) is threaded; current behavior is only spec-correct
+                    // for `R = DefaultAtRule`.
+                    CssRule::Custom(_x) => Err(dest.add_fmt_error()),
+                    CssRule::Ignored => Ok(()),
+                }
+            }
+
+            /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
+            /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
+            /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
+            /// as **inherent** methods rather than `DeepClone` trait impls during the
+            /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
+            pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+            where
+                R: css::generics::DeepClone<'bump>,
+            {
+                #[allow(unused_imports)]
+                use css::generics::DeepClone as _;
+                match self {
+                    $( CssRule::$Variant(x) => CssRule::$Variant(x.deep_clone(bump)), )+
+                    CssRule::Unknown(x) => CssRule::Unknown(x.deep_clone(bump)),
+                    CssRule::Custom(x) => CssRule::Custom(x.deep_clone(bump)),
+                    CssRule::Ignored => CssRule::Ignored,
+                }
+            }
+        }
+    };
+}
+
+css_rule_variants! {
     /// A `@media` rule.
     Media(media::MediaRule<R>),
     /// An `@import` rule.
@@ -92,12 +161,6 @@ pub enum CssRule<R> {
     Scope(scope::ScopeRule<R>),
     /// A `@starting-style` rule.
     StartingStyle(starting_style::StartingStyleRule<R>),
-    /// A placeholder for a rule that was removed.
-    Ignored,
-    /// An unknown at-rule.
-    Unknown(unknown::UnknownAtRule),
-    /// A custom at-rule.
-    Custom(R),
 }
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
@@ -400,58 +463,6 @@ impl<R> media::MediaRule<R> {
     }
 }
 
-// ─── CssRule::to_css ──────────────────────────────────────────────────────
-
-impl<R> CssRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        match self {
-            CssRule::Media(x) => x.to_css(dest),
-            CssRule::Import(x) => x.to_css(dest),
-            CssRule::Style(x) => x.to_css(dest),
-            CssRule::Keyframes(x) => x.to_css(dest),
-            CssRule::FontFace(x) => x.to_css(dest),
-            CssRule::FontPaletteValues(x) => x.to_css(dest),
-            CssRule::Page(x) => x.to_css(dest),
-            CssRule::Supports(x) => x.to_css(dest),
-            CssRule::CounterStyle(x) => x.to_css(dest),
-            CssRule::Namespace(x) => x.to_css(dest),
-            CssRule::MozDocument(x) => x.to_css(dest),
-            CssRule::Nesting(x) => x.to_css(dest),
-            CssRule::Viewport(x) => x.to_css(dest),
-            CssRule::CustomMedia(x) => x.to_css(dest),
-            CssRule::LayerStatement(x) => x.to_css(dest),
-            CssRule::LayerBlock(x) => x.to_css(dest),
-            CssRule::Property(x) => x.to_css(dest),
-            CssRule::StartingStyle(x) => x.to_css(dest),
-            CssRule::Container(x) => x.to_css(dest),
-            CssRule::Scope(x) => x.to_css(dest),
-            CssRule::Unknown(x) => x.to_css(dest),
-            // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
-            //
-            // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
-            // `DefaultAtRule` (whose `toCss` errors unconditionally) and
-            // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
-            // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
-            // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
-            // diverges from the spec for `R = TailwindAtRule`: it fails
-            // serialization where the spec round-trips.
-            //
-            // The correct port threads a `ToCss`-style bound (or per-`R`
-            // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
-            // maps the error path via `add_fmt_error()`. That bound cascades
-            // through every nested `CssRuleList<R>` printer (media, supports,
-            // layer, document, nesting, starting_style, style, scope,
-            // container) — deferred to the patch that un-gates
-            // `BundlerAtRule = TailwindAtRule`.
-            // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
-            // equivalent) is threaded; current behavior is only spec-correct
-            // for `R = DefaultAtRule`.
-            CssRule::Custom(_x) => Err(dest.add_fmt_error()),
-            CssRule::Ignored => Ok(()),
-        }
-    }
-}
-
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<R> CssRuleList<R> {
@@ -641,46 +652,6 @@ impl<R> CssRuleList<R> {
         R: css::generics::DeepClone<'bump>,
     {
         Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
-    }
-}
-
-impl<R> CssRule<R> {
-    /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
-    /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
-    /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
-    /// as **inherent** methods rather than `DeepClone` trait impls during the
-    /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
-    where
-        R: css::generics::DeepClone<'bump>,
-    {
-        #[allow(unused_imports)]
-        use css::generics::DeepClone as _;
-        match self {
-            CssRule::Media(x) => CssRule::Media(x.deep_clone(bump)),
-            CssRule::Import(x) => CssRule::Import(x.deep_clone(bump)),
-            CssRule::Style(x) => CssRule::Style(x.deep_clone(bump)),
-            CssRule::Keyframes(x) => CssRule::Keyframes(x.deep_clone(bump)),
-            CssRule::FontFace(x) => CssRule::FontFace(x.deep_clone(bump)),
-            CssRule::FontPaletteValues(x) => CssRule::FontPaletteValues(x.deep_clone(bump)),
-            CssRule::Page(x) => CssRule::Page(x.deep_clone(bump)),
-            CssRule::Supports(x) => CssRule::Supports(x.deep_clone(bump)),
-            CssRule::CounterStyle(x) => CssRule::CounterStyle(x.deep_clone(bump)),
-            CssRule::Namespace(x) => CssRule::Namespace(x.deep_clone(bump)),
-            CssRule::MozDocument(x) => CssRule::MozDocument(x.deep_clone(bump)),
-            CssRule::Nesting(x) => CssRule::Nesting(x.deep_clone(bump)),
-            CssRule::Viewport(x) => CssRule::Viewport(x.deep_clone(bump)),
-            CssRule::CustomMedia(x) => CssRule::CustomMedia(x.deep_clone(bump)),
-            CssRule::LayerStatement(x) => CssRule::LayerStatement(x.deep_clone(bump)),
-            CssRule::LayerBlock(x) => CssRule::LayerBlock(x.deep_clone(bump)),
-            CssRule::Property(x) => CssRule::Property(x.deep_clone(bump)),
-            CssRule::Container(x) => CssRule::Container(x.deep_clone(bump)),
-            CssRule::Scope(x) => CssRule::Scope(x.deep_clone(bump)),
-            CssRule::StartingStyle(x) => CssRule::StartingStyle(x.deep_clone(bump)),
-            CssRule::Unknown(x) => CssRule::Unknown(x.deep_clone(bump)),
-            CssRule::Custom(x) => CssRule::Custom(x.deep_clone(bump)),
-            CssRule::Ignored => CssRule::Ignored,
-        }
     }
 }
 

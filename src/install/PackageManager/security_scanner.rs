@@ -20,7 +20,7 @@ use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::pipe_reader::PosixFlags;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
@@ -1016,27 +1016,14 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
 // Wire the buffered-reader vtable to this type so `BufferedReader::init::<Self>()`
 // resolves. The reader stores `*mut Self` (set via `set_parent`) and calls back
 // through these raw-pointer hooks.
-bun_io::buffered_reader_parent_link!(SecurityScan for SecurityScanSubprocess<'static>);
-impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SecurityScan;
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: `this` was registered via `set_parent(self)`; live for the
-        // duration of the read loop and not aliased by another `&mut`.
-        unsafe { (*this).on_read_chunk(chunk, has_more) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        unsafe { (*this).loop_() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see `loop_`.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
+bun_io::impl_buffered_reader_parent! {
+    SecurityScan for SecurityScanSubprocess<'a>;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    on_reader_done  = |this| (*this).on_reader_done();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    loop_           = |this| (*this).loop_();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
 impl<'a> SecurityScanSubprocess<'a> {
@@ -1413,16 +1400,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn loop_(&mut self) -> *mut AsyncLoop {
-        // POSIX: `bun_io::Loop` is `PosixLoop` — identity cast. Windows: the
-        // uws wrapper (`WindowsLoop`) stores the real `*mut uv_loop_t` in its
-        // `uv_loop` field; project it so `BufferedReaderParent` consumers
-        // (which feed `uv_fs_*` / `Source::open`) get a libuv loop directly.
-        #[cfg(not(windows))]
-        { self.manager.event_loop.loop_().cast() }
-        #[cfg(windows)]
-        // SAFETY: `loop_()` returns the live `us_loop`; `uv_loop` is set once
-        // in C at construction and never null afterwards.
-        { unsafe { (*self.manager.event_loop.loop_()).uv_loop } }
+        self.manager.event_loop.native_loop()
     }
 
     pub fn on_reader_done(&mut self) {

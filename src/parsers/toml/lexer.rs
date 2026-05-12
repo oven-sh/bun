@@ -3,9 +3,9 @@ use core::fmt;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
-use bun_str::strings;
-// In Zig it's `bun.CodePoint` (i32); lives at `bun_str::strings::CodePoint`.
-use bun_str::strings::CodePoint;
+use bun_core::strings;
+// In Zig it's `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
+use bun_core::strings::CodePoint;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -414,7 +414,7 @@ impl<'a> Lexer<'a> {
                 if is_big_integer_literal {
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
-                    match bun_str::wtf::parse_double(text) {
+                    match bun_core::wtf::parse_double(text) {
                         Ok(num) => {
                             self.number = num;
                         }
@@ -567,7 +567,7 @@ impl<'a> Lexer<'a> {
                 self.number = number as f64;
             } else {
                 // Parse a double-precision floating-point number;
-                match bun_str::wtf::parse_double(text) {
+                match bun_core::wtf::parse_double(text) {
                     Ok(num) => {
                         self.number = num;
                     }

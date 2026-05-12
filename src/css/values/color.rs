@@ -280,21 +280,21 @@ impl CssColor {
                 };
                 Ok(CssColor::Rgba(RGBA::new(r, g, b, a)))
             }
-            css::Token::Ident(value) => {
-                if strings::eql_case_insensitive_ascii_check_length(value, b"currentcolor") {
-                    Ok(CssColor::CurrentColor)
-                } else if strings::eql_case_insensitive_ascii_check_length(value, b"transparent") {
-                    Ok(CssColor::Rgba(RGBA::transparent()))
-                } else if let Some((r, g, b)) = css::color::parse_named_color(value) {
-                    Ok(CssColor::Rgba(RGBA::new(r, g, b, 255.0)))
-                } else if let Some(system_color) =
-                    <SystemColor as css::EnumProperty>::from_ascii_case_insensitive(value)
-                {
-                    Ok(CssColor::System(system_color))
-                } else {
-                    Err(location.new_unexpected_token_error(token))
-                }
-            }
+            css::Token::Ident(value) => crate::match_ignore_ascii_case! { value, {
+                b"currentcolor" => Ok(CssColor::CurrentColor),
+                b"transparent" => Ok(CssColor::Rgba(RGBA::transparent())),
+                _ => {
+                    if let Some((r, g, b)) = css::color::parse_named_color(value) {
+                        Ok(CssColor::Rgba(RGBA::new(r, g, b, 255.0)))
+                    } else if let Some(system_color) =
+                        <SystemColor as css::EnumProperty>::from_ascii_case_insensitive(value)
+                    {
+                        Ok(CssColor::System(system_color))
+                    } else {
+                        Err(location.new_unexpected_token_error(token))
+                    }
+                },
+            }},
             css::Token::Function(name) => parse_color_function(location, name, input),
             _ => Err(location.new_unexpected_token_error(token)),
         }

@@ -129,6 +129,11 @@ impl Default for MySQLConnection {
     }
 }
 
+// SAFETY: `MySQLConnection` is the `connection` field embedded inside
+// `JSMySQLConnection` (Zig: `@fieldParentPtr("#connection", this)`); never
+// constructed standalone.
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
+
 impl MySQLConnection {
     pub fn init(
         database: Box<[u8]>,
@@ -252,7 +257,7 @@ impl MySQLConnection {
             return;
         }
 
-        let wrote = any_socket_write(&self.socket, chunk);
+        let wrote = self.socket.write(chunk);
         self.flags.set(
             ConnectionFlags::HAS_BACKPRESSURE,
             usize::try_from(wrote).unwrap_or(0) < chunk.len(),
@@ -266,7 +271,7 @@ impl MySQLConnection {
     }
 
     pub fn close(&mut self) {
-        any_socket_close(&self.socket);
+        self.socket.close(uws::CloseKind::Normal);
         self.write_buffer = OffsetByteList::default();
     }
 
@@ -448,7 +453,7 @@ impl MySQLConnection {
         // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.is_processing_data = false`
         // is hand-inlined before every return below (scopeguard would need &mut self.flags).
         // Clear the timeout.
-        any_socket_set_timeout(&self.socket, 0);
+        self.socket.set_timeout(0);
 
         SocketMonitor::read(data);
 
@@ -1247,42 +1252,6 @@ impl MySQLConnection {
         let _ = self.flush_queue();
     }
 
-    fn get_js_connection(&mut self) -> *mut JSMySQLConnection {
-        // SAFETY: self is the `connection` field embedded inside JSMySQLConnection;
-        // @fieldParentPtr("#connection", this) in Zig. Derive from `*mut Self`
-        // (Unique provenance) so callers may write through the result — casting
-        // from `&self` (`*const`) would carry SharedReadOnly provenance and
-        // make any subsequent write UB under Stacked Borrows.
-        unsafe {
-            bun_core::from_field_ptr!(JSMySQLConnection, connection, std::ptr::from_mut::<Self>(self))
-        }
-        // TODO(port): JSMySQLConnection field name was `#connection` (private) in Zig; confirm Rust field name
-    }
-
-    /// Shared back-reference to the embedding `JSMySQLConnection` (read-only).
-    ///
-    /// Encapsulates the single `container_of` unsafe so the N read-only callers
-    /// (`can_pipeline` / `can_prepare_query` / `can_execute_query`) need no
-    /// per-site unsafe deref. The returned borrow is tied to
-    /// `&self`; the parent's bytes are valid wherever `&self` is valid (self is
-    /// a subobject of the parent allocation).
-    #[inline]
-    fn js_connection_ref(&self) -> &JSMySQLConnection {
-        // SAFETY: `self` is the `connection` field embedded inside a live
-        // `JSMySQLConnection` (it is only ever constructed there). Recovering
-        // the parent via `from_field_ptr!` and reborrowing as `&` for the
-        // lifetime of `&self` is sound — the parent allocation outlives any
-        // borrow of its field.
-        unsafe {
-            &*bun_core::from_field_ptr!(
-                JSMySQLConnection,
-                connection,
-                std::ptr::from_ref::<Self>(self).cast_mut()
-            )
-        }
-    }
-
-    
     fn handle_result_set<C: ReaderContext>(
         &mut self,
         mut reader: NewReader<C>,
@@ -1635,36 +1604,6 @@ impl ReaderContext for Reader {
         }
 
         Err(AnyMySQLError::ShortRead)
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// AnySocket dispatch helpers — TODO(b2-blocked): bun_uws::AnySocket grows
-// `write`/`close`/`set_timeout` once the socket-handler dispatch surface
-// un-gates. Until then, match on the variant and call NewSocketHandler.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn any_socket_write(s: &Socket, data: &[u8]) -> i32 {
-    match s {
-        Socket::SocketTcp(h) => h.write(data),
-        Socket::SocketTls(h) => h.write(data),
-    }
-}
-
-#[inline]
-fn any_socket_close(s: &Socket) {
-    match s {
-        Socket::SocketTcp(h) => h.close(uws::CloseKind::Normal),
-        Socket::SocketTls(h) => h.close(uws::CloseKind::Normal),
-    }
-}
-
-#[inline]
-fn any_socket_set_timeout(s: &Socket, seconds: core::ffi::c_uint) {
-    match s {
-        Socket::SocketTcp(h) => h.set_timeout(seconds),
-        Socket::SocketTls(h) => h.set_timeout(seconds),
     }
 }
 

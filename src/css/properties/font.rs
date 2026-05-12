@@ -158,7 +158,7 @@ impl AbsoluteFontWeight {
 }
 
 /// A value for the [font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum FontSize {
     /// An explicit size.
     Length(LengthPercentage),
@@ -169,25 +169,8 @@ pub enum FontSize {
 }
 
 impl FontSize {
-    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — three payload variants
-    // tried in declaration order.
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(v) = input.try_parse(LengthPercentage::parse) {
-            return Ok(FontSize::Length(v));
-        }
-        if let Ok(v) = input.try_parse(AbsoluteFontSize::parse) {
-            return Ok(FontSize::Absolute(v));
-        }
-        RelativeFontSize::parse(input).map(FontSize::Relative)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        match self {
-            FontSize::Length(l) => l.to_css(dest),
-            FontSize::Absolute(a) => a.to_css(dest),
-            FontSize::Relative(r) => r.to_css(dest),
-        }
-    }
+    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
+    // is_compatible KEPT (custom Rem branch).
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
@@ -569,19 +552,17 @@ impl FontStyle {
     pub fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        // todo_stuff.match_ignore_ascii_case
-        if strings::eql_case_insensitive_ascii_check_length(b"normal", ident) {
-            Ok(FontStyle::Normal)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"italic", ident) {
-            Ok(FontStyle::Italic)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"oblique", ident) {
-            let angle = input
-                .try_parse(Angle::parse)
-                .unwrap_or(FontStyle::default_oblique_angle());
-            Ok(FontStyle::Oblique(angle))
-        } else {
-            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"normal" => Ok(FontStyle::Normal),
+            b"italic" => Ok(FontStyle::Italic),
+            b"oblique" => {
+                let angle = input
+                    .try_parse(Angle::parse)
+                    .unwrap_or(FontStyle::default_oblique_angle());
+                Ok(FontStyle::Oblique(angle))
+            },
+            _ => Err(location.new_unexpected_token_error(crate::Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {

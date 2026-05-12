@@ -12,28 +12,14 @@ pub fn to_have_returned_with(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // jsc.markBinding(@src()) — debug-only binding marker, dropped in port.
-
-    let this_value = frame.this();
-    // defer this.postMatch(globalThis)
-    // PORT NOTE: reshaped for borrowck — scopeguard owns the `&mut Expect` and DerefMut's back to
-    // it, so post_match runs on every exit while the body re-borrows `this` through the guard.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
-    let value: JSValue = this.get_value(global, this_value, "toHaveReturnedWith", "<green>expected<r>")?;
-
     let expected = frame.arguments_as_array::<1>()[0];
-    this.increment_expect_call_counter();
-
-    // TODO(port): bun.cpp.JSMockFunction__getReturns — extern C++ shim; confirm crate path.
-    let returns = super::mock::JSMockFunction__getReturns(global, value)?;
-    if !returns.js_type().is_array() {
-        let mut formatter = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Expected value must be a mock function: {}",
-            value.to_fmt(&mut formatter),
-        )));
-    }
+    let (this, returns, _value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveReturnedWith",
+        "<green>expected<r>",
+        mock::MockKind::Returns,
+    )?;
 
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;

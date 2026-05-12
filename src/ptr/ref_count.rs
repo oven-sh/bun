@@ -517,6 +517,46 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         }
     }
 
+    /// Decrement the refcount WITHOUT running `T::destructor`; returns `true`
+    /// on the 1→0 transition (caller now exclusively owns `*self_` and MUST
+    /// destroy it exactly once).
+    ///
+    /// Prefer [`deref`](Self::deref). Use `release` only when destruction must
+    /// be deferred or routed elsewhere (e.g. bouncing the final drop back to
+    /// the owning thread's event loop).
+    ///
+    /// # Safety
+    /// `self_` must point to a live `T`.
+    pub unsafe fn release(self_: *mut T) -> bool {
+        // SAFETY: caller contract
+        let count = unsafe { &*T::get_ref_count(self_) };
+        #[cfg(debug_assertions)]
+        count.debug.assert_valid();
+        let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
+        bun_core::scoped_log!(
+            ref_count,
+            "0x{:x} deref {} -> {}",
+            self_ as usize,
+            old_count,
+            old_count - 1,
+        );
+        debug_assert!(old_count > 0);
+        if old_count == 1 {
+            #[cfg(debug_assertions)]
+            {
+                // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
+                };
+                // SAFETY: we hold the last ref; exclusive access
+                unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// # Safety
     /// `self_` must point to a live `T`.
     pub unsafe fn dupe_ref(self_: *mut T) -> RefPtr<T>

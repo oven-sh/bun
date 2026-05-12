@@ -406,11 +406,8 @@ pub unsafe fn len_cstr(value: *const c_char) -> usize {
     unsafe { bun_core::ffi::cstr(value) }.to_bytes().len()
 }
 
-#[inline]
-pub unsafe fn span(pointer: *const c_char) -> &'static [u8] {
-    // SAFETY: caller guarantees `pointer` is NUL-terminated and outlives the slice
-    unsafe { bun_core::ffi::cstr(pointer) }.to_bytes()
-}
+/// Zig `bun.span(p)` — bytes of a NUL-terminated C string (excludes NUL).
+pub use bun_core::ffi::cstr_bytes as span;
 
 /// Scan `pointer` until `end` or NUL sentinel, return the slice.
 #[inline]
@@ -817,10 +814,7 @@ pub use bun_sys::copy_file::{
     copy_file_with_state as copyFileWithState, CopyFileState,
 };
 
-pub fn parse_double(input: &[u8]) -> Result<f64, bun_core::Error> {
-    // TODO(port): wasm fallback to std parseFloat
-    bun_jsc::wtf::parse_double(input)
-}
+pub use bun_core::fmt::parse_double;
 
 pub fn is_missing_io_uring() -> bool {
     #[cfg(not(target_os = "linux"))]
@@ -949,22 +943,6 @@ pub fn get_fd_path_w<'a>(_fd: FD, _buf: &'a mut WPathBuffer) -> Result<&'a mut [
 // above `slice_to`. Callers use `bun_core::slice_to_nul` or `slice_to` directly.
 // TODO(port): comptime reflection — sliceTo type machinery dropped
 
-pub fn concat<T: Copy>(dest: &mut [T], src: &[&[T]]) {
-    let mut remain = dest;
-    for group in src {
-        // PORT NOTE: reshaped for borrowck
-        let (head, tail) = remain.split_at_mut(group.len());
-        head.copy_from_slice(group);
-        remain = tail;
-    }
-}
-
-/// Attempt to coerce some value into a byte slice.
-#[inline]
-pub unsafe fn as_byte_slice(buffer: *const c_char) -> &'static [u8] {
-    // SAFETY: caller guarantees NUL-terminated
-    unsafe { span(buffer) }
-}
 
 // ─── DebugOnlyDisabler ────────────────────────────────────────────────────────
 pub struct DebugOnlyDisabler<T> {
@@ -1374,13 +1352,9 @@ macro_rules! os_path_literal {
 }
 
 // ─── MakePath / Dirname (Windows std.fs copies) ──────────────────────────────
-// TODO(port): MakePath — these are copy/pastes of Zig std internals for u16
-// paths on Windows. Phase B should reimplement on top of bun_sys::windows
-// directly rather than mirror Zig's NtCreateFile shim.
-pub mod MakePath {
-    // TODO(port): makeOpenPathAccessMaskW / makeOpenDirAccessMaskW / makeOpenPath /
-    // makePath<T> / componentIterator<T> — Windows-specific NT API wrappers
-}
+// `bun.MakePath.makePath(u16, ..)` callers use `bun_paths::make_path_with` over
+// a `ComponentIterator<u16>` directly (e.g. `bun_libarchive::make_path_u16`);
+// the `componentIterator<T>` half is `bun_paths::ComponentIterator::init`.
 
 /// Zig-API parity re-export. The body that lived here was a verbatim duplicate
 /// of `bun_paths::Dirname` (its non-Windows arm even called the *private*
@@ -1467,28 +1441,6 @@ pub use bun_core::errno_to_zig_err;
 
 pub fn iterate_dir(dir: FD) -> DirIterator::Iterator {
     DirIterator::iterate(dir, DirIterator::Encoding::U8).iter
-}
-
-/// Zig has a todo for @ptrCast changing the `.len`. This is the workaround.
-#[inline]
-pub fn reinterpret_slice<T>(slice: &[u8]) -> &[T] {
-    // SAFETY: caller guarantees alignment and that bytes form valid T values
-    unsafe {
-        core::slice::from_raw_parts(
-            slice.as_ptr().cast::<T>(),
-            slice.len() / core::mem::size_of::<T>(),
-        )
-    }
-}
-#[inline]
-pub fn reinterpret_slice_mut<T>(slice: &mut [u8]) -> &mut [T] {
-    // SAFETY: caller guarantees alignment and that bytes form valid T values
-    unsafe {
-        core::slice::from_raw_parts_mut(
-            slice.as_mut_ptr().cast::<T>(),
-            slice.len() / core::mem::size_of::<T>(),
-        )
-    }
 }
 
 // resolveSourcePath / runtimeEmbedFile — debug-only @embedFile bypass.

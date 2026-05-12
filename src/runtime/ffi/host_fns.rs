@@ -183,16 +183,16 @@ pub fn generate_symbol_for_function(
 
     if let Some(ptr) = value.get(global, b"ptr")? {
         if ptr.is_number() {
-            // PORT NOTE: `as_ptr_address` is gated; `from_ptr_address` encodes
-            // the addr as a JS double, so `as_number() as usize` recovers it
-            // losslessly for the 48-bit address ranges in practice.
-            let num = ptr.as_number() as usize;
+            let num = ptr.as_ptr_address();
+            if num > 0 {
+                function.symbol_from_dynamic_library = Some(num as *mut c_void);
+            }
+        } else if ptr.is_heap_big_int() {
+            let num = ptr.to_uint64_no_truncate() as usize;
             if num > 0 {
                 function.symbol_from_dynamic_library = Some(num as *mut c_void);
             }
         }
-        // TODO(b2): `is_heap_big_int` / `to_uint64_no_truncate` path — gated in
-        // `bun_jsc::JSValue` (lib.rs `_gated` block).
     }
 
     Ok(None)
@@ -384,11 +384,7 @@ impl Function {
             first = false;
             writer.write_all(b"    ")?;
 
-            let length_buf = {
-                let mut cursor = std::io::Cursor::new(&mut arg_buf[3..]);
-                let _ = write!(&mut cursor, "{}", i);
-                cursor.position() as usize
-            };
+            let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
             if arg.needs_a_cast_in_c() {
                 write!(writer, "{}", arg.to_c(arg_name))?;
@@ -484,11 +480,7 @@ impl Function {
 
             arg_buf[0..3].copy_from_slice(b"arg");
             for (i, arg) in self.arg_types.iter().enumerate() {
-                let printed = {
-                    let mut cursor = std::io::Cursor::new(&mut arg_buf[3..]);
-                    let _ = write!(&mut cursor, "{}", i);
-                    cursor.position() as usize
-                };
+                let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
                 write!(
                     writer,

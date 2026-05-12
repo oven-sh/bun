@@ -86,7 +86,10 @@ pub struct JSMySQLConnection {
     max_lifetime_timer: JsCell<EventLoopTimer>,
 }
 
-crate::impl_timer_backref!(JSMySQLConnection, timer, max_lifetime_timer);
+bun_event_loop::impl_timer_owner!(JSMySQLConnection;
+    from_timer_ptr => timer,
+    from_max_lifetime_timer_ptr => max_lifetime_timer,
+);
 
 bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
 
@@ -132,12 +135,7 @@ impl JSMySQLConnection {
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
     /// we never hold two `&mut` to it at once in this module.
     fn vm_mut(&self) -> &'static mut VirtualMachine {
-        // Explicit `'static` so the return does not reborrow `*self` — callers
-        // pair this with `&mut self.timer` in the same expression.
-        // SAFETY: vm is a process-lifetime singleton (per docs/PORTING.md);
-        // `BackRef` was built via `new_mut` so `as_ptr()` carries write
-        // provenance.
-        unsafe { &mut *self.vm.as_ptr() }
+        VirtualMachine::get_mut()
     }
 
     /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe
@@ -292,44 +290,22 @@ impl JSMySQLConnection {
             return;
         }
 
-        match self.connection.get().status {
-            my_sql_connection::Status::Connected => {
-                self.fail_fmt(
-                    AnyMySQLErrorT::IdleTimeout,
-                    format_args!(
-                        "Idle timeout reached after {}",
-                        bun_fmt::fmt_duration_one_decimal(
-                            (self.idle_timeout_interval_ms as u64).saturating_mul(NS_PER_MS)
-                        )
-                    ),
-                );
+        use bun_core::fmt::{fmt_conn_timeout, ConnTimeoutKind::*};
+        use my_sql_connection::Status as S;
+        let (code, kind, ms, sfx) = match self.connection.get().status {
+            S::Connected => (AnyMySQLErrorT::IdleTimeout, Idle, self.idle_timeout_interval_ms, ""),
+            S::Connecting => {
+                (AnyMySQLErrorT::ConnectionTimedOut, Connection, self.connection_timeout_ms, "")
             }
-            my_sql_connection::Status::Connecting => {
-                self.fail_fmt(
-                    AnyMySQLErrorT::ConnectionTimedOut,
-                    format_args!(
-                        "Connection timeout after {}",
-                        bun_fmt::fmt_duration_one_decimal(
-                            (self.connection_timeout_ms as u64).saturating_mul(NS_PER_MS)
-                        )
-                    ),
-                );
-            }
-            my_sql_connection::Status::Handshaking
-            | my_sql_connection::Status::Authenticating
-            | my_sql_connection::Status::AuthenticationAwaitingPk => {
-                self.fail_fmt(
-                    AnyMySQLErrorT::ConnectionTimedOut,
-                    format_args!(
-                        "Connection timeout after {} (during authentication)",
-                        bun_fmt::fmt_duration_one_decimal(
-                            (self.connection_timeout_ms as u64).saturating_mul(NS_PER_MS)
-                        )
-                    ),
-                );
-            }
-            my_sql_connection::Status::Disconnected | my_sql_connection::Status::Failed => {}
-        }
+            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+                AnyMySQLErrorT::ConnectionTimedOut,
+                Connection,
+                self.connection_timeout_ms,
+                " (during authentication)",
+            ),
+            S::Disconnected | S::Failed => return,
+        };
+        self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
     }
 
     pub fn on_max_lifetime_timeout(&self) {
@@ -337,13 +313,12 @@ impl JSMySQLConnection {
         if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
+        use bun_core::fmt::{fmt_conn_timeout, ConnTimeoutKind};
         self.fail_fmt(
             AnyMySQLErrorT::LifetimeTimeout,
             format_args!(
-                "Max lifetime timeout reached after {}",
-                bun_fmt::fmt_duration_one_decimal(
-                    (self.max_lifetime_interval_ms as u64).saturating_mul(NS_PER_MS)
-                )
+                "{}",
+                fmt_conn_timeout(ConnTimeoutKind::MaxLifetime, self.max_lifetime_interval_ms, "")
             ),
         );
     }
@@ -674,75 +649,18 @@ impl JSMySQLConnection {
         Ok(js_value)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
-    pub fn get_queries(
-        _this: &Self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        if let Some(value) = js::queries_get_cached(this_value) {
-            return Ok(value);
-        }
-
-        let array = JSValue::create_empty_array(global_object, 0)?;
-        js::queries_set_cached(this_value, global_object, array);
-
-        Ok(array)
+    bun_jsc::cached_prop_hostfns! {
+        crate::jsc::codegen::js_mysql_connection;
+        lazy_array(get_queries => queries_get_cached, queries_set_cached),
+        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
+        (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
+
+    bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
-    pub fn get_on_connect(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
-        if let Some(value) = js::onconnect_get_cached(this_value) {
-            return value;
-        }
-        JSValue::UNDEFINED
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
-    pub fn set_on_connect(
-        _this: &Self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        js::onconnect_set_cached(this_value, global_object, value);
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
-    pub fn get_on_close(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
-        if let Some(value) = js::onclose_get_cached(this_value) {
-            return value;
-        }
-        JSValue::UNDEFINED
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
-    pub fn set_on_close(
-        _this: &Self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        js::onclose_set_cached(this_value, global_object, value);
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
-    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let ctx = this.vm_ctx();
-        this.poll_ref.with_mut(|p| p.r#ref(ctx));
-        Ok(JSValue::UNDEFINED)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
-    pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let ctx = this.vm_ctx();
-        this.poll_ref.with_mut(|p| p.unref(ctx));
-        Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.

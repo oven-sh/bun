@@ -3,6 +3,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 use crate::node::BlobOrStringOrBuffer as JSArgument;
+use bun_collections::VecExt as _;
 use bun_core::{strings, OwnedString};
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
@@ -97,6 +98,32 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
     unsafe { (*p).to_js() }
 }
 
+/// Shared epilog for every Valkey prototype method: build a `Command`,
+/// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
+/// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
+///
+/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
+/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
+/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
+/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
+/// byte-identically; the only per-caller variation is the args slice, the
+/// `meta` flags, and the error-message prefix.
+#[inline]
+fn send_cmd(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    this_js: JSValue,
+    command: &[u8],
+    args: CommandArgs<'_>,
+    meta: CommandMeta,
+    err_msg: &str,
+) -> JsResult<JSValue> {
+    match this.send(global, this_js, &Command { command, args, meta }) {
+        Ok(p) => Ok(promise_to_js(p)),
+        Err(err) => send_err_to_js(global, err_msg, err),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // compile: comptime command generators
 // ──────────────────────────────────────────────────────────────────────────
@@ -150,22 +177,7 @@ macro_rules! cmd_noargs {
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&[]),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&[]), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -183,22 +195,7 @@ macro_rules! cmd_key {
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(bname($name), $arg0_name, "string or buffer"));
             };
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&[key]),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&[key]), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -234,22 +231,7 @@ macro_rules! cmd_key_varargs {
                 };
                 args.push(another);
             }
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&args),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&args), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -270,22 +252,7 @@ macro_rules! cmd_key_value {
             let Some(value) = from_js(global, frame.argument(1))? else {
                 return Err(global.throw_invalid_argument_type(bname($name), $arg1_name, "string or buffer"));
             };
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&[key, value]),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&[key, value]), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -309,22 +276,7 @@ macro_rules! cmd_key_value_value2 {
             let Some(value2) = from_js(global, frame.argument(2))? else {
                 return Err(global.throw_invalid_argument_type(bname($name), $arg2_name, "string or buffer"));
             };
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&[key, value, value2]),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&[key, value, value2]), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -351,22 +303,7 @@ macro_rules! cmd_strings_varargs {
                 };
                 args.push(another);
             }
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&args),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&args), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -397,22 +334,7 @@ macro_rules! cmd_key_value_varargs {
                 };
                 args.push(another);
             }
-
-            let promise = match this.send(
-                global,
-                frame.this(),
-                &Command {
-                    command: $command.as_bytes(),
-                    args: CommandArgs::Args(&args),
-                    meta: CommandMeta::default(),
-                },
-            ) {
-                Ok(p) => p,
-                Err(err) => {
-                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
-                }
-            };
-            Ok(promise_to_js(promise))
+            send_cmd(this, global, frame.this(), $command.as_bytes(), CommandArgs::Args(&args), CommandMeta::default(), concat!("Failed to send ", $command))
         }
     };
 }
@@ -476,23 +398,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
-
-        // Send GET command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"GET",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send GET command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"GET", CommandArgs::Args(&[key]), CommandMeta::default(), "Failed to send GET command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -506,22 +412,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"GET",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send GET command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"GET", CommandArgs::Args(&[key]), CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send GET command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -565,23 +456,7 @@ impl JSValkeyClient {
             }
         }
 
-        // Send SET command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SET",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SET command", err);
-            }
-        };
-
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SET", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send SET command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -591,23 +466,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
-
-        // Send INCR command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"INCR",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send INCR command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"INCR", CommandArgs::Args(&[key]), CommandMeta::default(), "Failed to send INCR command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -617,23 +476,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
-
-        // Send DECR command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"DECR",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send DECR command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"DECR", CommandArgs::Args(&[key]), CommandMeta::default(), "Failed to send DECR command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -647,23 +490,8 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
-
         // Send EXISTS command with special Exists type for boolean conversion
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"EXISTS",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send EXISTS command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"EXISTS", CommandArgs::Args(&[key]), CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send EXISTS command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -690,27 +518,9 @@ impl JSValkeyClient {
         )?;
 
         // Convert seconds to a string
-        // TODO(port): std.fmt.printInt → stack-buffer integer formatting helper
-        let mut int_buf = [0u8; 64];
-        let seconds_len = bun_core::fmt::print_int(&mut int_buf, seconds);
-        let seconds_slice = &int_buf[..seconds_len];
-
-        // Send EXPIRE command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"EXPIRE",
-                args: CommandArgs::Raw(&[key.slice(), seconds_slice]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send EXPIRE command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        let mut int_buf = bun_core::fmt::ItoaBuf::new();
+        let seconds_slice = bun_core::fmt::itoa(&mut int_buf, seconds);
+        send_cmd(this, global, frame.this(), b"EXPIRE", CommandArgs::Raw(&[key.slice(), seconds_slice]), CommandMeta::default(), "Failed to send EXPIRE command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -720,23 +530,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
-
-        // Send TTL command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"TTL",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send TTL command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"TTL", CommandArgs::Args(&[key]), CommandMeta::default(), "Failed to send TTL command")
     }
 
     // Implement srem (remove value from a set)
@@ -768,23 +562,7 @@ impl JSValkeyClient {
             // PERF(port): was assume_capacity
             args.push(value);
         }
-
-        // Send SREM command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SREM",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SREM command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SREM", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send SREM command")
     }
 
     // Implement srandmember (get random member from set)
@@ -818,23 +596,7 @@ impl JSValkeyClient {
             // PERF(port): was assume_capacity
             args.push(count_arg);
         }
-
-        // Send SRANDMEMBER command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SRANDMEMBER",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SRANDMEMBER command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SRANDMEMBER", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send SRANDMEMBER command")
     }
 
     // Implement smembers (get all members of a set)
@@ -849,23 +611,7 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
-
-        // Send SMEMBERS command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SMEMBERS",
-                args: CommandArgs::Args(&[key]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SMEMBERS command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SMEMBERS", CommandArgs::Args(&[key]), CommandMeta::default(), "Failed to send SMEMBERS command")
     }
 
     // Implement spop (pop a random member from a set)
@@ -891,23 +637,7 @@ impl JSValkeyClient {
             // PERF(port): was assume_capacity
             args.push(count_arg);
         }
-
-        // Send SPOP command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SPOP",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SPOP command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SPOP", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send SPOP command")
     }
 
     // Implement sadd (add member to a set)
@@ -939,23 +669,7 @@ impl JSValkeyClient {
             // PERF(port): was assume_capacity
             args.push(value);
         }
-
-        // Send SADD command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SADD",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SADD command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SADD", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send SADD command")
     }
 
     // Implement sismember (check if value is member of a set)
@@ -973,23 +687,7 @@ impl JSValkeyClient {
         let Some(value) = from_js(global, frame.argument(1))? else {
             return Err(global.throw_invalid_argument_type("sismember", "value", "string or buffer"));
         };
-
-        // Send SISMEMBER command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SISMEMBER",
-                args: CommandArgs::Args(&[key, value]),
-                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SISMEMBER command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SISMEMBER", CommandArgs::Args(&[key, value]), CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send SISMEMBER command")
     }
 
     // Implement hmget (get multiple values from hash)
@@ -1049,22 +747,7 @@ impl JSValkeyClient {
             }
         }
 
-        // Send HMGET command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"HMGET",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send HMGET command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"HMGET", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send HMGET command")
     }
 
     // Implement hincrby (increment hash field by integer value)
@@ -1085,22 +768,7 @@ impl JSValkeyClient {
         let field_slice = field.to_utf8_without_ref();
         let value_slice = value.to_utf8_without_ref();
 
-        // Send HINCRBY command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"HINCRBY",
-                args: CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send HINCRBY command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"HINCRBY", CommandArgs::Slices(&[key_slice, field_slice, value_slice]), CommandMeta::default(), "Failed to send HINCRBY command")
     }
 
     // Implement hincrbyfloat (increment hash field by float value)
@@ -1121,22 +789,7 @@ impl JSValkeyClient {
         let field_slice = field.to_utf8_without_ref();
         let value_slice = value.to_utf8_without_ref();
 
-        // Send HINCRBYFLOAT command
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"HINCRBYFLOAT",
-                args: CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send HINCRBYFLOAT command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"HINCRBYFLOAT", CommandArgs::Slices(&[key_slice, field_slice, value_slice]), CommandMeta::default(), "Failed to send HINCRBYFLOAT command")
     }
 
     // PERF(port): `command` was a comptime []const u8 — demoted to runtime &'static [u8]
@@ -1178,7 +831,7 @@ impl JSValkeyClient {
                 },
             )?;
 
-            args.reserve((1 + object_iter.len * 2).saturating_sub(args.len()));
+            args.ensure_total_capacity(1 + object_iter.len * 2);
 
             while let Some(field_name) = object_iter.next()? {
                 let field_slice = field_name.to_utf8();
@@ -1201,7 +854,7 @@ impl JSValkeyClient {
                 )));
             }
 
-            args.reserve((1 + iter.len as usize).saturating_sub(args.len()));
+            args.ensure_total_capacity(1 + iter.len as usize);
 
             while let Some(field_js) = iter.next()? {
                 let field_str = field_js.to_bun_string(global)?;
@@ -1235,7 +888,7 @@ impl JSValkeyClient {
                 )));
             }
 
-            args.reserve((args_count as usize).saturating_sub(args.len()));
+            args.ensure_total_capacity(args_count as usize);
 
             let mut i: u32 = 1;
             while i < args_count {
@@ -1251,27 +904,12 @@ impl JSValkeyClient {
             return Err(global.throw(format_args!("HSET requires at least one field-value pair")));
         }
 
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command,
-                args: CommandArgs::Slices(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                let msg = if command == b"HSET" {
-                    "Failed to send HSET command"
-                } else {
-                    "Failed to send HMSET command"
-                };
-                return send_err_to_js(global, msg, err);
-            }
+        let msg = if command == b"HSET" {
+            "Failed to send HSET command"
+        } else {
+            "Failed to send HMSET command"
         };
-
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), command, CommandArgs::Slices(&args), CommandMeta::default(), msg)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1321,22 +959,7 @@ impl JSValkeyClient {
         let Some(value) = from_js(global, frame.argument(2))? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"HSETNX",
-                args: CommandArgs::Args(&[key, field, value]),
-                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send HSETNX command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"HSETNX", CommandArgs::Args(&[key, field, value]), CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send HSETNX command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1354,22 +977,7 @@ impl JSValkeyClient {
         let Some(field) = from_js(global, frame.argument(1))? else {
             return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"HEXISTS",
-                args: CommandArgs::Args(&[key, field]),
-                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send HEXISTS command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"HEXISTS", CommandArgs::Args(&[key, field]), CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send HEXISTS command")
     }
 
     // Implement ping (send a PING command with an optional message)
@@ -1389,22 +997,7 @@ impl JSValkeyClient {
             Some(m) => core::slice::from_ref(m),
             None => &[],
         };
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"PING",
-                args: CommandArgs::Args(args_slice),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send PING command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"PING", CommandArgs::Args(args_slice), CommandMeta::default(), "Failed to send PING command")
     }
 
     cmd_key!(bitcount, b"bitcount", "BITCOUNT", "key", NotSubscriber);
@@ -1526,22 +1119,7 @@ impl JSValkeyClient {
         let Some(member) = from_js(global, frame.argument(2))? else {
             return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"SMOVE",
-                args: CommandArgs::Args(&[source, destination, member]),
-                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send SMOVE command", err)
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"SMOVE", CommandArgs::Args(&[source, destination, member]), CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING, "Failed to send SMOVE command")
     }
 
     cmd_key_value_value2!(substr, b"substr", "SUBSTR", "key", "start", "end", NotSubscriber);
@@ -1590,23 +1168,7 @@ impl JSValkeyClient {
         let message = from_js(global, arg1)?.expect("unreachable");
         // PERF(port): was assume_capacity
         args.push(message);
-
-        let promise = match this.send(
-            global,
-            frame.this(),
-            &Command {
-                command: b"PUBLISH",
-                args: CommandArgs::Args(&args),
-                meta: CommandMeta::default(),
-            },
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send PUBLISH command", err);
-            }
-        };
-
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, frame.this(), b"PUBLISH", CommandArgs::Args(&args), CommandMeta::default(), "Failed to send PUBLISH command")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1629,8 +1191,7 @@ impl JSValkeyClient {
                 return Err(global
                     .throw_invalid_arguments(format_args!("subscribe requires at least one channel")));
             }
-            redis_channels
-                .reserve((channel_or_many.get_length(global)? as usize).saturating_sub(redis_channels.len()));
+            redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
 
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
@@ -1692,20 +1253,7 @@ impl JSValkeyClient {
         redis_channels: &[JSArgument],
     ) -> JsResult<JSValue> {
         // TODO(port): narrow error set
-        // Send UNSUBSCRIBE command
-        let command = Command {
-            command: b"UNSUBSCRIBE",
-            args: CommandArgs::Args(redis_channels),
-            meta: CommandMeta::default(),
-        };
-        let promise = match this.send(global, this_js, &command) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send UNSUBSCRIBE command", err);
-            }
-        };
-
-        Ok(promise_to_js(promise))
+        send_cmd(this, global, this_js, b"UNSUBSCRIBE", CommandArgs::Args(redis_channels), CommandMeta::default(), "Failed to send UNSUBSCRIBE command")
     }
 
     #[bun_jsc::host_fn(method)]

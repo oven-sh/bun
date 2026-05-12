@@ -22,36 +22,7 @@ use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
     EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
-
-/// Recover this thread's `timer::All` via the high-tier `RuntimeState`.
-///
-/// PORT NOTE: `bun_jsc::VirtualMachine.timer` is a `()` placeholder
-/// (b2-cycle); the real `All` lives in `jsc_hooks::RuntimeState.timer` until
-/// the slot widens. Null only before `init_runtime_state` has run.
-#[inline]
-fn timer_all() -> *mut All {
-    let state = crate::jsc_hooks::runtime_state();
-    if state.is_null() {
-        core::ptr::null_mut()
-    } else {
-        // SAFETY: `state` is the live boxed RuntimeState for this thread.
-        unsafe { core::ptr::addr_of_mut!((*state).timer) }
-    }
-}
-
-/// Same as [`timer_all`] but returns `&'static mut`. Only valid once the JS
-/// runtime has installed `RuntimeState` (true for every JS host-call entry
-/// point below). Single JS thread + boxed-for-process-lifetime ⇒ the borrow is
-/// sound; callers must not hold it across a JS re-entry that could itself call
-/// this (NLL keeps every use here local to a single basic block).
-#[inline]
-fn timer_all_mut() -> &'static mut All {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread so no concurrent `&mut`.
-    unsafe { &mut (*state).timer }
-}
+use crate::jsc_hooks::{timer_all, timer_all_mut};
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
@@ -329,9 +300,7 @@ impl All {
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        Some(unsafe {
-            bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, value)
-        })
+        Some(unsafe { TimeoutObject::from_timer_ptr(value) })
     }
 
     pub fn clear_timer(

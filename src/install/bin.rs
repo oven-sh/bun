@@ -414,32 +414,13 @@ impl Bin {
 
     // ── Tag-checked union accessors ────────────────────────────────────────
     // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage. Tag is
-    // debug-asserted so misuse trips in debug; release matches Zig's unchecked
-    // field read. Accessors borrow (not copy) so callers can deref or project.
-    #[inline]
-    pub fn file(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::File);
-        // SAFETY: tag-guarded `Copy` union read.
-        unsafe { &*core::ptr::addr_of!(self.value.file) }
-    }
-    #[inline]
-    pub fn named_file(&self) -> &[String; 2] {
-        debug_assert_eq!(self.tag, Tag::NamedFile);
-        // SAFETY: tag-guarded `Copy` union read.
-        unsafe { &*core::ptr::addr_of!(self.value.named_file) }
-    }
-    #[inline]
-    pub fn dir(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::Dir);
-        // SAFETY: tag-guarded `Copy` union read.
-        unsafe { &*core::ptr::addr_of!(self.value.dir) }
-    }
-    #[inline]
-    pub fn map(&self) -> &ExternalStringList {
-        debug_assert_eq!(self.tag, Tag::Map);
-        // SAFETY: tag-guarded `Copy` union read.
-        unsafe { &*core::ptr::addr_of!(self.value.map) }
+    // `u32`s); reading the wrong variant is well-defined garbage.
+    bun_core::extern_union_accessors! {
+        tag: tag as Tag, value: value;
+        File      => file: String;
+        NamedFile => named_file: [String; 2];
+        Dir       => dir: String;
+        Map       => map: ExternalStringList;
     }
 }
 

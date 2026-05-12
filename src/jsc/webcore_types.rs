@@ -20,7 +20,7 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
+// (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
 use std::sync::Arc;
 
 use bun_http_types::MimeType::MimeType;
@@ -514,10 +514,11 @@ pub mod store {
 
     /// `Blob.Store` (Store.zig:1-9). Intrusively-refcounted; always
     /// heap-allocated (`bun.TrivialNew`).
+    #[derive(bun_ptr::ThreadSafeRefCounted)]
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        pub ref_count: AtomicU32,
+        pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
         // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global
         // mimalloc everywhere (PORTING.md §Allocators).
@@ -528,7 +529,7 @@ pub mod store {
             Self {
                 data: Data::Bytes(Bytes::default()),
                 mime_type: bun_http_types::MimeType::NONE,
-                ref_count: AtomicU32::new(1),
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }
         }
@@ -910,7 +911,7 @@ pub mod store {
             StoreRef::from(Store::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
-                ref_count: AtomicU32::new(1),
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }))
         }
@@ -966,49 +967,28 @@ pub mod store {
         /// `Store.ref()` (Store.zig:43).
         #[inline]
         pub fn ref_(&self) {
-            let old = self.ref_count.fetch_add(1, Ordering::Relaxed);
-            debug_assert!(old > 0);
+            // SAFETY: `self` is live; `ref_` only touches the interior-mutable
+            // atomic counter, never mutates through the pointer.
+            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
         }
 
         /// `Store.hasOneRef()` (Store.zig:48).
         #[inline]
         pub fn has_one_ref(&self) -> bool {
-            self.ref_count.load(Ordering::Relaxed) == 1
+            self.ref_count.has_one_ref()
         }
 
         /// `Store.deref()` (Store.zig:171). Consumes one reference; on last
         /// ref, drops & frees the heap `Store`.
         ///
-        /// Takes a raw pointer rather than `&self`: deriving the freeing `*mut`
-        /// from a `&self` borrow is UB — the shared-ref provenance forbids
-        /// mutation/deallocation through it.
-        ///
         /// # Safety
         /// `this` must point to a live `Store` originally allocated via
         /// `Store::new` / `Box::new`, and the caller must own one outstanding
         /// reference being released.
+        #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {
-            // SAFETY: place-project to the atomic field without materializing a
-            // `&Store`; `AtomicU32` is interior-mutable so the read is sound
-            // even with concurrent refs.
-            //
-            // `Release` on the decrement + `Acquire` fence on the 1→0
-            // transition is the `std::sync::Arc` pattern: it ensures all prior
-            // accesses to `*this` from any thread (each ending in a `Release`
-            // decrement) happen-before this thread observes the final count and
-            // runs `Drop`. Without it, `StoreRef: Send + Sync` lets thread A's
-            // writes to `Store` fields race with thread B's `drop` (UAF/torn
-            // read on `self.data`).
-            let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Release) };
-            debug_assert!(old >= 1);
-            if old == 1 {
-                core::sync::atomic::fence(Ordering::Acquire);
-                // SAFETY: refcount hit zero; the Acquire fence above
-                // synchronizes-with every prior `Release` decrement, so we are
-                // the sole remaining owner and all other threads' uses of this
-                // `Store` are visible and complete.
-                drop(unsafe { bun_core::heap::take(this.as_ptr()) });
-            }
+            // SAFETY: caller contract.
+            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
         }
 
         /// `extern fn external` (Store.zig:63) — `JSCArrayBuffer` deallocator

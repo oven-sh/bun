@@ -11,7 +11,7 @@
 
 // `#[macro_export]` macros defined in submodules (`w!`, `exact_case!`,
 // `to_utf16_literal!`, `literal!`) land at the *crate* root (`bun_core::`).
-// Re-export them here so `crate::string::w` / `bun_string::w` paths resolve.
+// Re-export them here so `crate::string::w` / `bun_core::w` paths resolve.
 pub use crate::{w, exact_case, to_utf16_literal, literal};
 
 #[path = "HashedString.rs"]  pub mod hashed_string;
@@ -46,7 +46,7 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // `BunString` in BunString.cpp), 24 bytes on 64-bit.
 // ──────────────────────────────────────────────────────────────────────────
 // Canonical layout lives in `bun_alloc` (T0 TYPE_ONLY landing for
-// `bun.String`); re-exported so existing `bun_string::{Tag, StringImpl}` paths
+// `bun.String`); re-exported so existing `bun_core::{Tag, StringImpl}` paths
 // keep working. `String` is a `#[repr(transparent)]` newtype over
 // `bun_alloc::String` so the FFI layout has ONE source of truth while this
 // crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
@@ -118,7 +118,7 @@ impl String {
     #[inline] pub const fn dead() -> Self { Self::DEAD }
     #[inline] pub fn tag(&self) -> Tag { self.0.tag }
 
-    /// Wrap a `bun_string::ZigString` under `tag`. Converts to the
+    /// Wrap a `bun_core::ZigString` under `tag`. Converts to the
     /// layout-identical `bun_alloc::ZigString` for storage in the canonical
     /// union (both `#[repr(C)] { *const u8, usize }`, same tag-bit scheme).
     #[inline(always)]
@@ -479,7 +479,7 @@ impl String {
     pub fn debug_assert_thread_safe(&self) {
         debug_assert!(
             self.is_thread_safe(),
-            "bun_string::String crosses thread boundary with non-thread-safe \
+            "bun_core::String crosses thread boundary with non-thread-safe \
              WTF::StringImpl (non-atomic refcount); call `to_thread_safe()` first"
         );
     }
@@ -2148,7 +2148,7 @@ impl ZigStringSlice {
 // bun_core re-exports these; we are the canonical home.
 pub use crate::{ZStr, WStr};
 
-/// `bun_str::zig_string` — module path so callers can spell `ZigString.Slice`
+/// `bun_core::zig_string` — module path so callers can spell `ZigString.Slice`
 /// as `zig_string::Slice` (matches the Zig namespace `ZigString.Slice`).
 pub mod zig_string {
     pub use super::ZigString;
@@ -2162,7 +2162,7 @@ pub mod zig_string {
 }
 
 /// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
-/// (lowest tier); re-exported here so existing `bun_string::StringPointer`
+/// (lowest tier); re-exported here so existing `bun_core::StringPointer`
 /// callers (FFI sigs in `bun_jsc::FetchHeaders`, lockfile, sourcemap) keep
 /// resolving.
 pub use crate::StringPointer;
@@ -2214,16 +2214,49 @@ pub mod lexer {
 }
 
 pub mod lexer_tables {
-    /// Remap a strict-mode reserved word to its `_`-prefixed identifier, or
-    /// `None` if `s` is not reserved.
-    ///
-    /// PERF(port): replaces the former `phf::Map<&[u8], &[u8]>`. 9 keys with
-    /// ≤2 per length bucket — a `match` on `len()` then exact bytes rejects
-    /// the overwhelming miss case on a single `usize` compare, vs. phf's
-    /// hash + index + verify. See clap::find_param (12577e958d71) for the
-    /// reference length-gated pattern.
+    /// The 9 strict-mode reserved words (ES2015 §11.6.2.2). Single source of
+    /// truth — [`strict_mode_reserved_word_remap`] and
+    /// [`is_strict_mode_reserved_word`] are derived from the same key set.
+    /// Plain array (not `phf::Set`): callers only need `.len()` / `.iter()`,
+    /// and membership goes through the length-gated `match` below.
+    pub const STRICT_MODE_RESERVED_WORDS: [&[u8]; 9] = [
+        b"implements",
+        b"interface",
+        b"let",
+        b"package",
+        b"private",
+        b"protected",
+        b"public",
+        b"static",
+        b"yield",
+    ];
+
+    /// Hot-path strict-mode reserved-word check. Length-bucketed fixed-array
+    /// compare to avoid the SipHash inside `phf::Set::contains`. All entries
+    /// are 3..=10 ASCII bytes with ≤2 per length bucket — a `match` on
+    /// `len()` then exact bytes rejects the overwhelming miss case on a single
+    /// `usize` compare. See clap::find_param (12577e958d71) for the reference
+    /// length-gated pattern.
     #[inline]
-    pub fn strict_mode_reserved_words_remap(s: &[u8]) -> Option<&'static [u8]> {
+    pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
+        match s.len() {
+            3 => s == b"let",
+            5 => s == b"yield",
+            6 => matches!(s, b"public" | b"static"),
+            7 => matches!(s, b"package" | b"private"),
+            9 => matches!(s, b"interface" | b"protected"),
+            10 => s == b"implements",
+            _ => false,
+        }
+    }
+
+    /// Same key set as [`is_strict_mode_reserved_word`], mapped to an
+    /// underscore-prefixed replacement. Used by
+    /// `MutableString::ensure_valid_identifier` to mangle a name that is
+    /// already a syntactically valid identifier but would collide with a
+    /// strict-mode reserved word.
+    #[inline]
+    pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
         match s.len() {
             3 if s == b"let" => Some(b"_let"),
             5 if s == b"yield" => Some(b"_yield"),
@@ -2465,7 +2498,7 @@ pub use printer::quote_for_json;
 /// `bun.sliceTo(buf, 0)` — slice up to (not including) the first NUL byte,
 /// or the whole buffer if none. Port of `std.mem.sliceTo` for `u8`/`0`.
 /// Sunk to `crate::ffi` so tier-1 crates (cares_sys, sys) can share it;
-/// re-exported here for the existing `bun_string::slice_to_nul` callers.
+/// re-exported here for the existing `bun_core::slice_to_nul` callers.
 pub use crate::ffi::{slice_to_nul, slice_to_nul_mut};
 
 /// move-in: `cheap_prefix_normalizer` (MOVE_DOWN ← `bundle_v2.zig`).
@@ -2500,7 +2533,7 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [
     [prefix, strings::remove_leading_dot_slash(suffix)]
 }
 
-// Re-export `wtf::parse_double` at crate root (callers spell it `bun_str::parse_double`).
+// Re-export `wtf::parse_double` at crate root (callers spell it `bun_core::parse_double`).
 pub use wtf::parse_double;
 
 /// [`Cell`]-shaped interior-mutable owned `BunString` slot. Layout-identical

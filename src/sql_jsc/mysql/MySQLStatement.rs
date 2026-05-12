@@ -1,8 +1,7 @@
 use core::cell::Cell;
-use core::mem::{ManuallyDrop, MaybeUninit};
 
 use bun_collections::StringHashMap;
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue};
 
 use crate::shared::CachedStructure;
 use crate::shared::sql_data_cell::Flags as DataCellFlags;
@@ -177,83 +176,11 @@ impl MySQLStatement {
             return &self.cached_structure;
         }
         self.check_for_duplicate_fields();
-
-        // lets avoid most allocations
-        // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
-        // element is itself `MaybeUninit` and thus has no validity invariant.
-        let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
-            unsafe { MaybeUninit::uninit().assume_init() };
-        // lets de duplicate the fields early
-        let mut non_duplicated_count = self.columns.len();
-        for column in &self.columns {
-            if matches!(column.name_or_index, ColumnIdentifier::Duplicate) {
-                non_duplicated_count -= 1;
-            }
-        }
-
-        let max_inline = JSObject::max_inline_capacity() as usize;
-        // PORT NOTE: see PostgresSQLStatement::structure for the same reshape.
-        let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
-        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline {
-            &mut stack_ids[..non_duplicated_count]
-        } else {
-            heap_ids = Vec::with_capacity(non_duplicated_count);
-            // Spare capacity is exactly the uninitialized `[MaybeUninit<T>]` view
-            // we need; fully initialized in the loop below before any read.
-            &mut heap_ids.spare_capacity_mut()[..non_duplicated_count]
-        };
-
-        let mut i: usize = 0;
-        for column in &self.columns {
-            if matches!(column.name_or_index, ColumnIdentifier::Duplicate) {
-                continue;
-            }
-
-            let mut out = ExternColumnIdentifier::default();
-            match &column.name_or_index {
-                ColumnIdentifier::Name(name) => {
-                    out.value.name = ManuallyDrop::new(
-                        bun_core::String::create_atom_if_possible(name.slice()),
-                    );
-                }
-                ColumnIdentifier::Index(index) => {
-                    out.value.index = *index;
-                }
-                ColumnIdentifier::Duplicate => unreachable!(),
-            }
-            out.tag = match column.name_or_index {
-                ColumnIdentifier::Name(_) => 2,
-                ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Duplicate => 0,
-            };
-            ids[i].write(out);
-            i += 1;
-        }
-
-        if non_duplicated_count > max_inline {
-            // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every slot
-            // in [0..non_duplicated_count] was initialized in the loop above.
-            unsafe { heap_ids.set_len(non_duplicated_count) };
-            // Ownership transfer of heap `ids` to CachedStructure — Zig passes the
-            // allocated slice and CachedStructure becomes responsible for freeing it.
-            self.cached_structure
-                .set(global_object, None, Some(heap_ids.into_boxed_slice()));
-        } else {
-            // Every element in `ids[..]` was `.write()`n above; C++ reads them as
-            // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
-            // without materialising a typed slice (avoids an unsafe assume-init cast).
-            self.cached_structure.set(
-                global_object,
-                Some(JSObject::create_structure(
-                    global_object,
-                    owner,
-                    ids.len() as u32,
-                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                )),
-                None,
-            );
-        }
-
+        self.cached_structure.build_from_columns(
+            global_object,
+            owner,
+            self.columns.iter().map(|c| &c.name_or_index),
+        );
         &self.cached_structure
     }
 }

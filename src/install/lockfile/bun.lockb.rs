@@ -5,6 +5,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::mem::{align_of, size_of};
 
 use bun_core::Error;
+use bun_io::Write as _;
 // PORT NOTE: `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
@@ -70,18 +71,6 @@ impl<'a> StreamType<'a> {
     #[inline]
     pub fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
-        Ok(())
-    }
-
-    #[inline]
-    pub fn write_int_u32_le(&mut self, v: u32) -> Result<(), Error> {
-        self.bytes.extend_from_slice(&v.to_le_bytes());
-        Ok(())
-    }
-
-    #[inline]
-    pub fn write_int_u64_le(&mut self, v: u64) -> Result<(), Error> {
-        self.bytes.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
 }
@@ -169,12 +158,12 @@ pub fn save(
     let mut stream = StreamType { bytes };
 
     stream.write_all(HEADER_BYTES)?;
-    stream.write_int_u32_le(this.format.0)?;
+    stream.write_int_le::<u32>(this.format.0)?;
 
     stream.write_all(&this.meta_hash)?;
 
     *end_pos = stream.get_pos()?;
-    stream.write_int_u64_le(0)?;
+    stream.write_int_le(0u64)?;
 
     if cfg!(debug_assertions) {
         for res in this.packages.items_resolution() {
@@ -222,7 +211,7 @@ pub fn save(
     // generic types in the crate have errors. Pin SemverIntType explicitly.
     package::serializer::save::<u64, _>(&this.packages, &mut stream)?;
     buffers::save(this, options, &mut stream)?;
-    stream.write_int_u64_le(0)?;
+    stream.write_int_le(0u64)?;
 
     // < Bun v1.0.4 stopped right here when reading the lockfile
     // So we add an extra 8 byte tag to say "hey, there's more data here"
@@ -308,7 +297,7 @@ pub fn save(
 
     stream.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
     let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
-    stream.write_int_u64_le(config_version as u64)?;
+    stream.write_int_le::<u64>(config_version as u64)?;
 
     *total_size = stream.get_pos()?;
 

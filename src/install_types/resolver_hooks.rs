@@ -404,52 +404,25 @@ impl Clone for DependencyVersion {
     }
 }
 
-/// Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
-///
-/// Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
-/// `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
-/// "wrong" variant is not UB — it yields garbage. `debug_assert_eq!` catches
-/// tag mismatches in debug builds; release matches Zig's unchecked field read.
-/// Centralizing the `unsafe` here lets the ~50 lockfile-graph call sites in
-/// `bun_install` borrow the active variant without an `unsafe` block apiece.
-///
-/// `_mut` variants additionally let the handful of mutate-in-place call sites
-/// (`runTasks.rs` package-name back-patching, `Package.rs` workspace
-/// resolution) write through the active arm without an `unsafe` block apiece.
-macro_rules! dep_version_accessors {
-    ($( $tag:ident => $field:ident / $field_mut:ident : $ty:ty ),* $(,)?) => {
-        $(
-            #[inline]
-            pub fn $field(&self) -> &$ty {
-                debug_assert!(self.tag == DependencyVersionTag::$tag);
-                // SAFETY: discriminant `self.tag` selects the active field;
-                // payload types are arena-backed POD (no validity invariants
-                // beyond initialization, which the constructing path upholds).
-                unsafe { &self.value.$field }
-            }
-            #[inline]
-            pub fn $field_mut(&mut self) -> &mut $ty {
-                debug_assert!(self.tag == DependencyVersionTag::$tag);
-                // SAFETY: same invariant as the shared-ref accessor above;
-                // exclusive borrow of `self` guarantees no aliasing into the
-                // union storage while the returned `&mut` is live.
-                unsafe { &mut self.value.$field }
-            }
-        )*
-    };
-}
-
 impl DependencyVersion {
-    dep_version_accessors! {
-        Npm      => npm       / npm_mut:       NpmInfo,
-        DistTag  => dist_tag  / dist_tag_mut:  TagInfo,
-        Tarball  => tarball   / tarball_mut:   TarballInfo,
-        Folder   => folder    / folder_mut:    SemverString,
-        Symlink  => symlink   / symlink_mut:   SemverString,
-        Workspace=> workspace / workspace_mut: SemverString,
-        Git      => git       / git_mut:       Repository,
-        Github   => github    / github_mut:    Repository,
-        Catalog  => catalog   / catalog_mut:   SemverString,
+    // Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
+    // Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
+    // `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
+    // "wrong" variant is not UB — it yields garbage. `_mut` variants let the
+    // handful of mutate-in-place call sites (`runTasks.rs` package-name
+    // back-patching, `Package.rs` workspace resolution) write through the
+    // active arm without an `unsafe` block apiece.
+    bun_core::extern_union_accessors! {
+        tag: tag as DependencyVersionTag, value: value;
+        Npm       => npm: NpmInfo,            mut npm_mut;
+        DistTag   => dist_tag: TagInfo,       mut dist_tag_mut;
+        Tarball   => tarball: TarballInfo,    mut tarball_mut;
+        Folder    => folder: SemverString,    mut folder_mut;
+        Symlink   => symlink: SemverString,   mut symlink_mut;
+        Workspace => workspace: SemverString, mut workspace_mut;
+        Git       => git: Repository,         mut git_mut;
+        Github    => github: Repository,      mut github_mut;
+        Catalog   => catalog: SemverString,   mut catalog_mut;
     }
 
     /// Zig: `if (version.tag == .npm) version.value.npm else null`.
@@ -708,6 +681,54 @@ pub trait NegatableExt: NegatableEnum {
 }
 impl<T: NegatableEnum> NegatableExt for T {}
 
+// ─── negatable_names! ─────────────────────────────────────────────────────
+// Single source of truth for the name↔bit table of a `NegatableEnum` newtype.
+//
+// Zig has ONE table per type (`pub const NameMap = bun.ComptimeStringMap(uN, .{...})`,
+// src/install/npm.zig) which comptime-derives BOTH `.kvs` (sorted iteration array,
+// walked by `Negatable.toJson` / bun.lock stringify) AND `.get()` (length-gated lookup).
+// The Rust port had forked that into a hand-maintained `NAME_MAP_KVS` const + a
+// hand-unrolled `lookup_name` match per type — two parallel tables with an
+// add-a-variant-forget-the-other drift hazard.
+//
+// This macro restores the single-source property: caller supplies ONE
+// `b"name" => BIT` list (already in `(key.len asc, bytewise asc)` order — that
+// order is LOAD-BEARING: `Negatable::to_json` iterates it to serialize bun.lock
+// `"os"/"cpu"/"libc"` arrays and must stay byte-identical with Zig's
+// `precomputed.sorted_kvs`, src/collections/comptime_string_map.zig:21-27,66).
+// The macro then expands BOTH the inherent `NAME_MAP_KVS` const (kept inherent
+// so non-trait callers like `lockfile_json_stringify_for_debugging` still
+// path-qualify it) AND the full `NegatableEnum` impl, whose `lookup_name`
+// length-gates exactly like Zig `ComptimeStringMap.get`: one `usize` compare
+// per bucket boundary, byte-compare only on length match, early-out once the
+// sorted table passes the requested length. ≤11 entries per type — `phf::Map`
+// would be a hash + indirect load + slice compare for at most 4 candidates.
+macro_rules! negatable_names {
+    ($ty:ident : $int:ty => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
+        impl $ty {
+            pub const NAME_MAP_KVS: &'static [(&'static [u8], $int)] =
+                &[ $( ($key, <$ty>::$bit) ),+ ];
+        }
+        impl NegatableEnum for $ty {
+            type Int = $int;
+            const NONE: Self = <$ty>::NONE;
+            const ALL: Self = <$ty>::ALL;
+            const ALL_VALUE: $int = <$ty>::ALL_VALUE;
+            #[inline]
+            fn lookup_name(key: &[u8]) -> Option<$int> {
+                let n = key.len();
+                $( if $key.len() > n { return None; }
+                   if $key.len() == n && key == $key { return Some(<$ty>::$bit); } )+
+                None
+            }
+            #[inline] fn name_map_kvs() -> &'static [(&'static [u8], $int)] { <$ty>::NAME_MAP_KVS }
+            #[inline] fn has(self, other: $int) -> bool { <$ty>::has(self, other) }
+            #[inline] fn to_raw(self) -> $int { self.0 }
+            #[inline] fn from_raw(n: $int) -> Self { Self(n) }
+        }
+    };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 /// https://nodejs.org/api/os.html#osplatform
@@ -762,64 +783,12 @@ impl OperatingSystem {
     #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
     #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
     #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
-
-    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
-    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
-    // `Negatable::to_json` iterates this to serialize bun.lock `"os"` arrays; mismatched
-    // order yields non-byte-identical lockfiles vs. Zig.
-    pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
-        (b"aix", Self::AIX),
-        (b"linux", Self::LINUX),
-        (b"sunos", Self::SUNOS),
-        (b"win32", Self::WIN32),
-        (b"darwin", Self::DARWIN),
-        (b"android", Self::ANDROID),
-        (b"freebsd", Self::FREEBSD),
-        (b"openbsd", Self::OPENBSD),
-    ];
 }
 
-impl NegatableEnum for OperatingSystem {
-    type Int = u16;
-    const NONE: Self = Self::NONE;
-    const ALL: Self = Self::ALL;
-    const ALL_VALUE: u16 = Self::ALL_VALUE;
-    // PERF(port): Zig `ComptimeStringMap` length-gates then byte-compares within
-    // the matching length bucket. 8 keys / 4 length buckets — a `phf::Map` here
-    // costs a hash + indirect load + slice compare for what is at most three
-    // candidate strings. Hand-roll the same gate so the miss path (most npm
-    // metadata never sets `"os"`) is a single `usize` compare.
-    #[inline]
-    fn lookup_name(key: &[u8]) -> Option<u16> {
-        match key.len() {
-            3 => match key {
-                b"aix" => Some(Self::AIX),
-                _ => None,
-            },
-            5 => match key {
-                b"linux" => Some(Self::LINUX),
-                b"sunos" => Some(Self::SUNOS),
-                b"win32" => Some(Self::WIN32),
-                _ => None,
-            },
-            6 => match key {
-                b"darwin" => Some(Self::DARWIN),
-                _ => None,
-            },
-            7 => match key {
-                b"android" => Some(Self::ANDROID),
-                b"freebsd" => Some(Self::FREEBSD),
-                b"openbsd" => Some(Self::OPENBSD),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-    fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
-    fn has(self, other: u16) -> bool { Self::has(self, other) }
-    fn to_raw(self) -> u16 { self.0 }
-    fn from_raw(n: u16) -> Self { Self(n) }
-}
+negatable_names! { OperatingSystem: u16 => [
+    b"aix" => AIX, b"linux" => LINUX, b"sunos" => SUNOS, b"win32" => WIN32,
+    b"darwin" => DARWIN, b"android" => ANDROID, b"freebsd" => FREEBSD, b"openbsd" => OPENBSD,
+] }
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -844,34 +813,9 @@ impl Libc {
     #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
     #[inline] pub fn has(self, other: u8) -> bool { (self.0 & other) != 0 }
     #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
-
-    // Order MUST match Zig's `ComptimeStringMap.kvs` (sorted by (key.len asc, bytewise asc)).
-    pub const NAME_MAP_KVS: &'static [(&'static [u8], u8)] = &[
-        (b"musl", Self::MUSL),
-        (b"glibc", Self::GLIBC),
-    ];
 }
 
-impl NegatableEnum for Libc {
-    type Int = u8;
-    const NONE: Self = Self::NONE;
-    const ALL: Self = Self::ALL;
-    const ALL_VALUE: u8 = Self::ALL_VALUE;
-    // PERF(port): two keys with distinct lengths — `phf::Map` is pure overhead
-    // (hash + table probe) for what is one `usize` compare + one word compare.
-    #[inline]
-    fn lookup_name(key: &[u8]) -> Option<u8> {
-        match key.len() {
-            4 if key == b"musl" => Some(Self::MUSL),
-            5 if key == b"glibc" => Some(Self::GLIBC),
-            _ => None,
-        }
-    }
-    fn name_map_kvs() -> &'static [(&'static [u8], u8)] { Self::NAME_MAP_KVS }
-    fn has(self, other: u8) -> bool { Self::has(self, other) }
-    fn to_raw(self) -> u8 { self.0 }
-    fn from_raw(n: u8) -> Self { Self(n) }
-}
+negatable_names! { Libc: u8 => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -924,69 +868,13 @@ impl Architecture {
     #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
     #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
     #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
-
-    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
-    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
-    // `Negatable::to_json` iterates this to serialize bun.lock `"cpu"` arrays; mismatched
-    // order yields non-byte-identical lockfiles vs. Zig.
-    pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
-        (b"arm", Self::ARM),
-        (b"ppc", Self::PPC),
-        (b"x32", Self::X32),
-        (b"x64", Self::X64),
-        (b"ia32", Self::IA32),
-        (b"mips", Self::MIPS),
-        (b"s390", Self::S390),
-        (b"arm64", Self::ARM64),
-        (b"ppc64", Self::PPC64),
-        (b"s390x", Self::S390X),
-        (b"mipsel", Self::MIPSEL),
-    ];
 }
 
-impl NegatableEnum for Architecture {
-    type Int = u16;
-    const NONE: Self = Self::NONE;
-    const ALL: Self = Self::ALL;
-    const ALL_VALUE: u16 = Self::ALL_VALUE;
-    // PERF(port): 11 keys across 4 length buckets (≤4 per bucket). Gate on
-    // `len()` first, then exact-match within the bucket — same shape as Zig
-    // `ComptimeStringMap.get`, and cheaper than `phf::Map`'s hash + probe at
-    // this size.
-    #[inline]
-    fn lookup_name(key: &[u8]) -> Option<u16> {
-        match key.len() {
-            3 => match key {
-                b"arm" => Some(Self::ARM),
-                b"ppc" => Some(Self::PPC),
-                b"x32" => Some(Self::X32),
-                b"x64" => Some(Self::X64),
-                _ => None,
-            },
-            4 => match key {
-                b"ia32" => Some(Self::IA32),
-                b"mips" => Some(Self::MIPS),
-                b"s390" => Some(Self::S390),
-                _ => None,
-            },
-            5 => match key {
-                b"arm64" => Some(Self::ARM64),
-                b"ppc64" => Some(Self::PPC64),
-                b"s390x" => Some(Self::S390X),
-                _ => None,
-            },
-            6 => match key {
-                b"mipsel" => Some(Self::MIPSEL),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-    fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
-    fn has(self, other: u16) -> bool { Self::has(self, other) }
-    fn to_raw(self) -> u16 { self.0 }
-    fn from_raw(n: u16) -> Self { Self(n) }
-}
+negatable_names! { Architecture: u16 => [
+    b"arm" => ARM, b"ppc" => PPC, b"x32" => X32, b"x64" => X64,
+    b"ia32" => IA32, b"mips" => MIPS, b"s390" => S390,
+    b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,
+] }
 
 
 // ─── Repository (data) ────────────────────────────────────────────────────

@@ -7,18 +7,6 @@ use core::marker::{PhantomData, PhantomPinned};
 use bun_core::{ZStr, WStr};
 use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 
-// ───────────────────────────────────────────────────────────────────────────
-// Local helpers (B-2): bun_core::{ZStr,WStr} expose `from_raw(ptr,len)` but
-// not a strlen-walking `from_ptr`. libarchive returns bare NUL-terminated
-// pointers, so wrap once here rather than at every call site.
-// ───────────────────────────────────────────────────────────────────────────
-
-#[inline]
-unsafe fn zstr_from_ptr<'a>(p: *const u8) -> &'a ZStr {
-    // SAFETY: caller guarantees `p` is null or a NUL-terminated string valid for `'a`.
-    unsafe { ZStr::from_c_ptr(p.cast()) }
-}
-
 /// Bitset over [`FileKind`] (Zig: `std.EnumSet(std.fs.File.Kind)`).
 /// Local because `bun_core::FileKind` does not derive `enumset::EnumSetType`.
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
@@ -457,14 +445,6 @@ unsafe extern "C" {
     safe fn archive_read_support_filter_zstd(a: &Archive) -> ArchiveResult;
 }
 
-#[inline(always)]
-fn p(a: &Archive) -> *mut Archive {
-    // SAFETY: `Archive` is an opaque zero-sized FFI marker whose real storage
-    // lives on the C heap. `_p: UnsafeCell<_>` at offset 0 grants interior
-    // mutability, so a `*mut` derived from `&Archive` carries write provenance.
-    a._p.get().cast::<Archive>()
-}
-
 impl Archive {
     pub fn version_number() -> i32 {
         archive_version_number()
@@ -525,7 +505,7 @@ impl Archive {
 
     pub fn write_set_options(&self, opts: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_options(p(self), opts.as_ptr().cast()) }
+        unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
     }
 
     pub fn write_set_format_pax_restricted(&self) -> ArchiveResult {
@@ -571,7 +551,7 @@ impl Archive {
     }
     pub fn write_add_filter_by_name(&self, name: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_by_name(p(self), name.as_ptr().cast()) }
+        unsafe { archive_write_add_filter_by_name(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
     pub fn write_add_filter_b64encode(&self) -> ArchiveResult {
         archive_write_add_filter_b64encode(self)
@@ -615,7 +595,7 @@ impl Archive {
         // SAFETY: FFI call on valid opaque libarchive handle.
         unsafe {
             archive_write_set_filter_option(
-                p(self),
+                self.as_mut_ptr(),
                 m.map_or(core::ptr::null(), |s| s.as_ptr().cast()),
                 o.as_ptr().cast(),
                 v.as_ptr().cast(),
@@ -625,7 +605,7 @@ impl Archive {
 
     pub fn write_open_filename(&self, filename: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_filename(p(self), filename.as_ptr().cast()) }
+        unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
     }
 
     pub fn write_open_fd(&self, fd: Fd) -> ArchiveResult {
@@ -636,7 +616,7 @@ impl Archive {
 
     pub fn write_open_memory(&self, buf: *mut c_void, buf_size: usize, used: &mut usize) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_memory(p(self), buf, buf_size, used) }
+        unsafe { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
     }
 
     pub fn write_header(&self, entry: &ArchiveEntry) -> ArchiveResult {
@@ -645,7 +625,7 @@ impl Archive {
 
     pub fn write_data(&self, data: &[u8]) -> isize {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_data(p(self), data.as_ptr().cast(), data.len()) }
+        unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
     }
 
     pub fn write_finish_entry(&self) -> ArchiveResult {
@@ -737,17 +717,17 @@ impl Archive {
 
     pub fn read_set_options(&self, opts: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_set_options(p(self), opts.as_ptr().cast()) }
+        unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
     }
 
     pub fn read_open_memory(&self, buf: &[u8]) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_open_memory(p(self), buf.as_ptr().cast(), buf.len()) }
+        unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
     }
 
     pub fn read_next_header(&self, entry: &mut *mut ArchiveEntry) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_next_header(p(self), entry) }
+        unsafe { archive_read_next_header(self.as_mut_ptr(), entry) }
     }
     pub fn read_next_header2(&self, entry: &ArchiveEntry) -> ArchiveResult {
         archive_read_next_header2(self, entry)
@@ -757,7 +737,7 @@ impl Archive {
         let mut buff: *const c_void = core::ptr::null();
         let mut size: usize = 0;
         // SAFETY: archive_read_data_block writes buff/size/offset; pointers are valid.
-        let r = unsafe { archive_read_data_block(p(self), &raw mut buff, &raw mut size, offset) };
+        let r = unsafe { archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset) };
         if r == ArchiveResult::Eof {
             return None;
         }
@@ -772,7 +752,7 @@ impl Archive {
 
     pub fn read_data(&self, buf: &mut [u8]) -> isize {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_data(p(self), buf.as_mut_ptr().cast(), buf.len()) }
+        unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
     }
 
     pub fn write_zeros_to_file(sink: &ArchiveFileSink, count: usize) -> ArchiveResult {
@@ -981,14 +961,6 @@ unsafe extern "C" {
     pub safe fn archive_entry_symlink_w(e: &ArchiveEntry) -> *const u16;
 }
 
-#[inline(always)]
-fn ep(e: &ArchiveEntry) -> *mut ArchiveEntry {
-    // SAFETY: `ArchiveEntry` is an opaque zero-sized FFI marker; `_p: UnsafeCell<_>`
-    // at offset 0 grants interior mutability so the derived `*mut` carries write
-    // provenance for the C-side allocation.
-    e._p.get().cast::<ArchiveEntry>()
-}
-
 impl ArchiveEntry {
     pub fn new() -> *mut ArchiveEntry {
         archive_entry_new()
@@ -1004,22 +976,22 @@ impl ArchiveEntry {
 
     pub fn set_pathname(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_pathname(ep(self), name.as_ptr().cast()) }
+        unsafe { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn set_pathname_utf8(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_pathname_utf8(ep(self), name.as_ptr().cast()) }
+        unsafe { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn copy_pathname(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_copy_pathname(ep(self), name.as_ptr().cast()) }
+        unsafe { archive_entry_copy_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn copy_pathname_w(&self, name: &WStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_copy_pathname_w(ep(self), name.as_ptr()) }
+        unsafe { archive_entry_copy_pathname_w(self.as_mut_ptr(), name.as_ptr()) }
     }
 
     pub fn set_size(&self, s: i64) {
@@ -1048,11 +1020,11 @@ impl ArchiveEntry {
 
     pub fn pathname(&self) -> &ZStr {
         // SAFETY: returns NUL-terminated string owned by the entry.
-        unsafe { zstr_from_ptr(archive_entry_pathname(self).cast()) }
+        unsafe { ZStr::from_c_ptr(archive_entry_pathname(self)) }
     }
     pub fn pathname_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_pathname_utf8(self).cast()) }
+        unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self)) }
     }
     pub fn pathname_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
@@ -1069,15 +1041,15 @@ impl ArchiveEntry {
     }
     pub fn mtime(&self) -> i64 {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        i64::try_from(unsafe { archive_entry_mtime(ep(self).cast()) }).unwrap()
+        i64::try_from(unsafe { archive_entry_mtime(self.as_mut_ptr().cast()) }).unwrap()
     }
     pub fn symlink(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_symlink(self).cast()) }
+        unsafe { ZStr::from_c_ptr(archive_entry_symlink(self)) }
     }
     pub fn symlink_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_symlink_utf8(self).cast()) }
+        unsafe { ZStr::from_c_ptr(archive_entry_symlink_utf8(self)) }
     }
     pub fn symlink_type(&self) -> SymlinkType {
         archive_entry_symlink_type(self)
@@ -1238,14 +1210,14 @@ impl NextEntry {
         // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
         let size = unsafe { (*self.entry).size() };
         if size < 0 {
-            return Ok(IteratorResult::init_err(p(archive), b"invalid archive entry size"));
+            return Ok(IteratorResult::init_err(archive.as_mut_ptr(), b"invalid archive entry size"));
         }
 
         let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
 
         let read = archive.read_data(&mut buf);
         if read < 0 {
-            return Ok(IteratorResult::init_err(p(archive), b"failed to read archive data"));
+            return Ok(IteratorResult::init_err(archive.as_mut_ptr(), b"failed to read archive data"));
         }
         buf.truncate(usize::try_from(read).expect("int cast"));
         Ok(IteratorResult::init_res(buf.into_boxed_slice()))

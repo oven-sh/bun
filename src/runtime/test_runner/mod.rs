@@ -26,6 +26,28 @@ pub mod diff {
 // single token if `bun_jsc` ever needs to be feature-gated again).
 macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
+/// Stamps out an `impl Expect { #[host_fn(method)] pub fn $method(..) }` that
+/// delegates to [`Expect::run_unary_predicate`]. Defined here (top-level,
+/// outside `cfg_jsc!`) so it can be addressed as
+/// `crate::unary_predicate_matcher!` from each `expect/toBe*.rs` file —
+/// `#[macro_export]` inside a macro-expanded module hits
+/// `macro_expanded_macro_exports_accessed_by_absolute_paths`.
+#[macro_export]
+macro_rules! unary_predicate_matcher {
+    ($method:ident, $name:literal, |$v:ident| $pred:expr) => {
+        impl $crate::test_runner::expect_core::Expect {
+            #[::bun_jsc::host_fn(method)]
+            pub fn $method(
+                &self,
+                g: &::bun_jsc::JSGlobalObject,
+                f: &::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                self.run_unary_predicate(g, f, $name, |$v: ::bun_jsc::JSValue| $pred)
+            }
+        }
+    };
+}
+
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub mod bun_test;
     #[path = "Collection.rs"]     pub mod collection;
@@ -327,6 +349,140 @@ pub mod expect {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
+    }
+
+    // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
+    // Four near-identical Zig matchers (toBeGreaterThan.zig:1-59 etc.) are
+    // copy-pasted upstream; collapse to one body parameterised by relation.
+    // Rust-side dedup, not a parity restore.
+
+    #[derive(Copy, Clone)]
+    pub(super) enum OrderingRelation { Gt, Ge, Lt, Le }
+
+    impl OrderingRelation {
+        /// Operator glyph pre-escaped for `throw_pretty` (`<`/`>` would
+        /// otherwise be parsed as colour-tag delimiters).
+        #[inline]
+        fn glyph(self) -> &'static str {
+            match self {
+                Self::Gt => r"\>",
+                Self::Ge => r"\>=",
+                Self::Lt => r"\<",
+                Self::Le => r"\<=",
+            }
+        }
+        /// number×number arm.
+        #[inline]
+        fn cmp_f64(self, a: f64, b: f64) -> bool {
+            match self {
+                Self::Gt => a > b,
+                Self::Ge => a >= b,
+                Self::Lt => a < b,
+                Self::Le => a <= b,
+            }
+        }
+        /// `value.asBigIntCompare(other)` arm — `value` is the BigInt.
+        #[inline]
+        fn cmp_bigint_fwd(self, r: BigIntCompare) -> bool {
+            use BigIntCompare::*;
+            match self {
+                Self::Gt => matches!(r, GreaterThan),
+                Self::Ge => matches!(r, GreaterThan | Equal),
+                Self::Lt => matches!(r, LessThan),
+                Self::Le => matches!(r, LessThan | Equal),
+            }
+        }
+        /// `other.asBigIntCompare(value)` arm — operands swapped, so the
+        /// relation is mirrored (Zig writes this out longhand per-matcher).
+        #[inline]
+        fn cmp_bigint_rev(self, r: BigIntCompare) -> bool {
+            use BigIntCompare::*;
+            match self {
+                Self::Gt => matches!(r, LessThan),
+                Self::Ge => matches!(r, LessThan | Equal),
+                Self::Lt => matches!(r, GreaterThan),
+                Self::Le => matches!(r, GreaterThan | Equal),
+            }
+        }
+    }
+
+    impl Expect {
+        /// Shared body for `toBeGreaterThan` / `toBeGreaterThanOrEqual` /
+        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four upstream Zig files
+        /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
+        /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
+        pub(super) fn numeric_ordering_matcher(
+            &self,
+            global: &JSGlobalObject,
+            frame: &bun_jsc::CallFrame,
+            name: &'static str,
+            rel: OrderingRelation,
+        ) -> JsResult<JSValue> {
+            // `defer this.postMatch(globalThis)` — run on every exit path.
+            let this = scopeguard::guard(self, |this| this.post_match(global));
+
+            let this_value = frame.this();
+            let args_buf = frame.arguments_old::<1>();
+            let arguments: &[JSValue] = args_buf.slice();
+
+            if arguments.is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "{name}() requires 1 argument"
+                )));
+            }
+
+            this.increment_expect_call_counter();
+
+            let other_value = arguments[0];
+            other_value.ensure_still_alive();
+
+            let value: JSValue =
+                this.get_value(global, this_value, name, "<green>expected<r>")?;
+
+            if (!value.is_number() && !value.is_big_int())
+                || (!other_value.is_number() && !other_value.is_big_int())
+            {
+                return Err(global.throw(format_args!(
+                    "Expected and actual values must be numbers or bigints"
+                )));
+            }
+
+            let not = this.flags.get().not();
+            let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
+                rel.cmp_f64(value.as_number(), other_value.as_number())
+            } else if value.is_big_int() {
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value, global))
+            } else {
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value, global))
+            };
+
+            if not { pass = !pass; }
+            if pass { return Ok(JSValue::UNDEFINED); }
+
+            // failure path — two formatters because `to_fmt` borrows `&mut`.
+            let mut f1 = make_formatter(global);
+            let mut f2 = make_formatter(global);
+            let value_fmt = value.to_fmt(&mut f1);
+            let expected_fmt = other_value.to_fmt(&mut f2);
+            let glyph = rel.glyph();
+            let signature = Expect::get_signature(name, "<green>expected<r>", not);
+            if not {
+                return this.throw(
+                    global,
+                    signature,
+                    format_args!(
+                        "\n\nExpected: not {glyph} <green>{expected_fmt}<r>\nReceived: <red>{value_fmt}<r>\n"
+                    ),
+                );
+            }
+            this.throw(
+                global,
+                signature,
+                format_args!(
+                    "\n\nExpected: {glyph} <green>{expected_fmt}<r>\nReceived: <red>{value_fmt}<r>\n"
+                ),
+            )
+        }
     }
 
     /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`

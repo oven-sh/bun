@@ -71,6 +71,7 @@ pub use process::{
     SignalCodeExt, SpawnOptions, SpawnProcessResult, SpawnResultExt, Status,
     StdioKind, WaiterThread,
 };
+pub use bun_spawn_sys::RusageFields;
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
 // via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a

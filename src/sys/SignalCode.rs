@@ -10,38 +10,13 @@ use bun_core::output;
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SignalCode(pub u8);
 
+// Associated-const generator fed by the canonical X-macro in `bun_core`.
+macro_rules! __sys_signal_consts {
+    ($($name:ident = $n:literal),* $(,)?) => { $(pub const $name: Self = Self($n);)* };
+}
+
 impl SignalCode {
-    pub const SIGHUP: Self = Self(1);
-    pub const SIGINT: Self = Self(2);
-    pub const SIGQUIT: Self = Self(3);
-    pub const SIGILL: Self = Self(4);
-    pub const SIGTRAP: Self = Self(5);
-    pub const SIGABRT: Self = Self(6);
-    pub const SIGBUS: Self = Self(7);
-    pub const SIGFPE: Self = Self(8);
-    pub const SIGKILL: Self = Self(9);
-    pub const SIGUSR1: Self = Self(10);
-    pub const SIGSEGV: Self = Self(11);
-    pub const SIGUSR2: Self = Self(12);
-    pub const SIGPIPE: Self = Self(13);
-    pub const SIGALRM: Self = Self(14);
-    pub const SIGTERM: Self = Self(15);
-    pub const SIG16: Self = Self(16);
-    pub const SIGCHLD: Self = Self(17);
-    pub const SIGCONT: Self = Self(18);
-    pub const SIGSTOP: Self = Self(19);
-    pub const SIGTSTP: Self = Self(20);
-    pub const SIGTTIN: Self = Self(21);
-    pub const SIGTTOU: Self = Self(22);
-    pub const SIGURG: Self = Self(23);
-    pub const SIGXCPU: Self = Self(24);
-    pub const SIGXFSZ: Self = Self(25);
-    pub const SIGVTALRM: Self = Self(26);
-    pub const SIGPROF: Self = Self(27);
-    pub const SIGWINCH: Self = Self(28);
-    pub const SIGIO: Self = Self(29);
-    pub const SIGPWR: Self = Self(30);
-    pub const SIGSYS: Self = Self(31);
+    bun_core::for_each_signal!(__sys_signal_consts);
 
     // The `subprocess.kill()` method sends a signal to the child process. If no
     // argument is given, the process will be sent the 'SIGTERM' signal.
@@ -119,40 +94,11 @@ impl SignalCode {
     }
 }
 
-/// `bun.ComptimeEnumMap(SignalCode)` — compile-time string → SignalCode lookup.
-pub static MAP: phf::Map<&'static [u8], SignalCode> = phf::phf_map! {
-    b"SIGHUP" => SignalCode::SIGHUP,
-    b"SIGINT" => SignalCode::SIGINT,
-    b"SIGQUIT" => SignalCode::SIGQUIT,
-    b"SIGILL" => SignalCode::SIGILL,
-    b"SIGTRAP" => SignalCode::SIGTRAP,
-    b"SIGABRT" => SignalCode::SIGABRT,
-    b"SIGBUS" => SignalCode::SIGBUS,
-    b"SIGFPE" => SignalCode::SIGFPE,
-    b"SIGKILL" => SignalCode::SIGKILL,
-    b"SIGUSR1" => SignalCode::SIGUSR1,
-    b"SIGSEGV" => SignalCode::SIGSEGV,
-    b"SIGUSR2" => SignalCode::SIGUSR2,
-    b"SIGPIPE" => SignalCode::SIGPIPE,
-    b"SIGALRM" => SignalCode::SIGALRM,
-    b"SIGTERM" => SignalCode::SIGTERM,
-    b"SIG16" => SignalCode::SIG16,
-    b"SIGCHLD" => SignalCode::SIGCHLD,
-    b"SIGCONT" => SignalCode::SIGCONT,
-    b"SIGSTOP" => SignalCode::SIGSTOP,
-    b"SIGTSTP" => SignalCode::SIGTSTP,
-    b"SIGTTIN" => SignalCode::SIGTTIN,
-    b"SIGTTOU" => SignalCode::SIGTTOU,
-    b"SIGURG" => SignalCode::SIGURG,
-    b"SIGXCPU" => SignalCode::SIGXCPU,
-    b"SIGXFSZ" => SignalCode::SIGXFSZ,
-    b"SIGVTALRM" => SignalCode::SIGVTALRM,
-    b"SIGPROF" => SignalCode::SIGPROF,
-    b"SIGWINCH" => SignalCode::SIGWINCH,
-    b"SIGIO" => SignalCode::SIGIO,
-    b"SIGPWR" => SignalCode::SIGPWR,
-    b"SIGSYS" => SignalCode::SIGSYS,
-};
+/// `bun.ComptimeEnumMap(SignalCode)` — name-bytes → open newtype.
+#[inline]
+pub fn from_name(s: &[u8]) -> Option<SignalCode> {
+    bun_core::SignalCode::from_name(s).map(|c| SignalCode(c as u8))
+}
 
 // This wrapper struct is lame, what if bun's color formatter was more versatile
 pub struct Fmt {

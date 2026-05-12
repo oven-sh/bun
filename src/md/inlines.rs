@@ -471,7 +471,7 @@ impl Parser<'_> {
         count: usize,
     ) -> Option<usize> {
         let mut pos = start;
-        while let Some(backtick_pos) = bun_str::strings::index_of_char_pos(content, b'`', pos) {
+        while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
             while pos < content.len() && content[pos] == b'`' {
                 pos += 1;

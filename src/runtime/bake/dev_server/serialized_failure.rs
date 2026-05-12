@@ -7,6 +7,8 @@
 //! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
 
 
+use bun_io::Write as _;
+
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle;
 use crate::bake::Side;
@@ -141,9 +143,9 @@ impl SerializedFailure {
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 
-        write_u32_le(w, owner.encode().bits());
+        _ = w.write_int_le::<u32>(owner.encode().bits());
         write_string32(owner_display_name, w);
-        write_u32_le(w, u32::try_from(messages.len()).expect("int cast"));
+        _ = w.write_int_le::<u32>(u32::try_from(messages.len()).expect("int cast"));
 
         for msg in messages {
             write_log_msg(msg, w);
@@ -208,16 +210,6 @@ pub enum ErrorKind {
 // Zig: const Writer = std.array_list.Managed(u8).Writer;
 type Writer = Vec<u8>;
 
-#[inline]
-pub(crate) fn write_u32_le(w: &mut Writer, v: u32) {
-    w.extend_from_slice(&v.to_le_bytes());
-}
-
-#[inline]
-pub(crate) fn write_i32_le(w: &mut Writer, v: i32) {
-    w.extend_from_slice(&v.to_le_bytes());
-}
-
 fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
     // Zig: switch (msg.kind) { inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))) }
     let kind_byte = match msg.kind {
@@ -230,7 +222,7 @@ fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
     w.push(kind_byte);
     write_log_data(&msg.data, w);
     let notes = &msg.notes;
-    write_u32_le(w, u32::try_from(notes.len()).expect("int cast"));
+    _ = w.write_int_le::<u32>(u32::try_from(notes.len()).expect("int cast"));
     for note in notes.iter() {
         write_log_data(note, w);
     }
@@ -240,14 +232,14 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
     write_string32(data.text.as_ref(), w);
     if let Some(loc) = &data.location {
         if loc.line < 0 {
-            write_u32_le(w, 0);
+            _ = w.write_int_le::<u32>(0);
             return;
         }
         debug_assert!(loc.column >= 0); // zero based and not negative
 
-        write_i32_le(w, i32::try_from(loc.line).expect("int cast"));
-        write_u32_le(w, u32::try_from(loc.column).expect("int cast"));
-        write_u32_le(w, u32::try_from(loc.length).expect("int cast"));
+        _ = w.write_int_le::<i32>(i32::try_from(loc.line).expect("int cast"));
+        _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
+        _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 
         // TODO: syntax highlighted line text + give more context lines
         write_string32(loc.line_text.as_deref().unwrap_or(b""), w);
@@ -256,12 +248,12 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         // in isolation, it would be impossible to reference any other file
         // in this Log. Thus, it is not serialized.
     } else {
-        write_u32_le(w, 0);
+        _ = w.write_int_le::<u32>(0);
     }
 }
 
 fn write_string32(data: &[u8], w: &mut Writer) {
-    write_u32_le(w, u32::try_from(data.len()).expect("int cast"));
+    _ = w.write_int_le::<u32>(u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
 

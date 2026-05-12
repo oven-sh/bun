@@ -78,19 +78,18 @@ impl BaselinePosition {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
-        // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
-        if bun_core::eql_case_insensitive_ascii(ident, b"baseline", true) {
-            return Ok(BaselinePosition::First);
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"first", true) {
-            input.expect_ident_matching(b"baseline")?;
-            return Ok(BaselinePosition::First);
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"last", true) {
-            input.expect_ident_matching(b"baseline")?;
-            return Ok(BaselinePosition::Last);
-        } else {
-            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"baseline" => Ok(BaselinePosition::First),
+            b"first" => {
+                input.expect_ident_matching(b"baseline")?;
+                Ok(BaselinePosition::First)
+            },
+            b"last" => {
+                input.expect_ident_matching(b"baseline")?;
+                Ok(BaselinePosition::Last)
+            },
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -164,14 +163,11 @@ impl JustifyContent {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
-            Ok(JustifyContent::Left { overflow })
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
-            Ok(JustifyContent::Right { overflow })
-        } else {
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"left" => Ok(JustifyContent::Left { overflow }),
+            b"right" => Ok(JustifyContent::Right { overflow }),
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -326,14 +322,11 @@ impl JustifySelf {
 
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
-            Ok(JustifySelf::Left { overflow })
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
-            Ok(JustifySelf::Right { overflow })
-        } else {
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"left" => Ok(JustifySelf::Left { overflow }),
+            b"right" => Ok(JustifySelf::Right { overflow }),
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -489,14 +482,11 @@ impl JustifyItems {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
-            Ok(JustifyItems::Left { overflow })
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
-            Ok(JustifyItems::Right { overflow })
-        } else {
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"left" => Ok(JustifyItems::Left { overflow }),
+            b"right" => Ok(JustifyItems::Right { overflow }),
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -550,30 +540,31 @@ impl LegacyJustify {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_core::eql_case_insensitive_ascii(ident, b"legacy", true) {
-            let inner_location = input.current_source_location();
-            let inner_ident = input.expect_ident_cloned()?;
-            if bun_core::eql_case_insensitive_ascii(inner_ident, b"left", true) {
-                return Ok(LegacyJustify::Left);
-            } else if bun_core::eql_case_insensitive_ascii(inner_ident, b"right", true) {
-                return Ok(LegacyJustify::Right);
-            } else if bun_core::eql_case_insensitive_ascii(inner_ident, b"center", true) {
-                return Ok(LegacyJustify::Center);
-            } else {
-                return Err(inner_location.new_unexpected_token_error(Token::Ident(inner_ident)));
-            }
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
-            input.expect_ident_matching(b"legacy")?;
-            return Ok(LegacyJustify::Left);
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
-            input.expect_ident_matching(b"legacy")?;
-            return Ok(LegacyJustify::Right);
-        } else if bun_core::eql_case_insensitive_ascii(ident, b"center", true) {
-            input.expect_ident_matching(b"legacy")?;
-            return Ok(LegacyJustify::Center);
-        }
-        Err(location.new_unexpected_token_error(Token::Ident(ident)))
+        crate::match_ignore_ascii_case! { ident, {
+            b"legacy" => {
+                let inner_location = input.current_source_location();
+                let inner_ident = input.expect_ident_cloned()?;
+                crate::match_ignore_ascii_case! { inner_ident, {
+                    b"left" => Ok(LegacyJustify::Left),
+                    b"right" => Ok(LegacyJustify::Right),
+                    b"center" => Ok(LegacyJustify::Center),
+                    _ => Err(inner_location.new_unexpected_token_error(Token::Ident(inner_ident))),
+                }}
+            },
+            b"left" => {
+                input.expect_ident_matching(b"legacy")?;
+                Ok(LegacyJustify::Left)
+            },
+            b"right" => {
+                input.expect_ident_matching(b"legacy")?;
+                Ok(LegacyJustify::Right)
+            },
+            b"center" => {
+                input.expect_ident_matching(b"legacy")?;
+                Ok(LegacyJustify::Center)
+            },
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

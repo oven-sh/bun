@@ -1284,28 +1284,12 @@ impl<V> MathFunction<V> {
             }
             MathFunction::Min(args) => {
                 dest.write_str("min(")?;
-                let mut first = true;
-                for arg in args {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.delim(b',', false)?;
-                    }
-                    arg.to_css(dest)?;
-                }
+                dest.write_comma_separated(args, |d, arg| arg.to_css(d))?;
                 dest.write_char(b')')
             }
             MathFunction::Max(args) => {
                 dest.write_str("max(")?;
-                let mut first = true;
-                for arg in args {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.delim(b',', false)?;
-                    }
-                    arg.to_css(dest)?;
-                }
+                dest.write_comma_separated(args, |d, arg| arg.to_css(d))?;
                 dest.write_char(b')')
             }
             MathFunction::Clamp { min, center, max } => {
@@ -1354,15 +1338,7 @@ impl<V> MathFunction<V> {
             }
             MathFunction::Hypot(args) => {
                 dest.write_str("hypot(")?;
-                let mut first = true;
-                for arg in args {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.delim(b',', false)?;
-                    }
-                    arg.to_css(dest)?;
-                }
+                dest.write_comma_separated(args, |d, arg| arg.to_css(d))?;
                 dest.write_char(b')')
             }
         }
@@ -1543,42 +1519,115 @@ impl CalcValue for Angle {
     #[inline] fn eql(&self, other: &Self) -> bool { Angle::eql(self, other) }
 }
 
-impl protocol::MulF32 for Percentage {
-    #[inline] fn mul_f32(self, rhs: f32) -> Self { Percentage::mul_f32(self, rhs) }
+// ─────────────────────────────────────────────────────────────────────────────
+// `protocol::*` forwarder stamper for `CalcValue` leaf types.
+//
+// Rust analogue of Zig's single comptime dispatcher in `src/css/generics.zig`
+// (`tryFromAngle`/`trySign`/`tryMap`/`tryOp`/`tryOpTo`/`partialCmp`, lines
+// ~489-570), which duck-types via `@hasDecl(T, "sign")` etc. Here each leaf
+// opts in per-trait; only the listed arms are stamped — `Parse`/`ToCss`/
+// `IsCompatible` already supplied by `impl_parse_tocss_via_inherent!` /
+// `bridge_is_compatible!` stay out of the invocation.
+//
+// Arm vocab (each `arm: spec,` — trailing comma required):
+//   mul_f32:        forward
+//   partial_cmp:    forward
+//   try_from_angle: forward | none
+//   try_sign:       forward | <ident>   (ident = infallible inherent → `Some`)
+//   try_map:        forward | <ident>
+//   try_op:         forward | |rhs, ctx, f| { <body> }   (idents = param names;
+//   try_op_to:      |rhs, ctx, f| { <body, generic R> }   captured for hygiene)
+//   is_compatible:  forward | always_true
+//   parse_to_css:   forward             (stamps both `Parse` + `ToCss`)
+macro_rules! calc_protocol_forwarders {
+    ($T:ty { $($arms:tt)* }) => { calc_protocol_forwarders!(@ $T; $($arms)*); };
+    (@ $T:ty;) => {};
+    (@ $T:ty; mul_f32: forward, $($r:tt)*) => {
+        impl protocol::MulF32 for $T { #[inline] fn mul_f32(self, rhs: f32) -> Self { <$T>::mul_f32(self, rhs) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; partial_cmp: forward, $($r:tt)*) => {
+        impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(self, rhs) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_from_angle: forward, $($r:tt)*) => {
+        impl protocol::TryFromAngle for $T { #[inline] fn try_from_angle(a: Angle) -> Option<Self> { <$T>::try_from_angle(a) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_from_angle: none, $($r:tt)*) => {
+        impl protocol::TryFromAngle for $T { #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_sign: forward, $($r:tt)*) => {
+        impl protocol::TrySign for $T { #[inline] fn try_sign(&self) -> Option<f32> { <$T>::try_sign(self) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_sign: $m:ident, $($r:tt)*) => {
+        impl protocol::TrySign for $T { #[inline] fn try_sign(&self) -> Option<f32> { Some(self.$m()) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_map: forward, $($r:tt)*) => {
+        impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(self, f) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_map: $m:ident, $($r:tt)*) => {
+        impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.$m(f)) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_op: forward, $($r:tt)*) => {
+        impl protocol::TryOp for $T {
+            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(self, rhs, ctx, f) }
+        }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    // Closure-ish syntax so `$this/$rhs/$ctx/$f` carry call-site hygiene into
+    // the param list (macro_rules! fn-params are hygienic — `self` does not
+    // resolve in a `:block` from the call site, so the caller binds it via
+    // `$this`).
+    (@ $T:ty; try_op: |$this:ident, $rhs:ident, $ctx:ident, $f:ident| $body:block, $($r:tt)*) => {
+        impl protocol::TryOp for $T {
+            #[inline] fn try_op<C>(&self, $rhs: &Self, $ctx: C, $f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+                let $this = self;
+                $body
+            }
+        }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_op_to: |$this:ident, $rhs:ident, $ctx:ident, $f:ident| $body:block, $($r:tt)*) => {
+        impl protocol::TryOpTo for $T {
+            #[inline] fn try_op_to<R, C>(&self, $rhs: &Self, $ctx: C, $f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+                let $this = self;
+                $body
+            }
+        }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; is_compatible: forward, $($r:tt)*) => {
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; is_compatible: always_true, $($r:tt)*) => {
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; parse_to_css: forward, $($r:tt)*) => {
+        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(self, dest) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
 }
-impl protocol::TryFromAngle for Percentage {
-    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
-}
-impl protocol::TrySign for Percentage {
-    #[inline] fn try_sign(&self) -> Option<f32> { Percentage::try_sign(self) }
-}
-impl protocol::TryMap for Percentage {
-    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Percentage::try_map(self, f) }
-}
-impl protocol::TryOp for Percentage {
-    #[inline]
-    fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        Percentage::try_op(self, rhs, ctx, f)
-    }
-}
-impl protocol::TryOpTo for Percentage {
-    #[inline]
-    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        Some(self.op_to(rhs, ctx, f))
-    }
-}
-impl protocol::PartialCmp for Percentage {
-    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { Percentage::partial_cmp(self, rhs) }
-}
-impl protocol::Parse for Percentage {
-    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { Percentage::parse(input) }
-}
-impl protocol::ToCss for Percentage {
-    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Percentage::to_css(self, dest) }
-}
-impl protocol::IsCompatible for Percentage {
-    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
-}
+
+calc_protocol_forwarders!(Percentage {
+    mul_f32: forward,
+    try_from_angle: none,
+    try_sign: forward,
+    try_map: forward,
+    try_op: forward,
+    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(rhs, ctx, f)) },
+    partial_cmp: forward,
+    is_compatible: always_true,
+    parse_to_css: forward,
+});
 impl CalcValue for Percentage {
     #[inline] fn add_internal(self, rhs: Self) -> Self { Percentage::add_internal(self, rhs) }
     #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
@@ -1592,49 +1641,31 @@ impl CalcValue for Percentage {
     #[inline] fn eql(&self, other: &Self) -> bool { Percentage::eql(self, other) }
 }
 
-impl protocol::MulF32 for Time {
-    #[inline] fn mul_f32(self, rhs: f32) -> Self { Time::mul_f32(self, rhs) }
-}
-impl protocol::TryFromAngle for Time {
-    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
-}
-impl protocol::TrySign for Time {
-    #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
-}
-impl protocol::TryMap for Time {
-    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map(f)) }
-}
-impl protocol::TryOp for Time {
-    #[inline]
-    fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+calc_protocol_forwarders!(Time {
+    mul_f32: forward,
+    try_from_angle: none,
+    try_sign: sign,
+    try_map: map,
+    try_op: |this, rhs, ctx, f| {
         // Inline `Time::op` body so `ctx` (no `Copy` bound) is consumed once.
-        Some(match (*self, *rhs) {
+        Some(match (*this, *rhs) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(f(ctx, a, b)),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => Time::Milliseconds(f(ctx, a, b)),
             (Time::Seconds(a), Time::Milliseconds(b)) => Time::Seconds(f(ctx, a, b / 1000.0)),
             (Time::Milliseconds(a), Time::Seconds(b)) => Time::Milliseconds(f(ctx, a, b * 1000.0)),
         })
-    }
-}
-impl protocol::TryOpTo for Time {
-    #[inline]
-    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        Some(match (*self, *rhs) {
+    },
+    try_op_to: |this, rhs, ctx, f| {
+        Some(match (*this, *rhs) {
             (Time::Seconds(a), Time::Seconds(b)) => f(ctx, a, b),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => f(ctx, a, b),
             (Time::Seconds(a), Time::Milliseconds(b)) => f(ctx, a, b / 1000.0),
             (Time::Milliseconds(a), Time::Seconds(b)) => f(ctx, a, b * 1000.0),
         })
-    }
-}
-impl protocol::PartialCmp for Time {
-    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { Time::partial_cmp(self, rhs) }
-}
-// `Parse`/`ToCss` for `Time` come from `impl_parse_tocss_via_inherent!` in
-// `properties/mod.rs`; only `IsCompatible` is supplied here.
-impl protocol::IsCompatible for Time {
-    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
-}
+    },
+    partial_cmp: forward,
+    is_compatible: always_true,
+});
 impl CalcValue for Time {
     #[inline] fn add_internal(self, rhs: Self) -> Self { Time::add_internal(self, rhs) }
     #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
@@ -1647,46 +1678,29 @@ impl CalcValue for Time {
     #[inline] fn eql(&self, other: &Self) -> bool { Time::eql(self, other) }
 }
 
-impl protocol::MulF32 for Length {
-    #[inline] fn mul_f32(self, rhs: f32) -> Self { Length::mul_f32(self, rhs) }
-}
-impl protocol::TryFromAngle for Length {
-    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
-}
-impl protocol::TrySign for Length {
-    #[inline] fn try_sign(&self) -> Option<f32> { Length::try_sign(self) }
-}
-impl protocol::TryMap for Length {
-    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Length::try_map(self, f) }
-}
-impl protocol::TryOp for Length {
-    #[inline]
-    fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+calc_protocol_forwarders!(Length {
+    mul_f32: forward,
+    try_from_angle: none,
+    try_sign: forward,
+    try_map: forward,
+    try_op: |this, rhs, ctx, f| {
         // Delegate to `protocol::TryOp for LengthValue` (which inlines the
         // same-unit/px-convert dispatch) rather than the inherent `Length::try_op`
         // — the inherent takes a 2-arg `Fn` closure, and adapting our 3-arg `f`
         // to that without `C: Copy` would only yield `FnOnce`.
-        if let (Length::Value(a), Length::Value(b)) = (self, rhs) {
+        if let (Length::Value(a), Length::Value(b)) = (this, rhs) {
             return <LengthValue as protocol::TryOp>::try_op(a, b, ctx, f).map(Length::Value);
         }
         None
-    }
-}
-impl protocol::TryOpTo for Length {
-    #[inline]
-    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        if let (Length::Value(a), Length::Value(b)) = (self, rhs) {
+    },
+    try_op_to: |this, rhs, ctx, f| {
+        if let (Length::Value(a), Length::Value(b)) = (this, rhs) {
             return <LengthValue as protocol::TryOpTo>::try_op_to(a, b, ctx, f);
         }
         None
-    }
-}
-impl protocol::PartialCmp for Length {
-    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { Length::partial_cmp(self, rhs) }
-}
-// `Parse`/`ToCss`/`IsCompatible` for `Length` come from
-// `impl_parse_tocss_via_inherent!` (properties/mod.rs) and
-// `bridge_is_compatible!` (generics.rs).
+    },
+    partial_cmp: forward,
+});
 impl CalcValue for Length {
     #[inline] fn add_internal(self, rhs: Self) -> Self { Length::add_internal(self, rhs) }
     #[inline] fn into_calc(self) -> Calc<Self> { Length::into_calc(self) }
@@ -1697,30 +1711,22 @@ impl CalcValue for Length {
     #[inline] fn eql(&self, other: &Self) -> bool { self == other }
 }
 
-/// `protocol::*` impls for the two concrete `DimensionPercentage<D>`
+/// `protocol::*` + `CalcValue` impls for the two concrete `DimensionPercentage<D>`
 /// instantiations that participate in `Calc<V>`. Kept as a macro (rather than
 /// a blanket `impl<D: …>`) so coherence doesn't tangle with the `where Self:
-/// CalcValue` bounds on the inherent methods these forward to.
+/// CalcValue` bounds on the inherent methods these forward to. Trailing extra
+/// arms (e.g. `parse_to_css: forward,`) are forwarded into
+/// `calc_protocol_forwarders!` — `LengthPercentage` already gets `Parse`/`ToCss`
+/// from `impl_parse_tocss_via_inherent!`, only `Angle` needs them stamped here.
 macro_rules! dim_pct_protocol {
-    ($D:ty) => {
-        impl protocol::MulF32 for DimensionPercentage<$D> {
-            #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
-        }
-        impl protocol::TryFromAngle for DimensionPercentage<$D> {
-            #[inline] fn try_from_angle(a: Angle) -> Option<Self> { DimensionPercentage::try_from_angle(a) }
-        }
-        impl protocol::TrySign for DimensionPercentage<$D> {
-            #[inline] fn try_sign(&self) -> Option<f32> { DimensionPercentage::try_sign(self) }
-        }
-        impl protocol::TryMap for DimensionPercentage<$D> {
-            #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> {
-                DimensionPercentage::try_map(self, f)
-            }
-        }
-        impl protocol::TryOp for DimensionPercentage<$D> {
-            #[inline]
-            fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-                match (self, rhs) {
+    ($D:ty $(, $($extra:tt)*)?) => {
+        calc_protocol_forwarders!(DimensionPercentage<$D> {
+            mul_f32: forward,
+            try_from_angle: forward,
+            try_sign: forward,
+            try_map: forward,
+            try_op: |this, rhs, ctx, f| {
+                match (this, rhs) {
                     (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
                         Some(DimensionPercentage::Dimension(<$D as protocol::TryOp>::try_op(a, b, ctx, f)?))
                     }
@@ -1729,12 +1735,9 @@ macro_rules! dim_pct_protocol {
                     }
                     _ => None,
                 }
-            }
-        }
-        impl protocol::TryOpTo for DimensionPercentage<$D> {
-            #[inline]
-            fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-                match (self, rhs) {
+            },
+            try_op_to: |this, rhs, ctx, f| {
+                match (this, rhs) {
                     (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
                         <$D as protocol::TryOpTo>::try_op_to(a, b, ctx, f)
                     }
@@ -1743,18 +1746,11 @@ macro_rules! dim_pct_protocol {
                     }
                     _ => None,
                 }
-            }
-        }
-        impl protocol::PartialCmp for DimensionPercentage<$D> {
-            #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-                DimensionPercentage::partial_cmp(self, rhs)
-            }
-        }
-        impl protocol::IsCompatible for DimensionPercentage<$D> {
-            #[inline] fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
-                DimensionPercentage::is_compatible(self, browsers)
-            }
-        }
+            },
+            partial_cmp: forward,
+            is_compatible: forward,
+            $($($extra)*)?
+        });
         impl CalcValue for DimensionPercentage<$D> {
             #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
             #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
@@ -1766,20 +1762,6 @@ macro_rules! dim_pct_protocol {
     };
 }
 dim_pct_protocol!(LengthValue);
-dim_pct_protocol!(Angle);
-
-// `Parse`/`ToCss` for `DimensionPercentage<LengthValue>` (= `LengthPercentage`)
-// come from `impl_parse_tocss_via_inherent!` in `properties/mod.rs`. Only
-// `DimensionPercentage<Angle>` needs them supplied here.
-impl protocol::Parse for DimensionPercentage<Angle> {
-    #[inline]
-    fn parse(input: &mut css::Parser) -> CssResult<Self> { DimensionPercentage::parse(input) }
-}
-impl protocol::ToCss for DimensionPercentage<Angle> {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        DimensionPercentage::to_css(self, dest)
-    }
-}
+dim_pct_protocol!(Angle, parse_to_css: forward,);
 
 // ported from: src/css/values/calc.zig

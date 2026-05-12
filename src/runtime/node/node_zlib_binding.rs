@@ -957,21 +957,16 @@ macro_rules! __impl_compression_stream {
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
-            #[inline] fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
+            // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
+            // with their own `#[ref_count(destroy = …)]` (or the default
+            // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
+            // a `Self::deinit(*mut Self)` signature that only one of them has.
+            #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
             #[inline] unsafe fn deref(this: *mut Self) {
-                // SAFETY: `this` is live per the trait contract; `ref_count` is a
-                // `Cell<u32>` so the read/write is sound through a raw `*mut`.
-                let n = unsafe { (*this).ref_count.get() } - 1;
-                unsafe { (*this).ref_count.set(n) };
-                if n == 0 {
-                    // Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-                    // → calls `deinit(this)` then `bun.destroy(this)`. The
-                    // per-type `Self::deinit(*mut Self)` does both (closes the
-                    // stream and `heap::take`s the payload).
-                    // SAFETY: refcount hit zero ⇒ no other borrow remains;
-                    // `this` was `heap::alloc`'d at construction.
-                    unsafe { Self::deinit(this) };
-                }
+                // SAFETY: forwarded trait contract — `this` is live; the
+                // derived `CellRefCounted::deref` routes zero to the per-type
+                // `destroy` (≡ Zig `bun.ptr.RefCount(.., deinit, .{})`).
+                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
 
             #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

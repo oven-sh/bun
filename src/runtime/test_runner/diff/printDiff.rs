@@ -234,16 +234,7 @@ pub enum DiffOperation {
     Equal,
 }
 
-mod colors {
-    pub const RED: &str = "\x1b[31m";
-    pub const GREEN: &str = "\x1b[32m";
-    pub const YELLOW: &str = "\x1b[33m";
-    pub const INVERT: &str = "\x1b[7m";
-    pub const UNDERLINE: &str = "\x1b[4m";
-    pub const DIM: &str = "\x1b[2m";
-    pub const WHITE: &str = "\x1b[97m";
-    pub const RESET: &str = "\x1b[0m";
-}
+use bun_core::output::ansi as colors;
 
 mod prefix_styles {
     use super::{colors, PrefixStyle};
@@ -425,7 +416,7 @@ fn print_truncated_line(
     }
 
     if config.enable_ansi_colors {
-        writer.write_str(colors::WHITE)?;
+        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97 — Zig printDiff.zig:177
     }
     // The context is shown on both sides, so we truncate line.len - 2 * context
     write!(

@@ -59,8 +59,85 @@ pub enum FlushValue {
     Trees = 6,
 }
 
-// `c_int` import is unused directly but documents that #[repr(C)] on a fieldless
-// enum yields a c_int-sized discriminant, matching Zig's `enum(c_int)`.
-const _: c_int = 0;
+// ---------------------------------------------------------------------------
+// z_stream — single source of truth for both POSIX and Windows.
+//
+// zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
+// `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
+// (4-byte) targets. The two per-platform copies in posix.rs / win32.rs were
+// already field-for-field identical; win32.rs had even normalized its
+// `struct_internal_state` to match posix so rustc's
+// `clashing_extern_declarations` lint saw the extern fns as compatible. This
+// hoist makes that the actual single definition.
+// ---------------------------------------------------------------------------
+use core::ffi::{c_char, c_uint, c_ulong, c_void};
+
+// typedef voidpf (*alloc_func)(voidpf opaque, uInt items, uInt size);
+// typedef void   (*free_func) (voidpf opaque, voidpf address);
+pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
+pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
+// Legacy spellings the per-platform modules exported; keep both so downstream
+// `pub use` re-exports stay source-compatible.
+pub type z_alloc_fn = alloc_func;
+pub type z_free_fn = free_func;
+pub type z_alloc_func = alloc_func;
+pub type z_free_func = free_func;
+
+/// zlib's opaque `struct internal_state { int dummy; }` stub — applications
+/// never look inside, only carry the pointer.
+#[repr(C)]
+pub struct struct_internal_state {
+    dummy: c_int,
+}
+pub type internal_state = struct_internal_state;
+
+// https://zlib.net/manual.html#Stream
+#[repr(C)]
+pub struct zStream_struct {
+    /// next input byte
+    pub next_in: *const u8,
+    /// number of bytes available at next_in
+    pub avail_in: c_uint,
+    /// total number of input bytes read so far
+    pub total_in: c_ulong,
+
+    /// next output byte will go here
+    pub next_out: *mut u8,
+    /// remaining free space at next_out
+    pub avail_out: c_uint,
+    /// total number of bytes output so far
+    pub total_out: c_ulong,
+
+    /// last error message, NULL if no error
+    pub err_msg: *const c_char,
+    /// not visible by applications
+    pub internal_state: *mut struct_internal_state,
+
+    /// used to allocate the internal state
+    pub alloc_func: alloc_func,
+    /// used to free the internal state
+    pub free_func: free_func,
+    /// private data object passed to zalloc and zfree
+    pub user_data: *mut c_void,
+
+    /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
+    pub data_type: DataType,
+
+    /// Adler-32 or CRC-32 value of the uncompressed data
+    pub adler: c_ulong,
+    /// reserved for future use
+    pub reserved: c_ulong,
+}
+
+pub type z_stream = zStream_struct;
+pub type z_streamp = *mut z_stream;
+// translate-c spellings (win32.rs historically used these).
+pub type struct_z_stream_s = zStream_struct;
+pub type z_stream_s = zStream_struct;
+
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
+// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// is the documented pre-`inflateInit`/`deflateInit` state (S021).
+unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
 
 // ported from: src/zlib_sys/shared.zig

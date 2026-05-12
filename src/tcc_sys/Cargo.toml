@@ -23,4 +23,3 @@ bun_core.workspace = true
 bun_ptr.workspace = true
 
 thiserror.workspace = true
-itoa.workspace = true

@@ -159,13 +159,7 @@ impl<'a> Snapshots<'a> {
         let (name, counter) = self.add_count(expect, hint)?;
 
         let mut counter_string_buf = [0u8; 32];
-        let counter_string = {
-            let mut cursor: &mut [u8] = &mut counter_string_buf[..];
-            let start_len = cursor.len();
-            write!(cursor, "{}", counter).map_err(|_| bun_core::err!("FmtError"))?;
-            let written = start_len - cursor.len();
-            &counter_string_buf[..written]
-        };
+        let counter_string = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
 
         let mut name_with_counter: Vec<u8> =
             Vec::with_capacity(name.len() + 1 + counter_string.len());

@@ -471,7 +471,7 @@ impl<'a> TOML<'a> {
                     // `&'a Source` (independent of `&self`), so bind it before
                     // the `&mut self.lexer` borrow below.
                     let src: &'a bun_ast::Source = self.source();
-                    let key_name = bun_str::strings::trim_right(
+                    let key_name = bun_core::strings::trim_right(
                         &src.contents[start as usize..rope_end],
                         b" \t\n\r\x0B\x0C",
                     );

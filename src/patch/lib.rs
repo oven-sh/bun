@@ -720,26 +720,7 @@ mod json {
     use super::*;
     use core::fmt::{Result, Write};
 
-    /// Minimal JSON string writer matching Zig `std.json.encodeJsonString`
-    /// (default options: escape `"`, `\`, and control chars; pass other
-    /// bytes through verbatim — Zig does no UTF-8 validation here).
-    fn write_str(w: &mut impl Write, s: &[u8]) -> Result {
-        w.write_char('"')?;
-        for &b in s {
-            match b {
-                b'"' => w.write_str("\\\"")?,
-                b'\\' => w.write_str("\\\\")?,
-                0x08 => w.write_str("\\b")?,
-                0x0c => w.write_str("\\f")?,
-                b'\n' => w.write_str("\\n")?,
-                b'\r' => w.write_str("\\r")?,
-                b'\t' => w.write_str("\\t")?,
-                0x00..=0x1f => write!(w, "\\u{:04x}", b)?,
-                _ => w.write_char(b as char)?,
-            }
-        }
-        w.write_char('"')
-    }
+    use bun_core::fmt::encode_json_string as write_str;
 
     fn write_opt_str(w: &mut impl Write, s: Option<&[u8]>) -> Result {
         match s {
@@ -1464,24 +1445,11 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
     })
 }
 
-/// Byte-slice `u32` parser (radix 8 or 10). Avoids `core::str::from_utf8` on
-/// external data per §Strings — patch input is arbitrary bytes, not UTF-8.
-/// Matches `std.fmt.parseInt(u32, s, radix)` for the inputs this file uses
-/// (no sign prefix, no `_` separators, no `0x`/`0o` prefix).
+/// Byte-slice `u32` parser (radix 8 or 10). Patch input is arbitrary bytes,
+/// not UTF-8; `parse_unsigned` avoids the `from_utf8` round-trip.
+#[inline]
 fn parse_u32_ascii(s: &[u8], radix: u32) -> Option<u32> {
-    debug_assert!(radix == 8 || radix == 10);
-    if s.is_empty() {
-        return None;
-    }
-    let mut acc: u32 = 0;
-    for &b in s {
-        let digit = (b as u32).wrapping_sub(b'0' as u32);
-        if digit >= radix {
-            return None;
-        }
-        acc = acc.checked_mul(radix)?.checked_add(digit)?;
-    }
-    Some(acc)
+    bun_core::parse_unsigned::<u32>(s, radix as u8).ok()
 }
 
 fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
@@ -1774,11 +1742,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
         // backslash in the path fucks everything up
         let mut cpy = vec![0u8; old_folder_.len() + bump];
         cpy[..old_folder_.len()].copy_from_slice(old_folder_);
-        for b in cpy.iter_mut() {
-            if *b == b'\\' {
-                *b = b'/';
-            }
-        }
+        paths::slashes_to_posix_in_place(&mut cpy[..]);
         if SENTINEL {
             cpy[old_folder_.len()] = 0;
             // Zig: `break :brk cpy[0..len :0]` — sentinel slice's `.len` excludes
@@ -1795,11 +1759,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
     let new_folder: Vec<u8> = {
         let mut cpy = vec![0u8; new_folder_.len() + bump];
         cpy[..new_folder_.len()].copy_from_slice(new_folder_);
-        for b in cpy.iter_mut() {
-            if *b == b'\\' {
-                *b = b'/';
-            }
-        }
+        paths::slashes_to_posix_in_place(&mut cpy[..]);
         if SENTINEL {
             cpy[new_folder_.len()] = 0;
             // Zig: `break :brk cpy[0..len :0]` — `.len` excludes the sentinel.

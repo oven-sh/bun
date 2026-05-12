@@ -339,11 +339,7 @@ impl PackageJSON {
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
         let mut normalized = path.to_vec();
-        for ch in normalized.iter_mut() {
-            if *ch == b'\\' {
-                *ch = b'/';
-            }
-        }
+        bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
     }
 }

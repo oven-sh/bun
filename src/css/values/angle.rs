@@ -61,18 +61,13 @@ impl Angle {
             Token::Dimension(dim) => {
                 let value = dim.num.value;
                 let unit = dim.unit;
-                // todo_stuff.match_ignore_ascii_case
-                if strings::eql_case_insensitive_ascii_check_length(b"deg", unit) {
-                    return Ok(Angle::Deg(value));
-                } else if strings::eql_case_insensitive_ascii_check_length(b"grad", unit) {
-                    return Ok(Angle::Grad(value));
-                } else if strings::eql_case_insensitive_ascii_check_length(b"turn", unit) {
-                    return Ok(Angle::Turn(value));
-                } else if strings::eql_case_insensitive_ascii_check_length(b"rad", unit) {
-                    return Ok(Angle::Rad(value));
-                } else {
-                    return Err(location.new_unexpected_token_error(token));
-                }
+                return crate::match_ignore_ascii_case! { unit, {
+                    b"deg" => Ok(Angle::Deg(value)),
+                    b"grad" => Ok(Angle::Grad(value)),
+                    b"turn" => Ok(Angle::Turn(value)),
+                    b"rad" => Ok(Angle::Rad(value)),
+                    _ => Err(location.new_unexpected_token_error(token)),
+                }};
             }
             Token::Number(num) => {
                 if num.value == 0.0 && allow_unitless_zero {
@@ -125,15 +120,13 @@ impl Angle {
         if let Token::Dimension(dimension) = token {
             let value = dimension.num.value;
             let unit = dimension.unit;
-            if strings::eql_case_insensitive_ascii_check_length(unit, b"deg") {
-                return Ok(Angle::Deg(value));
-            } else if strings::eql_case_insensitive_ascii_check_length(unit, b"grad") {
-                return Ok(Angle::Grad(value));
-            } else if strings::eql_case_insensitive_ascii_check_length(unit, b"turn") {
-                return Ok(Angle::Turn(value));
-            } else if strings::eql_case_insensitive_ascii_check_length(unit, b"rad") {
-                return Ok(Angle::Rad(value));
-            }
+            return crate::match_ignore_ascii_case! { unit, {
+                b"deg" => Ok(Angle::Deg(value)),
+                b"grad" => Ok(Angle::Grad(value)),
+                b"turn" => Ok(Angle::Turn(value)),
+                b"rad" => Ok(Angle::Rad(value)),
+                _ => Err(()),
+            }};
         }
         Err(())
     }

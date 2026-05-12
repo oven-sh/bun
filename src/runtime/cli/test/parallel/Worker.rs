@@ -476,35 +476,17 @@ impl Default for WorkerPipe {
 
 // `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(TestParallelWorkerPipe for WorkerPipe);
-impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::TestParallelWorkerPipe;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. These touch only fields disjoint from
-    // `reader` (worker backref / done flag).
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: bun_io::ReadState) -> bool {
-        unsafe { WorkerPipe::on_read_chunk(&mut *this, chunk, state) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { WorkerPipe::on_reader_done(&mut *this) }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { WorkerPipe::on_reader_error(&mut *this, err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        // `vm.uv_loop()` is `*mut bun_io::Loop` on every target (uv on
-        // Windows, us_loop on POSIX) — exactly the trait's nominal.
-        unsafe { (*(*(*this).worker).coord).vm.uv_loop() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx() }
-    }
+// Callbacks touch only fields disjoint from `reader` (worker backref / done
+// flag); worker/coord backrefs are valid for the pipe's lifetime.
+bun_io::impl_buffered_reader_parent! {
+    TestParallelWorkerPipe for WorkerPipe;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
+    on_reader_done  = |this| (*this).on_reader_done();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.
+    loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop();
+    event_loop      = |this| (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx();
 }
 
 impl Drop for WorkerPipe {

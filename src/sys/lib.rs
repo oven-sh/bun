@@ -7,7 +7,7 @@
 #![warn(unreachable_pub)]
 
 // `bun_str` is the historical Zig namespace name; keep a public alias to
-// `bun_core` so any external `bun_sys::bun_str::…` paths continue to resolve.
+// `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.
 #[cfg(windows)]
 pub extern crate bun_core as bun_str;
 #[cfg(windows)]
@@ -1795,63 +1795,24 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        // PERF(port): Zig leaves the buffer `undefined`; zero-fill here for
-        // simplicity. Stack-local, no heap.
+        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
+        // POSIX `init` is infallible.
+        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-        if sub_path.len() >= buf.len() {
-            // sys.zig:809 — `mkdiratZ` tags as `.mkdir`; keep consistent here.
-            return Err(Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path));
-        }
-        buf[..sub_path.len()].copy_from_slice(sub_path);
-        let mut end = sub_path.len();
-        while end > 0 && buf[end - 1] == bun_core::SEP { end -= 1; } // trim trailing seps
-        buf[end] = 0;
-        // Stack of separator positions we NUL'd while peeling back, so each
-        // can be restored before re-creating its component on the way up.
-        // Worst case: every other byte is a separator (`a/a/a/...`), so the
-        // stack can hold at most `MAX_PATH_BYTES / 2` entries — `sub_path` is
-        // bounds-checked against `MAX_PATH_BYTES` above so this never overflows.
-        let mut nuls = [0u16; bun_core::MAX_PATH_BYTES / 2];
-        let mut nuls_len = 0usize;
-        let mut peel = end;
-        // Walk down: try mkdirat; on ENOENT, peel one component.
-        loop {
-            // SAFETY: buf[0..=peel] is NUL-terminated (initial buf[end]=0 or a
-            // peeled '/' overwritten below).
-            let z = ZStr::from_buf(&buf[..], peel);
-            match mkdirat(dir, z, mode) {
-                Ok(()) => break,
-                Err(e) if e.get_errno() == E::EEXIST => break,
-                Err(e) if e.get_errno() == E::ENOENT => {
-                    let Some(slash) = buf[..peel].iter().rposition(|&b| b == bun_core::SEP) else {
-                        return Err(e);
-                    };
-                    if slash == 0 { return Err(e); }
-                    peel = slash;
-                    buf[peel] = 0;
-                    nuls[nuls_len] = peel as u16;
-                    nuls_len += 1;
-                }
-                Err(e) => return Err(e),
+        bun_paths::make_path_with(it, |p| {
+            if p.len() >= buf.len() {
+                // sys.zig:809 — `mkdiratZ` tags as `.mkdir`; keep consistent here.
+                return Err(Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path));
             }
-        }
-        // Walk back up, restoring each '/' and creating that prefix.
-        while nuls_len > 0 {
-            nuls_len -= 1;
-            let pos = nuls[nuls_len] as usize;
-            buf[pos] = bun_core::SEP;
-            // The only remaining NUL above `pos` is the next entry on the
-            // stack (or `end`), which is exactly the next component boundary.
-            let next_end = if nuls_len > 0 { nuls[nuls_len - 1] as usize } else { end };
-            // SAFETY: buf[next_end] == 0 (still un-restored or the original sentinel).
-            let z = ZStr::from_buf(&buf[..], next_end);
-            match mkdirat(dir, z, mode) {
-                Ok(()) => {}
-                Err(e) if e.get_errno() == E::EEXIST => {}
-                Err(e) => return Err(e),
+            buf[..p.len()].copy_from_slice(p);
+            buf[p.len()] = 0;
+            match mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
+                Ok(()) => Ok(MakePathStep::Created),
+                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+                Err(e) => Err(e),
             }
-        }
-        Ok(())
+        })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink, path); Ok(())
@@ -2914,42 +2875,33 @@ mod windows_impl {
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
-        // Port of `bun.makePath` (bun.zig:2288) — uses
-        // `std.fs.path.componentIterator(sub_path)`, starts at `it.last()`,
-        // walks `previous()` on FileNotFound and `next()` on success/EEXIST.
-        // The previous forward-iterating split-on-sep impl was wrong for
-        // absolute Windows paths: the first cumulative component is `"C:"`,
-        // and `mkdirat(cwd, "C:")` resolves to the volume device (`\??\C:`,
-        // no trailing `\`), which `NtCreateFile(FILE_CREATE|FILE_DIRECTORY_FILE)`
-        // rejects with a status that maps to ENOTDIR/EINVAL — not EEXIST — so
-        // the loop bailed before ever reaching the leaf (`.bin`). That broke
-        // every `bin::Linker::create_windows_shim` call (it passes the
-        // *absolute* `node_modules_path/.bin` here) → "Failed to link …:
-        // ENOENT" → `Global::crash()`.
+        // Port of `bun.makePath` (bun.zig:2288). The component-splitting and
+        // back-then-forward walk live in `bun_paths::{ComponentIterator,
+        // make_path_with}` (faithful `std.fs.path.ComponentIterator` port — it
+        // never yields a bare `"C:"` / `"\\server\share"` root, which is what
+        // broke the old forward-split impl for absolute paths fed by
+        // `bin::Linker::create_windows_shim`).
         //
-        // `componentIterator` on Windows treats the drive prefix as root and
-        // never yields a bare `"C:"` — `component.path` is always a full
-        // prefix slice (e.g. `"C:\Users"`, `"C:\Users\foo"`). We mirror that
-        // by recording separator boundaries *after* the disk designator and
-        // walking back-then-forward over them.
+        // What stays here is a `.`/`..` *pre-normalize* pass: Zig's
+        // `std.fs.Dir.makePath` calls `std.posix.mkdirat`, which on Windows
+        // normalizes each prefix through `sliceToPrefixedFileW` →
+        // `removeDotDirsSanitized` / `RtlGetFullPathName_U`, collapsing every
+        // `.` and `..` before `NtCreateFile`. Our `mkdirat` below routes
+        // through bun's `to_nt_path` which only flips slashes, so a literal
+        // `"."`/`".."` ObjectName reaches `NtCreateFile` un-normalized — `.`
+        // → `OBJECT_NAME_NOT_FOUND` (ENOENT, not the EEXIST the walk expects)
+        // and `a\..\b` live-locks the walk. Normalizing here matches the
+        // stdlib's effective behavior (compile-outfile-subdirs.test.ts
+        // "works with . and .. in paths", outfile
+        // `./output/../output/./app.exe`).
+        use bun_paths::{is_sep_any as is_sep, ComponentIterator, MakePathStep, PathFormat};
         if sub.is_empty() { return Ok(()); }
-        // Strip leading `./` (`.\`) segments and a bare `.` — Zig's
-        // `std.fs.Dir.makePath` reaches `dir.makeDir(".")` →
-        // `std.posix.mkdirat` → `windows.sliceToPrefixedFileW`, which
-        // *normalizes* `.` away (relative `"."` becomes the empty string,
-        // so NtCreateFile targets the RootDirectory itself → COLLISION →
-        // `error.PathAlreadyExists` → success). Our `mkdirat` below routes
-        // through bun's `toNTPath` which only flips slashes, leaving a
-        // literal `"."` ObjectName that the NT object manager rejects with
-        // OBJECT_NAME_NOT_FOUND → ENOENT → the `idx == 0` arm bubbles it
-        // out. The bundler's chunk paths are always `./<name>` (see
-        // `linker_context::writeOutputFilesToDisk`), so without this strip
-        // every `--outdir` write on Windows fails "ENOENT creating outdir
-        // \".\"".
+        // Strip leading `./` (`.\`) and a bare `.` (bundler chunk paths are
+        // always `./<name>` — see `linker_context::writeOutputFilesToDisk`).
         let mut sub = sub;
-        while sub.len() >= 2 && sub[0] == b'.' && (sub[1] == b'/' || sub[1] == b'\\') {
+        while sub.len() >= 2 && sub[0] == b'.' && is_sep(sub[1]) {
             sub = &sub[2..];
-            while !sub.is_empty() && (sub[0] == b'/' || sub[0] == b'\\') { sub = &sub[1..]; }
+            while !sub.is_empty() && is_sep(sub[0]) { sub = &sub[1..]; }
         }
         if sub.is_empty() || sub == b"." { return Ok(()); }
         let mut buf = bun_core::PathBuffer::default();
@@ -2957,60 +2909,15 @@ mod windows_impl {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
 
-        let is_sep = |b: u8| b == b'/' || b == b'\\';
-
-        // `std.fs.path.componentIterator(.windows, …).root_end_index` — skip
-        // the disk designator (`C:` / `C:\` / `\\server\share\`) so we never
-        // try to create it.
-        let root_end: usize = {
-            let s = sub;
-            if s.len() >= 2 && s[1] == b':' && s[0].is_ascii_alphabetic() {
-                // drive letter, optionally followed by one separator
-                if s.len() >= 3 && is_sep(s[2]) { 3 } else { 2 }
-            } else if s.len() >= 2 && is_sep(s[0]) && is_sep(s[1]) {
-                // UNC `\\server\share\` — root ends after the share name
-                let mut i = 2usize;
-                while i < s.len() && !is_sep(s[i]) { i += 1; } // server
-                while i < s.len() && is_sep(s[i]) { i += 1; }
-                while i < s.len() && !is_sep(s[i]) { i += 1; } // share
-                while i < s.len() && is_sep(s[i]) { i += 1; }
-                i
-            } else if !s.is_empty() && is_sep(s[0]) {
-                1
-            } else {
-                0
-            }
-        };
-
-        // Build a *normalized* copy of `sub` into `buf`, collapsing `.` and
-        // `..` segments, and record the end offset of each surviving component
-        // (`component.path` = `buf[..ends[k]]`). Zig's `last()/previous()/
-        // next()` is then an index walk over `ends[]`.
-        //
-        // Zig's `std.fs.Dir.makePath` calls `std.posix.mkdirat`, which on
-        // Windows normalizes each prefix through `sliceToPrefixedFileW` →
-        // `removeDotDirsSanitized` (relative) / `RtlGetFullPathName_U`
-        // (absolute), collapsing every `.` and `..` segment before
-        // `NtCreateFile`. Our `mkdirat` below routes through `to_nt_path`
-        // which only flips slashes, so a literal `"."`/`".."` ObjectName
-        // reaches `NtCreateFile` un-normalized. For `.` that yields
-        // `OBJECT_NAME_NOT_FOUND` → ENOENT (not the EEXIST the walk expects);
-        // for `a\..\b` the walk live-locks: `mkdirat("a")` → OK, step
-        // forward, `mkdirat("a\..")` → ENOENT, step back, `mkdirat("a")` →
-        // EEXIST, step forward… forever (90s timeout in
-        // compile-outfile-subdirs.test.ts "works with . and .. in paths",
-        // outfile `./output/../output/./app.exe`). Normalizing here matches
-        // the stdlib's effective behavior — an input that fully cancels (e.g.
-        // `a/..`) yields zero components and returns Ok, i.e. a no-op as in
-        // Zig.
+        // Disk designator (`C:` / `C:\` / `\\server\share\`) is copied verbatim
+        // and never popped by `..`.
+        let root_end = bun_paths::resolve_path::windows_filesystem_root(sub).len();
         buf.0[..root_end].copy_from_slice(&sub[..root_end]);
         let mut w = root_end; // write cursor into buf
-        let mut ends: [usize; 256] = [0; 256];
-        let mut n_ends = 0usize;
-        // Count of leading `..` that couldn't pop a prior component (relative
-        // paths only). These are written literally and pinned — a later `..`
-        // must not pop them (`removeDotDirsSanitized` keeps them too).
-        let mut pinned_dotdot = 0usize;
+        // Bytes in `buf[root_end..pinned_end]` are leading `..` segments that
+        // had nothing to pop (relative paths only) — a later `..` must not pop
+        // them (`removeDotDirsSanitized` keeps them too).
+        let mut pinned_end = root_end;
         {
             let mut i = root_end;
             loop {
@@ -3019,70 +2926,46 @@ mod windows_impl {
                 let start = i;
                 while i < sub.len() && !is_sep(sub[i]) { i += 1; }
                 let comp = &sub[start..i];
-                if comp == b"." {
-                    continue;
-                }
+                if comp == b"." { continue; }
                 if comp == b".." {
-                    if n_ends > pinned_dotdot {
-                        // Pop the previous component from both `ends` and `buf`.
-                        n_ends -= 1;
-                        w = if n_ends > 0 { ends[n_ends - 1] } else { root_end };
+                    if w > pinned_end {
+                        // Pop the last written component (single-`\`-separated,
+                        // so a back-scan to the previous `\` is exact).
+                        while w > pinned_end && buf.0[w - 1] != b'\\' { w -= 1; }
+                        if w > pinned_end { w -= 1; } // drop the separator too
                         continue;
                     }
-                    if root_end > 0 {
-                        // Absolute: `..` at root is the root itself — drop it.
-                        continue;
-                    }
+                    if root_end > 0 { continue; } // absolute: `..` at root is root
                     // Relative with nothing to pop: keep `..` literally so
                     // `mkdirat(dir, "..\foo")` still targets `dir`'s parent.
-                    pinned_dotdot += 1;
-                }
-                if n_ends == ends.len() {
-                    return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
+                    if w > root_end { buf.0[w] = b'\\'; w += 1; }
+                    buf.0[w] = b'.'; buf.0[w + 1] = b'.'; w += 2;
+                    pinned_end = w;
+                    continue;
                 }
                 if w > root_end { buf.0[w] = b'\\'; w += 1; }
                 buf.0[w..w + comp.len()].copy_from_slice(comp);
                 w += comp.len();
-                ends[n_ends] = w;
-                n_ends += 1;
             }
         }
-        buf.0[w] = 0;
-        if n_ends == 0 { return Ok(()); }
+        if w == root_end { return Ok(()); } // fully cancelled (e.g. `a/..`)
 
-        // `it.last()` → walk back on ENOENT, forward on Ok/EEXIST.
-        let mut idx = n_ends - 1;
-        loop {
-            let end = ends[idx];
-            buf.0[end] = 0;
-            // SAFETY: NUL written at buf.0[end]; [0..end] is the normalized prefix.
-            let z = ZStr::from_buf(&buf.0[..], end);
-            let res = mkdirat(dir, z, mode);
-            // Restore the separator we overwrote (every intermediate `ends[k]`
-            // sits on a `\` we wrote above; the final one sits on the
-            // terminating NUL at `w`, which needs no restore).
-            if end < w { buf.0[end] = b'\\'; }
-            match res {
-                Ok(()) => {
-                    // `component = it.next() orelse return;`
-                    idx += 1;
-                    if idx >= n_ends { return Ok(()); }
-                }
-                Err(e) => match e.get_errno() {
-                    E::EEXIST => {
-                        // Zig: `error.PathAlreadyExists => {}` then next()
-                        idx += 1;
-                        if idx >= n_ends { return Ok(()); }
-                    }
-                    E::ENOENT => {
-                        // `component = it.previous() orelse return e;`
-                        if idx == 0 { return Err(e); }
-                        idx -= 1;
-                    }
-                    _ => return Err(e),
-                },
+        // Walk the normalized result. `ComponentIterator::init(.windows)` only
+        // errors on namespace-prefixed / `\\\x` inputs — pathological for
+        // makePath (NtCreateFile rejects them anyway).
+        let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
+            .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
+        let mut z = bun_core::PathBuffer::default();
+        bun_paths::make_path_with(it, |p| {
+            z.0[..p.len()].copy_from_slice(p);
+            z.0[p.len()] = 0;
+            match mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode) {
+                Ok(()) => Ok(MakePathStep::Created),
+                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+                Err(e) => Err(e),
             }
-        }
+        })
     }
     pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
         // No native `linkat` on Windows — resolve to absolute and CreateHardLinkW.
@@ -6448,38 +6331,29 @@ pub mod net {
     #[cfg(windows)] pub type sa_family_t = u16; // ws2def.h: `typedef USHORT ADDRESS_FAMILY;`
     #[cfg(windows)] pub type in_port_t   = u16;
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    // The BSD `len` field is `#[cfg]`-gated in BOTH the struct definition and
+    // the `ZEROED` initializer — Rust accepts outer attributes on struct-
+    // expression fields, so a single body suffices on all targets.
     #[repr(C)] #[derive(Copy, Clone)]
     pub struct sockaddr_in {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub len: u8,
         pub family: sa_family_t,
         pub port: in_port_t,
         pub addr: u32,
         pub zero: [u8; 8],
     }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     impl sockaddr_in {
         pub const ZEROED: Self = Self {
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             len: core::mem::size_of::<Self>() as u8,
             family: 0, port: 0, addr: 0, zero: [0; 8],
         };
     }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    #[repr(C)] #[derive(Copy, Clone)]
-    pub struct sockaddr_in {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub addr: u32,
-        pub zero: [u8; 8],
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    impl sockaddr_in {
-        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
-    }
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[repr(C)] #[derive(Copy, Clone)]
     pub struct sockaddr_in6 {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub len: u8,
         pub family: sa_family_t,
         pub port: in_port_t,
@@ -6487,26 +6361,12 @@ pub mod net {
         pub addr: [u8; 16],
         pub scope_id: u32,
     }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     impl sockaddr_in6 {
         pub const ZEROED: Self = Self {
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             len: core::mem::size_of::<Self>() as u8,
             family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0,
         };
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    #[repr(C)] #[derive(Copy, Clone)]
-    pub struct sockaddr_in6 {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub flowinfo: u32,
-        pub addr: [u8; 16],
-        pub scope_id: u32,
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    impl sockaddr_in6 {
-        pub const ZEROED: Self =
-            Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
     }
     const _: () = assert!(core::mem::size_of::<sockaddr_in>()  == core::mem::size_of::<crate::posix::sockaddr_in>());
     const _: () = assert!(core::mem::align_of::<sockaddr_in>() == core::mem::align_of::<crate::posix::sockaddr_in>());
@@ -6806,17 +6666,18 @@ pub mod make_path {
     }
 
     /// Dispatch trait for `make_path::<T>` over `u8` (POSIX) / `u16` (Windows).
-    /// Mirrors Zig's `std.fs.Dir.makePath` taking `OSPathSlice`.
-    pub trait PathChar: Copy {
+    /// Mirrors Zig's `std.fs.Dir.makePath` taking `OSPathSlice`. Extends the
+    /// canonical [`bun_paths::PathChar`] with the one syscall-dispatch hook.
+    pub trait MakePathUnit: bun_paths::PathChar {
         fn make_path_at(dir: Fd, sub: &[Self]) -> core::result::Result<(), bun_core::Error>;
     }
-    impl PathChar for u8 {
+    impl MakePathUnit for u8 {
         #[inline]
         fn make_path_at(dir: Fd, sub: &[u8]) -> core::result::Result<(), bun_core::Error> {
             mkdir_recursive_at(dir, sub).map_err(Into::into)
         }
     }
-    impl PathChar for u16 {
+    impl MakePathUnit for u16 {
         #[inline]
         fn make_path_at(dir: Fd, sub: &[u16]) -> core::result::Result<(), bun_core::Error> {
             make_path_w(dir, sub).map_err(Into::into)
@@ -6825,7 +6686,7 @@ pub mod make_path {
     /// `bun.makePath` — `mkdir -p` relative to `dir`, generic over path-char
     /// width so callers can pass `OSPathChar` slices unchanged.
     #[inline]
-    pub fn make_path<T: PathChar>(dir: Dir, sub_path: &[T])
+    pub fn make_path<T: MakePathUnit>(dir: Dir, sub_path: &[T])
         -> core::result::Result<(), bun_core::Error>
     {
         T::make_path_at(dir.fd, sub_path)

@@ -48,7 +48,7 @@ impl FileJsc for File {
             let store = StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: MimeType::NONE,
-                ref_count: AtomicU32::new(1),
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }));
             // make it never free

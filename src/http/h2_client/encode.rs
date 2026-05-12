@@ -393,7 +393,7 @@ pub fn encode_header(
         .encode(name, value, never_index, buf, encoded.len())
         .map_err(|e| bun_core::err!(from e))?;
     // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
-    unsafe { encoded.set_len(encoded.len() + written) };
+    unsafe { bun_core::vec::commit_spare(encoded, written) };
     Ok(())
 }
 

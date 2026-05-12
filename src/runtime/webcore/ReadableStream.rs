@@ -219,7 +219,7 @@ impl ReadableStream {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Blob(source) => unsafe { (*source).parent().cancel() },
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
-            Source::Bytes(source) => unsafe { (*source).parent().cancel() },
+            Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}
         }
         self.detach_if_possible(global_this);

@@ -3,7 +3,7 @@ use core::mem;
 use bun_alloc::AllocError;
 use bun_collections::{VecExt, MultiArrayList};
 use bun_ast::Loc;
-use bun_str::strings;
+use bun_core::strings;
 
 /// The source map specification is very loose and does not specify what
 /// column numbers actually mean. The popular "source-map" library from Mozilla

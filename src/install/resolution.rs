@@ -99,81 +99,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     // ── Tag-checked union accessors ────────────────────────────────────────
     // Every `Value` payload is `Copy` (`String` handles, `Repository`,
     // `VersionedURLType`) and the union is zero-initialized, so reading the
-    // wrong variant is well-defined garbage — `debug_assert_eq!` catches tag
-    // mismatches in debug. Centralizing the `unsafe` here removes ~100
-    // per-call-site `unsafe` blocks across the lockfile graph traversal
-    // without changing release codegen (these inline to a field projection).
-    #[inline]
-    pub fn npm(&self) -> &VersionedURLType<SemverInt> {
-        debug_assert_eq!(self.tag, Tag::Npm);
-        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
-        unsafe { &(*core::ptr::from_ref(&self.value)).npm }
-    }
-    #[inline]
-    pub fn npm_mut(&mut self) -> &mut VersionedURLType<SemverInt> {
-        debug_assert_eq!(self.tag, Tag::Npm);
-        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
-        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).npm }
-    }
-    #[inline]
-    pub fn folder(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::Folder);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).folder }
-    }
-    #[inline]
-    pub fn local_tarball(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::LocalTarball);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).local_tarball }
-    }
-    #[inline]
-    pub fn remote_tarball(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::RemoteTarball);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).remote_tarball }
-    }
-    #[inline]
-    pub fn workspace(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::Workspace);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).workspace }
-    }
-    #[inline]
-    pub fn symlink(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::Symlink);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).symlink }
-    }
-    #[inline]
-    pub fn single_file_module(&self) -> &String {
-        debug_assert_eq!(self.tag, Tag::SingleFileModule);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).single_file_module }
-    }
-    #[inline]
-    pub fn git(&self) -> &Repository {
-        debug_assert_eq!(self.tag, Tag::Git);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).git }
-    }
-    #[inline]
-    pub fn git_mut(&mut self) -> &mut Repository {
-        debug_assert_eq!(self.tag, Tag::Git);
-        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
-        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).git }
-    }
-    #[inline]
-    pub fn github(&self) -> &Repository {
-        debug_assert_eq!(self.tag, Tag::Github);
-        // SAFETY: tag-guarded.
-        unsafe { &(*core::ptr::from_ref(&self.value)).github }
-    }
-    #[inline]
-    pub fn github_mut(&mut self) -> &mut Repository {
-        debug_assert_eq!(self.tag, Tag::Github);
-        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
-        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).github }
+    // wrong variant is well-defined garbage — the macro debug-asserts the tag.
+    bun_core::extern_union_accessors! {
+        tag: tag as Tag, value: value;
+        Npm              => npm: VersionedURLType<SemverInt>, mut npm_mut;
+        Folder           => folder: String;
+        LocalTarball     => local_tarball: String;
+        RemoteTarball    => remote_tarball: String;
+        Workspace        => workspace: String;
+        Symlink          => symlink: String;
+        SingleFileModule => single_file_module: String;
+        Git              => git: Repository, mut git_mut;
+        Github           => github: Repository, mut github_mut;
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]

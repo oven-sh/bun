@@ -733,28 +733,6 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-pub fn update_package_json_and_install_catch_error(
-    ctx: Command::Context,
-    subcommand: Subcommand,
-) -> Result<(), Error> {
-    // TODO(port): narrow error set
-    // Zig: `&bun.cli.Cli.log_`. `ctx.log` *is* `&Cli.log_` — `Command.create()` writes
-    // `data.log = log` where `log = &Cli.log_` (see runtime/cli/cli.zig:333). Capture the
-    // pointer up-front so we don't reborrow `*ctx` after handing it to the inner call.
-    let log: *mut bun_ast::Log = ctx.log;
-    match update_package_json_and_install(ctx, subcommand) {
-        Ok(()) => Ok(()),
-        Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
-            // SAFETY: `log` is the process-global `Cli.log_` (set once during single-threaded
-            // CLI startup, never freed). We are on the single CLI thread in the install error
-            // path; no other `&mut Log` to it is live for the duration of this `print` call.
-            let _ = unsafe { &mut *log }.print(std::ptr::from_mut(Output::error_writer()));
-            Global::exit(1);
-        }
-        Err(e) => Err(e),
-    }
-}
-
 pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
@@ -986,29 +964,6 @@ impl fmt::Display for MoreInstructions<'_> {
             }
         }
     }
-}
-
-/// The Zig spec's `if (cli.analyze)` branch (which constructs a
-/// `bun.bundle_v2.BundleV2.DependenciesScanner` and calls
-/// `bun.cli.BuildCommand.exec`) was MOVED UP to `bun_runtime::cli::pm_update_package_json`
-/// — both `bun_bundler` and `bun_runtime` are higher-tier than `bun_install` and a
-/// dependency edge here would form a cycle. CLI entry points (`bun add`/`remove`/
-/// `update`/`patch`) call the runtime wrapper, which handles `--analyze` and then
-/// re-enters this crate via `update_package_json_and_install_and_cli`. This function
-/// is retained for install-internal callers that never set `cli.analyze`.
-pub fn update_package_json_and_install(
-    ctx: Command::Context,
-    subcommand: Subcommand,
-) -> Result<(), Error> {
-    // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
-    // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match` in Phase B.
-    let cli = CommandLineArguments::parse(subcommand)?;
-    debug_assert!(
-        !cli.analyze,
-        "`--analyze` must be handled by bun_runtime::cli::pm_update_package_json",
-    );
-    update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }
 
 use super::options::{Do, LogLevel, PatchFeatures};

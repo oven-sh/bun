@@ -44,6 +44,15 @@ pub type PidFdType = (); // u0 in Zig
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
+//
+// One Bun-level type per target, mirroring Zig's `bun.spawn.Rusage`
+// (process.zig:72-97). On every Unix this is `libc::rusage` — Rust's libc
+// crate, unlike Zig's `std.posix`, *does* define `rusage` on FreeBSD with
+// the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
+// needed. On Windows it is the value-typed `WinRusage` below (NOT
+// `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
+// untouched; our Windows path fills `WinRusage` directly from Win32, not
+// via libuv).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -63,20 +72,11 @@ pub struct WinRusage {
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: u0 in Zig — zero-sized, omitted
 }
 
-#[repr(C)]
-#[derive(Default)]
-#[allow(non_snake_case)] // mirrors Win32 IO_COUNTERS field names exactly
-pub struct IoCounters {
-    pub ReadOperationCount: u64,
-    pub WriteOperationCount: u64,
-    pub OtherOperationCount: u64,
-    pub ReadTransferCount: u64,
-    pub WriteTransferCount: u64,
-    pub OtherTransferCount: u64,
-}
+pub type IoCounters = bun_windows_sys::IO_COUNTERS;
 
 #[cfg(windows)]
 unsafe extern "system" {
+    // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
     fn GetProcessIoCounters(handle: bun_sys::windows::HANDLE, counters: *mut IoCounters) -> core::ffi::c_int;
 }
 
@@ -141,42 +141,72 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
 
 #[cfg(windows)]
 pub type Rusage = WinRusage;
-// std.posix.rusage has no .freebsd arm; field names also differ
-// (ru_* instead of bare). Define a layout-compatible struct so
-// ResourceUsage can use the same field names everywhere.
-#[cfg(target_os = "freebsd")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Rusage {
-    pub utime: libc::timeval,
-    pub stime: libc::timeval,
-    pub maxrss: isize,
-    pub ixrss: isize,
-    pub idrss: isize,
-    pub isrss: isize,
-    pub minflt: isize,
-    pub majflt: isize,
-    pub nswap: isize,
-    pub inblock: isize,
-    pub oublock: isize,
-    pub msgsnd: isize,
-    pub msgrcv: isize,
-    pub nsignals: isize,
-    pub nvcsw: isize,
-    pub nivcsw: isize,
-}
-#[cfg(all(unix, not(target_os = "freebsd")))]
+#[cfg(unix)]
 pub type Rusage = libc::rusage;
 
-// SAFETY: integers + `libc::timeval` only; all-zero is a valid `Rusage`.
-#[cfg(target_os = "freebsd")]
-unsafe impl bun_core::ffi::Zeroable for Rusage {}
 // SAFETY: `i64`/`u64` only (via `WinTimeval`); all-zero matches `Default`.
 unsafe impl bun_core::ffi::Zeroable for WinRusage {}
 
 #[inline]
 pub fn rusage_zeroed() -> Rusage {
     bun_core::ffi::zeroed()
+}
+
+/// Platform-uniform field accessors over [`Rusage`]. The underlying alias has
+/// divergent field names (`ru_*` on every Unix `libc::rusage`; bare names on
+/// `WinRusage` with several `u0`/absent counters). This trait gives JS-facing
+/// getters one cfg-free body, matching the Zig spec's uniform names.
+pub trait RusageFields {
+    fn utime_sec(&self) -> i64;
+    fn utime_usec(&self) -> i64;
+    fn stime_sec(&self) -> i64;
+    fn stime_usec(&self) -> i64;
+    fn maxrss_(&self) -> f64;
+    fn ixrss_(&self) -> f64;
+    fn nswap_(&self) -> f64;
+    fn inblock_(&self) -> f64;
+    fn oublock_(&self) -> f64;
+    fn msgsnd_(&self) -> f64;
+    fn msgrcv_(&self) -> f64;
+    fn nsignals_(&self) -> f64;
+    fn nvcsw_(&self) -> f64;
+    fn nivcsw_(&self) -> f64;
+}
+
+#[cfg(unix)]
+impl RusageFields for libc::rusage {
+    #[inline] fn utime_sec(&self) -> i64 { self.ru_utime.tv_sec as i64 }
+    #[inline] fn utime_usec(&self) -> i64 { self.ru_utime.tv_usec as i64 }
+    #[inline] fn stime_sec(&self) -> i64 { self.ru_stime.tv_sec as i64 }
+    #[inline] fn stime_usec(&self) -> i64 { self.ru_stime.tv_usec as i64 }
+    #[inline] fn maxrss_(&self) -> f64 { self.ru_maxrss as f64 }
+    #[inline] fn ixrss_(&self) -> f64 { self.ru_ixrss as f64 }
+    #[inline] fn nswap_(&self) -> f64 { self.ru_nswap as f64 }
+    #[inline] fn inblock_(&self) -> f64 { self.ru_inblock as f64 }
+    #[inline] fn oublock_(&self) -> f64 { self.ru_oublock as f64 }
+    #[inline] fn msgsnd_(&self) -> f64 { self.ru_msgsnd as f64 }
+    #[inline] fn msgrcv_(&self) -> f64 { self.ru_msgrcv as f64 }
+    #[inline] fn nsignals_(&self) -> f64 { self.ru_nsignals as f64 }
+    #[inline] fn nvcsw_(&self) -> f64 { self.ru_nvcsw as f64 }
+    #[inline] fn nivcsw_(&self) -> f64 { self.ru_nivcsw as f64 }
+}
+
+impl RusageFields for WinRusage {
+    #[inline] fn utime_sec(&self) -> i64 { self.utime.sec }
+    #[inline] fn utime_usec(&self) -> i64 { self.utime.usec }
+    #[inline] fn stime_sec(&self) -> i64 { self.stime.sec }
+    #[inline] fn stime_usec(&self) -> i64 { self.stime.usec }
+    #[inline] fn maxrss_(&self) -> f64 { self.maxrss as f64 }
+    // Zig declares these as `u0` on Windows — always zero.
+    #[inline] fn ixrss_(&self) -> f64 { 0.0 }
+    #[inline] fn nswap_(&self) -> f64 { 0.0 }
+    #[inline] fn inblock_(&self) -> f64 { self.inblock as f64 }
+    #[inline] fn oublock_(&self) -> f64 { self.oublock as f64 }
+    #[inline] fn msgsnd_(&self) -> f64 { 0.0 }
+    #[inline] fn msgrcv_(&self) -> f64 { 0.0 }
+    #[inline] fn nsignals_(&self) -> f64 { 0.0 }
+    #[inline] fn nvcsw_(&self) -> f64 { 0.0 }
+    #[inline] fn nivcsw_(&self) -> f64 { 0.0 }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

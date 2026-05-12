@@ -254,14 +254,6 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 // getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
 // getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
 // In Rust this is a trait with default methods; Response implements it.
-//
-// PORT NOTE: Zig re-exports each mixin fn as an inherent decl
-// (`pub const getText = ResponseMixin.getText;`) so codegen can call
-// `Response.getText`. In Rust, the generated thunks use UFCS
-// (`Response::get_text(&mut *this, ...)`), which only resolves to a trait
-// method if the trait is in scope at the call site. Rather than leak
-// `BodyMixin` into the codegen include site, we mirror Zig's re-export with
-// thin inherent wrappers below. Same approach applies to Request.
 
 impl BodyMixin for Response {
     #[inline]
@@ -283,48 +275,6 @@ impl BodyMixin for Response {
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Response::get_form_data_encoding(self)
-    }
-}
-
-// Zig: `pub const getText = ResponseMixin.getText;` (etc.) — re-export the
-// mixin fns as inherent methods so the codegen thunks (which call
-// `Response::get_text(...)` without `BodyMixin` in scope) resolve.
-impl Response {
-    #[inline]
-    pub fn get_text(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_text(self, global, callframe)
-    }
-    #[inline]
-    pub fn get_body(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_body(self, global)
-    }
-    #[inline]
-    pub fn get_bytes(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_bytes(self, global, callframe)
-    }
-    #[inline]
-    pub fn get_body_used(&self, global: &JSGlobalObject) -> JSValue {
-        <Self as BodyMixin>::get_body_used(self, global)
-    }
-    #[inline]
-    pub fn get_json(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_json(self, global, callframe)
-    }
-    #[inline]
-    pub fn get_array_buffer(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_array_buffer(self, global, callframe)
-    }
-    #[inline]
-    pub fn get_blob(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_blob(self, global, callframe)
-    }
-    #[inline]
-    pub fn get_blob_without_call_frame(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_blob_without_call_frame(self, global)
-    }
-    #[inline]
-    pub fn get_form_data(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        <Self as BodyMixin>::get_form_data(self, global, callframe)
     }
 }
 

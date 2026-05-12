@@ -13,30 +13,15 @@ struct StructuredCloneWriter {
     impl_: crate::generated_classes::WriteBytesFn,
 }
 
-impl StructuredCloneWriter {
-    fn write(&self, bytes: &[u8]) -> usize {
+impl bun_io::Write for StructuredCloneWriter {
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         // SAFETY: `ctx` and `impl_` were supplied together by the C++
         // SerializedScriptValue writer; the callback only reads `len` bytes
         // from `ptr`, both of which we derive from a single `&[u8]`.
         unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        bytes.len()
+        Ok(())
     }
-
-    fn write_int_le(&self, v: usize) {
-        let bytes = v.to_le_bytes();
-        self.write(&bytes);
-    }
-}
-
-fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
-    const N: usize = core::mem::size_of::<usize>();
-    if buf.len() - *pos < N {
-        return None;
-    }
-    let mut arr = [0u8; N];
-    arr.copy_from_slice(&buf[*pos..*pos + N]);
-    *pos += N;
-    Some(usize::from_le_bytes(arr))
 }
 
 // ─── JsClass payload + host fns ───────────────────────────────────────────
@@ -386,14 +371,15 @@ impl BlockList {
         // codegen `WriteBytesFn` typedef (jsc.conv).
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
+        use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
-        let writer = StructuredCloneWriter { ctx, impl_: write_bytes };
+        let mut writer = StructuredCloneWriter { ctx, impl_: write_bytes };
         // Error = `!` (Zig: `error{}`), so no `?` needed.
         // Only the address is serialized; deserialize re-derives `*mut Self`
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
-        writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
+        _ = writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
     }
 
     pub fn on_structured_clone_deserialize(
@@ -406,12 +392,11 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
-        let buf = unsafe { bun_core::ffi::slice(*ptr, total_length) };
-        let mut pos: usize = 0;
+        let mut r = bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
-        let int = match read_int_le_usize(buf, &mut pos) {
-            Some(v) => v,
-            None => {
+        let int = match r.read_int_le::<usize>() {
+            Ok(v) => v,
+            Err(_) => {
                 return Err(global.throw(format_args!(
                     "BlockList.onStructuredCloneDeserialize failed"
                 )));
@@ -419,8 +404,8 @@ impl BlockList {
         };
 
         // Advance the pointer by the number of bytes consumed
-        // SAFETY: `pos <= total_length` by construction of `read_int_le_usize`.
-        *ptr = unsafe { (*ptr).add(pos) };
+        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
+        *ptr = unsafe { (*ptr).add(r.pos) };
 
         let this: *mut Self = int as *mut Self;
         // A single SerializedScriptValue can be deserialized multiple times

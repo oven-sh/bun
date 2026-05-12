@@ -102,25 +102,8 @@ impl ArrayHashContext<[u8]> for StringContext {
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
-    pub fn hash_bytes(mut s: &[u8]) -> u32 {
-        // Mirrors the Zig: lowercase into a 1024-byte scratch buffer in chunks
-        // and feed wyhash incrementally. Zig uses std.hash.Wyhash (NOT Wyhash11).
-        let mut buf = [0u8; 1024];
-        if s.len() < buf.len() {
-            // Fast path (src/bun.zig:1015): one-shot wyhash on the lowered copy.
-            // Output equals the incremental loop below (init(0)+update+finish ≡
-            // one-shot) — kept only as the perf shortcut the spec spells out.
-            let n = s.len();
-            let lowered = bun_core::strings::copy_lowercase(s, &mut buf[..n]);
-            return bun_wyhash::hash(lowered) as u32; // @truncate
-        }
-        let mut h = bun_wyhash::Wyhash::init(0);
-        while !s.is_empty() {
-            let n = s.len().min(buf.len());
-            h.update(bun_core::strings::copy_lowercase(&s[..n], &mut buf[..n]));
-            s = &s[n..];
-        }
-        h.finish() as u32 // @truncate
+    pub fn hash_bytes(s: &[u8]) -> u32 {
+        bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
     }
 
     /// `bun.CaseInsensitiveASCIIStringContext.pre` (src/bun.zig:1031).

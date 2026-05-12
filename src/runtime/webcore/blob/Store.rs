@@ -144,7 +144,7 @@ impl StoreExt for Store {
         Ok(Store::new(Store {
             data: Data::S3(S3::init_with_referenced_credentials(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -165,7 +165,7 @@ impl StoreExt for Store {
         Ok(Store::new(Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -184,7 +184,7 @@ impl StoreExt for Store {
         Ok(Store::new(Store {
             data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -198,7 +198,7 @@ impl StoreExt for Store {
         StoreRef::from(Store::new(Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -525,22 +525,13 @@ impl BytesExt for Bytes {
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> Bytes {
         // Stateless allocator vtable whose `free` munmap's. Same pattern as
-        // `LinuxMemFdAllocator` but without the stateful fd. `alloc` returns
-        // null: blob stores never grow.
-        unsafe fn alloc(_: *mut core::ffi::c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> *mut u8 {
-            core::ptr::null_mut()
-        }
+        // `LinuxMemFdAllocator` but without the stateful fd.
         unsafe fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
                 bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {err:?}"));
             }
         }
-        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
-            alloc,
-            resize: bun_alloc::AllocatorVTable::NO_RESIZE,
-            remap: bun_alloc::AllocatorVTable::NO_REMAP,
-            free,
-        };
+        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
         // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
         // exactly the same range.

@@ -21,6 +21,8 @@ pub struct EventLoopDelayMonitor {
     enabled: bool,
 }
 
+bun_event_loop::impl_timer_owner!(EventLoopDelayMonitor; from_timer_ptr => event_loop_timer);
+
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
@@ -33,16 +35,7 @@ impl Default for EventLoopDelayMonitor {
     }
 }
 
-/// PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier `VirtualMachine`;
-/// the real `timer::All` lives in `RuntimeState`. Recover it via the
-/// thread-local. Returns a raw ptr — callers dereference per-field under
-/// `// SAFETY:` blocks (see jsc_hooks.rs raw-ptr-per-field re-entry pattern).
-#[inline]
-fn timer_all() -> *mut crate::timer::All {
-    let state = crate::jsc_hooks::runtime_state();
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
-    unsafe { core::ptr::addr_of_mut!((*state).timer) }
-}
+use crate::jsc_hooks::timer_all;
 
 impl EventLoopDelayMonitor {
     pub fn enable(&mut self, _vm: &mut VirtualMachine, histogram: JSValue, resolution_ms: i32) {

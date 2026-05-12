@@ -228,29 +228,6 @@ impl WebSocketServerContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shim — `JSValue::withAsyncContextIfNeeded` (JSValue.zig)
-// is not yet on `bun_jsc::JSValue`; forward to the C++ symbol directly.
-// ──────────────────────────────────────────────────────────────────────────
-trait JsValueAsyncContextExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JsValueAsyncContextExt for JSValue {
-    #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        debug_assert!(self.is_cell());
-        // SAFETY: FFI call into JSC bindings; `global` is a valid live JSGlobalObject.
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-}
-
-
 static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_COMPRESSOR,

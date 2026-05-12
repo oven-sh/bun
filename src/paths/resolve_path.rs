@@ -549,7 +549,7 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
         }
     }
 
-    let last_common_separator = strings::last_index_of_char(
+    let last_common_separator = strings::last_index_of_char_t(
         if P::P == Platform::Windows {
             common_path
         } else {
@@ -840,10 +840,10 @@ pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     {
         // TODO(port): Zig branched on T==u8 to use SIMD index_of_any vs generic;
         // collapse to a single generic helper here. PERF(port): profile in Phase B.
-        if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit("/\\")) {
+        if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
-                if let Some(idx2) = strings::index_of_any_t::<T>(&path[idx + 4..], T::lit("/\\")) {
+                if let Some(idx2) = strings::index_of_any_t::<T>(&path[idx + 4..], T::lit(b"/\\")) {
                     return (idx + idx2 + 4, idx + 3);
                 } else {
                     return (path.len(), idx + 3);
@@ -906,6 +906,7 @@ pub fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 
 // path.relative lets you do relative across different share drives
 pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
+    if path.is_empty() { return &path[..0]; }
     // minimum: `C:`
     if path.len() < 2 {
         return if is_sep_any_t::<T>(path[0]) {
@@ -938,8 +939,8 @@ pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
         }
 
         // UNC
-        if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit("/\\")) {
-            if let Some(idx_second) = strings::index_of_any_t::<T>(&path[4 + idx..], T::lit("/\\"))
+        if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
+            if let Some(idx_second) = strings::index_of_any_t::<T>(&path[4 + idx..], T::lit(b"/\\"))
             {
                 return &path[0..idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
@@ -1050,7 +1051,7 @@ pub fn normalize_string_generic_tz<'a,
         //
         // since it is theoretically possible to get here in release
         // we will not do this check in release.
-        debug_assert!(!strings::has_prefix_t::<T>(path_, T::lit(":\\")));
+        debug_assert!(!strings::has_prefix_t::<T>(path_, T::lit(b":\\")));
     }
 
     let mut buf_i: usize = 0;
@@ -1066,14 +1067,14 @@ pub fn normalize_string_generic_tz<'a,
     if is_windows {
         if vol_len > 0 {
             if ADD_NT_PREFIX {
-                buf[buf_i..buf_i + 4].copy_from_slice(T::lit("\\??\\"));
+                buf[buf_i..buf_i + 4].copy_from_slice(T::lit(b"\\??\\"));
                 buf_i += 4;
             }
             if path_[1] != T::from_u8(b':') {
                 // UNC paths
                 if ADD_NT_PREFIX {
                     // "UNC" ++ sep_str
-                    buf[buf_i..buf_i + 3].copy_from_slice(T::lit("UNC"));
+                    buf[buf_i..buf_i + 3].copy_from_slice(T::lit(b"UNC"));
                     buf[buf_i + 3] = separator;
                     buf_i += 2;
                 } else {
@@ -1223,7 +1224,7 @@ pub fn normalize_string_generic_tz<'a,
     let result = &mut buf[0..buf_i];
 
     if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit("\\:\\")));
+        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
     }
 
     result
@@ -1475,36 +1476,6 @@ pub fn normalize_string_buf<'a,
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-// ─── CGU-anchored concrete instantiations (startup/p-1+1) ────────────────────
-// `normalize_string_buf_t` is generic over <T, bool, P, bool>, so every
-// downstream crate that touches a path stamps out its own private copy of the
-// (large) `normalize_string_generic_t` body, scattering the hottest startup
-// path-normalization code across dozens of CGUs and out of the front-cluster
-// fault-around window. The four `T==u8, P==Posix` variants below are the ones
-// the `bun <file>` / `bun .` / `bun install` startup probe actually hits; by
-// giving them non-generic `#[inline(never)]` bodies they are compiled exactly
-// once into bun_paths's own CGU (already in the 240p front cluster at 0x561e)
-// and listed in src/startup.order so lld packs them contiguously.
-//
-// Naming: `_{aa}{ts}` encodes (ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH).
-#[inline(never)]
-pub fn normalize_string_buf_posix_u8_ff<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    normalize_string_loose_buf_t::<u8, false, false>(str, buf)
-}
-#[inline(never)]
-pub fn normalize_string_buf_posix_u8_ft<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    normalize_string_loose_buf_t::<u8, false, true>(str, buf)
-}
-#[inline(never)]
-pub fn normalize_string_buf_posix_u8_tf<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    normalize_string_loose_buf_t::<u8, true, false>(str, buf)
-}
-#[inline(never)]
-pub fn normalize_string_buf_posix_u8_tt<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    normalize_string_loose_buf_t::<u8, true, true>(str, buf)
-}
-
-#[inline(always)]
 pub fn normalize_string_buf_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1514,24 +1485,6 @@ pub fn normalize_string_buf_t<'a,
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
-    // Fast path: route the hot `u8 + Posix` quad to the CGU-anchored wrappers
-    // above. Every predicate is a `const`, so this folds to a single direct
-    // call (or is dead-stripped) per monomorphization — no runtime branch.
-    if matches!(P::P, Platform::Posix) && !T::IS_U16 {
-        // `PathChar` is implemented only for `u8` and `u16`; `!T::IS_U16` ⇒
-        // `T == u8`, so these `Pod` slice casts are 1:1 layout no-ops (the
-        // size/align checks in `bytemuck` const-fold away per monomorphization).
-        let str8: &[u8] = bytemuck::cast_slice(str);
-        let buf8: &'a mut [u8] = bytemuck::cast_slice_mut(buf);
-        let out: &'a mut [u8] = match (ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH) {
-            (false, false) => normalize_string_buf_posix_u8_ff(str8, buf8),
-            (false, true)  => normalize_string_buf_posix_u8_ft(str8, buf8),
-            (true,  false) => normalize_string_buf_posix_u8_tf(str8, buf8),
-            (true,  true)  => normalize_string_buf_posix_u8_tt(str8, buf8),
-        };
-        // Inverse of the `buf` cast above (`T == u8`).
-        return bytemuck::cast_slice_mut(out);
-    }
     match P::P {
         Platform::Nt => unreachable!("not implemented"),
         Platform::Windows => normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),
@@ -1971,11 +1924,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out]) {
             let outdir = &mut temp_buf[0..i + 1];
             if P::P == Platform::Loose {
-                for c in outdir.iter_mut() {
-                    if *c == b'\\' {
-                        *c = b'/';
-                    }
-                }
+                slashes_to_posix_in_place(outdir);
             }
             leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
             i + 1
@@ -2133,22 +2082,14 @@ pub fn is_sep_win32_t<T: PathChar>(char: T) -> bool {
     char == T::from_u8(SEP_WINDOWS)
 }
 
-#[inline(always)]
-pub fn is_sep_any(char: u8) -> bool {
-    is_sep_any_t::<u8>(char)
-}
+// u8-only predicates are sunk to tier-0 `bun_core::path_sep` so `bun_core::util`
+// (dirname, which) can use them without an upward dep; re-exported here as the
+// canonical `bun_paths::is_sep_any` / `is_sep_native`. Generic `_t` set below.
+pub use bun_core::path_sep::{is_sep_any, is_sep_native};
 
 #[inline(always)]
 pub fn is_sep_any_t<T: PathChar>(char: T) -> bool {
     is_sep_posix_t::<T>(char) || is_sep_win32_t::<T>(char)
-}
-
-/// Host-OS-native separator predicate: accepts `\` only when *compiled* for
-/// Windows (cfg-gated), unlike [`is_sep_any`] which accepts both on every
-/// target. Use this when matching against real on-disk paths (glob, joins).
-#[inline(always)]
-pub fn is_sep_native(char: u8) -> bool {
-    is_sep_native_t::<u8>(char)
 }
 
 #[inline(always)]
@@ -2643,21 +2584,51 @@ impl PosixToWinNormalizer {
 // ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.zig
 // (reaches into the VM for cwd; paths/ is JSC-free).
 
-pub fn platform_to_posix_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if SEP == b'/' {
-        return;
-    }
-    let mut idx: usize = 0;
-    while let Some(index) =
-        path_buffer[idx..].iter().position(|&c| c == T::from_u8(SEP)).map(|p| p + idx)
-    {
-        path_buffer[index] = T::from_u8(b'/');
-        idx = index + 1;
+// ─────────────────────────────────────────────────────────────────────────────
+// In-place separator rewrites.
+//
+// `slashes_to_{posix,windows}_in_place` are the two PRIMITIVES — unconditional,
+// no host-OS gating, no drive-letter touch. They are the Rust analogue of Zig's
+// `std.mem.replaceScalar(T, buf, '\\', '/')` (and inverse), which is what Zig
+// callers handroll at the sites this dedup targets.
+//
+// The four pre-existing public fns below are now thin wrappers over the
+// primitives so that Zig grep-parity (`platformToPosixInPlace`,
+// `dangerouslyConvertPathTo{Posix,Windows}InPlace`, `posixToPlatformInPlace`)
+// is preserved without a fourth/fifth copy of the loop body.
+//
+// Encoding safety: both 0x2F ('/') and 0x5C ('\\') are single-unit ASCII in
+// UTF-8 and UTF-16 and never appear as a sub-unit of a multi-unit sequence, so
+// a scalar replace is sound for `u8` and `u16` alike.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Unconditional `'\\' → '/'` in place. No host-OS gate, no drive-letter touch.
+#[inline]
+pub fn slashes_to_posix_in_place<T: PathChar>(path: &mut [T]) {
+    let bslash = T::from_u8(b'\\');
+    let fslash = T::from_u8(b'/');
+    for c in path.iter_mut() {
+        if *c == bslash { *c = fslash; }
     }
 }
 
+/// Unconditional `'/' → '\\'` in place. No host-OS gate.
+#[inline]
+pub fn slashes_to_windows_in_place<T: PathChar>(path: &mut [T]) {
+    let fslash = T::from_u8(b'/');
+    let bslash = T::from_u8(b'\\');
+    for c in path.iter_mut() {
+        if *c == fslash { *c = bslash; }
+    }
+}
+
+#[inline]
+pub fn platform_to_posix_in_place<T: PathChar>(path_buffer: &mut [T]) {
+    if SEP == b'/' { return; }
+    slashes_to_posix_in_place(path_buffer);
+}
+
 pub fn dangerously_convert_path_to_posix_in_place<T: PathChar>(path: &mut [T]) {
-    let mut idx: usize = 0;
     #[cfg(windows)]
     {
         if path.len() > 2
@@ -2665,38 +2636,16 @@ pub fn dangerously_convert_path_to_posix_in_place<T: PathChar>(path: &mut [T]) {
             && path[1] == T::from_u8(b':')
             && is_sep_any_t::<T>(path[2])
         {
-            // Uppercase drive letter
-            let c = path[0];
-            if c >= T::from_u8(b'a') && c <= T::from_u8(b'z') {
-                path[0] = T::to_ascii_upper(c);
-            } else if c >= T::from_u8(b'A') && c <= T::from_u8(b'Z') {
-                // no-op
-            } else {
-                unreachable!();
-            }
+            // Uppercase drive letter (is_drive_letter_t guarantees [A-Za-z]).
+            path[0] = T::to_ascii_upper(path[0]);
         }
     }
-
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP_WINDOWS))
-        .map(|p| p + idx)
-    {
-        path[index] = T::from_u8(b'/');
-        idx = index + 1;
-    }
+    slashes_to_posix_in_place(path);
 }
 
+#[inline]
 pub fn dangerously_convert_path_to_windows_in_place<T: PathChar>(path: &mut [T]) {
-    let mut idx: usize = 0;
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP_POSIX))
-        .map(|p| p + idx)
-    {
-        path[index] = T::from_u8(b'\\');
-        idx = index + 1;
-    }
+    slashes_to_windows_in_place(path);
 }
 
 pub fn path_to_posix_buf<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a mut [T] {
@@ -2732,112 +2681,14 @@ pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -
     &buf[0..path.len()]
 }
 
+#[inline]
 pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if SEP == b'/' {
-        return;
-    }
-    let mut idx: usize = 0;
-    while let Some(index) = path_buffer[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(b'/'))
-        .map(|p| p + idx)
-    {
-        path_buffer[index] = T::from_u8(SEP);
-        idx = index + 1;
-    }
+    if SEP == b'/' { return; }
+    slashes_to_windows_in_place(path_buffer);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Port helper: trait abstracting over u8/u16 for the `comptime T: type` params.
-// Zig had no trait — it relied on duck-typed comptime. Phase B may move this
-// into bun_paths or bun_str.
-// ─────────────────────────────────────────────────────────────────────────────
-pub trait PathChar: Copy + Eq + Ord + bytemuck::Pod + 'static {
-    const IS_U16: bool;
-    fn from_u8(b: u8) -> Self;
-    fn to_u8(self) -> u8;
-    fn to_ascii_upper(self) -> Self;
-    /// Comptime literal: `strings.literal(T, "...")`
-    fn lit(s: &'static str) -> &'static [Self];
-    #[inline] fn is_ascii_alphabetic(self) -> bool {
-        let c = self.to_u8();
-        c.is_ascii_alphabetic()
-    }
-    /// Write a u8 path part into `dest` (transcoding to UTF-16 when
-    /// `Self == u16`, else memcpy). Returns units written.
-    fn write_u8_part(dest: &mut [Self], part: &[u8]) -> usize;
-}
-
-impl PathChar for u8 {
-    const IS_U16: bool = false;
-    #[inline(always)]
-    fn from_u8(b: u8) -> Self {
-        b
-    }
-    #[inline(always)]
-    fn to_u8(self) -> u8 {
-        self
-    }
-    #[inline]
-    fn to_ascii_upper(self) -> Self {
-        self.to_ascii_uppercase()
-    }
-    #[inline]
-    fn lit(s: &'static str) -> &'static [Self] {
-        s.as_bytes()
-    }
-    #[inline]
-    fn write_u8_part(dest: &mut [u8], part: &[u8]) -> usize {
-        dest[..part.len()].copy_from_slice(part);
-        part.len()
-    }
-}
-
-impl PathChar for u16 {
-    const IS_U16: bool = true;
-    #[inline(always)]
-    fn from_u8(b: u8) -> Self {
-        b as u16
-    }
-    #[inline(always)]
-    fn to_u8(self) -> u8 {
-        // narrowing u16→u8: callers only pass ASCII-range values
-        u8::try_from(self).expect("int cast")
-    }
-    #[inline]
-    fn to_ascii_upper(self) -> Self {
-        if (b'a' as u16..=b'z' as u16).contains(&self) {
-            self - 32
-        } else {
-            self
-        }
-    }
-    #[inline]
-    fn lit(s: &'static str) -> &'static [Self] {
-        // PORT NOTE: Zig `strings.literal(u16, "...")` is a comptime constant. Rust
-        // cannot widen an arbitrary `&'static str` to UTF-16 at const time, so
-        // dispatch on the closed set of ASCII literals actually passed by callers.
-        // Zero allocation; matches Zig's zero-runtime-cost behavior.
-        // Box::leak is forbidden here (PORTING.md §Forbidden) — it leaked per call.
-        static SLASH_BSLASH: [u16; 2] = [b'/' as u16, b'\\' as u16];
-        static COLON_BSLASH: [u16; 2] = [b':' as u16, b'\\' as u16];
-        static NT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
-        static UNC: [u16; 3] = [b'U' as u16, b'N' as u16, b'C' as u16];
-        static BSLASH_COLON_BSLASH: [u16; 3] = [b'\\' as u16, b':' as u16, b'\\' as u16];
-        match s {
-            "/\\" => &SLASH_BSLASH,
-            ":\\" => &COLON_BSLASH,
-            "\\??\\" => &NT_PREFIX,
-            "UNC" => &UNC,
-            "\\:\\" => &BSLASH_COLON_BSLASH,
-            // Unreachable for current callers; fail loudly rather than leak.
-            _ => unreachable!("PathChar::<u16>::lit: unhandled literal {:?}", s),
-        }
-    }
-    #[inline]
-    fn write_u8_part(dest: &mut [u16], part: &[u8]) -> usize {
-        strings::convert_utf8_to_utf16_in_buffer(dest, part).len()
-    }
-}
+// `PathChar` is now canonical at `crate::path_char`; re-export for callers
+// that still path through `resolve_path::PathChar`.
+pub use crate::PathChar;
 
 // ported from: src/paths/resolve_path.zig

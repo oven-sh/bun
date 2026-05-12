@@ -50,7 +50,7 @@ unsafe extern "C" {
     // casting away const from the `&self` borrow below; any interior mutation
     // lives behind the FFI boundary in C++-owned storage that Rust has no
     // provenance over (this type is an opaque ZST marker).
-    fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> bun_str::String;
+    fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> bun_core::String;
 }
 
 unsafe extern "Rust" {
@@ -68,7 +68,7 @@ unsafe extern "Rust" {
 
 impl BakeSourceProvider {
     #[inline]
-    pub fn get_source_slice(&self) -> bun_str::String {
+    pub fn get_source_slice(&self) -> bun_core::String {
         // SAFETY: opaque FFI handle; address-only pass-through, callee does not
         // write Rust-visible memory.
         unsafe { BakeSourceProvider__getSourceSlice(self) }
@@ -112,7 +112,7 @@ impl BakeSourceProvider {
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
 
-    fn get_source_slice(&self) -> bun_str::String {
+    fn get_source_slice(&self) -> bun_core::String {
         Self::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -262,7 +262,7 @@ impl LineColumnOffset {
 
     pub fn advance(&mut self, input: &[u8]) {
         let this_ptr = self;
-        use bun_str::strings;
+        use bun_core::strings;
         // Instead of mutating `this_ptr` directly, copy the state to the stack and do
         // all the work here, then move it back to the input pointer. When sourcemaps
         // are enabled, this function is extremely hot.
@@ -361,7 +361,7 @@ pub struct SourceMapPieces {
 
 /// This function is extremely hot.
 pub fn append_mapping_to_buffer(
-    buffer: &mut bun_str::MutableString,
+    buffer: &mut bun_core::MutableString,
     last_byte: u8,
     prev_state: SourceMapState,
     current_state: SourceMapState,
@@ -430,11 +430,11 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_str::String;
+    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
 }
 
 impl SourceProviderMap {
-    pub fn get_source_slice(&self) -> bun_str::String {
+    pub fn get_source_slice(&self) -> bun_core::String {
         ZigSourceProvider__getSourceSlice(self)
     }
 
@@ -454,7 +454,7 @@ impl SourceProviderMap {
 }
 
 impl SourceProvider for SourceProviderMap {
-    fn get_source_slice(&self) -> bun_str::String {
+    fn get_source_slice(&self) -> bun_core::String {
         SourceProviderMap::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -479,14 +479,14 @@ unsafe extern "C" {
     // (this type is an opaque ZST marker).
     fn DevServerSourceProvider__getSourceSlice(
         this: *const DevServerSourceProvider,
-    ) -> bun_str::String;
+    ) -> bun_core::String;
     fn DevServerSourceProvider__getSourceMapJSON(
         this: *const DevServerSourceProvider,
     ) -> DevServerSourceMapData;
 }
 
 impl DevServerSourceProvider {
-    pub fn get_source_slice(&self) -> bun_str::String {
+    pub fn get_source_slice(&self) -> bun_core::String {
         // SAFETY: opaque FFI handle; address-only pass-through, callee does not
         // write Rust-visible memory.
         unsafe { DevServerSourceProvider__getSourceSlice(self) }
@@ -515,7 +515,7 @@ impl DevServerSourceProvider {
 impl SourceProvider for DevServerSourceProvider {
     const IS_DEV_SERVER: bool = true;
 
-    fn get_source_slice(&self) -> bun_str::String {
+    fn get_source_slice(&self) -> bun_core::String {
         DevServerSourceProvider::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -538,7 +538,7 @@ impl SourceProvider for DevServerSourceProvider {
 /// `@hasDecl` checks; in Rust this is a trait with default-`None` optional
 /// methods so each provider only overrides what it actually has.
 pub trait SourceProvider {
-    fn get_source_slice(&self) -> bun_str::String;
+    fn get_source_slice(&self) -> bun_core::String;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
     /// Returns the dev-server source map JSON, if this provider is a
@@ -583,8 +583,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                // defer source.deref() → Drop on bun_str::String
-                debug_assert!(source.tag() == bun_str::Tag::ZigString);
+                // defer source.deref() → Drop on bun_core::String
+                debug_assert!(source.tag() == bun_core::Tag::ZigString);
 
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())
@@ -786,7 +786,7 @@ pub mod SavedSourceMap {
 // as a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
 #[allow(non_snake_case)]
 pub mod SerializedSourceMap {
-    use bun_str::StringPointer;
+    use bun_core::StringPointer;
     use core::mem::size_of;
 
     /// Following the header bytes:
@@ -935,7 +935,7 @@ impl SourceMapPieces {
         // it doesnt contain json payloads or source code, so 16kb is probably going to cover
         // most applications.
         // PERF(port): was stack-fallback (16384)
-        let mut j = bun_str::string_joiner::StringJoiner::default();
+        let mut j = bun_core::string_joiner::StringJoiner::default();
 
         j.push_static(&self.prefix);
         let mappings = &self.mappings;
@@ -1264,7 +1264,7 @@ pub fn parse_json(
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
 pub fn append_source_map_chunk(
-    j: &mut bun_str::string_joiner::StringJoiner,
+    j: &mut bun_core::string_joiner::StringJoiner,
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
     source_map_: &[u8],
@@ -1275,7 +1275,7 @@ pub fn append_source_map_chunk(
     // Handle line breaks in between this mapping and the previous one
     if start_state.generated_line != 0 {
         j.push_owned(
-            bun_str::strings::repeating_alloc(
+            bun_core::strings::repeating_alloc(
                 usize::try_from(start_state.generated_line).expect("int cast"),
                 b';',
             )?,
@@ -1285,7 +1285,7 @@ pub fn append_source_map_chunk(
 
     // Skip past any leading semicolons, which indicate line breaks
     let mut source_map = source_map_;
-    if let Some(semicolons) = bun_str::strings::index_of_not_char(source_map, b';') {
+    if let Some(semicolons) = bun_core::strings::index_of_not_char(source_map, b';') {
         let semicolons = semicolons as usize;
         if semicolons > 0 {
             j.push_static(&source_map[..semicolons]);
@@ -1318,7 +1318,7 @@ pub fn append_source_map_chunk(
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
 
-    let mut str = bun_str::MutableString::init_empty();
+    let mut str = bun_core::MutableString::init_empty();
     append_mapping_to_buffer(&mut str, j.last_byte(), prev_end_state, start_state);
     j.push_owned(str.to_owned_slice());
 
@@ -1331,22 +1331,22 @@ pub fn append_source_map_chunk(
 // TODO(port): Zig was generic over `comptime T: type` (u8/u16). Rust cannot
 // express `[]const T` literals generically without a helper trait; split into
 // two functions and dispatch at the (only) callsite.
-fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_str::zig_string::Slice> {
+fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
-    let found = bun_str::strings::last_index_of(source, NEEDLE)?;
+    let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
     let end = source[start..]
         .iter()
         .position(|&b| b == b'\n')
         .map(|p| start + p)
         .unwrap_or(source.len());
-    let url = bun_str::strings::trim_right(&source[start..end], b" \r");
-    Some(bun_str::zig_string::Slice::from_utf8_never_free(url))
+    let url = bun_core::strings::trim_right(&source[start..end], b" \r");
+    Some(bun_core::zig_string::Slice::from_utf8_never_free(url))
 }
 
-fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_str::zig_string::Slice> {
-    let needle: &[u16] = bun_str::w!("\n//# sourceMappingURL=");
-    let found = bun_str::strings::last_index_of_t(source, needle)?;
+fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::Slice> {
+    let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
+    let found = bun_core::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
     let end = source[start..]
         .iter()
@@ -1361,8 +1361,8 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_str::zig_string::Sl
             break;
         }
     }
-    Some(bun_str::zig_string::Slice::init_owned(
-        bun_str::strings::to_utf8_alloc(url),
+    Some(bun_core::zig_string::Slice::init_owned(
+        bun_core::strings::to_utf8_alloc(url),
     ))
 }
 
@@ -1373,7 +1373,7 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
     writer: &mut W,
 ) -> bun_io::Result<()> {
     writer.write_all(b"\n//# sourceMappingURL=")?;
-    writer.write_all(bun_str::strings::without_trailing_slash(origin.href))?;
+    writer.write_all(bun_core::strings::without_trailing_slash(origin.href))?;
     if !asset_prefix_path.is_empty() {
         writer.write_all(asset_prefix_path)?;
     }

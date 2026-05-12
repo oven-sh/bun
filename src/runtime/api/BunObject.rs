@@ -2241,6 +2241,53 @@ pub extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue)
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 
+/// Shared argument prefix for `Bun.{gzip,gunzip,deflate,inflate}Sync` and
+/// `Bun.zstd{Compress,Decompress}{,Sync}`: returns `(arguments[0] ?? undefined,
+/// arguments[1] if object)`. Throws if `arguments[1]` is present but neither an
+/// object nor `undefined`.
+///
+/// Kept separate from [`parse_compress_buffer_and_options`] so async callers
+/// (e.g. `JSZstd::get_options_async`) can read `options` *before* GC-protecting
+/// the buffer — preserving error precedence and avoiding a protect leak on the
+/// early-throw path.
+#[inline]
+pub(crate) fn parse_compress_args(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<(JSValue, Option<JSValue>)> {
+    let arguments = callframe.arguments();
+    let buffer_value: JSValue = if arguments.len() > 0 {
+        arguments[0]
+    } else {
+        JSValue::UNDEFINED
+    };
+    let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
+        Some(arguments[1])
+    } else if arguments.len() > 1 && !arguments[1].is_undefined() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("Expected options to be an object"))
+        );
+    } else {
+        None
+    };
+    Ok((buffer_value, options_val))
+}
+
+/// [`parse_compress_args`] + sync `StringOrBuffer` coercion of `arguments[0]`.
+/// Shared by `JSZlib::{gzip,gunzip,deflate,inflate}_sync` and
+/// `JSZstd::{compress,decompress}_sync`.
+#[inline]
+pub(crate) fn parse_compress_buffer_and_options(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
+    let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
+    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
+        return Ok((buffer, options_val));
+    }
+    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+}
+
 #[allow(non_snake_case)]
 pub mod JSZlib {
     use super::*;
@@ -2269,12 +2316,8 @@ pub mod JSZlib {
     // from the ArrayBuffer finalizer. The Rust port keeps the reader on-stack
     // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
     // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
-    // and the per-type callbacks are gone.
-    #[unsafe(no_mangle)]
-    pub extern "C" fn global_deallocator(_: *mut c_void, ctx: *mut c_void) {
-        // SAFETY: ctx is a mimalloc-allocated pointer.
-        unsafe { bun_alloc::basic::free_without_size(ctx) };
-    }
+    // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
+    pub use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]
@@ -2289,57 +2332,27 @@ pub mod JSZlib {
         b"libdeflate" => Library::Libdeflate,
     };
 
-    // This has to be `inline` due to the callframe.
-    #[inline]
-    fn get_options(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
-        let arguments_ = callframe.arguments_old::<2>();
-        let arguments = arguments_.slice();
-        let buffer_value: JSValue = if arguments.len() > 0 {
-            arguments[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
-            Some(arguments[1])
-        } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected options to be an object")));
-        } else {
-            None
-        };
-
-        if let Some(buffer) = node::StringOrBuffer::from_js(global_this, buffer_value)? {
-            return Ok((buffer, options_val));
-        }
-
-        Err(global_this
-            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
-    }
-
     #[bun_jsc::host_fn]
     pub fn gzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let (buffer, options_val) = get_options(global_this, callframe)?;
+        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
         gzip_or_deflate_sync(global_this, buffer, options_val, true)
     }
 
     #[bun_jsc::host_fn]
     pub fn inflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let (buffer, options_val) = get_options(global_this, callframe)?;
+        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
         gunzip_or_inflate_sync(global_this, buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn deflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let (buffer, options_val) = get_options(global_this, callframe)?;
+        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
         gzip_or_deflate_sync(global_this, buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn gunzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let (buffer, options_val) = get_options(global_this, callframe)?;
+        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
         gunzip_or_inflate_sync(global_this, buffer, options_val, true)
     }
 
@@ -2665,39 +2678,9 @@ pub mod JSZstd {
     use super::*;
     use bun_jsc::virtual_machine::VirtualMachine;
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn deallocator(_: *mut c_void, ctx: *mut c_void) {
-        // SAFETY: ctx is a mimalloc-allocated pointer.
-        unsafe { bun_alloc::basic::free_without_size(ctx) };
-    }
-
-    #[inline]
-    fn get_options(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
-        let arguments = callframe.arguments();
-        let buffer_value: JSValue = if arguments.len() > 0 {
-            arguments[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
-            Some(arguments[1])
-        } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected options to be an object")));
-        } else {
-            None
-        };
-
-        if let Some(buffer) = node::StringOrBuffer::from_js(global_this, buffer_value)? {
-            return Ok((buffer, options_val));
-        }
-
-        Err(global_this
-            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
-    }
+    // `no_mangle` dropped: 0 C++ refs, 0 Rust refs (kept for parity with Zig export).
+    #[allow(unused_imports)]
+    pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {
@@ -2725,20 +2708,7 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<(node::StringOrBuffer, Option<JSValue>, i32)> {
-        let arguments = callframe.arguments();
-        let buffer_value: JSValue = if arguments.len() > 0 {
-            arguments[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
-            Some(arguments[1])
-        } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected options to be an object")));
-        } else {
-            None
-        };
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
@@ -2758,7 +2728,7 @@ pub mod JSZstd {
 
     #[bun_jsc::host_fn]
     pub fn compress_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let (buffer, options_val) = get_options(global_this, callframe)?;
+        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
@@ -2795,7 +2765,7 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, _) = get_options(global_this, callframe)?;
+        let (buffer, _) = parse_compress_buffer_and_options(global_this, callframe)?;
 
         let input = buffer.slice();
 
@@ -3011,7 +2981,7 @@ mod stdio_stores {
                 ..Default::default()
             }),
             mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         });
         StoreRef::from(store)

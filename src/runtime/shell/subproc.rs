@@ -1740,6 +1740,8 @@ impl Default for CapturedWriter {
     }
 }
 
+bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; pub fn parent; fn parent_mut; }
+
 impl CapturedWriter {
     pub fn do_write(&mut self, chunk: &[u8]) {
         if self.dead || self.err.is_some() {
@@ -1788,19 +1790,6 @@ impl CapturedWriter {
         }
     }
 
-    pub fn parent(&self) -> &PipeReader {
-        // SAFETY: self points to PipeReader.captured_writer (embedded field).
-        unsafe {
-            &*bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_ref(self))
-        }
-    }
-
-    fn parent_mut(&mut self) -> &mut PipeReader {
-        // SAFETY: self points to PipeReader.captured_writer (embedded field).
-        unsafe {
-            &mut *bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_mut(self))
-        }
-    }
 
     pub fn event_loop(&self) -> EventLoopHandle {
         self.parent().event_loop()
@@ -1852,14 +1841,14 @@ impl CapturedWriter {
             // `container_of`; raw-ptr form per `try_signal_done_to_cmd`
             // contract (no `&mut PipeReader` held across the Cmd re-entry).
             return unsafe {
-                PipeReader::try_signal_done_to_cmd(core::ptr::from_mut(self.parent_mut()))
+                PipeReader::try_signal_done_to_cmd(self.parent_mut())
             };
         } else if self.written >= self.parent().buffered_output.len()
             && !matches!(self.parent().state, PipeReaderState::Pending)
         {
             // SAFETY: as above.
             return unsafe {
-                PipeReader::try_signal_done_to_cmd(core::ptr::from_mut(self.parent_mut()))
+                PipeReader::try_signal_done_to_cmd(self.parent_mut())
             };
         }
         Yield::Suspended
@@ -1877,7 +1866,9 @@ impl CapturedWriter {
             std::ptr::from_mut(self) as usize,
             out_kind_str(self.parent().out_type)
         );
-        self.parent_mut().on_captured_writer_done();
+        // SAFETY: `parent_mut` returns the raw embedding `*mut PipeReader`;
+        // dereference for the duration of the call (no `&mut self` aliases live).
+        unsafe { &mut *self.parent_mut() }.on_captured_writer_done();
     }
 }
 
@@ -2467,29 +2458,17 @@ impl Drop for PipeReader {
     }
 }
 
-bun_io::buffered_reader_parent_link!(ShellPipeReader for PipeReader);
-impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellPipeReader;
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more)
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: see trait contract.
-        unsafe { PipeReader::on_reader_done(this) }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see trait contract.
-        unsafe { PipeReader::on_reader_error(this, err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        // SAFETY: see trait contract.
-        unsafe { (*this).r#loop() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see trait contract.
-        // SAFETY: see on_read_chunk.
-        unsafe { (*this).event_loop.as_event_loop_ctx() }
-    }
+// `on_reader_done`/`on_reader_error` forward the raw `*mut Self` (NOT
+// autoref) — see their doc-comments: the body builds an `Arc` keepalive that
+// may free `this` on drop, so a `&mut self` protector would be UB.
+bun_io::impl_buffered_reader_parent! {
+    ShellPipeReader for PipeReader;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, has_more| PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more);
+    on_reader_done  = |this| PipeReader::on_reader_done(this);
+    on_reader_error = |this, err| PipeReader::on_reader_error(this, err);
+    loop_           = |this| (*this).r#loop();
+    event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

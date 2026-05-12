@@ -2,9 +2,13 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ushort, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
-pub use crate::shared::{DataType, FlushValue, ReturnCode};
+pub use crate::shared::{
+    DataType, FlushValue, ReturnCode,
+    z_stream, z_streamp, zStream_struct, struct_z_stream_s, z_stream_s,
+    struct_internal_state, internal_state,
+    alloc_func, free_func, z_alloc_func, z_free_func,
+};
 
 pub type rsize_t = usize;
 pub type _ino_t = c_ushort;
@@ -28,43 +32,6 @@ type z_size_t = usize;
 type uLongf = uLong;
 type voidpc = *const c_void;
 type voidp = *mut c_void;
-pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
-pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-pub type z_alloc_func = alloc_func;
-pub type z_free_func = free_func;
-
-#[repr(C)]
-pub struct struct_internal_state {
-    // Match the posix.rs layout (zlib's `struct internal_state { int dummy; }` stub)
-    // so rustc's clashing_extern_declarations lint sees the two z_stream definitions
-    // as structurally identical when both modules are compiled into the same crate.
-    dummy: c_int,
-}
-
-#[repr(C)]
-pub struct struct_z_stream_s {
-    pub next_in: *const u8,
-    pub avail_in: uInt,
-    pub total_in: uLong,
-    pub next_out: *mut u8,
-    pub avail_out: uInt,
-    pub total_out: uLong,
-    pub err_msg: *const c_char,
-    pub internal_state: *mut struct_internal_state,
-    pub alloc_func: alloc_func,
-    pub free_func: free_func,
-    pub user_data: *mut c_void,
-    pub data_type: DataType,
-    pub adler: uLong,
-    pub reserved: uLong,
-}
-pub type z_stream = struct_z_stream_s;
-pub type z_streamp = *mut z_stream;
-
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
-// is the documented pre-`inflateInit`/`deflateInit` state (S021).
-unsafe impl bun_core::ffi::Zeroable for struct_z_stream_s {}
 
 #[repr(C)]
 pub struct struct_gz_header_s {
@@ -238,9 +205,6 @@ pub unsafe fn inflate_back_init(strm: z_streamp, window_bits: c_int, window: *mu
     unsafe { inflateBackInit_(strm, window_bits, window, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 
-pub type internal_state = struct_internal_state;
-pub type z_stream_s = struct_z_stream_s;
-pub type zStream_struct = struct_z_stream_s;
 pub type gz_header_s = struct_gz_header_s;
 pub type gzFile_s = struct_gzFile_s;
 

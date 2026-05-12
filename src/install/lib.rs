@@ -212,13 +212,6 @@ pub mod package_manager {
     /// `perform_security_scan_for_all` / `print_security_advisories` /
     /// `SecurityScanResults` / `SecurityAdvisory`.
     pub use crate::package_manager_real::security_scanner;
-
-    /// Forward to the file-backed entrypoint so `bun add`/`bun remove`/
-    /// `bun update`/`bun patch` actually run the install pipeline. Generic
-    /// over `Ctx` because `bun_runtime::command::Context` would be an upward
-    /// dep; the real fn is monomorphic over `Command::Context`, so route
-    /// through it via the re-export.
-    pub use crate::package_manager_real::update_package_json_and_install_catch_error;
 }
 
 /// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,

@@ -131,7 +131,7 @@ impl DevServer {
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
         debug_assert!(::core::ptr::eq(self.vm, VirtualMachine::get()));
-        VirtualMachine::get().as_mut()
+        VirtualMachine::get_mut()
     }
 
     // ── transpiler accessors ───────────────────────────────────────────────
@@ -479,6 +479,8 @@ pub struct DevServer {
     /// If true, console logs from the browser will be echoed to the server console.
     pub broadcast_console_log_from_browser_to_server: bool,
 }
+
+bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
 pub const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -5238,30 +5240,15 @@ impl DevServer {
         self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::BINARY);
     }
 
-    /// Recover the per-VM `timer::All` heap. Zig spelt this `dev.vm.timer`;
-    /// `bun_jsc::VirtualMachine.timer` is a `()` cycle-break placeholder (T4
-    /// `bun_jsc` cannot name T6 `bun_runtime::timer::All`), so the real heap is
-    /// stored on the high-tier `RuntimeState` instead. This is the same path
-    /// every other intrusive-timer user in this crate takes
-    /// (`EventLoopDelayMonitor`, `DateHeaderTimer`). Single VM ⇒ single timer
-    /// heap, so no per-`DevServer` lookup is needed.
     #[inline]
-    fn timer_heap(&self) -> &mut crate::timer::All {
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-        // `timer` is an embedded `timer::All` at a stable address. JS-thread
-        // exclusive access — same contract as Zig `dev.vm.timer`.
-        unsafe { &mut *::core::ptr::addr_of_mut!((*state).timer) }
-    }
+    fn timer_heap(&self) -> &mut crate::timer::All { crate::jsc_hooks::timer_all_mut() }
 
     pub fn emit_memory_visualizer_message_timer(timer: &mut EventLoopTimer, _: &bun_core::Timespec) {
         if !cfg!(feature = "bake_debugging_features") {
             return;
         }
         // SAFETY: timer is the .memory_visualizer_timer field of DevServer
-        let dev: &mut DevServer = unsafe {
-            &mut *bun_core::from_field_ptr!(DevServer, memory_visualizer_timer, std::ptr::from_mut(timer))
-        };
+        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
         timer.state = bun_event_loop::EventLoopTimer::State::FIRED;

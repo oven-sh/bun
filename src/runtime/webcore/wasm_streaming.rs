@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
-use crate::webcore::body::Value as BodyValue;
+use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
 use crate::webcore::{response, ReadableStream, Response};
 
 unsafe extern "C" {

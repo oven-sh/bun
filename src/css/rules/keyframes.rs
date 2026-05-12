@@ -224,15 +224,7 @@ pub struct Keyframe {
 
 impl Keyframe {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let mut first = true;
-        for sel in self.selectors.iter() {
-            if !first {
-                dest.delim(b',', false)?;
-            }
-            first = false;
-            sel.to_css(dest)?;
-        }
-
+        dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
@@ -300,16 +292,14 @@ impl KeyframesRule {
                 dest.write_char(b'{')?;
                 dest.indent();
 
-                let mut first = true;
-                for keyframe in self.keyframes.iter() {
-                    if first {
-                        first = false;
-                    } else if !dest.minify {
-                        dest.write_char(b'\n')?; // no indent
-                    }
-                    dest.newline()?;
-                    keyframe.to_css(dest)?;
-                }
+                dest.write_separated(
+                    self.keyframes.iter(),
+                    |d| if d.minify { Ok(()) } else { d.write_char(b'\n') }, // no indent
+                    |d, kf| {
+                        d.newline()?;
+                        kf.to_css(d)
+                    },
+                )?;
                 dest.dedent();
                 dest.newline()?;
                 dest.write_char(b'}')?;

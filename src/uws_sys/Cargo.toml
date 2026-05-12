@@ -27,3 +27,5 @@ bun_http_types.workspace = true
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
 bun_libuv_sys.workspace = true
+bun_paths.workspace = true
+# no cycle: bun_paths -> {bun_core, bun_alloc}; neither depends on bun_uws_sys

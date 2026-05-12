@@ -767,7 +767,7 @@ impl ReadFile {
                 } else {
                     // record the amount of data read
                     // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                    unsafe { self.buffer.set_len(self.buffer.len() + read_amount) };
+                    unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
                 }
                 // - If they DID set a max length, we should stop
                 //   reading after that.

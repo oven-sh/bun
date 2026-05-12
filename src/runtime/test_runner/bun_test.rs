@@ -25,22 +25,6 @@ macro_rules! group_begin {
 }
 pub(crate) use group_begin;
 
-// ── local shims ─────────────────────────────────────────────────────────────
-
-/// `JSValue::as_promise_ptr<T>` — recover the `*mut T` smuggled through
-/// `Promise.then`'s trailing context arg. Local extension trait until
-/// upstreamed to `bun_jsc`.
-trait JSValuePromisePtrExt {
-    fn as_promise_ptr<T>(self) -> *mut T;
-}
-impl JSValuePromisePtrExt for JSValue {
-    #[inline]
-    fn as_promise_ptr<T>(self) -> *mut T {
-        // PORT NOTE: Zig `asPromisePtr` does `@ptrFromInt(@intFromFloat(asNumber()))`.
-        self.as_number() as usize as *mut T
-    }
-}
-
 /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
 /// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
 #[inline]
@@ -638,6 +622,8 @@ pub struct BunTest {
     pub collection: Collection,
     pub execution: Execution::Execution,
 }
+
+bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
 
 impl BunTest {
     pub fn init(

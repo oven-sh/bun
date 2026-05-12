@@ -200,16 +200,7 @@ impl TrackSizeList {
             return Ok(());
         }
 
-        let mut first = true;
-        for item in self.v.slice() {
-            if first {
-                first = false;
-            } else {
-                dest.write_char(b' ')?;
-            }
-            item.to_css(dest)?;
-        }
-        Ok(())
+        dest.write_separated(self.v.slice(), |d| d.write_char(b' '), |d, item| item.to_css(d))
     }
 }
 
@@ -368,16 +359,10 @@ impl TrackRepeat {
 
 fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(), PrintErr> {
     dest.write_char(b'[')?;
-    let mut first = true;
-    for name in names {
-        if first {
-            first = false;
-        } else {
-            dest.write_char(b' ')?;
-        }
+    dest.write_separated(names, |d| d.write_char(b' '), |d, name| {
         // SAFETY: arena-owned slice valid for 'bump.
-        write_ident(unsafe { crate::arena_str(name.v) }, dest)?;
-    }
+        write_ident(unsafe { crate::arena_str(name.v) }, d)
+    })?;
     dest.write_char(b']')
 }
 

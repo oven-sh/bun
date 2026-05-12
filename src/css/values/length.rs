@@ -12,8 +12,7 @@ use bun_core::strings;
 use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum LengthOrNumber {
     /// A number.
     Number(CSSNumber),
@@ -22,23 +21,8 @@ pub enum LengthOrNumber {
 }
 
 impl LengthOrNumber {
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // `DeriveParse` for a 2-payload union(enum) tries each payload's `parse`
-    // in declaration order, with the last one's error propagating.
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
-            return Ok(LengthOrNumber::Number(n));
-        }
-        Length::parse(input).map(LengthOrNumber::Length)
-    }
-
-    // Zig: `pub const toCss = css.DeriveToCss(@This()).toCss;`
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        match self {
-            LengthOrNumber::Number(n) => CSSNumberFns::to_css(n, dest),
-            LengthOrNumber::Length(l) => l.to_css(dest),
-        }
-    }
+    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]
+    // (f32 resolves via generics::{Parse,ToCss} for f32). is_compatible KEPT.
 
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
@@ -60,8 +44,7 @@ impl Default for LengthOrNumber {
 pub type LengthPercentage = DimensionPercentage<LengthValue>;
 
 /// Either a [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage), or the `auto` keyword.
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum LengthPercentageOrAuto {
     /// The `auto` keyword.
     Auto,
@@ -70,23 +53,7 @@ pub enum LengthPercentageOrAuto {
 }
 
 impl LengthPercentageOrAuto {
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // Unit variant (`auto`) first → try the keyword, fall through to payload.
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|p| p.expect_ident_matching(b"auto")).is_ok() {
-            return Ok(LengthPercentageOrAuto::Auto);
-        }
-        LengthPercentage::parse(input).map(LengthPercentageOrAuto::Length)
-    }
-
-    // Zig: `pub const toCss = css.DeriveToCss(@This()).toCss;`
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        match self {
-            LengthPercentageOrAuto::Auto => dest.write_str(b"auto"),
-            LengthPercentageOrAuto::Length(lp) => lp.to_css(dest),
-        }
-    }
-    // TODO(port): derive Parse + ToCss traits
+    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]. is_compatible KEPT.
 
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
@@ -496,7 +463,7 @@ impl PartialEq for LengthValue {
 }
 
 /// A CSS [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) value, with support for `calc()`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::ToCss)]
 pub enum Length {
     /// An explicitly specified length value.
     Value(LengthValue),
@@ -538,12 +505,8 @@ impl Length {
         Ok(Self::Value(len))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        match self {
-            Self::Value(a) => a.to_css(dest),
-            Self::Calc(c) => c.to_css(dest),
-        }
-    }
+    // to_css — provided by #[derive(css::ToCss)] (Box<Calc<Length>> auto-derefs
+    // to Calc::<V: CalcValue>::to_css inherent). parse KEPT (custom Calc::Value unwrap).
 
     // Zig `eql` → derive(PartialEq).
 

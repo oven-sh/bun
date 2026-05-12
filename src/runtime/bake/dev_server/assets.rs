@@ -35,29 +35,11 @@ pub struct Assets {
     pub needs_reindex: bool,
 }
 
+// SAFETY: `Assets` is only ever constructed as the `assets` field of
+// `DevServer` (which is `Box`-allocated and never moved post-init).
+bun_core::impl_field_parent! { Assets => DevServer.assets; pub(super) fn owner; fn owner_mut; }
+
 impl Assets {
-    /// Intrusive backref: intrusive backref.
-    #[inline]
-    pub(super) fn owner(&self) -> &DevServer {
-        // SAFETY: `Assets` is only ever constructed as the `assets` field of
-        // `DevServer` (which is `Box`-allocated and never moved post-init).
-        unsafe {
-            &*bun_core::from_field_ptr!(DevServer, assets, std::ptr::from_ref::<Self>(self))
-        }
-    }
-
-    /// Mutable variant of `owner`. Returns a raw `*mut DevServer` (not `&mut`)
-    /// because `self` is a field of `DevServer` — materializing `&mut DevServer`
-    /// while `&mut self` is live would alias. Callers dereference under `unsafe`
-    /// and must only touch fields disjoint from `assets`.
-    #[inline]
-    fn owner_mut(&mut self) -> *mut DevServer {
-        // SAFETY: see `owner`. Pointer arithmetic only; no reference is formed here.
-        unsafe {
-            bun_core::from_field_ptr!(DevServer, assets, std::ptr::from_mut::<Self>(self))
-        }
-    }
-
     pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
         debug_assert!(self.owner().magic == Magic::Valid);
         self.path_map.get(path).map(|idx| self.files.keys()[idx.get_usize()])

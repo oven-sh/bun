@@ -1,6 +1,6 @@
 use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
@@ -43,6 +43,8 @@ bun_output::declare_scope!(FetchTasklet, visible);
 
 pub type ResumableSink = ResumableFetchSink;
 
+#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
     // heap::alloc); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
@@ -112,7 +114,7 @@ pub struct FetchTasklet {
 
     pub tracker: AsyncTaskTracker,
 
-    pub ref_count: AtomicU32,
+    pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
 
 pub enum HTTPRequestBody {
@@ -340,46 +342,33 @@ impl FetchTasklet {
     }
 
     pub fn ref_(&self) {
-        let count = self.ref_count.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(count > 0);
+        // SAFETY: `self` is live; `ref_` only touches the interior-mutable
+        // atomic counter.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
     pub fn deref(this: *mut FetchTasklet) {
-        // SAFETY: caller holds a ref; ref_count > 0
-        // Release on decrement + Acquire fence on the 1→0 transition is the
-        // standard `Arc` pattern: Release publishes this thread's prior writes
-        // to the object; the Acquire fence on the dropping thread observes
-        // them before `deinit` reads/ frees. `Relaxed` here was a data-race
-        // hazard — refs cross JS↔HTTP threads.
-        let count = unsafe { (*this).ref_count.fetch_sub(1, Ordering::Release) };
-        debug_assert!(count > 0);
-
-        if count == 1 {
-            core::sync::atomic::fence(Ordering::Acquire);
-            // SAFETY: last ref; exclusive access
-            unsafe { FetchTasklet::deinit(this) };
-        }
+        // SAFETY: caller holds a ref; `this` is a live heap allocation from `get()`.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub fn deref_from_thread(this: *mut FetchTasklet) {
-        let self_ = Self::from_raw_ref(this);
-        let count = self_.ref_count.fetch_sub(1, Ordering::Release);
-        debug_assert!(count > 0);
-
-        if count == 1 {
-            core::sync::atomic::fence(Ordering::Acquire);
-            if self_.javascript_vm.is_shutting_down() {
-                // SAFETY: last ref; exclusive access
-                unsafe { FetchTasklet::deinit(this) };
-                return;
-            }
-            // this is really unlikely to happen, but can happen
-            // lets make sure that we always call deinit from main thread
-            Self::enqueue_concurrent(
-                self_.javascript_vm,
-                ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
-            );
+        // SAFETY: caller holds a ref; `this` is a live heap allocation from `get()`.
+        if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
+            return;
         }
+        let self_ = Self::from_raw_ref(this);
+        if self_.javascript_vm.is_shutting_down() {
+            // SAFETY: last ref; exclusive access
+            unsafe { FetchTasklet::deinit(this) };
+            return;
+        }
+        // this is really unlikely to happen, but can happen
+        // lets make sure that we always call deinit from main thread
+        Self::enqueue_concurrent(
+            self_.javascript_vm,
+            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+        );
     }
 
     // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -464,7 +453,8 @@ impl FetchTasklet {
     unsafe fn deinit(this: *mut FetchTasklet) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
 
-        debug_assert!(unsafe { (*this).ref_count.load(Ordering::Relaxed) } == 0);
+        // SAFETY: caller contract — `this` is live with ref_count == 0.
+        unsafe { (*this).ref_count.assert_no_refs() };
 
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -1428,7 +1418,7 @@ impl FetchTasklet {
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
             tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();

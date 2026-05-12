@@ -5,7 +5,7 @@
 //! re-gated with `` and a `// TODO(b2-blocked): bun_X::Y` marker so
 //! the rest of the module type-checks against the real lower-tier crates.
 
-// Phase-A drafts wrote `bun_str::…`; the workspace crate is `bun_string`.
+// Phase-A drafts wrote `bun_core::…`; the workspace crate is `bun_string`.
 extern crate bun_core as bun_str;
 
 pub mod source_provider;

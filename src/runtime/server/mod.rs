@@ -2980,6 +2980,46 @@ macro_rules! any_server_dispatch_mut {
     }};
 }
 
+/// Dispatch over the four `NewServer` monomorphizations, simultaneously
+/// downcasting an [`uws::AnyResponse`] to the matching `*mut Response<SSL>`.
+///
+/// Binds `$s: *mut NewServer<SSL, DEBUG>` (raw, NOT `&`/`&mut` — the target
+/// fns take `this: *mut Self` and may re-enter JS) and `$r: *mut
+/// uws_sys::Response<SSL>`. Tag↔SSL invariant is enforced by
+/// `assert_ssl`/`assert_no_ssl` (panics on `AnyResponse::H3`, matching the
+/// hand-written arms this replaces). The body is monomorphized four times, so
+/// `NewServer::method($s, …, $r, …)` infers `<SSL, DEBUG>` from `$s`.
+macro_rules! any_server_dispatch_resp {
+    ($self:expr, $resp:expr, |$s:ident, $r:ident| $body:expr) => {{
+        let this = $self;
+        let __resp = $resp;
+        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
+        // and is non-null while the server is alive.
+        match this.tag {
+            AnyServerTag::HTTPServer => {
+                let $s = this.ptr.cast::<HTTPServer>();
+                let $r = __resp.assert_no_ssl();
+                $body
+            }
+            AnyServerTag::HTTPSServer => {
+                let $s = this.ptr.cast::<HTTPSServer>();
+                let $r = __resp.assert_ssl();
+                $body
+            }
+            AnyServerTag::DebugHTTPServer => {
+                let $s = this.ptr.cast::<DebugHTTPServer>();
+                let $r = __resp.assert_no_ssl();
+                $body
+            }
+            AnyServerTag::DebugHTTPSServer => {
+                let $s = this.ptr.cast::<DebugHTTPSServer>();
+                let $r = __resp.assert_ssl();
+                $body
+            }
+        }
+    }};
+}
+
 impl AnyServer {
     pub fn from<const SSL: bool, const DEBUG: bool>(server: *const NewServer<SSL, DEBUG>) -> AnyServer {
         let tag = match (SSL, DEBUG) {
@@ -3072,21 +3112,7 @@ impl AnyServer {
     /// (see `server.zig`): un-erase the SSL bool from the tag and downcast
     /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
     pub fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
-        // `assert_{no_,}ssl` upholds the tag↔SSL invariant.
-        match self.tag {
-            AnyServerTag::HTTPServer => {
-                HTTPServer::on_request(self.ptr.cast(), req, resp.assert_no_ssl())
-            }
-            AnyServerTag::HTTPSServer => {
-                HTTPSServer::on_request(self.ptr.cast(), req, resp.assert_ssl())
-            }
-            AnyServerTag::DebugHTTPServer => {
-                DebugHTTPServer::on_request(self.ptr.cast(), req, resp.assert_no_ssl())
-            }
-            AnyServerTag::DebugHTTPSServer => {
-                DebugHTTPSServer::on_request(self.ptr.cast(), req, resp.assert_ssl())
-            }
-        }
+        any_server_dispatch_resp!(self, resp, |s, r| NewServer::on_request(s, req, r))
     }
 
     pub fn on_request_complete(&mut self) {
@@ -3153,46 +3179,13 @@ impl AnyServer {
         global: &jsc::JSGlobalObject,
         method: Option<bun_http::Method>,
     ) -> jsc::JsResult<Option<SavedRequest>> {
-        // PORT NOTE: hand-dispatched (the macro can't bind a per-arm `resp`
-        // type). `uws::Request` and `uws_sys::Request` are the same opaque
-        // FFI handle re-exported through two crates.
-        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
-        // and is non-null while the server is alive.
         let req: &mut uws_sys::Request = req;
-        Ok(match self.tag {
-            AnyServerTag::HTTPServer => {
-                let s = self.ptr.cast::<HTTPServer>();
-                let r = resp.assert_no_ssl();
-                let Some(p) = HTTPServer::prepare_js_request_context(
-                    s, req, r, None, CreateJsRequest::Bake, method,
-                ) else { return Ok(None) };
-                Some(p.save(global, req, r))
-            }
-            AnyServerTag::HTTPSServer => {
-                let s = self.ptr.cast::<HTTPSServer>();
-                let r = resp.assert_ssl();
-                let Some(p) = HTTPSServer::prepare_js_request_context(
-                    s, req, r, None, CreateJsRequest::Bake, method,
-                ) else { return Ok(None) };
-                Some(p.save(global, req, r))
-            }
-            AnyServerTag::DebugHTTPServer => {
-                let s = self.ptr.cast::<DebugHTTPServer>();
-                let r = resp.assert_no_ssl();
-                let Some(p) = DebugHTTPServer::prepare_js_request_context(
-                    s, req, r, None, CreateJsRequest::Bake, method,
-                ) else { return Ok(None) };
-                Some(p.save(global, req, r))
-            }
-            AnyServerTag::DebugHTTPSServer => {
-                let s = self.ptr.cast::<DebugHTTPSServer>();
-                let r = resp.assert_ssl();
-                let Some(p) = DebugHTTPSServer::prepare_js_request_context(
-                    s, req, r, None, CreateJsRequest::Bake, method,
-                ) else { return Ok(None) };
-                Some(p.save(global, req, r))
-            }
-        })
+        Ok(any_server_dispatch_resp!(self, resp, |s, r| {
+            let Some(p) = NewServer::prepare_js_request_context(
+                s, req, r, None, CreateJsRequest::Bake, method,
+            ) else { return Ok(None) };
+            Some(p.save(global, req, r))
+        }))
     }
 
     /// `server.zig:3574` — invoke the user's route handler for a request that
@@ -3204,22 +3197,9 @@ impl AnyServer {
         callback: jsc::JSValue,
         extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
     ) {
-        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
-        // and is non-null while the server is alive.
-        match self.tag {
-            AnyServerTag::HTTPServer => HTTPServer::on_saved_request(
-                self.ptr.cast(), req, resp.assert_no_ssl(), callback, extra_args,
-            ),
-            AnyServerTag::HTTPSServer => HTTPSServer::on_saved_request(
-                self.ptr.cast(), req, resp.assert_ssl(), callback, extra_args,
-            ),
-            AnyServerTag::DebugHTTPServer => DebugHTTPServer::on_saved_request(
-                self.ptr.cast(), req, resp.assert_no_ssl(), callback, extra_args,
-            ),
-            AnyServerTag::DebugHTTPSServer => DebugHTTPSServer::on_saved_request(
-                self.ptr.cast(), req, resp.assert_ssl(), callback, extra_args,
-            ),
-        }
+        any_server_dispatch_resp!(self, resp, |s, r| {
+            NewServer::on_saved_request(s, req, r, callback, extra_args)
+        })
     }
 
     /// Mutable handle to the DevServer (when configured). HTMLBundle's request

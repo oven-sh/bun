@@ -528,21 +528,8 @@ pub mod registry {
             _ => {}
         }
 
-        let mut newly_last_modified: &[u8] = b"";
-        let mut new_etag: &[u8] = b"";
-        for header in response.headers.list.iter() {
-            if !(header.name().len() == "last-modified".len() || header.name().len() == "etag".len()) {
-                continue;
-            }
-
-            let hashed = http::hash_header_name(header.name());
-
-            if hashed == http::hash_header_name(b"last-modified") {
-                newly_last_modified = header.value();
-            } else if hashed == http::hash_header_name(b"etag") {
-                new_etag = header.value();
-            }
-        }
+        let newly_last_modified: &[u8] = response.headers.get(b"last-modified").unwrap_or(b"");
+        let mut new_etag: &[u8] = response.headers.get(b"etag").unwrap_or(b"");
 
         let mut new_etag_buf = [0u8; 64];
 

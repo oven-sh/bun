@@ -2159,9 +2159,6 @@ pub mod internal {
     // ───────────── GlobalCache ─────────────
 
     const MAX_ENTRIES: usize = 256;
-    /// `bun_fmt::fast_digit_count(u16::MAX) + 2` — 5 decimal digits + NUL + slack.
-    /// Hard-coded because `fast_digit_count` is not `const fn`.
-    const U16_PORT_BUF_LEN: usize = 7;
 
     /// The cache data guarded by `GLOBAL_CACHE`. The Zig code stored a `bun.Mutex`
     /// adjacent to `cache`/`len`; in Rust the lock owns the data (PORTING.md §Concurrency).
@@ -2497,21 +2494,12 @@ pub mod internal {
     }
 
     fn work_pool_callback(req: *mut Request) {
-        let mut service_buf = [0u8; U16_PORT_BUF_LEN];
-        let service: *const c_char = unsafe {
-            if (*req).key.port > 0 {
-                use std::io::Write;
-                let n = {
-                    let total = service_buf.len();
-                    let mut cursor = &mut service_buf[..];
-                    write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                    total - cursor.len()
-                };
-                service_buf[n] = 0;
-                service_buf.as_ptr().cast::<c_char>()
-            } else {
-                ptr::null()
-            }
+        let mut service_buf = [0u8; 21];
+        let port = unsafe { (*req).key.port };
+        let service: *const c_char = if port > 0 {
+            bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
+        } else {
+            ptr::null()
         };
 
         #[cfg(windows)]
@@ -2555,21 +2543,12 @@ pub mod internal {
         };
 
         let mut machport: mach_port = 0;
-        let mut service_buf = [0u8; U16_PORT_BUF_LEN];
-        let service: *const c_char = unsafe {
-            if (*req).key.port > 0 {
-                use std::io::Write;
-                let n = {
-                    let total = service_buf.len();
-                    let mut cursor = &mut service_buf[..];
-                    write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                    total - cursor.len()
-                };
-                service_buf[n] = 0;
-                service_buf.as_ptr().cast::<c_char>()
-            } else {
-                ptr::null()
-            }
+        let mut service_buf = [0u8; 21];
+        let port = unsafe { (*req).key.port };
+        let service: *const c_char = if port > 0 {
+            bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
+        } else {
+            ptr::null()
         };
 
         let mut hints = get_hints();
@@ -2626,17 +2605,9 @@ pub mod internal {
             unsafe {
                 if status == netc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
                     (*req).can_retry_for_addrconfig = false;
-                    let mut service_buf = [0u8; U16_PORT_BUF_LEN];
+                    let mut service_buf = [0u8; 21];
                     let service: *const c_char = if (*req).key.port > 0 {
-                        use std::io::Write;
-                        let n = {
-                            let total = service_buf.len();
-                            let mut cursor = &mut service_buf[..];
-                            write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                            total - cursor.len()
-                        };
-                        service_buf[n] = 0;
-                        service_buf.as_ptr().cast::<c_char>()
+                        bun_fmt::itoa_z(&mut service_buf, (*req).key.port as u64).as_ptr()
                     } else {
                         ptr::null()
                     };
@@ -3202,6 +3173,8 @@ pub struct Resolver {
     pub pending_addr_cache_cares: JsCell<AddrPendingCache>,
     pub pending_nameinfo_cache_cares: JsCell<NameInfoPendingCache>,
 }
+
+bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
 /// RAII owner for a scoped `Resolver` refcount bump (Zig: `this.ref(); defer this.deref();`).
 /// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.

@@ -39,9 +39,7 @@ pub fn create_postgres_error(
         (b"routine", options.routine),
     ];
     for (name, value) in optional_fields {
-        if let Some(value) = value {
-            opts_obj.put(global, name, bun_string_jsc::create_utf8_for_js(global, value)?);
-        }
+        opts_obj.put_optional_utf8(global, name, value)?;
     }
     opts_obj.put(
         global,

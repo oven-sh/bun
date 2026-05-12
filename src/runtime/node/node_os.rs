@@ -1006,9 +1006,6 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             };
 
             if let Some(ll_addr) = maybe_ll_addr {
-                // Encode its link-layer address.  We need 2*6 bytes for the
-                //  hex characters and 5 for the colon separators
-                let mut mac_buf = [0u8; 17];
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
                 let addr_data: &[u8] = unsafe { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
@@ -1026,18 +1023,10 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                     let mac = b"00:00:00:00:00:00";
                     interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
                 } else {
-                    let mac = {
-                        let mut cursor = &mut mac_buf[..];
-                        write!(
-                            cursor,
-                            "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                            addr_data[0], addr_data[1], addr_data[2],
-                            addr_data[3], addr_data[4], addr_data[5],
-                        )
-                        .expect("unreachable");
-                        &mac_buf[..]
-                    };
-                    interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
+                    let mac_buf = bun_fmt::mac_address_lower(
+                        addr_data[..6].try_into().expect("len>=6 checked above"),
+                    );
+                    interface.put(global_this, b"mac", ZigString::init(&mac_buf).with_encoding().to_js(global_this));
                 }
             } else {
                 let mac = b"00:00:00:00:00:00";
@@ -1099,7 +1088,6 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
 
     // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
     let mut ip_buf = [0u8; 65];
-    let mut mac_buf = [0u8; 17];
 
     // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
     let iface_slice = unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
@@ -1174,18 +1162,8 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
 
         // mac
         {
-            let phys = &iface.phys_addr;
-            let mac = {
-                let mut cursor = &mut mac_buf[..];
-                write!(
-                    cursor,
-                    "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    phys[0], phys[1], phys[2], phys[3], phys[4], phys[5],
-                )
-                .expect("unreachable");
-                &mac_buf[..]
-            };
-            interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
+            let mac_buf = bun_fmt::mac_address_lower(&iface.phys_addr);
+            interface.put(global_this, b"mac", ZigString::init(&mac_buf).with_encoding().to_js(global_this));
         }
 
         // internal

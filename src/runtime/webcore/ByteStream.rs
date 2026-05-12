@@ -4,7 +4,7 @@ use core::mem::offset_of;
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_jsc::strong::Optional as StrongOptional;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::Pipe;
@@ -91,6 +91,12 @@ impl readable_stream::SourceContext for ByteStream {
         Some(Self::to_buffered_value(self, global, action))
     }
 }
+
+// SAFETY: `ByteStream` is always the `context` field of a `Source`
+// (ReadableStream.NewSource); never constructed standalone. `parent` returns
+// `*mut Source` (not `&mut`) — retained for the `finalize` (GC-teardown) path
+// only; all host-fn-reachable callers use `parent_const`.
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
 
 impl ByteStream {
     #[inline]
@@ -376,24 +382,6 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
-    /// `&mut self → &mut Source` projection. Retained for the `finalize`
-    /// (GC-teardown) path only, which legitimately holds unique access; all
-    /// host-fn-reachable callers use [`Self::parent_const`].
-    pub fn parent(&mut self) -> &mut Source {
-        // SAFETY: `self` is always the `context` field of a `Source` (ReadableStream.NewSource);
-        // ByteStream is never constructed standalone.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
-        }
-    }
-
-    pub fn parent_const(&self) -> &Source {
-        // SAFETY: same invariant as `parent` — `self` is the `context` field of a `Source`.
-        unsafe {
-            &*bun_core::from_field_ptr!(Source, context, std::ptr::from_ref::<Self>(self))
-        }
-    }
-
     pub fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
@@ -584,13 +572,7 @@ impl ByteStream {
             return Ok(blob.to_promise(global_this, action)?);
         }
 
-        self.buffer_action.set(Some(match action {
-            streams::BufferActionTag::Blob => BufferAction::Blob(JSPromiseStrong::init(global_this)),
-            streams::BufferActionTag::Bytes => BufferAction::Bytes(JSPromiseStrong::init(global_this)),
-            streams::BufferActionTag::ArrayBuffer => BufferAction::ArrayBuffer(JSPromiseStrong::init(global_this)),
-            streams::BufferActionTag::Json => BufferAction::Json(JSPromiseStrong::init(global_this)),
-            streams::BufferActionTag::Text => BufferAction::Text(JSPromiseStrong::init(global_this)),
-        }));
+        self.buffer_action.set(Some(BufferAction::new(action, global_this)));
 
         Ok(self.buffer_action.get().as_ref().unwrap().value())
     }

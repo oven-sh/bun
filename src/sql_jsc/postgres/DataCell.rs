@@ -615,7 +615,7 @@ fn parse_array(
                                         array.push(SQLDataCell {
                                             tag: Tag::Int8,
                                             value: Value {
-                                                int8: parse_int_i64(element)
+                                                int8: bun_core::fmt::parse_decimal::<i64>(element)
                                                     .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
                                             },
                                             ..Default::default()
@@ -641,7 +641,7 @@ fn parse_array(
                                     array.push(SQLDataCell {
                                         tag: Tag::Uint4,
                                         value: Value {
-                                            uint4: parse_int_u32(element).unwrap_or(0),
+                                            uint4: bun_core::fmt::parse_decimal::<u32>(element).unwrap_or(0),
                                         },
                                         ..Default::default()
                                     });
@@ -649,7 +649,7 @@ fn parse_array(
                                     continue;
                                 }
                                 _ => {
-                                    let value = parse_int_i32(element)
+                                    let value = bun_core::fmt::parse_decimal::<i32>(element)
                                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?;
 
                                     array.push(SQLDataCell {
@@ -862,7 +862,7 @@ pub fn from_bytes(
             } else {
                 Ok(SQLDataCell {
                     tag: Tag::Int4,
-                    value: Value { int4: parse_int_i32(bytes).unwrap_or(0) },
+                    value: Value { int4: bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0) },
                     ..Default::default()
                 })
             }
@@ -877,7 +877,7 @@ pub fn from_bytes(
             } else {
                 Ok(SQLDataCell {
                     tag: Tag::Uint4,
-                    value: Value { uint4: parse_int_u32(bytes).unwrap_or(0) },
+                    value: Value { uint4: bun_core::fmt::parse_decimal::<u32>(bytes).unwrap_or(0) },
                     ..Default::default()
                 })
             }
@@ -892,7 +892,7 @@ pub fn from_bytes(
             } else {
                 Ok(SQLDataCell {
                     tag: Tag::Int4,
-                    value: Value { int4: parse_int_i32(bytes).unwrap_or(0) },
+                    value: Value { int4: bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0) },
                     ..Default::default()
                 })
             }
@@ -903,7 +903,7 @@ pub fn from_bytes(
                 // .int8 is a 64-bit integer always string
                 Ok(SQLDataCell {
                     tag: Tag::Int8,
-                    value: Value { int8: parse_int_i64(bytes).unwrap_or(0) },
+                    value: Value { int8: bun_core::fmt::parse_decimal::<i64>(bytes).unwrap_or(0) },
                     ..Default::default()
                 })
             } else {
@@ -1297,8 +1297,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
             // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
             let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) { read_be!(u16) } else { 0 };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
-            // TODO(port): std.fmt.printInt with width=4 fill='0'. NBASE=10000 so digit ∈ [0,9999].
-            let digit_str: [u8; 4] = format_digit_4(digit);
+            let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             let digit_len = 4usize;
             if !first_non_zero {
                 // In the first digit, suppress extra leading decimal zeroes
@@ -1337,7 +1336,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
                     0
                 };
                 bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
-                let digit_str: [u8; 4] = format_digit_4(digit);
+                let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
                 let digit_len = 4usize;
                 result.extend_from_slice(&digit_str[0..digit_len]);
             } else {
@@ -1352,17 +1351,6 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
     }
     // PORT NOTE: reshaped for borrowck — return borrowed slice of `result`
     Ok(PGNummericString::Dynamic(result.as_slice()))
-}
-
-#[inline]
-fn format_digit_4(d: u16) -> [u8; 4] {
-    // NBASE digits are 0..=9999
-    [
-        b'0' + ((d / 1000) % 10) as u8,
-        b'0' + ((d / 100) % 10) as u8,
-        b'0' + ((d / 10) % 10) as u8,
-        b'0' + (d % 10) as u8,
-    ]
 }
 
 // PORT NOTE: Zig's `parseBinary(comptime tag, comptime ReturnType, bytes)` returns a
@@ -1555,14 +1543,6 @@ impl<'a> Putter<'a> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }
-
-// Postgres text-format integers are always decimal — radix 10.
-#[inline]
-fn parse_int_i32(s: &[u8]) -> Option<i32> { bun_core::fmt::parse_int(s, 10).ok() }
-#[inline]
-fn parse_int_i64(s: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(s, 10).ok() }
-#[inline]
-fn parse_int_u32(s: &[u8]) -> Option<u32> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // External C++ formatting functions
 // TODO(port): move to <area>_sys

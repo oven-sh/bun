@@ -8,12 +8,7 @@ use crate::SystemError;
 
 use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
 
-// Local helpers replacing the `tag_name`/`errno_to_err` forward-refs.
-#[inline]
-fn tag_name(e: SystemErrno) -> Option<&'static str> {
-    // strum::IntoStaticStr — variant name (e.g., "ENOENT").
-    Some(<&'static str>::from(e))
-}
+// Local helper replacing the `errno_to_err` forward-ref.
 #[inline]
 fn errno_to_err(errno: Int) -> bun_core::Error {
     bun_core::Error::from_errno(errno as i32)
@@ -285,42 +280,41 @@ impl Error {
         }
     }
 
-    pub fn name(&self) -> &'static [u8] {
+    /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
+    /// Shared by `name()` / `get_error_code_tag_name()`; replaces Zig's unchecked
+    /// `@setRuntimeSafety(false) + @enumFromInt` with a fallible discriminant lookup.
+    #[inline]
+    fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]
         {
-            // Zig used @setRuntimeSafety(false) + @enumFromInt on a possibly-invalid value, then
-            // `bun.tagName` (which returns null for invalid). In Rust transmuting to an invalid
-            // enum is UB, so fold both steps into a single fallible *discriminant* lookup.
+            if self.from_libuv {
+                // `self.errno` is the positive `UV_E*` magnitude; negate back to the signed
+                // uv code, map to `E`, then to `SystemErrno` via the shared #[repr(u16)]
+                // discriminant table (Zig: `@enumFromInt(@intFromEnum(...))`).
+                let translated =
+                    crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
+                return Some(SystemErrno::from_raw(translated as u16));
+            }
+            // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
             // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
             // Win32/WSA error codes to errnos and would corrupt a value that is already a
             // SystemErrno discriminant (e.g. discriminant 1/EPERM → Win32(1) → EISDIR).
-            let system_errno: Option<SystemErrno> = if self.from_libuv {
-                let translated =
-                    crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
-                // `translated` is already a valid `E`; E and SystemErrno share identical
-                // #[repr(u16)] discriminant tables, so route through the discriminant
-                // accessor (Zig: `@enumFromInt(@intFromEnum(translateUVErrorToE(...)))`).
-                Some(SystemErrno::from_raw(translated as u16))
-            } else {
-                // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
-                E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
-            };
-            if let Some(errname) = system_errno.and_then(tag_name) {
-                return errname.as_bytes();
-            }
+            E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
         }
         #[cfg(not(windows))]
         {
-            if self.errno > 0 && (self.errno) < SystemErrno::MAX {
-                if let Some(system_errno) = SystemErrno::init(self.errno as i64) {
-                    if let Some(errname) = tag_name(system_errno) {
-                        return errname.as_bytes();
-                    }
-                }
+            if self.errno > 0 && self.errno < SystemErrno::MAX {
+                SystemErrno::init(self.errno as i64)
+            } else {
+                None
             }
         }
+    }
 
-        b"UNKNOWN"
+    pub fn name(&self) -> &'static [u8] {
+        self.get_error_code_tag_name()
+            .map(|(n, _)| n.as_bytes())
+            .unwrap_or(b"UNKNOWN")
     }
 
     pub fn to_zig_err(&self) -> bun_core::Error {
@@ -330,34 +324,9 @@ impl Error {
     /// 1. Convert libuv errno values into libc ones.
     /// 2. Get the tag name as a string for printing.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
-        #[cfg(not(windows))]
-        {
-            if self.errno > 0 && (self.errno) < SystemErrno::MAX {
-                // TODO(port): Zig used unchecked @enumFromInt + @tagName; folded into checked lookup.
-                let system_errno = SystemErrno::init(self.errno as i64)?;
-                return Some((<&'static str>::from(system_errno), system_errno));
-            }
-        }
-        #[cfg(windows)]
-        {
-            // Zig used @setRuntimeSafety(false) + @enumFromInt on a possibly-invalid value; see
-            // note in `name()` above. Direct discriminant cast — NOT `SystemErrno::init` (which
-            // on Windows maps Win32/WSA codes, not discriminants).
-            let system_errno: SystemErrno = 'brk: {
-                if self.from_libuv {
-                    let translated =
-                        crate::windows::translate_uv_error_to_e(c_int::from(self.errno) * -1);
-                    // E and SystemErrno share identical #[repr(u16)] discriminant tables;
-                    // route through the discriminant accessor instead of transmute.
-                    break 'brk SystemErrno::from_raw(translated as u16);
-                }
-                E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))?
-            };
-            if let Some(errname) = tag_name(system_errno) {
-                return Some((errname, system_errno));
-            }
-        }
-        None
+        let e = self.resolve_system_errno()?;
+        // strum::IntoStaticStr — variant name (e.g., "ENOENT").
+        Some((<&'static str>::from(e), e))
     }
 
     pub fn msg(&self) -> Option<&'static [u8]> {
@@ -368,23 +337,27 @@ impl Error {
         Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
-    /// Simpler formatting which does not allocate a message
-    pub fn to_shell_system_error(&self) -> SystemError {
+    /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
+    /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
+    /// and returns the looked-up `(code, label)` so each caller can build its own
+    /// `message` (shell: static label; node: formatted stack buffer).
+    fn fill_system_error_common(
+        &self,
+        map: &enum_map::EnumMap<SystemErrno, &'static str>,
+    ) -> (SystemError, Option<(&'static str, &'static str)>) {
         let mut err = SystemError {
-            errno: c_int::from(self.errno) * -1,
+            errno: c_int::from(self.errno).wrapping_neg(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             message: BunString::empty(),
             ..Default::default()
         };
 
-        // errno label
-        if let Some((code, system_errno)) = self.get_error_code_tag_name() {
+        // PORT NOTE: both maps are total (`initFull("unknown error")`); Zig's optional
+        // unwrap on `.get()` is never null.
+        let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
             err.code = BunString::static_(code.as_bytes());
-            // PORT NOTE: map is total (`initFull("unknown error")`); Zig's optional
-            // unwrap on `.get()` is never null.
-            let label = coreutils_error_map::COREUTILS_ERROR_MAP[system_errno];
-            err.message = BunString::static_(label.as_bytes());
-        }
+            (code, map[system_errno])
+        });
 
         if !self.path.is_empty() {
             err.path = BunString::clone_utf8(&self.path);
@@ -406,29 +379,24 @@ impl Error {
             }
         }
 
+        (err, looked_up)
+    }
+
+    /// Simpler formatting which does not allocate a message
+    pub fn to_shell_system_error(&self) -> SystemError {
+        let (mut err, looked_up) =
+            self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
+        if let Some((_, label)) = looked_up {
+            err.message = BunString::static_(label.as_bytes());
+        }
         err
     }
 
     /// More complex formatting to precisely match the printing that Node.js emits.
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn to_system_error(&self) -> SystemError {
-        let mut err = SystemError {
-            errno: c_int::from(self.errno).wrapping_neg(),
-            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
-            message: BunString::empty(),
-            ..Default::default()
-        };
-
-        // errno label
-        let mut maybe_code: Option<&'static str> = None;
-        let mut label: Option<&'static str> = None;
-        if let Some((code, system_errno)) = self.get_error_code_tag_name() {
-            maybe_code = Some(code);
-            err.code = BunString::static_(code.as_bytes());
-            // PORT NOTE: map is total (`initFull("unknown error")`); Zig's `.get()`
-            // never returns null, so `label` is always Some past this point.
-            label = Some(libuv_error_map::LIBUV_ERROR_MAP[system_errno]);
-        }
+        let (mut err, looked_up) =
+            self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
 
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
@@ -437,11 +405,12 @@ impl Error {
             use std::io::Write as _;
             let mut cursor = std::io::Cursor::new(&mut message_buf[..]);
             'brk: {
-                if let Some(code) = maybe_code {
+                if let Some((code, _)) = looked_up {
                     if cursor.write_all(code.as_bytes()).is_err() { break 'brk; }
                     if cursor.write_all(b": ").is_err() { break 'brk; }
                 }
-                if cursor.write_all(label.unwrap_or("Unknown Error").as_bytes()).is_err() { break 'brk; }
+                let label = looked_up.map(|(_, l)| l).unwrap_or("Unknown Error");
+                if cursor.write_all(label.as_bytes()).is_err() { break 'brk; }
                 if cursor.write_all(b", ").is_err() { break 'brk; }
                 if cursor.write_all(<&'static str>::from(self.syscall).as_bytes()).is_err() { break 'brk; }
                 if !self.path.is_empty() {
@@ -458,28 +427,7 @@ impl Error {
             }
             usize::try_from(cursor.position()).expect("int cast")
         };
-        let message = &message_buf[..pos];
-        err.message = BunString::clone_utf8(message);
-
-        if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path);
-        }
-
-        if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest);
-        }
-
-        if let Some(valid) = fd_unwrap_valid(self.fd) {
-            // When the FD is a windows handle, there is no sane way to report this.
-            #[cfg(windows)]
-            if valid.kind() == crate::FdKind::Uv {
-                err.fd = valid.uv();
-            }
-            #[cfg(not(windows))]
-            {
-                err.fd = valid.uv();
-            }
-        }
+        err.message = BunString::clone_utf8(&message_buf[..pos]);
 
         err
     }

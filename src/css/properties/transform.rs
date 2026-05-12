@@ -159,149 +159,170 @@ impl Transform {
         // parseNestedBlock; Rust closures capture `function` directly.
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
-            if strings::eql_case_insensitive_ascii_check_length(function, b"matrix") {
-                let a = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let b = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let c = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let d = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let e = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let f = CSSNumberFns::parse(i)?;
-                Ok(Transform::Matrix(Matrix { a, b, c, d, e, f }))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"matrix3d") {
-                let m11 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m12 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m13 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m14 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m21 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m22 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m23 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m24 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m31 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m32 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m33 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m34 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m41 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m42 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m43 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let m44 = CSSNumberFns::parse(i)?;
-                Ok(Transform::Matrix3d(Matrix3d {
-                    m11, m12, m13, m14,
-                    m21, m22, m23, m24,
-                    m31, m32, m33, m34,
-                    m41, m42, m43, m44,
-                }))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"translate") {
-                let x = LengthPercentage::parse(i)?;
-                if i.try_parse(|p| p.expect_comma()).is_ok() {
+            crate::match_ignore_ascii_case! { function, {
+                b"matrix" => {
+                    let a = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let b = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let c = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let d = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let e = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let f = CSSNumberFns::parse(i)?;
+                    Ok(Transform::Matrix(Matrix { a, b, c, d, e, f }))
+                },
+                b"matrix3d" => {
+                    let m11 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m12 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m13 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m14 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m21 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m22 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m23 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m24 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m31 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m32 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m33 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m34 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m41 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m42 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m43 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let m44 = CSSNumberFns::parse(i)?;
+                    Ok(Transform::Matrix3d(Matrix3d {
+                        m11, m12, m13, m14,
+                        m21, m22, m23, m24,
+                        m31, m32, m33, m34,
+                        m41, m42, m43, m44,
+                    }))
+                },
+                b"translate" => {
+                    let x = LengthPercentage::parse(i)?;
+                    if i.try_parse(|p| p.expect_comma()).is_ok() {
+                        let y = LengthPercentage::parse(i)?;
+                        Ok(Transform::Translate { x, y })
+                    } else {
+                        Ok(Transform::Translate { x, y: LengthPercentage::zero() })
+                    }
+                },
+                b"translatex" => {
+                    let x = LengthPercentage::parse(i)?;
+                    Ok(Transform::TranslateX(x))
+                },
+                b"translatey" => {
                     let y = LengthPercentage::parse(i)?;
-                    Ok(Transform::Translate { x, y })
-                } else {
-                    Ok(Transform::Translate { x, y: LengthPercentage::zero() })
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"translatex") {
-                let x = LengthPercentage::parse(i)?;
-                Ok(Transform::TranslateX(x))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"translatey") {
-                let y = LengthPercentage::parse(i)?;
-                Ok(Transform::TranslateY(y))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"translatez") {
-                let z = Length::parse(i)?;
-                Ok(Transform::TranslateZ(z))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"translate3d") {
-                let x = LengthPercentage::parse(i)?;
-                i.expect_comma()?;
-                let y = LengthPercentage::parse(i)?;
-                i.expect_comma()?;
-                let z = Length::parse(i)?;
-                Ok(Transform::Translate3d { x, y, z })
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"scale") {
-                let x = NumberOrPercentage::parse(i)?;
-                if i.try_parse(|p| p.expect_comma()).is_ok() {
+                    Ok(Transform::TranslateY(y))
+                },
+                b"translatez" => {
+                    let z = Length::parse(i)?;
+                    Ok(Transform::TranslateZ(z))
+                },
+                b"translate3d" => {
+                    let x = LengthPercentage::parse(i)?;
+                    i.expect_comma()?;
+                    let y = LengthPercentage::parse(i)?;
+                    i.expect_comma()?;
+                    let z = Length::parse(i)?;
+                    Ok(Transform::Translate3d { x, y, z })
+                },
+                b"scale" => {
+                    let x = NumberOrPercentage::parse(i)?;
+                    if i.try_parse(|p| p.expect_comma()).is_ok() {
+                        let y = NumberOrPercentage::parse(i)?;
+                        Ok(Transform::Scale { x, y })
+                    } else {
+                        // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
+                        // is POD; `clone()` is exact.
+                        let y = x.clone();
+                        Ok(Transform::Scale { x, y })
+                    }
+                },
+                b"scalex" => {
+                    let x = NumberOrPercentage::parse(i)?;
+                    Ok(Transform::ScaleX(x))
+                },
+                b"scaley" => {
                     let y = NumberOrPercentage::parse(i)?;
-                    Ok(Transform::Scale { x, y })
-                } else {
-                    // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
-                    // is POD; `clone()` is exact.
-                    let y = x.clone();
-                    Ok(Transform::Scale { x, y })
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"scalex") {
-                let x = NumberOrPercentage::parse(i)?;
-                Ok(Transform::ScaleX(x))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"scaley") {
-                let y = NumberOrPercentage::parse(i)?;
-                Ok(Transform::ScaleY(y))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"scalez") {
-                let z = NumberOrPercentage::parse(i)?;
-                Ok(Transform::ScaleZ(z))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"scale3d") {
-                let x = NumberOrPercentage::parse(i)?;
-                i.expect_comma()?;
-                let y = NumberOrPercentage::parse(i)?;
-                i.expect_comma()?;
-                let z = NumberOrPercentage::parse(i)?;
-                Ok(Transform::Scale3d { x, y, z })
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"rotate") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::Rotate(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"rotatex") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::RotateX(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"rotatey") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::RotateY(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"rotatez") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::RotateZ(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"rotate3d") {
-                let x = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let y = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let z = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::Rotate3d { x, y, z, angle })
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"skew") {
-                let x = Angle::parse_with_unitless_zero(i)?;
-                if i.try_parse(|p| p.expect_comma()).is_ok() {
-                    let y = Angle::parse_with_unitless_zero(i)?;
-                    Ok(Transform::Skew { x, y })
-                } else {
-                    Ok(Transform::Skew { x, y: Angle::Deg(0.0) })
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"skewx") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::SkewX(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"skewy") {
-                let angle = Angle::parse_with_unitless_zero(i)?;
-                Ok(Transform::SkewY(angle))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"perspective") {
-                let len = Length::parse(i)?;
-                Ok(Transform::Perspective(len))
-            } else {
-                Err(location.new_unexpected_token_error(Token::Ident(function)))
-            }
+                    Ok(Transform::ScaleY(y))
+                },
+                b"scalez" => {
+                    let z = NumberOrPercentage::parse(i)?;
+                    Ok(Transform::ScaleZ(z))
+                },
+                b"scale3d" => {
+                    let x = NumberOrPercentage::parse(i)?;
+                    i.expect_comma()?;
+                    let y = NumberOrPercentage::parse(i)?;
+                    i.expect_comma()?;
+                    let z = NumberOrPercentage::parse(i)?;
+                    Ok(Transform::Scale3d { x, y, z })
+                },
+                b"rotate" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::Rotate(angle))
+                },
+                b"rotatex" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::RotateX(angle))
+                },
+                b"rotatey" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::RotateY(angle))
+                },
+                b"rotatez" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::RotateZ(angle))
+                },
+                b"rotate3d" => {
+                    let x = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let y = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let z = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::Rotate3d { x, y, z, angle })
+                },
+                b"skew" => {
+                    let x = Angle::parse_with_unitless_zero(i)?;
+                    if i.try_parse(|p| p.expect_comma()).is_ok() {
+                        let y = Angle::parse_with_unitless_zero(i)?;
+                        Ok(Transform::Skew { x, y })
+                    } else {
+                        Ok(Transform::Skew { x, y: Angle::Deg(0.0) })
+                    }
+                },
+                b"skewx" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::SkewX(angle))
+                },
+                b"skewy" => {
+                    let angle = Angle::parse_with_unitless_zero(i)?;
+                    Ok(Transform::SkewY(angle))
+                },
+                b"perspective" => {
+                    let len = Length::parse(i)?;
+                    Ok(Transform::Perspective(len))
+                },
+                _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
+            }}
         })
     }
 
@@ -799,14 +820,12 @@ impl Rotate {
         let xyz = match input.try_parse(|i| -> Result<Xyz> {
             let location = i.current_source_location();
             let ident = i.expect_ident_cloned()?;
-            if strings::eql_case_insensitive_ascii_check_length(ident, b"x") {
-                return Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 });
-            } else if strings::eql_case_insensitive_ascii_check_length(ident, b"y") {
-                return Ok(Xyz { x: 0.0, y: 1.0, z: 0.0 });
-            } else if strings::eql_case_insensitive_ascii_check_length(ident, b"z") {
-                return Ok(Xyz { x: 0.0, y: 0.0, z: 1.0 });
-            }
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
+            crate::match_ignore_ascii_case! { ident, {
+                b"x" => Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 }),
+                b"y" => Ok(Xyz { x: 0.0, y: 1.0, z: 0.0 }),
+                b"z" => Ok(Xyz { x: 0.0, y: 0.0, z: 1.0 }),
+                _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+            }}
         }) {
             Ok(v) => v,
             Err(_) => input

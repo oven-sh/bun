@@ -592,7 +592,7 @@ pub mod chars {
 
     pub fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         // YAML 1.2 production [36] ns-hex-digit — keep spec name, delegate to canonical.
-        bun_str::strings::is_hex_code_point(Enc::wide(c))
+        bun_core::strings::is_hex_code_point(Enc::wide(c))
     }
 
     pub fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
@@ -1607,20 +1607,20 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 }
 
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
-/// `bun_str::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
+/// `bun_core::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
 /// via `Enc::key_bytes` (identity). For `Utf16` the lexer guarantees the
 /// slice is ASCII-only, so it is narrowed via
 /// [`bun_core::strings::narrow_ascii_u16`].
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
-            bun_str::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
+            bun_core::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
         }
         EncodingKind::Utf16 => {
             let mut buf = vec![0u8; s.len()];
             bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
                 .expect("lexer guarantees ASCII");
-            bun_str::wtf::parse_double(&buf).map_err(|_| ())
+            bun_core::wtf::parse_double(&buf).map_err(|_| ())
         }
     }
 }
@@ -1632,62 +1632,15 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
-            parse_unsigned_radix0_bytes(Enc::key_bytes(s))
+            bun_core::fmt::parse_unsigned::<u64>(Enc::key_bytes(s), 0).map_err(|_| ())
         }
         EncodingKind::Utf16 => {
             let mut buf = vec![0u8; s.len()];
             bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
                 .expect("lexer guarantees ASCII");
-            parse_unsigned_radix0_bytes(&buf)
+            bun_core::fmt::parse_unsigned::<u64>(&buf, 0).map_err(|_| ())
         }
     }
-}
-
-/// Byte-level impl of Zig `std.fmt.parseUnsigned(u64, buf, 0)`.
-fn parse_unsigned_radix0_bytes(mut buf: &[u8]) -> Result<u64, ()> {
-    if buf.is_empty() {
-        return Err(());
-    }
-    let radix: u32 = if buf.len() >= 2 && buf[0] == b'0' {
-        match buf[1] {
-            b'x' | b'X' => {
-                buf = &buf[2..];
-                16
-            }
-            b'o' | b'O' => {
-                buf = &buf[2..];
-                8
-            }
-            b'b' | b'B' => {
-                buf = &buf[2..];
-                2
-            }
-            _ => 10,
-        }
-    } else {
-        10
-    };
-    if buf.is_empty() {
-        return Err(());
-    }
-    let mut acc: u64 = 0;
-    for &c in buf {
-        if c == b'_' {
-            continue;
-        }
-        let digit = match c {
-            b'0'..=b'9' => (c - b'0') as u32,
-            b'a'..=b'z' => (c - b'a') as u32 + 10,
-            b'A'..=b'Z' => (c - b'A') as u32 + 10,
-            _ => return Err(()),
-        };
-        if digit >= radix {
-            return Err(());
-        }
-        acc = acc.checked_mul(radix as u64).ok_or(())?;
-        acc = acc.checked_add(digit as u64).ok_or(())?;
-    }
-    Ok(acc)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -4660,12 +4613,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         for _ in 0..(escape as u8) {
             self.inc(1);
             let digit = Enc::wide(self.next());
-            let num: u8 = match digit {
-                0x30..=0x39 => u8::try_from(digit - 0x30).expect("int cast"),
-                0x61..=0x66 => u8::try_from(digit - 0x61 + 10).expect("int cast"),
-                0x41..=0x46 => u8::try_from(digit - 0x41 + 10).expect("int cast"),
-                _ => return Err(ParseError::UnexpectedCharacter),
-            };
+            let num = bun_core::fmt::hex_digit_value_u32(digit)
+                .ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
 

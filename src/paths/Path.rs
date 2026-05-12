@@ -201,7 +201,10 @@ macro_rules! sep_dispatch {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A path code unit: `u8` (UTF-8/WTF-8 bytes) or `u16` (WTF-16, Windows).
-pub trait PathUnit: Copy + Eq + 'static {
+/// Extends the canonical [`crate::PathChar`] with the buffer-pool / ZSlice
+/// machinery this module needs; the ASCII helpers (`from_u8`/`eq_ascii`/
+/// `to_ascii`) are inherited.
+pub trait PathUnit: crate::PathChar {
     /// `opts.notPathUnit()`
     type Other: PathUnit;
     /// The fixed-size buffer type (`PathBuffer` / `WPathBuffer`).
@@ -210,11 +213,6 @@ pub trait PathUnit: Copy + Eq + 'static {
     const MAX_PATH: usize;
     /// `[:0]const u8` → `ZStr`, `[:0]const u16` → `WStr` (length-carrying NUL-terminated slice).
     type ZSlice: ?Sized;
-
-    fn from_ascii(c: u8) -> Self;
-    fn eq_ascii(self, c: u8) -> bool;
-    /// Return `Some(b)` if this code unit is in the ASCII range (`<= 0x7F`), else `None`.
-    fn to_ascii(self) -> Option<u8>;
 
     /// Construct a borrowed NUL-terminated slice (`ZStr` / `WStr`) from a raw pointer + len.
     ///
@@ -275,18 +273,6 @@ impl PathUnit for u8 {
     const LONG_PATH_PREFIX: &'static [u8] = &crate::windows::LONG_PATH_PREFIX_U8;
 
     #[inline]
-    fn from_ascii(c: u8) -> Self {
-        c
-    }
-    #[inline]
-    fn eq_ascii(self, c: u8) -> bool {
-        self == c
-    }
-    #[inline]
-    fn to_ascii(self) -> Option<u8> {
-        Some(self)
-    }
-    #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
         unsafe { ZStr::from_raw(ptr, len) }
     }
@@ -327,18 +313,6 @@ impl PathUnit for u16 {
     type ZSlice = WStr;
     const LONG_PATH_PREFIX: &'static [u16] = &crate::windows::LONG_PATH_PREFIX;
 
-    #[inline]
-    fn from_ascii(c: u8) -> Self {
-        c as u16
-    }
-    #[inline]
-    fn eq_ascii(self, c: u8) -> bool {
-        self == c as u16
-    }
-    #[inline]
-    fn to_ascii(self) -> Option<u8> {
-        u8::try_from(self).ok()
-    }
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
         unsafe { WStr::from_raw(ptr, len) }
@@ -398,9 +372,9 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_ascii(SEP),
-                PathSeparators::Posix => U::from_ascii(SEP_POSIX),
-                PathSeparators::Windows => U::from_ascii(SEP_WINDOWS),
+                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
+                PathSeparators::Posix => U::from_u8(SEP_POSIX),
+                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
             };
             self.len += 1;
         }
@@ -414,7 +388,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
             PathSeparators::Auto | PathSeparators::Posix | PathSeparators::Windows => {
                 for &c in characters {
                     buf[self.len] = if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                        U::from_ascii(PathSeparators::from_u8(SEP_OPT).char())
+                        U::from_u8(PathSeparators::from_u8(SEP_OPT).char())
                     } else {
                         c
                     };
@@ -429,9 +403,9 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_ascii(SEP),
-                PathSeparators::Posix => U::from_ascii(SEP_POSIX),
-                PathSeparators::Windows => U::from_ascii(SEP_WINDOWS),
+                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
+                PathSeparators::Posix => U::from_u8(SEP_POSIX),
+                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
             };
             self.len += 1;
         }
@@ -445,7 +419,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
             for off in 0..converted_len {
                 let c = buf[self.len + off];
                 if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                    buf[self.len + off] = U::from_ascii(PathSeparators::from_u8(SEP_OPT).char());
+                    buf[self.len + off] = U::from_u8(PathSeparators::from_u8(SEP_OPT).char());
                 }
             }
         }
@@ -461,69 +435,9 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
 /// Width-generic `bun.strings.basename` (Zig: `src/string/immutable/paths.zig:413`).
 /// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
 /// the `X:` drive designator at index 1.
+#[inline]
 fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
-    #[cfg(not(windows))]
-    return basename_posix(path);
-    #[cfg(windows)]
-    return basename_windows(path);
-}
-
-#[inline]
-fn basename_posix<U: PathUnit>(path: &[U]) -> &[U] {
-    if path.is_empty() {
-        return &path[..0];
-    }
-    let mut end_index = path.len() - 1;
-    while path[end_index].eq_ascii(b'/') {
-        if end_index == 0 {
-            return &path[..0];
-        }
-        end_index -= 1;
-    }
-    let mut start_index = end_index;
-    end_index += 1;
-    while !path[start_index].eq_ascii(b'/') {
-        if start_index == 0 {
-            return &path[0..end_index];
-        }
-        start_index -= 1;
-    }
-    &path[start_index + 1..end_index]
-}
-
-#[allow(dead_code)]
-#[inline]
-fn basename_windows<U: PathUnit>(path: &[U]) -> &[U] {
-    if path.is_empty() {
-        return &path[..0];
-    }
-    let mut end_index = path.len() - 1;
-    loop {
-        let c = path[end_index];
-        if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-            if end_index == 0 {
-                return &path[..0];
-            }
-            end_index -= 1;
-            continue;
-        }
-        if c.eq_ascii(b':') && end_index == 1 {
-            return &path[..0];
-        }
-        break;
-    }
-    let mut start_index = end_index;
-    end_index += 1;
-    while !path[start_index].eq_ascii(b'/')
-        && !path[start_index].eq_ascii(b'\\')
-        && !(path[start_index].eq_ascii(b':') && start_index == 1)
-    {
-        if start_index == 0 {
-            return &path[0..end_index];
-        }
-        start_index -= 1;
-    }
-    &path[start_index + 1..end_index]
+    if cfg!(windows) { bun_core::strings::basename_windows(path) } else { bun_core::strings::basename_posix(path) }
 }
 
 /// Width-generic `bun.Dirname.dirname` (Zig: `src/bun.zig:2520`).
@@ -600,8 +514,7 @@ fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
 /// Width-generic port of `bun.Dirname.diskDesignatorWindows` →
 /// `windowsParsePath(..).disk_designator.len`. Handles drive-letter (`C:` → 2)
 /// and UNC NetworkShare (`\\server\share` → index past second token).
-#[allow(dead_code)]
-fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
+pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
     // Zig: `path_.len >= 2 and path_[1] == ':'` — no alphabetic check on path_[0].
     if path.len() >= 2 && path[1].eq_ascii(b':') {
         return 2;
@@ -932,7 +845,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // PORT NOTE: reshaped for borrowck (Zig took *const and wrote NUL via @constCast).
         let len = self._buf.len;
         let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_ascii(0);
+        buf[len] = U::from_u8(0);
         let base_len = basename_generic(&buf[..len]).len();
         // Mirror Zig `full[full.len - base.len ..][0..base.len :0]` exactly:
         // index from the END of `buf[..len]`, not from `base.as_ptr()`, so that
@@ -985,7 +898,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // PORT NOTE: reshaped for borrowck (Zig took *const and wrote NUL via @constCast).
         let len = self._buf.len;
         let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_ascii(0);
+        buf[len] = U::from_u8(0);
         // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
         unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
     }

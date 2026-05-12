@@ -578,19 +578,7 @@ impl<'a> MiniVM<'a> {
 
     #[inline]
     pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
-        #[cfg(windows)]
-        {
-            // `WindowsLoop.uv_loop` is a public field (not a method); deref the
-            // process-global `*mut WindowsLoop`.
-            // SAFETY: `loop_ptr()` returns the live `WindowsLoop::get()`
-            // pointer; valid for the process lifetime.
-            return unsafe { (*self.mini.loop_ptr()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            // On POSIX, `PlatformEventLoop` is `uws::Loop` (alias defined above).
-            self.mini.loop_ptr()
-        }
+        bun_io::uws_to_native(self.mini.loop_ptr())
     }
 
     #[inline]

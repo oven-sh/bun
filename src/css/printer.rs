@@ -715,6 +715,45 @@ impl<'a> Printer<'a> {
         self.write_char(b'}')
     }
 
+    /// Writes each item via `f`, calling `sep` *between* items (not before the
+    /// first, not after the last). All errors short-circuit via `?`.
+    ///
+    /// This is the canonical replacement for the open-coded
+    /// `let mut first = true; for x in iter { if !first { <sep>? } first = false; <body>? }`
+    /// loop that pervades `to_css` impls.
+    ///
+    /// `sep` is a closure — not a `u8` — because the dominant separator in CSS
+    /// printing is [`delim`](Self::delim) (minify-aware whitespace around a byte),
+    /// and several sites need a multi-statement or `minify`-conditional separator.
+    pub fn write_separated<I, S, F>(&mut self, iter: I, mut sep: S, mut f: F) -> PrintResult<()>
+    where
+        I: IntoIterator,
+        S: FnMut(&mut Self) -> PrintResult<()>,
+        F: FnMut(&mut Self, I::Item) -> PrintResult<()>,
+    {
+        let mut first = true;
+        for item in iter {
+            if first {
+                first = false;
+            } else {
+                sep(self)?;
+            }
+            f(self, item)?;
+        }
+        Ok(())
+    }
+
+    /// [`write_separated`](Self::write_separated) with the most common separator,
+    /// [`delim(b',', false)`](Self::delim).
+    #[inline]
+    pub fn write_comma_separated<I, F>(&mut self, iter: I, f: F) -> PrintResult<()>
+    where
+        I: IntoIterator,
+        F: FnMut(&mut Self, I::Item) -> PrintResult<()>,
+    {
+        self.write_separated(iter, |d| d.delim(b',', false), f)
+    }
+
     pub fn with_context<C, F>(
         &mut self,
         selectors: &css::SelectorList,

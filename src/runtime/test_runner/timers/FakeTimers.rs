@@ -102,17 +102,7 @@ enum AssertMode {
     Unlocked,
 }
 
-/// PORT NOTE (b2-cycle): Zig reaches `vm.timer` (a value field of
-/// `VirtualMachine`); the low-tier `bun_jsc::VirtualMachine.timer` is `()`,
-/// so resolve `Timer::All` via the per-thread `RuntimeState` instead.
-#[inline]
-fn timer_all() -> *mut timer::All {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
-    // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-    unsafe { &raw mut (*state).timer }
-}
+use crate::jsc_hooks::timer_all;
 
 /// RAII `lock()`/`unlock()` for the per-thread `timer::All.lock`. Centralises
 /// the single raw-pointer deref so call sites read `let _g = timers_lock_guard();`

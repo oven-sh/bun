@@ -11,7 +11,7 @@ use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeL
 use crate::PackageManager;
 use bun_event_loop::AnyEventLoop;
 use bun_io::heap as io_heap;
-use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
+use bun_io::{BufferedReader, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
@@ -338,17 +338,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_io::Loop` *is* `PosixLoop` (identity). On Windows the uws
-        // wrapper (`WindowsLoop`) embeds the `*mut uv_loop_t` as a field —
-        // project it so the `BufferedReaderParent::loop_` consumer (which
-        // feeds `uv_fs_read`/`Source::open`) sees a real `uv_loop_t*`.
-        #[cfg(not(windows))]
-        { self.manager_mut().event_loop.r#loop().cast::<AsyncLoop>() }
-        #[cfg(windows)]
-        // SAFETY: `r#loop()` returns the live `us_loop` allocated by
-        // `us_create_loop`; `uv_loop` is set once in C at construction.
-        { unsafe { (*self.manager_mut().event_loop.r#loop()).uv_loop } }
+        self.manager_mut().event_loop.native_loop()
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {
@@ -1211,35 +1201,19 @@ bun_spawn::link_impl_ProcessExit! {
 // `on_reader_done`/`on_reader_error` via the type-erased vtable.
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_io::buffered_reader_parent_link!(LifecycleScript for LifecycleScriptSubprocess<'static>);
-impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::LifecycleScript;
-    /// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
-    const HAS_ON_READ_CHUNK: bool = false;
-
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: vtable contract — `this` is the live `set_parent` backref;
-        // tail-position call so no `&mut` to the embedded reader survives.
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: as above.
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        // SAFETY: as above. `AsyncLoop` (= `bun_io::Loop`) is a type alias for
-        // `bun_uws_sys::Loop` on POSIX, matching the trait's nominal return type.
-        unsafe { (*this).loop_() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
-        // SAFETY: as above. `manager.event_loop` is an `AnyEventLoop`; convert
-        // through `EventLoopHandle::from_any` so the by-value `EventLoopCtx`
-        // carries the right `kind`.
-        unsafe {
-            bun_event_loop::EventLoopHandle::from_any(&mut (*(*this).manager.as_ptr()).event_loop)
-                .as_event_loop_ctx()
-        }
-    }
+// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
+// `manager.event_loop` is an `AnyEventLoop`; convert through
+// `EventLoopHandle::from_any` so the by-value `EventLoopCtx` carries the right
+// `kind`.
+bun_io::impl_buffered_reader_parent! {
+    LifecycleScript for LifecycleScriptSubprocess<'a>;
+    has_on_read_chunk = false;
+    on_reader_done  = |this| (*this).on_reader_done();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    loop_           = |this| (*this).loop_();
+    event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
+        &mut (*(*this).manager.as_ptr()).event_loop,
+    ).as_event_loop_ctx();
 }
 
 impl Drop for LifecycleScriptSubprocess<'_> {

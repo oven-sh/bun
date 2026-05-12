@@ -72,79 +72,21 @@ pub type Poll<P> = IOWriter<P>;
 // BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
-impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
-    for StaticPipeWriter<P>
-{
-    const POLL_OWNER_TAG: bun_io::PollTag = P::POLL_OWNER_TAG;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
-        // never materializes `&mut StaticPipeWriter`, so this is the unique
-        // access path for the callback's duration.
-        unsafe { (*this).on_write(amount, status) };
-    }
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) };
-    }
-    const HAS_ON_CLOSE: bool = true;
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() };
-    }
-    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
-        // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly (rather than via `&self`) so the
-        // returned lifetime `'a` is unbound from `P`'s lifetime parameter.
-        unsafe { &*(*this).buffer.as_ptr() }
-    }
-    const HAS_ON_WRITABLE: bool = false;
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write. Shared-only read of event_loop.
-        unsafe { (*this).io_evtloop() }
-    }
-}
-
-#[cfg(windows)]
-impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_sys::windows::libuv::Loop {
-        // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
-        // `EventLoopHandle::uv_loop` is the centralized `.uv_loop` accessor.
-        unsafe { (*this).event_loop.uv_loop() }
-    }
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: see loop_. Intrusive refcount bump.
-        unsafe { RefCount::<Self>::ref_(this) };
-    }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see loop_. Intrusive refcount drop; may free `this`.
-        unsafe { RefCount::<Self>::deref(this) };
-    }
-}
-
-#[cfg(windows)]
-impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParent
-    for StaticPipeWriter<P>
-{
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: BACKREF set via set_parent; unique access for callback duration.
-        unsafe { (*this).on_write(amount, status) };
-    }
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) };
-    }
-    const HAS_ON_CLOSE: bool = true;
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() };
-    }
-    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
-        // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`.
-        unsafe { &*(*this).buffer.as_ptr() }
-    }
-    const HAS_ON_WRITABLE: bool = false;
+bun_io::impl_buffered_writer_parent! {
+    for<P: StaticPipeWriterProcess> StaticPipeWriter<P>;
+    poll_tag   = P::POLL_OWNER_TAG,
+    borrow     = mut,
+    on_write   = on_write,
+    on_error   = on_error,
+    on_close   = on_close,
+    // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`'s
+    // lifetime parameter.
+    get_buffer = |this| &*(*this).buffer.as_ptr(),
+    event_loop = |this| (*this).io_evtloop(),
+    uv_loop    = |this| (*this).event_loop.uv_loop(),
+    ref_       = |this| RefCount::<Self>::ref_(this),
+    deref      = |this| RefCount::<Self>::deref(this),
+    win_on_write_guard = |_this| (),
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
@@ -313,18 +255,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(not(windows))]
-        {
-            self.event_loop.platform_event_loop()
-        }
-        #[cfg(windows)]
-        {
-            // `platform_event_loop()` returns the uws `WindowsLoop` wrapper;
-            // `AsyncLoop` (= `bun_io::Loop`) is the inner `uv_loop_t` on
-            // Windows (Zig: `vm.event_loop_handle.?` is `*uv.Loop`).
-            // `EventLoopHandle::uv_loop` centralizes that field projection.
-            self.event_loop.uv_loop()
-        }
+        self.event_loop.native_loop()
     }
 
     pub fn watch(&mut self) {

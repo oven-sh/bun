@@ -685,7 +685,7 @@ pub fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(with_async_context_if_needed(callback, global))
+        Some(callback.with_async_context_if_needed(global))
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
@@ -844,20 +844,6 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
     // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
     // `value` must be an object (always a JSBoundFunction here).
     bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
-}
-
-/// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on
-/// `bun_jsc::JSValue`). Wraps a callback so it restores the current
-/// AsyncLocalStorage context when invoked later.
-// TODO(port): land as inherent `JSValue::with_async_context_if_needed` in bun_jsc.
-fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
-    unsafe extern "C" {
-        safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-            global: &JSGlobalObject,
-            callback: JSValue,
-        ) -> JSValue;
-    }
-    AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
 }
 
 pub fn create_bound(

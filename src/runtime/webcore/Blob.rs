@@ -2330,7 +2330,7 @@ impl BlobExt for Blob {
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,
-                        ref_count: AtomicU32::new(1),
+                        ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: None,
                     }));
                     let mut blob = Blob::init_with_store(store, global_this);
@@ -4961,7 +4961,7 @@ pub fn jsdom_file_construct_(
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
                     bun_core::PathString::init_owned(name_value_str.to_owned_slice()),
                 )),
-                ref_count: AtomicU32::new(1),
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,
                 is_all_ascii: None,
             }))));
@@ -5442,33 +5442,6 @@ pub extern "C" fn Blob__fromBytesWithType(
     blob
 }
 
-// POSIX-only — bun_sys::munmap is a compile error on Windows, and the only
-// caller (WebKit screenshot path) is macOS.
-#[cfg(unix)]
-pub mod mmap_free_interface {
-    use super::*;
-    // Stateless allocator vtable whose free() munmap's. Same pattern as
-    // LinuxMemFdAllocator but without the stateful fd.
-    unsafe fn free(_: *mut c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-        if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
-            bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {:?}", err));
-        }
-    }
-    unsafe fn alloc(_: *mut c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> *mut u8 {
-        // Unreachable: mmap-backed `Bytes` is fixed-size and never grows.
-        core::ptr::null_mut()
-    }
-    static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
-        alloc,
-        resize: bun_alloc::AllocatorVTable::NO_RESIZE,
-        remap: bun_alloc::AllocatorVTable::NO_REMAP,
-        free,
-    };
-    pub static ALLOCATOR: bun_alloc::StdAllocator = bun_alloc::StdAllocator {
-        ptr: core::ptr::null_mut(),
-        vtable: &VTABLE,
-    };
-}
 
 /// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;
 /// when the store's refcount drops to zero, deinit calls allocator.free

@@ -41,19 +41,7 @@ pub mod js_printer {
     /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, _enc: Encoding) -> fmt::Result {
-        f.write_char('"')?;
-        for &b in input {
-            match b {
-                b'"' => f.write_str("\\\"")?,
-                b'\\' => f.write_str("\\\\")?,
-                b'\n' => f.write_str("\\n")?,
-                b'\r' => f.write_str("\\r")?,
-                b'\t' => f.write_str("\\t")?,
-                0x00..=0x1F => write!(f, "\\u{:04x}", b)?,
-                _ => f.write_char(b as char)?,
-            }
-        }
-        f.write_char('"')
+        super::encode_json_string(f, input)
     }
     pub fn write_pre_quoted_string(
         input: &[u8],
@@ -62,24 +50,12 @@ pub mod js_printer {
         _allow_backtick: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        let _ = (quote, enc);
         // TODO(port): full impl in bun_js_printer; this tier only needs the
         // "already quoted" passthrough for fmt.rs JS-string display.
         // Zig writePreQuotedString writes the escaped body WITHOUT surrounding
-        // quotes — emit the same escape set as write_json_string sans the
-        // leading/trailing '"'.
-        for &b in input {
-            match b {
-                b'"' => f.write_str("\\\"")?,
-                b'\\' => f.write_str("\\\\")?,
-                b'\n' => f.write_str("\\n")?,
-                b'\r' => f.write_str("\\r")?,
-                b'\t' => f.write_str("\\t")?,
-                0x00..=0x1F => write!(f, "\\u{:04x}", b)?,
-                _ => f.write_char(b as char)?,
-            }
-        }
-        Ok(())
+        // quotes — delegate to the canonical chars-only escaper.
+        let _ = (quote, enc);
+        super::encode_json_string_chars(f, input)
     }
 }
 use strum::IntoStaticStr;
@@ -719,47 +695,27 @@ impl fmt::Display for Raw<'_> {
 #[inline(always)]
 pub const fn raw(bytes: &[u8]) -> Raw<'_> { Raw(bytes) }
 
-/// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
-/// [`buf_print`] / [`buf_print_len`] / [`buf_print_z`] and [`print_int`].
-/// Hoisted so other modules can reuse it instead of redefining the same
-/// `Cursor{buf,pos}` struct (the `std.fmt.bufPrint` shim shows up everywhere).
-pub struct SliceCursor<'a> {
-    pub buf: &'a mut [u8],
-    pub at: usize,
-}
-impl core::fmt::Write for SliceCursor<'_> {
+// Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
+// `bun_alloc` so that crate can use them too; re-exported here for the
+// `bun_core::fmt::` callers and extended with an `io::Write` face so the same
+// struct also serves as Zig's `std.io.fixedBufferStream` for write-only sites.
+pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
+
+impl crate::io::Write for SliceCursor<'_> {
     #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
         let end = self.at + bytes.len();
-        if end > self.buf.len() { return Err(core::fmt::Error); }
+        if end > self.buf.len() {
+            return Err(crate::err!("NoSpaceLeft"));
+        }
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
         Ok(())
     }
-}
-
-/// Port of `std.fmt.bufPrint` — render into `buf`, return the written sub-slice.
-/// Fails (`fmt::Error`) when `buf` is too short.
-pub fn buf_print<'a>(
-    buf: &'a mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> core::result::Result<&'a [u8], core::fmt::Error> {
-    let mut c = SliceCursor { buf, at: 0 };
-    core::fmt::write(&mut c, args)?;
-    let len = c.at;
-    Ok(&c.buf[..len])
-}
-
-/// [`buf_print`] returning only the byte count — `std.fmt.bufPrint(..).len`.
-#[inline]
-pub fn buf_print_len(
-    buf: &mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> core::result::Result<usize, core::fmt::Error> {
-    let mut c = SliceCursor { buf, at: 0 };
-    core::fmt::write(&mut c, args)?;
-    Ok(c.at)
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.at
+    }
 }
 
 /// Port of `std.fmt.bufPrintZ` — [`buf_print`] then append a NUL terminator and
@@ -822,47 +778,49 @@ impl core::fmt::Write for VecWriter<'_> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// std.fmt.parseInt / parseFloat — canonical &[u8] number parsers.
+// std.fmt.parseInt / parseUnsigned — canonical &[u8] integer parsers.
 //
-// Zig has exactly one impl (`std.fmt.parseInt(T, []const u8, radix)`) called
-// directly at every site. The Rust port spawned ~13 local
-// `core::str::from_utf8(s).ok()?.parse::<T>().ok()` helpers solely because
-// `str::parse` needs `&str`. This is the single replacement; bun_string
-// re-exports `parse_int` so existing `strings::parse_int` callers keep working.
+// Zig has exactly one impl (`std.fmt.parseIntWithSign`, vendor/zig/lib/std/
+// fmt.zig:409) plus thin no-sign wrapper `std.fmt.parseUnsigned` (:488). Every
+// Zig caller invoked those directly on `[]const u8`; the Rust port spawned ~15
+// local digit loops solely to dodge `core::str::from_utf8`. These restore 1:1
+// parity. bun_string re-exports `parse_int` so existing `strings::parse_int`
+// callers keep working. Re-exported via bun_core::lib.rs.
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Error from [`parse_int`] (`std.fmt.parseInt` port).
+/// Error from [`parse_int`] / [`parse_unsigned`] (`std.fmt.ParseIntError` port).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseIntError {
     InvalidCharacter,
     Overflow,
 }
 
-/// `std.fmt.parseInt(T, buf, radix)` — parse an integer of type `T` from `buf`
-/// in base `radix` (2..=36). Accepts an optional leading `+`/`-`. Port keeps
-/// Zig's error set: `Overflow` on range error, `InvalidCharacter` otherwise.
-///
-/// Works directly on `&[u8]` so callers never need an intermediate
-/// `core::str::from_utf8` round-trip.
-pub fn parse_int<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
-where
-    T: TryFrom<i128> + TryFrom<u128>,
-{
-    debug_assert!((2..=36).contains(&radix));
-    if buf.is_empty() {
-        return Err(ParseIntError::InvalidCharacter);
+impl ParseIntError {
+    /// Zig `@errorName(e)` — for callers that bubble the tag verbatim
+    /// (e.g. Postgres `CommandTag` Debug fmt).
+    #[inline]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::InvalidCharacter => "InvalidCharacter",
+            Self::Overflow => "Overflow",
+        }
     }
-    let (neg, digits) = match buf[0] {
-        b'+' => (false, &buf[1..]),
-        b'-' => (true, &buf[1..]),
-        _ => (false, buf),
-    };
-    if digits.is_empty() {
+}
+
+/// Shared digit loop behind [`parse_int`] / [`parse_unsigned`]. `digits` has
+/// any sign already stripped; `radix` is post-auto-detect (2..=36). Mirrors
+/// `std.fmt.parseIntWithSign` body: skips embedded `_` separators, rejects
+/// leading/trailing `_`, accumulates in `u128` with checked overflow.
+#[inline]
+fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
+    debug_assert!((2..=36).contains(&radix));
+    if digits.is_empty() || digits[0] == b'_' || *digits.last().unwrap() == b'_' {
         return Err(ParseIntError::InvalidCharacter);
     }
     let radix_u = radix as u128;
     let mut acc: u128 = 0;
     for &c in digits {
+        if c == b'_' { continue; }
         let d = match c {
             b'0'..=b'9' => (c - b'0') as u128,
             b'a'..=b'z' => (c - b'a' + 10) as u128,
@@ -877,6 +835,48 @@ where
             .and_then(|v| v.checked_add(d))
             .ok_or(ParseIntError::Overflow)?;
     }
+    Ok(acc)
+}
+
+/// Strip an optional `0x`/`0o`/`0b` prefix when `radix == 0`; otherwise pass
+/// through unchanged. Mirrors `std.fmt.parseIntWithSign` radix-0 branch.
+#[inline]
+fn auto_radix(digits: &[u8], radix: u8) -> (&[u8], u8) {
+    if radix != 0 { return (digits, radix); }
+    if digits.len() >= 2 && digits[0] == b'0' {
+        match digits[1] {
+            b'x' | b'X' => return (&digits[2..], 16),
+            b'o' | b'O' => return (&digits[2..], 8),
+            b'b' | b'B' => return (&digits[2..], 2),
+            _ => {}
+        }
+    }
+    (digits, 10)
+}
+
+/// `std.fmt.parseInt(T, buf, radix)` — parse an integer of type `T` from `buf`.
+///
+/// `radix` ∈ 2..=36, or `0` to auto-detect from a `0x`/`0o`/`0b` prefix
+/// (defaulting to 10). Accepts an optional leading `+`/`-`. Embedded `_`
+/// separators are skipped; leading/trailing `_` are rejected. Port keeps Zig's
+/// error set: `Overflow` on range error, `InvalidCharacter` otherwise.
+///
+/// Works directly on `&[u8]` so callers never need an intermediate
+/// `core::str::from_utf8` round-trip.
+pub fn parse_int<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    if buf.is_empty() {
+        return Err(ParseIntError::InvalidCharacter);
+    }
+    let (neg, rest) = match buf[0] {
+        b'+' => (false, &buf[1..]),
+        b'-' => (true, &buf[1..]),
+        _ => (false, buf),
+    };
+    let (digits, radix) = auto_radix(rest, radix);
+    let acc = parse_with_sign(digits, radix)?;
     if neg {
         let signed: i128 = if acc == (i128::MAX as u128) + 1 {
             i128::MIN
@@ -889,6 +889,81 @@ where
     } else {
         T::try_from(acc).map_err(|_| ParseIntError::Overflow)
     }
+}
+
+/// `std.fmt.parseUnsigned(T, buf, radix)` — [`parse_int`] without sign
+/// handling: a leading `+`/`-` is `InvalidCharacter`. Use when the grammar
+/// being parsed forbids signs (semver components, HTTP status codes,
+/// content-length, etc.).
+#[inline]
+pub fn parse_unsigned<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    let (digits, radix) = auto_radix(buf, radix);
+    let acc = parse_with_sign(digits, radix)?;
+    T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+}
+
+/// `std.fmt.parseInt(T, s, 10) catch null` — decimal convenience wrapper over
+/// [`parse_int`]. Replaces the ~12 file-local
+/// `fn parse_T(s:&[u8])->Option<T>{ parse_int(s,10).ok() }` thin wrappers the
+/// port spawned (Zig calls `std.fmt.parseInt` inline at every site).
+#[inline]
+pub fn parse_decimal<T>(s: &[u8]) -> Option<T>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    parse_int::<T>(s, 10).ok()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// parse_double — `WTF.parseDouble` (src/jsc/WTF.zig:20 / bun.zig:1150)
+//
+// Partial-match JS-semantics double parse over Latin-1 bytes. Unlike
+// [`parse_f64`] this accepts a numeric *prefix* (`b"1.5x"` → `Ok(1.5)`) and
+// does NOT special-case `inf`/`nan` — it is exactly WebKit's lexer behaviour.
+//
+// Lives in tier-0 `bun_core` (not `bun_jsc`) so `bun_interchange` (yaml/toml),
+// `bun_js_parser::lexer`, and `bun_install` can call it without taking a
+// `bun_jsc` edge. `bun_core::wtf`, `bun_jsc::wtf`, and `bun::` re-export it
+// to preserve the Zig namespace shape.
+//
+// TODO(port): Zig `bun.parseDouble` falls back to `std.fmt.parseFloat` under
+// `comptime Environment.isWasm` (no WebKit link). Restore when wasm target is
+// brought up.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Error from [`parse_double`] — Zig `error{InvalidCharacter}`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct InvalidCharacter;
+
+impl core::fmt::Display for InvalidCharacter {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("InvalidCharacter")
+    }
+}
+impl core::error::Error for InvalidCharacter {}
+impl From<InvalidCharacter> for crate::Error {
+    #[inline]
+    fn from(_: InvalidCharacter) -> Self { crate::Error::from_name("InvalidCharacter") }
+}
+
+/// `WTF.parseDouble` — partial-match Latin-1 double parser. Returns `Ok` if
+/// any numeric prefix was consumed; `Err(InvalidCharacter)` on empty input or
+/// when no leading digit/sign was recognised.
+pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
+    if buf.is_empty() {
+        return Err(InvalidCharacter);
+    }
+    let mut count: usize = 0;
+    // SAFETY: `buf` is a valid slice; WTF reads at most `len` Latin-1 bytes.
+    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
+    if count == 0 {
+        return Err(InvalidCharacter);
+    }
+    Ok(res)
 }
 
 // `WTF__parseDouble` — WebKit's JS-semantics double parser (Latin-1 input,
@@ -2199,6 +2274,53 @@ pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a m
 // count (std.fmt.count)
 // ───────────────────────────────────────────────────────────────────────────
 
+// ───────────────────────── CountingWriter / Null ─────────────────────────
+// One type subsumes Zig's `std.Io.Writer.Discarding` (null sink) and the
+// removed `std.io.countingWriter(inner)` (forwarding wrapper). Implements
+// `core::fmt::Write` so it can replace the per-crate private `CountingWriter`
+// reinventions (clap). The byte-level `bun_io::Write` counting sink stays in
+// `bun_io::DiscardingWriter` (different trait, sits above bun_core).
+
+/// Zero-sized `fmt::Write` no-op — default type param for [`CountingWriter`].
+pub struct Null;
+impl fmt::Write for Null {
+    #[inline]
+    fn write_str(&mut self, _: &str) -> fmt::Result { Ok(()) }
+}
+
+/// Counts every byte written; optionally forwards to a wrapped `fmt::Write`.
+/// `inner: None` ⇒ pure discarding sink (Zig `Writer.Discarding`).
+pub struct CountingWriter<'a, W: fmt::Write = Null> {
+    inner: Option<&'a mut W>,
+    /// Total bytes written so far (counted before forwarding).
+    pub count: usize,
+}
+
+impl<'a, W: fmt::Write> CountingWriter<'a, W> {
+    /// Wrap an existing `fmt::Write` sink, forwarding writes through it.
+    #[inline]
+    pub fn wrap(w: &'a mut W) -> Self { Self { inner: Some(w), count: 0 } }
+    /// Direct access to the inner sink (bypasses counting). Panics on the
+    /// `null()` variant — callers know which mode they constructed.
+    #[inline]
+    pub fn inner(&mut self) -> &mut W { self.inner.as_mut().unwrap() }
+}
+
+impl CountingWriter<'static, Null> {
+    /// Pure discarding sink — `inner: None`, never forwarded.
+    #[inline]
+    pub fn null() -> Self { Self { inner: None, count: 0 } }
+}
+
+impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.count += s.len();
+        if let Some(w) = self.inner.as_mut() { w.write_str(s)?; }
+        Ok(())
+    }
+}
+
 /// Port of `std.fmt.count`: number of bytes the formatted args would produce.
 ///
 /// Zig drives a `Writer.Discarding` (64-byte scratch buffer that drops writes
@@ -2440,6 +2562,16 @@ pub const fn hex_digit_value(b: u8) -> Option<u8> {
     }
 }
 
+/// Widened wrapper over [`hex_digit_value`] for callers holding a decoded code
+/// point (`u32`, or `i32` bit-cast via `as u32`). Any value outside `0..=0xFF`
+/// — including a `-1i32 as u32` EOF sentinel — falls through to `None`.
+///
+/// Returns the nibble `0..=15`; callers cast to their accumulator width.
+#[inline]
+pub const fn hex_digit_value_u32(c: u32) -> Option<u8> {
+    if c <= 0xFF { hex_digit_value(c as u8) } else { None }
+}
+
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
 /// High bits are masked, so any `u8` is accepted.
 #[inline]
@@ -2471,6 +2603,12 @@ pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
 pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
     if LOWER { hex_byte_lower(b) } else { hex_byte_upper(b) }
 }
+
+// ── compat aliases (pre-dedup names) ──────────────────────────────────────
+#[doc(hidden)] #[inline] pub const fn hex2_upper(b: u8) -> [u8; 2] { hex_byte_upper(b) }
+#[doc(hidden)] #[inline] pub const fn hex2_lower(b: u8) -> [u8; 2] { hex_byte_lower(b) }
+#[doc(hidden)] #[inline] pub const fn hex4_upper(v: u16) -> [u8; 4] { hex_u16::<false>(v) }
+#[doc(hidden)] #[inline] pub const fn hex4_lower(v: u16) -> [u8; 4] { hex_u16::<true>(v) }
 
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
@@ -2536,36 +2674,39 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
     HexIntFormatter::<LOWER, N>::get_out_buf(v)
 }
 
-/// Upper-case `[u8; 2]` hex of a byte — for `\xHH` / `%HH` escapes. Replaces
-/// open-coded `HEX_CHARS[(b>>4)&0xF], HEX_CHARS[b&0xF]` indexing.
-#[inline(always)]
-pub const fn hex2_upper(b: u8) -> [u8; 2] {
-    [UPPER_HEX_TABLE[(b >> 4) as usize], UPPER_HEX_TABLE[(b & 0xF) as usize]]
+/// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
+/// colon-separated). Returns a fixed 17-byte ASCII buffer; borrow as `&[u8]`
+/// for `ZigString::init`. Port of the inline `std.fmt.bufPrint(.., "{x:0>2}:..")`
+/// pattern duplicated at `node_os.zig:686` and `:800`.
+#[inline]
+pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
+    let mut out = [b':'; 17];
+    let mut i = 0;
+    for &b in mac {
+        out[i]     = LOWER_HEX_TABLE[(b >> 4)  as usize];
+        out[i + 1] = LOWER_HEX_TABLE[(b & 0x0f) as usize];
+        i += 3;
+    }
+    out
 }
-/// Lower-case `[u8; 2]` hex of a byte.
+
+/// `{:0N}` — zero-padded fixed-width decimal of a `u64` into `[u8; N]`.
+/// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Port of Zig
+/// `std.fmt.printInt(.., .{.width=N, .fill='0'})` and js_printer's
+/// `formatUnsignedIntegerBetween`. Caller guarantees `val < 10^N`; excess
+/// high digits are silently dropped (debug-asserted).
 #[inline(always)]
-pub const fn hex2_lower(b: u8) -> [u8; 2] {
-    [LOWER_HEX_TABLE[(b >> 4) as usize], LOWER_HEX_TABLE[(b & 0xF) as usize]]
-}
-/// Upper-case `[u8; 4]` hex of a `u16` — for `\uXXXX` escapes.
-#[inline(always)]
-pub const fn hex4_upper(k: u16) -> [u8; 4] {
-    [
-        UPPER_HEX_TABLE[((k >> 12) & 0xF) as usize],
-        UPPER_HEX_TABLE[((k >> 8) & 0xF) as usize],
-        UPPER_HEX_TABLE[((k >> 4) & 0xF) as usize],
-        UPPER_HEX_TABLE[(k & 0xF) as usize],
-    ]
-}
-/// Lower-case `[u8; 4]` hex of a `u16`.
-#[inline(always)]
-pub const fn hex4_lower(k: u16) -> [u8; 4] {
-    [
-        LOWER_HEX_TABLE[((k >> 12) & 0xF) as usize],
-        LOWER_HEX_TABLE[((k >> 8) & 0xF) as usize],
-        LOWER_HEX_TABLE[((k >> 4) & 0xF) as usize],
-        LOWER_HEX_TABLE[(k & 0xF) as usize],
-    ]
+pub fn itoa_padded<const N: usize>(mut val: u64) -> [u8; N] {
+    debug_assert!(N == 0 || val < 10u64.saturating_pow(N as u32));
+    let mut buf = [b'0'; N];
+    let mut i = N;
+    while i > 0 {
+        i -= 1;
+        // val % 10 < 10 ⇒ cast never truncates.
+        buf[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
+    buf
 }
 
 /// `{:x}` — variable-width lower-hex of a u64 (no leading zeros; `0` → `"0"`),
@@ -2728,6 +2869,44 @@ pub fn fmt_duration_one_decimal(ns: u64) -> DurationOneDecimal {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// SQL connection-timeout error message — pure formatting, cycle-free: bun_core
+// is already a dep of bun_sql_jsc AND bun_runtime.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Which connection-level timeout fired. Drives the message template in
+/// [`fmt_conn_timeout`]; shared by the Postgres and MySQL backends.
+#[derive(Clone, Copy)]
+pub enum ConnTimeoutKind {
+    Idle,
+    Connection,
+    MaxLifetime,
+}
+
+/// Render the canonical SQL connection-timeout error message.
+///
+/// `ms` is converted to nanoseconds with a saturating multiply and rendered
+/// through [`fmt_duration_one_decimal`] (matching the Zig backends' inline
+/// `bun.fmt.fmtDurationOneDecimal(ms * std.time.ns_per_ms)`). `suffix` is
+/// appended verbatim — used for the per-status `(sent startup message…)` /
+/// `(during authentication)` tails.
+pub fn fmt_conn_timeout(kind: ConnTimeoutKind, ms: u32, suffix: &str) -> impl Display + '_ {
+    struct F<'a>(ConnTimeoutKind, u32, &'a str);
+    impl Display for F<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            let prefix = match self.0 {
+                ConnTimeoutKind::Idle => "Idle timeout reached after ",
+                ConnTimeoutKind::Connection => "Connection timeout after ",
+                ConnTimeoutKind::MaxLifetime => "Max lifetime timeout reached after ",
+            };
+            f.write_str(prefix)?;
+            fmt_duration_one_decimal((self.1 as u64).saturating_mul(1_000_000)).fmt(f)?;
+            f.write_str(self.2)
+        }
+    }
+    F(kind, ms, suffix)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // FormatSlice
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -2810,15 +2989,36 @@ impl Display for FormatDouble {
 /// convention rather than the `Format*` struct convention used here).
 pub type DoubleFormatter = FormatDouble;
 
+// ─── Integer → ASCII ───────────────────────────────────────────────────────
+// One path for every base-10 integer write. Backed by the `itoa` crate (LUT
+// 2-digits-at-a-time — same code serde_json/cssparser ship), already in the
+// workspace link graph. Replaces the three competing impls the port grew:
+// `core::fmt`-via-SliceCursor (slow + silent-truncate footgun), the hand-
+// rolled `itoa_u64` reverse-fill, and tcc_sys's private `itoa::Buffer` use.
+// Zig has exactly one path (`std.fmt.printInt`); this restores that parity.
+
+/// Stack scratch for [`itoa`]. 40 bytes — fits `i128::MIN`. `::new()` is a
+/// const no-op (uninit array), so declare it inline at the call site.
+pub use ::itoa::Buffer as ItoaBuf;
+
+/// Format `n` as base-10 ASCII into `buf` and return the digits (with leading
+/// `-` for negatives) as `&[u8]`. `core::fmt`-free; no `Formatter` vtable.
+#[inline]
+pub fn itoa<T: ::itoa::Integer>(buf: &mut ItoaBuf, n: T) -> &[u8] {
+    buf.format(n).as_bytes()
+}
+
 /// Port of `std.fmt.printInt(buf, value, 10, .lower, .{})`: format `value`
 /// into `buf` as base-10 ASCII and return the number of bytes written.
-/// Panics (debug) if `buf` is too small — callers size the buffer by the
-/// type's max digit count.
+/// Panics if `buf` is too small — callers size the buffer by the type's max
+/// digit count. Use [`itoa`] directly when you can own a fresh [`ItoaBuf`];
+/// this exists for offset-writes into a larger caller buffer.
 #[inline]
-pub fn print_int<T: core::fmt::Display>(buf: &mut [u8], value: T) -> usize {
-    let mut w = SliceCursor { buf, at: 0 };
-    let _ = core::fmt::Write::write_fmt(&mut w, format_args!("{value}"));
-    w.at
+pub fn print_int<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> usize {
+    let mut tmp = ItoaBuf::new();
+    let s = tmp.format(value).as_bytes();
+    buf[..s.len()].copy_from_slice(s);
+    s.len()
 }
 
 /// [`print_int`] returning the written sub-slice of `buf` — the moral
@@ -2826,28 +3026,27 @@ pub fn print_int<T: core::fmt::Display>(buf: &mut [u8], value: T) -> usize {
 /// Use this when the caller wants the bytes; use [`print_int`] directly when
 /// writing at an offset and only the byte-count is needed.
 #[inline]
-pub fn int_as_bytes<T: core::fmt::Display>(buf: &mut [u8], value: T) -> &[u8] {
+pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
     let n = print_int(buf, value);
     &buf[..n]
 }
 
-/// Reverse-fill decimal `u64` → ASCII into a caller-owned scratch buffer and
-/// return the formatted slice (1..=20 bytes, no leading zeros, `0` → `b"0"`).
+/// NUL-terminated decimal `u64` → ASCII into a caller-owned scratch buffer,
+/// returning a [`CStr`] borrowing the head of `buf`.
 ///
-/// This is the `core::fmt`-free itoa used on hot paths where dragging in
-/// `Formatter` / `dyn Display` vtables is measurable. 20 bytes covers
-/// `u64::MAX` (20 digits); `u32` callers widen via `u64::from`.
-#[inline(always)]
-pub fn itoa_u64(buf: &mut [u8; 20], mut n: u64) -> &[u8] {
-    let mut i = buf.len();
-    loop {
-        i -= 1;
-        // n % 10 < 10 ⇒ cast never truncates.
-        buf[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-        if n == 0 { break; }
-    }
-    &buf[i..]
+/// This is the Rust analogue of Zig's `std.fmt.bufPrintZ(&buf, "{d}", .{n})`
+/// — used when handing an integer to a C API that wants a `*const c_char`
+/// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
+/// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
+#[inline]
+pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
+    let mut tmp = ItoaBuf::new();
+    let s = tmp.format(n).as_bytes();
+    buf[..s.len()].copy_from_slice(s);
+    buf[s.len()] = 0;
+    // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
+    // wrote a NUL terminator at `s.len()`.
+    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
 }
 
 /// Decimal digit count of a signed integer, including the leading `-` for
@@ -2961,7 +3160,7 @@ impl<'a> OutOfRangeValue for &'a [u8] {
     }
     fn type_name() -> &'static str { "[]const u8" }
 }
-// MOVE_DOWN: bun_str::String → bun_alloc (T0). Re-import from there.
+// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
 impl OutOfRangeValue for bun_alloc::String {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
@@ -3112,6 +3311,60 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
         w.write_char(byte as char)?;
     }
     Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// std.json.encodeJsonString — single canonical port.
+// Zig: vendor/zig/lib/std/json/Stringify.zig:670 (encodeJsonString →
+// encodeJsonStringChars → outputSpecialEscape). Every Rust copy that was
+// hand-ported from a Zig `std.json.fmt(...)` call funnels through here.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Port of Zig stdlib `std.json.encodeJsonStringChars` with default options
+/// (`escape_unicode = false`): writes the escaped body of a JSON string
+/// **without** surrounding quotes.
+///
+/// Escape set (matches `outputSpecialEscape` exactly):
+///   - `\"` `\\` `\b` `\f` `\n` `\r` `\t`
+///   - other `0x00..=0x1F` → `\u00XX` (lowercase hex)
+///   - `0x20..=0xFF` → emitted verbatim in run-batched `write_str` calls
+///     (input is treated as UTF-8/Latin-1 bytes; no transcoding).
+pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+    let mut run = 0;
+    for (i, &b) in s.iter().enumerate() {
+        let esc: &str = match b {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            0x08 => "\\b",
+            0x0C => "\\f",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x00..=0x1F => {
+                if run < i { write_bytes(w, &s[run..i])?; }
+                let hex = hex_u16::<true>(b as u16);
+                w.write_str("\\u")?;
+                write_bytes(w, &hex)?;
+                run = i + 1;
+                continue;
+            }
+            _ => continue,
+        };
+        if run < i { write_bytes(w, &s[run..i])?; }
+        w.write_str(esc)?;
+        run = i + 1;
+    }
+    if run < s.len() { write_bytes(w, &s[run..])?; }
+    Ok(())
+}
+
+/// Port of Zig stdlib `std.json.encodeJsonString`: surrounding `"` quotes
+/// around [`encode_json_string_chars`].
+#[inline]
+pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+    w.write_char('"')?;
+    encode_json_string_chars(w, s)?;
+    w.write_char('"')
 }
 
 // ported from: src/bun_core/fmt.zig

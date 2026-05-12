@@ -29,8 +29,8 @@ use bun_paths::path_buffer_pool;
 use bun_core::{strings, String as BunString};
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_io::Write as _;
 
-use super::serialized_failure::{write_i32_le, write_u32_le};
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{DevServer, CLIENT_PREFIX};
 use crate::bake::dev_server_body::parse_hex_to_int;
@@ -107,7 +107,7 @@ impl ErrorReportRequest {
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
 
-        let mut reader: &[u8] = body;
+        let mut reader = bun_io::FixedBufferStream::new(body);
 
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         let arena = Arena::new();
@@ -128,11 +128,11 @@ impl ErrorReportRequest {
         let name = read_string32(&mut reader)?;
         let message = read_string32(&mut reader)?;
         let browser_url = read_string32(&mut reader)?;
-        let stack_count = read_u32_le(&mut reader)?.min(255); // does not support more than 255
+        let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
         let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
-            let line = read_i32_le(&mut reader)?;
-            let column = read_i32_le(&mut reader)?;
+            let line = reader.read_int_le::<i32>()?;
+            let column = reader.read_int_le::<i32>()?;
             let function_name = read_string32(&mut reader)?;
             let file_name = read_string32(&mut reader)?;
             frames.push(ZigStackFrame {
@@ -349,23 +349,23 @@ impl ErrorReportRequest {
 
         let mut out: Vec<u8> = Vec::new();
 
-        write_u32_le(&mut out, exception.stack.frames_len as u32);
+        _ = out.write_int_le::<u32>(exception.stack.frames_len as u32);
         for frame in exception.stack.frames() {
-            write_i32_le(&mut out, frame.position.line.one_based());
-            write_i32_le(&mut out, frame.position.column.one_based());
+            _ = out.write_int_le::<i32>(frame.position.line.one_based());
+            _ = out.write_int_le::<i32>(frame.position.column.one_based());
 
             let function_name: &[u8] = frame.function_name.byte_slice();
-            write_u32_le(&mut out, function_name.len() as u32);
+            _ = out.write_int_le::<u32>(function_name.len() as u32);
             out.extend_from_slice(function_name);
 
             let src_to_write: &[u8] = frame.source_url.byte_slice();
             if strings::has_prefix_comptime(src_to_write, b"/") {
                 let mut relative_path_buf = path_buffer_pool::get();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);
-                write_u32_le(&mut out, file.len() as u32);
+                _ = out.write_int_le::<u32>(file.len() as u32);
                 out.extend_from_slice(file);
             } else {
-                write_u32_le(&mut out, src_to_write.len() as u32);
+                _ = out.write_int_le::<u32>(src_to_write.len() as u32);
                 out.extend_from_slice(src_to_write);
             }
         }
@@ -385,12 +385,12 @@ impl ErrorReportRequest {
             }
 
             out.push(adjusted_lines.len() as u8);
-            write_u32_le(&mut out, region_of_interest_line);
-            write_u32_le(&mut out, (first_line_of_interest + 1) as u32);
-            write_u32_le(&mut out, top_frame_position.column.one_based() as u32);
+            _ = out.write_int_le::<u32>(region_of_interest_line);
+            _ = out.write_int_le::<u32>((first_line_of_interest + 1) as u32);
+            _ = out.write_int_le::<u32>(top_frame_position.column.one_based() as u32);
 
             for line in adjusted_lines.iter() {
-                write_u32_le(&mut out, line.len() as u32);
+                _ = out.write_int_le::<u32>(line.len() as u32);
                 out.extend_from_slice(line);
             }
         } else {
@@ -552,43 +552,17 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     Ok(Some(result))
 }
 
-// ─── local I/O helpers ────────────────────────────────────────────────────
-// Zig used `std.io.fixedBufferStream(body).reader()` with `readInt(T, .little)`
-// and a `writer()` over an ArrayList. These tiny helpers cover exactly the
-// methods used here; Phase B may replace with a shared bun_io reader/writer.
-
 /// `DevServer.readString32` — local zero-copy variant over the body slice
 /// reader (the canonical allocating version lives in the gated `DevServer.rs`
 /// draft and is not yet re-exported from `super`).
 #[inline]
-fn read_string32<'a>(r: &mut &'a [u8]) -> Result<&'a [u8], bun_core::Error> {
-    let len = read_u32_le(r)? as usize;
-    if r.len() < len {
-        return Err(bun_core::err!("EndOfStream"));
-    }
-    let (head, tail) = r.split_at(len);
-    *r = tail;
-    Ok(head)
-}
-
-#[inline]
-fn read_u32_le(r: &mut &[u8]) -> Result<u32, bun_core::Error> {
-    if r.len() < 4 {
-        return Err(bun_core::err!("EndOfStream"));
-    }
-    let (head, tail) = r.split_at(4);
-    *r = tail;
-    Ok(u32::from_le_bytes([head[0], head[1], head[2], head[3]]))
-}
-
-#[inline]
-fn read_i32_le(r: &mut &[u8]) -> Result<i32, bun_core::Error> {
-    if r.len() < 4 {
-        return Err(bun_core::err!("EndOfStream"));
-    }
-    let (head, tail) = r.split_at(4);
-    *r = tail;
-    Ok(i32::from_le_bytes([head[0], head[1], head[2], head[3]]))
+fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> Result<&'a [u8], bun_core::Error> {
+    let len = r.read_int_le::<u32>()? as usize;
+    let buf: &'a [u8] = r.buffer;
+    let end = r.pos.checked_add(len).filter(|&e| e <= buf.len()).ok_or_else(|| bun_core::err!("EndOfStream"))?;
+    let s = &buf[r.pos..end];
+    r.pos = end;
+    Ok(s)
 }
 
 // ported from: src/bake/DevServer/ErrorReportRequest.zig

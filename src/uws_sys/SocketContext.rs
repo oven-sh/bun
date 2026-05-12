@@ -48,9 +48,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     let bytes = path.as_bytes();
     let mut wbuf = vec![0u16; bytes.len() + 1];
     let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, bytes).len();
-    for w in &mut wbuf[..n] {
-        if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
-    }
+    bun_paths::slashes_to_windows_in_place(&mut wbuf[..n]);
     wbuf[n] = 0;
     // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;

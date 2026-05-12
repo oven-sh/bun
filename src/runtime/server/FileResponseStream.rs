@@ -528,41 +528,16 @@ impl FileResponseStream {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(FileResponseStream for FileResponseStream);
-impl bun_io::BufferedReaderParent for FileResponseStream {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileResponseStream;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack.
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
-        // SAFETY: trait aliasing contract; the body's reader accesses go through
-        // the same `&mut self.reader` provenance the caller already holds.
-        unsafe { (*this).on_read_chunk(chunk, state) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: tail-position — reader is finished with `self`.
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: tail-position — reader is finished with `self`.
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `r#loop()` which already does the
-        // cfg(windows) `.uv_loop` projection — `EventLoopCtx::loop_()` returns
-        // the uws `WindowsLoop*` on Windows, NOT a `uv_loop_t*`, so casting it
-        // directly (the old body) type-punned the wrapper struct into libuv.
-        // Zig spec: FileResponseStream.zig `loop()` does the same projection.
-        // SAFETY: trait contract — `this` non-null/live.
-        unsafe { (*this).r#loop() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
+// `loop_` delegates to the inherent `r#loop()` which already does the
+// cfg(windows) `.uv_loop` projection (Zig spec: FileResponseStream.zig `loop()`).
+bun_io::impl_buffered_reader_parent! {
+    FileResponseStream for FileResponseStream;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
+    on_reader_done  = |this| (*this).on_reader_done();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    loop_           = |this| (*this).r#loop();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
 impl Drop for FileResponseStream {

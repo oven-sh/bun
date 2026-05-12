@@ -49,17 +49,10 @@ use bun_sys::{self as sys, Fd, File};
 /// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
 #[inline]
 fn vm_mut<'a>() -> &'a mut VirtualMachine {
-    VirtualMachine::get().as_mut()
+    VirtualMachine::get_mut()
 }
 
-/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
-/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
-#[inline]
-fn timer_all<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-}
+use crate::jsc_hooks::timer_all_mut as timer_all;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -83,14 +76,10 @@ trait CronJobBase: Sized {
     unsafe fn maybe_finished(this: *mut Self);
 
     fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            vm_mut().uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            bun_uws::Loop::get()
-        }
+        // `VirtualMachine::uv_loop` already returns the native loop on both
+        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
+        // `bun_uws::Loop::get()` named the same per-thread singleton.
+        vm_mut().uv_loop()
     }
 
     fn event_loop(&self) -> *mut EventLoop {
@@ -178,28 +167,14 @@ enum RegisterState {
     Failed,
 }
 
-bun_io::buffered_reader_parent_link!(CronRegister for CronRegisterJob);
-impl BufferedReaderParent for CronRegisterJob {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::CronRegister;
-    const HAS_ON_READ_CHUNK: bool = false;
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as
-        // raw ptr — `maybe_finished` may free `this`.
-        unsafe { <Self as CronJobBase>::on_reader_done(this) }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see `on_reader_done`.
-        unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` is non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
+// Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
+bun_io::impl_buffered_reader_parent! {
+    CronRegister for CronRegisterJob;
+    has_on_read_chunk = false;
+    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(this);
+    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(this, err);
+    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
 impl CronJobBase for CronRegisterJob {
@@ -913,28 +888,14 @@ enum RemoveState {
     Failed,
 }
 
-bun_io::buffered_reader_parent_link!(CronRemove for CronRemoveJob);
-impl BufferedReaderParent for CronRemoveJob {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::CronRemove;
-    const HAS_ON_READ_CHUNK: bool = false;
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as
-        // raw ptr — `maybe_finished` may free `this`.
-        unsafe { <Self as CronJobBase>::on_reader_done(this) }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see `on_reader_done`.
-        unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` is non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
+// Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
+bun_io::impl_buffered_reader_parent! {
+    CronRemove for CronRemoveJob;
+    has_on_read_chunk = false;
+    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(this);
+    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(this, err);
+    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
 impl CronJobBase for CronRemoveJob {
@@ -1334,6 +1295,8 @@ pub struct CronJob {
     /// True between onTimerFire's cb.call() and processing of its result.
     in_fire: Cell<bool>,
 }
+
+bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
 
 pub mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
@@ -2355,22 +2318,10 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         }
         let mut vals: Vec<i32> = Vec::new();
         for part in field.split(|&b| b == b',') {
-            // Zig: std.fmt.parseInt(i32, part, 10) on raw []const u8. Parse bytes
-            // directly — do NOT round-trip through str/from_utf8 (PORTING.md "Strings").
-            if part.is_empty() {
-                return Err(CalendarError::InvalidCron);
-            }
-            let mut val: i32 = 0;
-            for &b in part {
-                let digit = b.wrapping_sub(b'0');
-                if digit > 9 {
-                    return Err(CalendarError::InvalidCron);
-                }
-                val = val
-                    .checked_mul(10)
-                    .and_then(|v| v.checked_add(digit as i32))
-                    .ok_or(CalendarError::InvalidCron)?;
-            }
+            // Zig: std.fmt.parseInt(i32, part, 10) on raw []const u8.
+            // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
+            let val: i32 = bun_core::parse_unsigned(part, 10)
+                .map_err(|_| CalendarError::InvalidCron)?;
             vals.push(val);
         }
         *fv = Some(vals);

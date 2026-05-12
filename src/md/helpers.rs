@@ -1,7 +1,7 @@
 // Local ports of the four `bun.strings.*` helpers we call. Bodies are 1:1 with
 // `src/string/immutable/unicode.zig` + `src/string/immutable.zig`; kept inline
 // because `codepoint_size` / `encode_wtf8_rune_t` are not (yet) re-exported
-// from `bun_str::strings`.
+// from `bun_core::strings`.
 mod strings {
     /// Port of `bun.strings.codepointSize` — UTF-8 sequence length from leading byte.
     /// Returns 0 for an invalid leading byte.
@@ -113,12 +113,6 @@ mod strings {
         }
     }
 
-    /// Port of `bun.strings.eqlCaseInsensitiveASCIIICheckLength` (sic — triple-`i`
-    /// typo preserved from Zig). Length-checked ASCII case-insensitive compare.
-    #[inline]
-    pub(super) fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
-        bun_core::strings::eql_case_insensitive_ascii(a, b, true)
-    }
 }
 
 use super::entity as entity_mod;
@@ -313,9 +307,7 @@ pub fn skip_utf8_bom(text: &[u8]) -> &[u8] {
 }
 
 /// Case-insensitive ASCII comparison.
-pub fn ascii_case_eql(a: &[u8], b: &[u8]) -> bool {
-    strings::eql_case_insensitive_asciii_check_length(a, b)
-}
+pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case_eql;
 
 /// Find an HTML entity starting at `start` (which must point to '&').
 /// Returns the end position (one past the ';') or null if no valid entity found.
@@ -550,8 +542,8 @@ pub fn generate_slug<'a>(
         text_buf.truncate(out_len);
         text_buf.push(b'-');
 
-        let mut dec_buf = [0u8; 20];
-        text_buf.extend_from_slice(bun_core::fmt::itoa_u64(&mut dec_buf, u64::from(count)));
+        let mut dec_buf = bun_core::fmt::ItoaBuf::new();
+        text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
         return text_buf.as_slice();
     }
 

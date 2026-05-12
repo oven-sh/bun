@@ -6,6 +6,7 @@ use core::fmt;
 use core::fmt::Write as _;
 
 use bun_core::{self, Output};
+use bun_core::fmt::CountingWriter;
 
 pub mod args;
 pub mod comptime;
@@ -503,8 +504,8 @@ where
             // CountingWriter that discards output and counts bytes.
             let mut cs = CountingWriter::null();
             print_param(&mut cs, param, context, value_text)?;
-            if res < cs.bytes_written {
-                res = cs.bytes_written;
+            if res < cs.count {
+                res = cs.count;
             }
         }
         break 'blk res;
@@ -522,7 +523,7 @@ where
             let mut cs = CountingWriter::wrap(stream);
             write!(cs.inner(), "\t")?;
             print_param(&mut cs, param, context, value_text)?;
-            let written = cs.bytes_written;
+            let written = cs.count;
             // stream.splatByteAll(' ', max_spacing - written)
             for _ in 0..(max_spacing - written) {
                 stream.write_char(' ')?;
@@ -778,14 +779,14 @@ where
             continue;
         }
 
-        if cos.bytes_written == 0 {
+        if cos.count == 0 {
             // PORT NOTE: Zig wrote "[-" to `stream` (not `cs`), bypassing the
             // counter. Preserving that quirk by writing to the inner writer.
             write!(cos.inner(), "[-")?;
         }
         cos.write_char(name as char)?;
     }
-    if cos.bytes_written != 0 {
+    if cos.count != 0 {
         cos.write_char(']')?;
     }
 
@@ -809,7 +810,7 @@ where
             positional = Some(*param);
             continue;
         };
-        if cos.bytes_written != 0 {
+        if cos.count != 0 {
             cos.write_char(' ')?;
         }
 
@@ -820,7 +821,7 @@ where
     }
 
     if let Some(p) = positional {
-        if cos.bytes_written != 0 {
+        if cos.count != 0 {
             cos.write_char(' ')?;
         }
         write!(cos, "<{}>", bstr::BStr::new(value_text(context, &p).map_err(Into::into)?))?;
@@ -861,49 +862,6 @@ fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::E
     usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
     assert_eq!(expected, &buf[..]);
     Ok(())
-}
-
-// ───────────── helpers (no Zig std equivalent in PORTING.md) ─────────────
-
-// TODO(port): `std.io.countingWriter` replacement. If `bun_io` grows one, swap.
-struct CountingWriter<'a, W: fmt::Write> {
-    inner: Option<&'a mut W>,
-    bytes_written: usize,
-}
-
-impl<'a, W: fmt::Write> CountingWriter<'a, W> {
-    fn wrap(w: &'a mut W) -> Self {
-        Self { inner: Some(w), bytes_written: 0 }
-    }
-    fn inner(&mut self) -> &mut W {
-        self.inner.as_mut().unwrap()
-    }
-}
-
-impl CountingWriter<'static, NullWriter> {
-    fn null() -> CountingWriter<'static, NullWriter> {
-        // PORT NOTE: reshaped for borrowck — Zig used `io.null_writer`. `inner: None`
-        // discards writes (the `Write` impl below already handles `None`); `inner()`
-        // is never called on the null variant.
-        CountingWriter { inner: None, bytes_written: 0 }
-    }
-}
-
-impl<'a, W: fmt::Write> fmt::Write for CountingWriter<'a, W> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.bytes_written += s.len();
-        if let Some(w) = self.inner.as_mut() {
-            w.write_str(s)?;
-        }
-        Ok(())
-    }
-}
-
-struct NullWriter;
-impl fmt::Write for NullWriter {
-    fn write_str(&mut self, _s: &str) -> fmt::Result {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

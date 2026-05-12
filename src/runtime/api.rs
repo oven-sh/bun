@@ -228,4 +228,62 @@ pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 pub use crate::webview::host_process as WebViewHostProcess;
 pub use crate::webview::chrome_process as ChromeProcess;
 
+// ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
+//
+// All four host fns repeat: Arena + ASTMemoryAllocator scope + Log +
+// frame.argument(0) → bytes → Source::init_path_string. They diverge on
+// (a) whether nullish input throws, (b) whether Blob/Buffer is accepted, and
+// (c) parse-error class + Expr→JS tail — so this helper owns ONLY the scaffold
+// and hands `(&arena, &mut log, &source)` to a per-format closure that does the
+// format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
+// log.to_js), and tail conversion.
+//
+// Zig has no shared helper (four open-coded copies); this is net-new cleanup of
+// a faithfully-ported duplication.
+pub(crate) fn with_text_format_source<R>(
+    global: &bun_jsc::JSGlobalObject,
+    frame: &bun_jsc::CallFrame,
+    path: &'static [u8],
+    accept_blob_or_buffer: bool,
+    reject_nullish: bool,
+    f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+) -> bun_jsc::JsResult<R> {
+    use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
+
+    // PERF(port): was ArenaAllocator bulk-free feeding the parser + AST stores.
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+
+    let input_value = frame.argument(0);
+    if reject_nullish && input_value.is_empty_or_undefined_or_null() {
+        return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
+    }
+
+    // Hold whichever input storage applies; both expose `.slice() -> &[u8]`.
+    // Conditional-init + drop-flag — only the taken branch's holder is live.
+    let _blob_hold: BlobOrStringOrBuffer;
+    let _str_hold;
+    let bytes: &[u8] = if accept_blob_or_buffer {
+        _blob_hold = match BlobOrStringOrBuffer::from_js(global, input_value)? {
+            Some(v) => v,
+            None => {
+                // `to_slice` moves the +1 ref into the returned slice's
+                // `.underlying`, so the temporary `BunString` drop is a no-op.
+                let mut s = input_value.to_bun_string(global)?;
+                BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(s.to_slice()))
+            }
+        };
+        _blob_hold.slice()
+    } else {
+        _str_hold = input_value.to_slice(global)?;
+        _str_hold.slice()
+    };
+
+    let mut log = bun_ast::Log::init();
+    let source = bun_ast::Source::init_path_string(path, bytes);
+
+    f(&arena, &mut log, &source)
+}
+
 // ported from: src/runtime/api.zig

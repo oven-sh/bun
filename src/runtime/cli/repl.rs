@@ -112,20 +112,8 @@ const TAB_WIDTH: usize = 2;
 const ESC: &str = "\x1b";
 const CSI: &str = concat!("\x1b", "[");
 
-// Colors
-struct Color;
-impl Color {
-    const RESET: &'static str = concat!("\x1b", "[", "0m");
-    const BOLD: &'static str = concat!("\x1b", "[", "1m");
-    const DIM: &'static str = concat!("\x1b", "[", "2m");
-    const RED: &'static str = concat!("\x1b", "[", "31m");
-    const GREEN: &'static str = concat!("\x1b", "[", "32m");
-    const YELLOW: &'static str = concat!("\x1b", "[", "33m");
-    const BLUE: &'static str = concat!("\x1b", "[", "34m");
-    const MAGENTA: &'static str = concat!("\x1b", "[", "35m");
-    const CYAN: &'static str = concat!("\x1b", "[", "36m");
-    const WHITE: &'static str = concat!("\x1b", "[", "37m");
-}
+// Colors — Color::RESET, Color::CYAN, … resolve unchanged
+use bun_core::output::ansi as Color;
 
 // Cursor control
 struct Cursor;
@@ -2261,36 +2249,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
 }
 
-/// Check if code looks like an object literal that would be misinterpreted as a block
-fn is_likely_object_literal(code: &[u8]) -> bool {
-    // Skip leading whitespace
-    let mut start: usize = 0;
-    while start < code.len()
-        && (code[start] == b' ' || code[start] == b'\t' || code[start] == b'\n' || code[start] == b'\r')
-    {
-        start += 1;
-    }
-
-    // Check if starts with {
-    if start >= code.len() || code[start] != b'{' {
-        return false;
-    }
-
-    // Skip trailing whitespace
-    let mut end: usize = code.len();
-    while end > 0
-        && (code[end - 1] == b' ' || code[end - 1] == b'\t' || code[end - 1] == b'\n' || code[end - 1] == b'\r')
-    {
-        end -= 1;
-    }
-
-    // Check if ends with semicolon - if so, it's likely a block statement
-    if end > 0 && code[end - 1] == b';' {
-        return false;
-    }
-
-    true
-}
+use crate::api::js_transpiler::is_likely_object_literal;
 
 // ============================================================================
 // Public Entry Point (for CLI integration)

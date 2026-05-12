@@ -2,26 +2,15 @@
 
 use core::cmp::Ordering;
 
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_semver::{query, SlicedString, Version};
 use bun_core::strings;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    let object = JSValue::create_empty_object(global, 2);
-
-    object.put(
-        global,
-        b"satisfies",
-        JSFunction::create(global, "satisfies", __jsc_host_satisfies, 2, Default::default()),
-    );
-
-    object.put(
-        global,
-        b"order",
-        JSFunction::create(global, "order", __jsc_host_order, 2, Default::default()),
-    );
-
-    object
+    bun_jsc::create_host_function_object(global, &[
+        ("satisfies", __jsc_host_satisfies, 2),
+        ("order", __jsc_host_order, 2),
+    ])
 }
 
 #[bun_jsc::host_fn]

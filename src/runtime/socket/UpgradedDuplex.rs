@@ -43,6 +43,8 @@ pub struct UpgradedDuplex {
     pub current_timeout: u32,
 }
 
+bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
+
 #[derive(Default)]
 pub struct CertError {
     pub error_no: i32,
@@ -68,14 +70,7 @@ pub struct Handlers {
     pub on_timeout: fn(*mut ()),
 }
 
-/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
-/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
-#[inline]
-fn timer_all<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-}
+use crate::jsc_hooks::timer_all_mut as timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `slot`.
 ///

@@ -15,7 +15,7 @@ use bun_sys;
 /// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
 /// `bun.String.cloneUTF16(...).toJS(...)` so the generic body unifies.
 #[inline]
-fn create_js_string_t<T: PathChar>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
+fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{bun_string_jsc, StringJsc as _};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
@@ -62,12 +62,12 @@ const STACK_FALLBACK_SIZE_LARGE: usize =
 /// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
 /// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
 /// never observed).
-enum PathScratch<'a, T: PathChar> {
+enum PathScratch<'a, T: PathCharCwd> {
     Pooled(&'a mut [T]),
     Spill(Box<[T]>),
 }
 
-impl<'a, T: PathChar> PathScratch<'a, T> {
+impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
     const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
 
@@ -102,90 +102,25 @@ const STACK_FALLBACK_SIZE_SMALL: usize = PATH_MIN_WIDE;
 #[cfg(not(windows))]
 const STACK_FALLBACK_SIZE_SMALL: usize = MAX_PATH_BYTES;
 
-/// Trait bound for path character types (`u8` or `u16`).
-/// Mirrors Zig's `comptime T: type` constraint via `validatePathT`.
-pub trait PathChar: Copy + Eq + Ord + Default + bytemuck::Pod + 'static {
-    const IS_U16: bool;
-    fn from_u8(c: u8) -> Self;
-    fn as_u32(self) -> u32;
-    /// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for an ASCII literal.
-    fn lit(s: &'static [u8]) -> &'static [Self];
+/// Canonical path-unit trait — re-export so external callers that named
+/// `crate::node::path::PathChar` keep compiling.
+pub use bun_paths::PathChar;
+
+/// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
+/// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
+/// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
+/// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
+pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
-impl PathChar for u8 {
-    const IS_U16: bool = false;
-    #[inline]
-    fn from_u8(c: u8) -> Self {
-        c
-    }
-    #[inline]
-    fn as_u32(self) -> u32 {
-        self as u32
-    }
-    #[inline]
-    fn lit(s: &'static [u8]) -> &'static [u8] {
-        s
-    }
+impl PathCharCwd for u8 {
     #[inline]
     fn get_cwd(buf: &mut [u8]) -> bun_sys::Result<&mut [u8]> {
         get_cwd_u8(buf)
     }
 }
-impl PathChar for u16 {
-    const IS_U16: bool = true;
-    #[inline]
-    fn from_u8(c: u8) -> Self {
-        c as u16
-    }
-    #[inline]
-    fn as_u32(self) -> u32 {
-        self as u32
-    }
-    #[inline]
-    fn lit(s: &'static [u8]) -> &'static [u16] {
-        // Zig: `bun.strings.literal(u16, str)` → `std.unicode.utf8ToUtf16LeStringLiteral(str)`,
-        // which produces a comptime-static widened slice per call site. Rust can't widen a
-        // generic `&'static [u8]` at const time, so emulate the comptime `Holder.value` by
-        // matching the closed set of ASCII literals this module passes through `l::<T>()`
-        // (each gets one static, exactly as Zig emits). The fallback leaks once for any
-        // unrecognized literal — same lifetime semantics as a Zig comptime static.
-        // PERF(port): was comptime monomorphization — profile in Phase B.
-        match s {
-            b"." => {
-                static W: [u16; 1] = [b'.' as u16];
-                &W
-            }
-            b"/" => {
-                static W: [u16; 1] = [b'/' as u16];
-                &W
-            }
-            b"\\" => {
-                static W: [u16; 1] = [b'\\' as u16];
-                &W
-            }
-            b".." => {
-                static W: [u16; 2] = [b'.' as u16, b'.' as u16];
-                &W
-            }
-            b"./" => {
-                static W: [u16; 2] = [b'.' as u16, b'/' as u16];
-                &W
-            }
-            b"//" => {
-                static W: [u16; 2] = [b'/' as u16, b'/' as u16];
-                &W
-            }
-            b"" => &[],
-            _ => {
-                // The literal set is closed (every `l::<T>()` call site is one of the
-                // arms above). Zig's `bun.strings.literal(T, "...")` is comptime-static;
-                // there is no runtime widening to emulate. Reaching this arm is a bug.
-                debug_assert!(false, "PathChar<u16>::lit: unknown literal {:?}", s);
-                &[]
-            }
-        }
-    }
+impl PathCharCwd for u16 {
     #[inline]
     fn get_cwd(buf: &mut [u16]) -> bun_sys::Result<&mut [u16]> {
         get_cwd_u16(buf)
@@ -194,7 +129,7 @@ impl PathChar for u16 {
 
 /// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for the ASCII literal.
 #[inline]
-fn l<T: PathChar>(s: &'static [u8]) -> &'static [T] {
+fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
     T::lit(s)
 }
 
@@ -202,7 +137,7 @@ fn l<T: PathChar>(s: &'static [u8]) -> &'static [T] {
 /// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
 ///
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
-fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
+fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
@@ -223,7 +158,7 @@ fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
 ///
 /// Lowers ASCII values, non-ASCII values are returned directly
 #[inline]
-fn to_lower_t<T: PathChar>(a_c: T) -> T {
+fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     if !T::IS_U16 {
         return T::from_u8(u8::try_from(a_c.as_u32()).expect("int cast").to_ascii_lowercase());
     }
@@ -257,7 +192,7 @@ const CHAR_STR_DOT: &[u8] = b".";
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
 /// The structs returned by parse methods.
 #[derive(Default)]
-pub struct PathParsed<'a, T: PathChar> {
+pub struct PathParsed<'a, T: PathCharCwd> {
     pub root: &'a [T],
     pub dir: &'a [T],
     pub base: &'a [T],
@@ -279,7 +214,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-impl<'a, T: PathChar> PathParsed<'a, T> {
+impl<'a, T: PathCharCwd> PathParsed<'a, T> {
     pub fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // PORT NOTE: alias the free-fn module so the Zig-mirrored
         // `BunString::create_utf8_for_js(...)` call shape resolves (same pattern
@@ -293,7 +228,7 @@ impl<'a, T: PathChar> PathParsed<'a, T> {
     }
 }
 
-pub const fn max_path_size<T: PathChar>() -> usize {
+pub const fn max_path_size<T: PathCharCwd>() -> usize {
     if T::IS_U16 {
         bun_paths::PATH_MAX_WIDE
     } else {
@@ -310,7 +245,7 @@ const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE 
     bun_paths::PATH_MAX_WIDE
 };
 
-pub const fn path_size<T: PathChar>() -> usize {
+pub const fn path_size<T: PathCharCwd>() -> usize {
     if T::IS_U16 {
         PATH_MIN_WIDE
     } else {
@@ -340,7 +275,7 @@ fn copy_overlapping<T: Copy>(dst: &mut [T], src: &[T]) {
 /// Based on Node v21.6.1 private helper formatExt:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L130C10-L130C19
 #[inline]
-fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
+fn format_ext_t<'a, T: PathCharCwd>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
     let len = ext.len();
     if len == 0 {
         return &[];
@@ -356,7 +291,7 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-pub fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
+pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     let cwd = match get_cwd_t(buf) {
         Ok(r) => r,
         Err(e) => return Err(e),
@@ -445,7 +380,7 @@ pub fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
 }
 
 #[inline]
-pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
+pub fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     T::get_cwd(buf)
 }
 
@@ -454,7 +389,7 @@ pub use get_cwd_u8 as get_cwd;
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
-pub fn basename_posix_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
     // Exit early for easier number type use.
@@ -555,7 +490,7 @@ pub fn basename_posix_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) ->
 
 /// Based on Node v21.6.1 path.win32.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
-pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
     // Exit early for easier number type use.
@@ -660,7 +595,7 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
     }
 }
 
-pub fn basename_posix_js_t<T: PathChar>(
+pub fn basename_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
     suffix: Option<&[T]>,
@@ -668,7 +603,7 @@ pub fn basename_posix_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, basename_posix_t(path, suffix))
 }
 
-pub fn basename_windows_js_t<T: PathChar>(
+pub fn basename_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
     suffix: Option<&[T]>,
@@ -676,7 +611,7 @@ pub fn basename_windows_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, basename_windows_t(path, suffix))
 }
 
-pub fn basename_js_t<T: PathChar>(
+pub fn basename_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     is_windows: bool,
     path: &[T],
@@ -735,7 +670,7 @@ pub fn basename(
 
 /// Based on Node v21.6.1 path.posix.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
-pub fn dirname_posix_t<T: PathChar>(path: &[T]) -> &[T] {
+pub fn dirname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn dirname.
     let len = path.len();
     if len == 0 {
@@ -776,7 +711,7 @@ pub fn dirname_posix_t<T: PathChar>(path: &[T]) -> &[T] {
 
 /// Based on Node v21.6.1 path.win32.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L657
-pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
+pub fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn dirname.
     let len = path.len();
     if len == 0 {
@@ -883,21 +818,21 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
     }
 }
 
-pub fn dirname_posix_js_t<T: PathChar>(
+pub fn dirname_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(global_object, dirname_posix_t(path))
 }
 
-pub fn dirname_windows_js_t<T: PathChar>(
+pub fn dirname_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(global_object, dirname_windows_t(path))
 }
 
-pub fn dirname_js_t<T: PathChar>(
+pub fn dirname_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     is_windows: bool,
     path: &[T],
@@ -931,7 +866,7 @@ pub fn dirname(
 
 /// Based on Node v21.6.1 path.posix.extname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
-pub fn extname_posix_t<T: PathChar>(path: &[T]) -> &[T] {
+pub fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn extname.
     let len = path.len();
     // Exit early for easier number type use.
@@ -1005,7 +940,7 @@ pub fn extname_posix_t<T: PathChar>(path: &[T]) -> &[T] {
 
 /// Based on Node v21.6.1 path.win32.extname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L840
-pub fn extname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
+pub fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn extname.
     let len = path.len();
     // Exit early for easier number type use.
@@ -1088,18 +1023,18 @@ pub fn extname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
 }
 
 #[inline]
-pub fn is_sep_posix_t<T: PathChar>(byte: T) -> bool {
+pub fn is_sep_posix_t<T: PathCharCwd>(byte: T) -> bool {
     byte == T::from_u8(CHAR_FORWARD_SLASH)
 }
 
 #[inline]
-pub fn is_sep_windows_t<T: PathChar>(byte: T) -> bool {
+pub fn is_sep_windows_t<T: PathCharCwd>(byte: T) -> bool {
     byte == T::from_u8(CHAR_FORWARD_SLASH) || byte == T::from_u8(CHAR_BACKWARD_SLASH)
 }
 
 /// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
 #[inline]
-pub fn is_windows_device_root_t<T: PathChar>(byte: T) -> bool {
+pub fn is_windows_device_root_t<T: PathCharCwd>(byte: T) -> bool {
     let c = byte.as_u32();
     (b'A' as u32 <= c && c <= b'Z' as u32) || (b'a' as u32 <= c && c <= b'z' as u32)
 }
@@ -1107,7 +1042,7 @@ pub fn is_windows_device_root_t<T: PathChar>(byte: T) -> bool {
 /// Based on Node v21.6.1 path.posix.isAbsolute:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1159
 #[inline]
-pub fn is_absolute_posix_t<T: PathChar>(path: &[T]) -> bool {
+pub fn is_absolute_posix_t<T: PathCharCwd>(path: &[T]) -> bool {
     // validateString of `path` is performed in pub fn isAbsolute.
     !path.is_empty() && path[0] == T::from_u8(CHAR_FORWARD_SLASH)
 }
@@ -1115,7 +1050,7 @@ pub fn is_absolute_posix_t<T: PathChar>(path: &[T]) -> bool {
 /// Based on Node v21.6.1 path.win32.isAbsolute:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L406
 #[inline]
-pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
+pub fn is_absolute_windows_t<T: PathCharCwd>(path: &[T]) -> bool {
     // validateString of `path` is performed in pub fn isAbsolute.
     let len = path.len();
     if len == 0 {
@@ -1129,21 +1064,21 @@ pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
             && is_sep_windows_t(path[2]))
 }
 
-pub fn extname_posix_js_t<T: PathChar>(
+pub fn extname_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(global_object, extname_posix_t(path))
 }
 
-pub fn extname_windows_js_t<T: PathChar>(
+pub fn extname_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(global_object, extname_windows_t(path))
 }
 
-pub fn extname_js_t<T: PathChar>(
+pub fn extname_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     is_windows: bool,
     path: &[T],
@@ -1177,7 +1112,7 @@ pub fn extname(
 
 /// Based on Node v21.6.1 private helper _format:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L145
-fn _format_t<'a, T: PathChar>(
+fn _format_t<'a, T: PathCharCwd>(
     path_object: &PathParsed<'a, T>,
     sep: T,
     buf: &'a mut [T],
@@ -1267,7 +1202,7 @@ fn _format_t<'a, T: PathChar>(
     &buf[0..buf_size]
 }
 
-pub fn format_posix_js_t<T: PathChar>(
+pub fn format_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path_object: &PathParsed<'_, T>,
     buf: &mut [T],
@@ -1278,7 +1213,7 @@ pub fn format_posix_js_t<T: PathChar>(
     )
 }
 
-pub fn format_windows_js_t<T: PathChar>(
+pub fn format_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path_object: &PathParsed<'_, T>,
     buf: &mut [T],
@@ -1289,7 +1224,7 @@ pub fn format_windows_js_t<T: PathChar>(
     )
 }
 
-pub fn format_js_t<T: PathChar>(
+pub fn format_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
@@ -1425,7 +1360,7 @@ pub fn is_absolute(
 
 /// Based on Node v21.6.1 path.posix.join:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1169
-pub fn join_posix_t<'a, T: PathChar>(
+pub fn join_posix_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &'a mut [T],
@@ -1499,7 +1434,7 @@ pub extern "C" fn Bun__Node__Path_joinWTF(
 
 /// Based on Node v21.6.1 path.win32.join:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L425
-pub fn join_windows_t<'a, T: PathChar>(
+pub fn join_windows_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &'a mut [T],
@@ -1603,7 +1538,7 @@ pub fn join_windows_t<'a, T: PathChar>(
     normalize_windows_t(&buf2[0..joined_len], buf)
 }
 
-pub fn join_posix_js_t<T: PathChar>(
+pub fn join_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     paths: &[&[T]],
     buf: &mut [T],
@@ -1612,7 +1547,7 @@ pub fn join_posix_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, join_posix_t(paths, buf, buf2))
 }
 
-pub fn join_windows_js_t<T: PathChar>(
+pub fn join_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     paths: &[&[T]],
     buf: &mut [T],
@@ -1621,7 +1556,7 @@ pub fn join_windows_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, join_windows_t(paths, buf, buf2))
 }
 
-pub fn join_js_t<T: PathChar>(
+pub fn join_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
@@ -1689,7 +1624,7 @@ pub fn join(
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L65C1-L66C77
 ///
 /// Resolves . and .. elements in a path with directory names
-fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
+fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
     path: &[T],
     allow_above_root: bool,
     separator: T,
@@ -1827,7 +1762,7 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
 
 /// Based on Node v21.6.1 path.posix.normalize
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1130
-pub fn normalize_posix_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
+pub fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
     // validateString of `path` is performed in pub fn normalize.
     let len = path.len();
     if len == 0 {
@@ -1887,7 +1822,7 @@ pub fn normalize_posix_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [
 
 /// Based on Node v21.6.1 path.win32.normalize
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L308
-pub fn normalize_windows_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
+pub fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
     // validateString of `path` is performed in pub fn normalize.
     let len = path.len();
     if len == 0 {
@@ -2057,7 +1992,7 @@ pub fn normalize_windows_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a
     &buf[0..buf_size]
 }
 
-pub fn normalize_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
+pub fn normalize_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
     #[cfg(windows)]
     {
         normalize_windows_t(path, buf)
@@ -2068,7 +2003,7 @@ pub fn normalize_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
     }
 }
 
-pub fn normalize_posix_js_t<T: PathChar>(
+pub fn normalize_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
     buf: &mut [T],
@@ -2076,7 +2011,7 @@ pub fn normalize_posix_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, normalize_posix_t(path, buf))
 }
 
-pub fn normalize_windows_js_t<T: PathChar>(
+pub fn normalize_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
     buf: &mut [T],
@@ -2084,7 +2019,7 @@ pub fn normalize_windows_js_t<T: PathChar>(
     create_js_string_t::<T>(global_object, normalize_windows_t(path, buf))
 }
 
-pub fn normalize_js_t<T: PathChar>(
+pub fn normalize_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
@@ -2123,7 +2058,7 @@ pub fn normalize(
 
 // Based on Node v21.6.1 path.posix.parse
 // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1452
-pub fn parse_posix_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
+pub fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
     // validateString of `path` is performed in pub fn parse.
     let len = path.len();
     if len == 0 {
@@ -2225,7 +2160,7 @@ pub fn parse_posix_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
 
 // Based on Node v21.6.1 path.win32.parse
 // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L916
-pub fn parse_windows_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
+pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
     // validateString of `path` is performed in pub fn parse.
     let mut root: &[T] = &[];
     let mut dir: &[T] = &[];
@@ -2401,21 +2336,21 @@ pub fn parse_windows_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
     PathParsed { root, dir, base, ext, name: _name }
 }
 
-pub fn parse_posix_js_t<T: PathChar>(
+pub fn parse_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     parse_posix_t(path).to_js_object(global_object)
 }
 
-pub fn parse_windows_js_t<T: PathChar>(
+pub fn parse_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
     parse_windows_t(path).to_js_object(global_object)
 }
 
-pub fn parse_js_t<T: PathChar>(
+pub fn parse_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     is_windows: bool,
     path: &[T],
@@ -2449,7 +2384,7 @@ pub fn parse(
 
 /// Based on Node v21.6.1 path.posix.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
-pub fn relative_posix_t<'a, T: PathChar>(
+pub fn relative_posix_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
@@ -2598,7 +2533,7 @@ pub fn relative_posix_t<'a, T: PathChar>(
 
 /// Based on Node v21.6.1 path.win32.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
-pub fn relative_windows_t<'a, T: PathChar>(
+pub fn relative_windows_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
@@ -2784,7 +2719,7 @@ pub fn relative_windows_t<'a, T: PathChar>(
     Ok(&buf[to_start..to_end])
 }
 
-pub fn relative_posix_js_t<T: PathChar>(
+pub fn relative_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     from: &[T],
     to: &[T],
@@ -2798,7 +2733,7 @@ pub fn relative_posix_js_t<T: PathChar>(
     }
 }
 
-pub fn relative_windows_js_t<T: PathChar>(
+pub fn relative_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     from: &[T],
     to: &[T],
@@ -2812,7 +2747,7 @@ pub fn relative_windows_js_t<T: PathChar>(
     }
 }
 
-pub fn relative_js_t<T: PathChar>(
+pub fn relative_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
@@ -2866,7 +2801,7 @@ pub fn relative(
 
 /// Based on Node v21.6.1 path.posix.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-pub fn resolve_posix_t<'a, T: PathChar>(
+pub fn resolve_posix_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -2968,7 +2903,7 @@ pub fn resolve_posix_t<'a, T: PathChar>(
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-pub fn resolve_windows_t<'a, T: PathChar>(
+pub fn resolve_windows_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -3389,7 +3324,7 @@ unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
 }
 
-pub fn resolve_posix_js_t<T: PathChar>(
+pub fn resolve_posix_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     paths: &[&[T]],
     buf: &mut [T],
@@ -3401,7 +3336,7 @@ pub fn resolve_posix_js_t<T: PathChar>(
     }
 }
 
-pub fn resolve_windows_js_t<T: PathChar>(
+pub fn resolve_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     paths: &[&[T]],
     buf: &mut [T],
@@ -3413,7 +3348,7 @@ pub fn resolve_windows_js_t<T: PathChar>(
     }
 }
 
-pub fn resolve_js_t<T: PathChar>(
+pub fn resolve_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
@@ -3511,7 +3446,7 @@ pub fn resolve(
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
-pub fn to_namespaced_path_windows_t<'a, T: PathChar>(
+pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     path: &[T],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -3589,7 +3524,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathChar>(
     Ok(&buf[0..resolved_len])
 }
 
-pub fn to_namespaced_path_windows_js_t<T: PathChar>(
+pub fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],
     buf: &mut [T],
@@ -3601,7 +3536,7 @@ pub fn to_namespaced_path_windows_js_t<T: PathChar>(
     }
 }
 
-pub fn to_namespaced_path_js_t<T: PathChar>(
+pub fn to_namespaced_path_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,

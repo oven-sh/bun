@@ -74,30 +74,6 @@ fn is_latin1_identifier_utf16(name: &[u16]) -> bool {
     true
 }
 
-/// Port of Zig `@tagName(array_buffer.typed_array_type)` — `JSType` has no
-/// `Into<&'static str>` upstream, so map the typed-array variants locally
-/// (mirrors `ConsoleObject.rs::typed_array_type_name`).
-fn typed_array_type_name(t: JSType) -> &'static [u8] {
-    use JSType as T;
-    match t {
-        T::Int8Array => b"Int8Array",
-        T::Uint8Array => b"Uint8Array",
-        T::Uint8ClampedArray => b"Uint8ClampedArray",
-        T::Int16Array => b"Int16Array",
-        T::Uint16Array => b"Uint16Array",
-        T::Int32Array => b"Int32Array",
-        T::Uint32Array => b"Uint32Array",
-        T::Float16Array => b"Float16Array",
-        T::Float32Array => b"Float32Array",
-        T::Float64Array => b"Float64Array",
-        T::BigInt64Array => b"BigInt64Array",
-        T::BigUint64Array => b"BigUint64Array",
-        T::DataView => b"DataView",
-        T::ArrayBuffer => b"ArrayBuffer",
-        _ => b"TypedArray",
-    }
-}
-
 /// `Expect*.js.*GetCached` accessors (Zig: `ExpectAny.js.constructorValueGetCached` etc.)
 /// — generate-classes.ts emits these per-type for `cache: true` props
 /// (jest.classes.ts). The Rust port has no inherent associated modules, so each
@@ -2693,9 +2669,9 @@ impl<'a> Formatter<'a> {
 
                             return Ok(());
                         }
-                        writer.write_all(typed_array_type_name(array_buffer.typed_array_type));
+                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
                     } else {
-                        writer.write_all(typed_array_type_name(array_buffer.typed_array_type));
+                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
                     }
 
                     writer.write_all(b" [");

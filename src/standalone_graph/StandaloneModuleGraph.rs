@@ -12,7 +12,7 @@ use std::sync::Arc;
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, Environment, Error as BunError, Output, err};
 use bun_paths::{self as path, strings, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
-use bun_str::{String as BunString, ZStr, StringPointer};
+use bun_core::{String as BunString, ZStr, StringPointer};
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 use bun_ast::Loader;
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
@@ -684,7 +684,7 @@ pub fn to_bytes(
     // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
 
     let mut entry_point_id: Option<usize> = None;
-    let mut string_builder = bun_str::StringBuilder::default();
+    let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
@@ -745,7 +745,7 @@ pub fn to_bytes(
             continue;
         };
 
-        let dest_path = bun_str::strings::remove_leading_dot_slash(&output_file.dest_path);
+        let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -1146,7 +1146,7 @@ pub fn inject(
                                 // reached via `bun_bundler`'s public re-export so this
                                 // crate doesn't take a direct `bun_resolver` edge.
                                 {
-                                let zname_z = bun_str::strings::concat(&[
+                                let zname_z = bun_core::strings::concat(&[
                                     bun_bundler::bun_fs::RealFS::tmpdir_path(),
                                     SEP_STR.as_bytes(),
                                     zname.as_bytes(),

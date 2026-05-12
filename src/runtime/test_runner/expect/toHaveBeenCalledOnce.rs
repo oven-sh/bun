@@ -11,25 +11,13 @@ pub fn to_have_been_called_once(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let this_value = frame.this();
-    // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` becomes a scopeguard
-    // that owns the &mut Expect for the rest of the body.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
-    let value: JSValue =
-        this.get_value(global, this_value, "toHaveBeenCalledOnce", "<green>expected<r>")?;
-
-    this.increment_expect_call_counter();
-
-    // TODO(port): bun.cpp.* FFI shim location — assuming bun_jsc::cpp re-exports generated bindings
-    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
-    if !calls.js_type().is_array() {
-        let mut formatter = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Expected value must be a mock function: {}",
-            value.to_fmt(&mut formatter),
-        )));
-    }
+    let (this, calls, _value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveBeenCalledOnce",
+        "<green>expected<r>",
+        super::mock::MockKind::Calls,
+    )?;
 
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length == 1;

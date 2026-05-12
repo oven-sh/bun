@@ -163,7 +163,7 @@ pub(crate) type DirnameStoreBacking =
 pub(crate) type FilenameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
 // PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
-pub(crate) type EntryStoreBacking =
+pub type EntryStoreBacking =
     allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage — Zig kept `var instance` inside the
@@ -257,12 +257,12 @@ string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, Fi
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
 /// `Once` atomic checks per directory. Resolving once up front and carrying the
 /// raw pointer across the loop drops that to a single check per `readdir`.
-pub(crate) struct FilenameStoreAppender {
+pub struct FilenameStoreAppender {
     backing: *mut FilenameStoreBacking,
 }
 impl FilenameStoreAppender {
     #[inline]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         // One `Once` check, hoisted out of the per-entry loop.
         Self { backing: filename_store_backing() }
     }
@@ -471,23 +471,278 @@ impl FileSystem {
 // PORT NOTE: Zig `FileSystem.deinit()` only called .deinit() on dirname_store/filename_store,
 // which are &'static singletons here — nothing owned to free, so no `impl Drop`.
 
-pub(crate) mod dir_entry {
-    use super::*;
+// ══════════════════════════════════════════════════════════════════════════
+// CANONICAL Entry / DirEntry / EntryLookup family.
+//
+// This is the SINGLE definition. The inline `pub mod fs { … }` block in
+// `lib.rs` re-exports these via `pub use crate::fs_full::{…}` and deletes its
+// own copies (and its second `bss_list!{entry_store_backing}` singleton).
+//
+// `Entry::kind`/`symlink` are decoupled from a concrete `RealFS` type via the
+// `EntryKindResolver` trait so this block does NOT depend on which of the two
+// `RealFS` copies is in scope; both impl the trait by forwarding to their own
+// `RealFS::kind`. Once the (separate) `RealFS`/`Implementation` dedup lands,
+// the trait collapses to a single impl.
+// ══════════════════════════════════════════════════════════════════════════
 
-    pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+/// Decouples `Entry::kind`/`symlink` (the lazy-stat path) from a concrete
+/// `RealFS` type. Both the `fs_full::RealFS` here and the inline-`fs::RealFS`
+/// in `lib.rs` impl this by forwarding to their own `RealFS::kind`.
+pub trait EntryKindResolver {
+    fn resolve_kind(
+        &mut self,
+        dir: &[u8],
+        base: &[u8],
+        existing_fd: Fd,
+        store_fd: bool,
+    ) -> core::result::Result<EntryCache, bun_core::Error>;
+}
+
+/// Port of `FileSystem.Entry.Kind` in `fs.zig`.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryKind {
+    Dir,
+    File,
+}
+
+/// Port of `FileSystem.Entry.Cache` in `fs.zig`.
+#[derive(Clone, Copy)]
+pub struct EntryCache {
+    pub symlink: PathString,
+    /// Too much code expects this to be 0
+    /// don't make it bun.invalid_fd
+    pub fd: Fd,
+    pub kind: EntryKind,
+}
+
+impl Default for EntryCache {
+    fn default() -> Self {
+        Self { symlink: PathString::EMPTY, fd: Fd::INVALID, kind: EntryKind::File }
+    }
+}
+
+/// Port of `FileSystem.Entry` in `fs.zig`.
+// PORT NOTE: `cache` / `need_stat` are lazily populated by `Entry::kind` /
+// `Entry::symlink` while callers hold a shared `&Entry` (Zig used a freely-
+// aliasing-mutable `*Entry`). `EntryCache` is `Copy`, so `Cell` gives us safe
+// `.get()/.set()` through `&self` — `RealFS.entries_mutex` serializes access
+// across threads (the `unsafe impl Sync for Entry` below opts back in under
+// that external-locking discipline).
+pub struct Entry {
+    pub cache: core::cell::Cell<EntryCache>,
+    // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
+    // but this points into DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
+    pub dir: &'static [u8],
+
+    pub base_: strings::StringOrTinyString,
+
+    // Necessary because the hash table uses it as a key
+    pub base_lowercase_: strings::StringOrTinyString,
+
+    pub mutex: Mutex,
+    pub need_stat: core::cell::Cell<bool>,
+
+    pub abs_path: PathString,
+}
+
+impl Entry {
+    /// Snapshot of the lazily-populated stat cache. `EntryCache` is `Copy`
+    /// (3 word-sized fields), so by-value return is free and avoids the
+    /// `&self → &interior` aliasing hazard the old `UnsafeCell` accessor had.
+    #[inline(always)]
+    pub fn cache(&self) -> EntryCache {
+        self.cache.get()
+    }
+
+    /// Overwrite the whole cache (interior mutability via `Cell`).
+    #[inline(always)]
+    pub fn set_cache(&self, c: EntryCache) {
+        self.cache.set(c);
+    }
+
+    /// Update a single cache field. Read-modify-write is fine: callers hold
+    /// `RealFS.entries_mutex` so no torn writes; `EntryCache` is `Copy`.
+    #[inline(always)]
+    pub fn set_cache_fd(&self, fd: Fd) {
+        let mut c = self.cache.get();
+        c.fd = fd;
+        self.cache.set(c);
+    }
+
+    #[inline(always)]
+    pub fn set_cache_kind(&self, kind: EntryKind) {
+        let mut c = self.cache.get();
+        c.kind = kind;
+        self.cache.set(c);
+    }
+
+    #[inline(always)]
+    pub fn set_cache_symlink(&self, symlink: PathString) {
+        let mut c = self.cache.get();
+        c.symlink = symlink;
+        self.cache.set(c);
+    }
+
+    #[inline]
+    pub fn base(&self) -> &[u8] {
+        self.base_.slice()
+    }
+
+    #[inline]
+    pub fn base_lowercase(&self) -> &[u8] {
+        self.base_lowercase_.slice()
+    }
+
+    /// Zig: `entry.dir` field (fs.zig:333) — interned in DirnameStore.
+    #[inline] pub fn dir(&self) -> &'static [u8] { self.dir }
+
+    /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
+    #[inline] pub fn abs_path(&self) -> PathString { self.abs_path }
+
+    /// Zig: `entry.abs_path = PathString.init(...)`.
+    #[inline] pub fn set_abs_path(&mut self, p: PathString) { self.abs_path = p; }
+
+    /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
+    // PORT NOTE: `Entry` lives in the EntryStore BSSMap singleton; all access is
+    // serialized through `RealFS.entries_mutex`. Zig used `*Entry` (freely
+    // aliasing-mutable) and `*Fs.FileSystem.RealFS` (raw). `fs` is `*mut` so the
+    // call site does not require a second exclusive `&mut RealFS` borrow while a
+    // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
+    // lazily-populated `need_stat` / `cache` goes through `Cell`. Generic over
+    // `R: EntryKindResolver` so this block is independent of which `RealFS`
+    // copy `fs` points at (see file-top comment).
+    pub fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
+        if self.need_stat.get() {
+            self.need_stat.set(false);
+            // This is technically incorrect, but we are choosing not to handle errors here
+            // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
+            // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
+            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                Ok(c) => self.cache.set(c),
+                Err(_) => return self.cache().kind,
+            }
+        }
+        self.cache().kind
+    }
+
+    /// Port of `Entry.symlink` in `fs.zig`.
+    pub fn symlink<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> &'static [u8] {
+        if self.need_stat.get() {
+            self.need_stat.set(false);
+            // This error can happen if the file was deleted between the time the directory
+            // was scanned and the time it was read
+            // SAFETY: see `Entry::kind` PORT NOTE.
+            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                Ok(c) => self.cache.set(c),
+                Err(_) => return b"",
+            }
+        }
+        crate::path_string_static(&self.cache().symlink)
+    }
+}
+
+// PORT NOTE: `BSSList::append` requires `ValueType: Clone` (its overflow path
+// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
+// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
+// with a fresh `Mutex` is semantically equivalent to Zig's by-value move.
+impl Clone for Entry {
+    fn clone(&self) -> Self {
+        Self {
+            cache: core::cell::Cell::new(self.cache.get()),
+            dir: self.dir,
+            base_: strings::StringOrTinyString::init(self.base_.slice()),
+            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
+            mutex: Mutex::default(),
+            need_stat: core::cell::Cell::new(self.need_stat.get()),
+            abs_path: self.abs_path,
+        }
+    }
+}
+
+impl Default for Entry {
+    fn default() -> Self {
+        Self {
+            cache: core::cell::Cell::new(EntryCache::default()),
+            dir: b"",
+            base_: strings::StringOrTinyString::init(b""),
+            base_lowercase_: strings::StringOrTinyString::init(b""),
+            mutex: Mutex::default(),
+            need_stat: core::cell::Cell::new(true),
+            abs_path: PathString::EMPTY,
+        }
+    }
+}
+
+/// Port of `FileSystem.DirEntry.DifferentCase` in `fs.zig`.
+// PORT NOTE: lifetime-generic, but resolver storage requires `'static` (all
+// three slices borrow DirnameStore/EntryStore-interned data in practice).
+#[derive(Clone, Copy)]
+pub struct DifferentCase<'a> {
+    pub dir: &'a [u8],
+    pub query: &'a [u8],
+    pub actual: &'a [u8],
+}
+
+/// Port of `FileSystem.DirEntry.Lookup` in `fs.zig`.
+// PORT NOTE: `entry` is a RAW `*mut Entry` (matching Zig `*Entry`). A safe
+// `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
+// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
+// at each write site under `entries_mutex`.
+pub struct EntryLookup<'a> {
+    pub entry: *mut Entry,
+    pub diff_case: Option<DifferentCase<'static>>,
+    // tie the lookup's nominal lifetime to the DirEntry it came from
+    _marker: core::marker::PhantomData<&'a Entry>,
+}
+
+impl<'a> EntryLookup<'a> {
+    /// Shared borrow of the looked-up `Entry`.
+    ///
+    /// # Safety (encapsulated)
+    /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
+    /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
+    /// only mutable state (`cache`) is behind `Cell`, so interior
+    /// writes via `set_cache*()` do not alias this `&Entry`. The
+    /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
+    /// looked up from.
+    #[inline(always)]
+    pub fn entry(&self) -> &'a Entry {
+        // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
+        unsafe { &*self.entry }
+    }
+
+    /// # Safety
+    /// `entry` is an EntryStore-owned slot; caller holds `RealFS.entries_mutex`
+    /// and must not let the returned `&mut Entry` overlap any other live
+    /// reference to this slot.
+    #[inline(always)]
+    pub unsafe fn entry_mut(&self) -> &'a mut Entry {
+        // SAFETY: upheld by caller — see fn doc. `self.entry` is an EntryStore slot.
+        unsafe { &mut *self.entry }
+    }
+}
+
+/// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `EntryStore`, `Err`).
+pub mod dir_entry {
+    use super::{Entry, EntryStoreBacking};
+
+    /// Port of `DirEntry.EntryMap` (`bun.StringHashMap(*Entry)`).
+    pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+
     /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
     /// ZST handle resolving to the `entry_store_backing()` singleton.
-    pub(crate) struct EntryStore(());
+    pub struct EntryStore(());
 
     impl EntryStore {
         #[inline]
-        pub(crate) fn instance() -> *mut EntryStoreBacking {
+        pub fn instance() -> *mut EntryStoreBacking {
             // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
             // materialize a `&'static mut` here — concurrent callers would alias.
-            entry_store_backing()
+            super::entry_store_backing()
         }
         #[inline]
-        pub(crate) fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
+        pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_alloc::AllocError> {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
             // `BSSList::append` takes `*mut Self` and serializes on its own inner
             // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
@@ -505,8 +760,8 @@ pub(crate) mod dir_entry {
         /// writes lower straight into the destination (matching Zig's
         /// result-location semantics).
         #[inline(always)]
-        pub(crate) fn append_uninit()
-            -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, AllocError>
+        pub fn append_uninit()
+            -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError>
         {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
             // `BSSList::append_uninit` takes `*mut Self` and serializes on its
@@ -515,6 +770,7 @@ pub(crate) mod dir_entry {
         }
     }
 
+    /// Port of `DirEntry.Err`.
     #[derive(Clone, Copy)]
     pub struct Err {
         pub original_err: bun_core::Error,
@@ -522,6 +778,25 @@ pub(crate) mod dir_entry {
     }
 }
 
+/// Trait abstraction for the `comptime Iterator: type, iterator: Iterator` pattern
+/// in `addEntry`/`readdir` (Zig used a duck-typed `iterator.next(*Entry, FD)`).
+pub trait DirEntryIterator {
+    const IS_VOID: bool = false;
+    fn next(&self, entry: &mut Entry, fd: Fd);
+}
+
+impl DirEntryIterator for () {
+    const IS_VOID: bool = true;
+    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+}
+
+impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
+    const IS_VOID: bool = T::IS_VOID;
+    #[inline]
+    fn next(&self, entry: &mut Entry, fd: Fd) { (**self).next(entry, fd) }
+}
+
+/// Port of `FileSystem.DirEntry` in `fs.zig`.
 pub struct DirEntry {
     // TODO(port): rule deviation — Zig deinit calls allocator.free(d.dir) so guide says Box<[u8]>,
     // but this is interned in DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
@@ -532,21 +807,27 @@ pub struct DirEntry {
 }
 
 impl DirEntry {
-    // pub fn remove_entry(dir: &mut DirEntry, name: &[u8]) -> Result<(), bun_core::Error> {
-    //     // dir.data.remove(name);
-    // }
+    pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
+        if FeatureFlags::VERBOSE_FS {
+            bun_core::prettyln!("\n  {}", BStr::new(dir));
+        }
+        DirEntry { dir, data: dir_entry::EntryMap::default(), generation, fd: Fd::INVALID }
+    }
 
+    /// Port of `DirEntry.addEntry` in `fs.zig`.
+    // PORT NOTE: Zig signature was `(prev_map, *entry, allocator, comptime Iterator, iterator)`.
+    // The Zig `allocator` param is dropped (everything routes through the global stores).
+    // Compatibility wrapper for callers outside the `readdir` hot loop —
+    // resolves the `FilenameStore` singleton on demand. Hot-loop callers
+    // should hoist `FilenameStoreAppender::new()` once and call
+    // `add_entry_with_store` directly.
     #[inline]
     pub fn add_entry<I: DirEntryIterator>(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         iterator: I,
-    ) -> Result<(), bun_core::Error> {
-        // Compatibility wrapper for callers outside the `readdir` hot loop —
-        // resolves the `FilenameStore` singleton on demand. Hot-loop callers
-        // should hoist `FilenameStoreAppender::new()` once and call
-        // `add_entry_with_store` directly.
+    ) -> core::result::Result<(), bun_core::Error> {
         self.add_entry_with_store(prev_map, entry, &mut FilenameStoreAppender::new(), iterator)
     }
 
@@ -556,7 +837,7 @@ impl DirEntry {
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
         iterator: I,
-    ) -> Result<(), bun_core::Error> {
+    ) -> core::result::Result<(), bun_core::Error> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
@@ -602,16 +883,15 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    existing.need_stat = existing.need_stat
+                    existing.need_stat.set(existing.need_stat.get()
                         || found_kind.is_none()
-                        || Some(existing.cache.kind) != found_kind;
+                        || Some(existing.cache().kind) != found_kind);
                     // TODO: is this right?
-                    if Some(existing.cache.kind) != found_kind {
+                    if Some(existing.cache().kind) != found_kind {
                         // if found_kind is null, we have set need_stat above, so we
                         // store an arbitrary kind
-                        existing.cache.kind = found_kind.unwrap_or(EntryKind::File);
-
-                        existing.cache.symlink = PathString::EMPTY;
+                        existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
+                        existing.set_cache_symlink(PathString::EMPTY);
                     }
                     break 'brk existing_ptr;
                 }
@@ -649,14 +929,14 @@ impl DirEntry {
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
-                addr_of_mut!((*p).need_stat).write(found_kind.is_none());
-                addr_of_mut!((*p).cache).write(EntryCache {
+                addr_of_mut!((*p).need_stat).write(core::cell::Cell::new(found_kind.is_none()));
+                addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: PathString::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
-                });
+                }));
                 addr_of_mut!((*p).abs_path).write(PathString::EMPTY);
                 p
             }
@@ -696,20 +976,11 @@ impl DirEntry {
         Ok(())
     }
 
-    pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
-        if FeatureFlags::VERBOSE_FS {
-            bun_core::prettyln!("\n  {}", BStr::new(dir));
-        }
-
-        DirEntry {
-            dir,
-            data: dir_entry::EntryMap::default(),
-            generation,
-            fd: Fd::INVALID,
-        }
-    }
-
-    pub fn get<'a>(&'a self, query_: &'a [u8]) -> Option<EntryLookup<'a>> {
+    /// Port of `DirEntry.get` in `fs.zig`.
+    // PORT NOTE: `query_` borrow detached from the returned Entry lifetime so
+    // callers can pass a slice into the same threadlocal buffer they then
+    // mutate; `DifferentCase` widens to 'static (DirnameStore-backed).
+    pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
@@ -717,31 +988,36 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        let lookup = EntryLookup { entry: result_ptr, diff_case: None };
-        // EntryStore-owned pointer; safe read via the encapsulated backref accessor.
-        let basename = lookup.entry().base();
+        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
+        // borrow here only to compare basename — never overlaps a writer.
+        let basename = unsafe { &*result_ptr }.base();
         if !strings::eql_long(basename, query_, true) {
             return Some(EntryLookup {
                 entry: result_ptr,
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
-                    query: query_,
-                    actual: basename,
+                    // TODO(port): lifetime — Zig stored caller's slice; widened to 'static.
+                    // SAFETY: extended for borrowck reshape; consumed before caller's buffer
+                    // is overwritten (see resolver call sites).
+                    query: unsafe { &*core::ptr::from_ref::<[u8]>(query_) },
+                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
                 }),
+                _marker: core::marker::PhantomData,
             });
         }
 
-        Some(lookup)
+        Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
     }
 
-    // TODO(port): getComptimeQuery used comptime string lowering + comptime hash; Rust port
-    // takes a &'static [u8] that is already lowercase. Phase B may add a const-eval hash.
+    /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
+    // PORT NOTE: Zig used comptime string lowering + comptime hash; Rust port
+    // takes a &'static [u8] that is already lowercase.
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
         // PERF(port): was comptime hash precompute — profile in Phase B
         let &result_ptr = self.data.get(query_lower)?;
-        let lookup = EntryLookup { entry: result_ptr, diff_case: None };
-        // EntryStore-owned pointer; safe read via the encapsulated backref accessor.
-        let basename = lookup.entry().base();
+        // SAFETY: EntryStore-owned pointer; read-only basename compare.
+        let basename = unsafe { &*result_ptr }.base();
 
         if basename != query_lower {
             return Some(EntryLookup {
@@ -749,185 +1025,50 @@ impl DirEntry {
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
                     query: query_lower,
-                    actual: basename,
+                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
                 }),
+                _marker: core::marker::PhantomData,
             });
         }
 
-        Some(lookup)
+        Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
     }
 
+    /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         // PERF(port): was comptime hash precompute — profile in Phase B
         self.data.contains_key(query_lower)
+    }
+
+    /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
+    /// `bun.invalid_fd` when the resolver did not retain it.
+    #[inline] pub fn fd(&self) -> Fd { self.fd }
+
+    /// Zig: `dir_entry.data.iterator()` (fs.zig:117). Yields the raw
+    /// `*mut Entry` value for each cached file (Zig's `EntryMap` value
+    /// type is `*Entry`). Yields `*mut Entry`, NOT `&mut Entry`, because
+    /// the map hands out raw pointers with no exclusivity guarantee;
+    /// callers reborrow at the use site under `entries_mutex`.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = *mut Entry> + '_ {
+        self.data.values().copied()
     }
 }
 
 // PORT NOTE: Zig `DirEntry.deinit(allocator)` freed `data` (now drops itself) and `dir`
 // (interned in DirnameStore — see field TODO). Body would be empty, so no `impl Drop`.
 
-/// Trait abstraction for the `comptime Iterator: type, iterator: Iterator` pattern in addEntry/readdir.
-pub trait DirEntryIterator {
-    const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
-}
-
-impl DirEntryIterator for () {
-    const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
-}
-
-impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
-    const IS_VOID: bool = T::IS_VOID;
+impl bun_dotenv::DirEntryProbe for DirEntry {
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) { (**self).next(entry, fd) }
-}
-
-pub struct Entry {
-    pub cache: EntryCache,
-    // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
-    // but this points into DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
-    pub dir: &'static [u8],
-
-    pub base_: strings::StringOrTinyString,
-
-    // Necessary because the hash table uses it as a key
-    pub base_lowercase_: strings::StringOrTinyString,
-
-    pub mutex: Mutex,
-    pub need_stat: bool,
-
-    pub abs_path: PathString,
-}
-
-// PORT NOTE: `BSSList::append` requires `ValueType: Clone` (its overflow path
-// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
-// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
-// with a fresh `Mutex` is semantically equivalent to Zig's by-value move.
-impl Clone for Entry {
-    fn clone(&self) -> Self {
-        Self {
-            cache: self.cache,
-            dir: self.dir,
-            base_: strings::StringOrTinyString::init(self.base_.slice()),
-            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
-            mutex: Mutex::default(),
-            need_stat: self.need_stat,
-            abs_path: self.abs_path,
-        }
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        DirEntry::has_comptime_query(self, query_lower)
     }
 }
 
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            cache: EntryCache::default(),
-            dir: b"",
-            base_: strings::StringOrTinyString::init(b""),
-            base_lowercase_: strings::StringOrTinyString::init(b""),
-            mutex: Mutex::default(),
-            need_stat: true,
-            abs_path: PathString::EMPTY,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct DifferentCase<'a> {
-    pub dir: &'a [u8],
-    pub query: &'a [u8],
-    pub actual: &'a [u8],
-}
-
-pub struct EntryLookup<'a> {
-    /// Mutable raw pointer matching Zig `*Entry` — the lazy-stat methods
-    /// `Entry::kind`/`Entry::symlink` need `&mut Entry` to fill `cache`, and
-    /// `Entry` lives in the process-static `EntryStore` (BSSList) so a raw
-    /// pointer is the correct ownership shape (BACKREF/ARENA).
-    pub entry: *mut Entry,
-    pub diff_case: Option<DifferentCase<'a>>,
-}
-
-impl<'a> EntryLookup<'a> {
-    /// Shared borrow of the looked-up `Entry`.
-    ///
-    /// # Safety (encapsulated)
-    /// `self.entry` is a slot in the process-static `EntryStore` BSSList
-    /// singleton (BACKREF/ARENA — never freed, never moved). No `&mut Entry`
-    /// is materialized concurrently with a read: the lazy-stat path mutates
-    /// only `Entry.cache` under `Entry.mutex`, so safe code cannot alias.
-    /// Returned as `&'a` (the lookup's nominal lifetime, tied to the
-    /// `DirEntry` it came from) rather than `&self` so callers may
-    /// move/consume the `EntryLookup` while keeping the borrow.
-    #[inline]
-    pub fn entry(&self) -> &'a Entry {
-        // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
-        unsafe { &*self.entry }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct EntryCache {
-    pub symlink: PathString,
-    /// Too much code expects this to be 0
-    /// don't make it bun.invalid_fd
-    pub fd: Fd,
-    pub kind: EntryKind,
-}
-
-impl Default for EntryCache {
-    fn default() -> Self {
-        Self {
-            symlink: PathString::EMPTY,
-            fd: Fd::INVALID,
-            kind: EntryKind::File,
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EntryKind {
-    Dir,
-    File,
-}
-
-impl Entry {
-    #[inline]
-    pub fn base(&self) -> &[u8] {
-        self.base_.slice()
-    }
-
-    #[inline]
-    pub fn base_lowercase(&self) -> &[u8] {
-        self.base_lowercase_.slice()
-    }
-
-    pub fn kind(&mut self, fs: &mut Implementation, store_fd: bool) -> EntryKind {
-        if self.need_stat {
-            self.need_stat = false;
-            // This is technically incorrect, but we are choosing not to handle errors here
-            match fs.kind(self.dir, self.base(), self.cache.fd, store_fd) {
-                Ok(c) => self.cache = c,
-                Err(_) => return self.cache.kind,
-            }
-        }
-        self.cache.kind
-    }
-
-    pub fn symlink(&mut self, fs: &mut Implementation, store_fd: bool) -> &[u8] {
-        if self.need_stat {
-            self.need_stat = false;
-            // This is technically incorrect, but we are choosing not to handle errors here
-            // This error can happen if the file was deleted between the time the directory was scanned and the time it was read
-            match fs.kind(self.dir, self.base(), self.cache.fd, store_fd) {
-                Ok(c) => self.cache = c,
-                Err(_) => return b"",
-            }
-        }
-        self.cache.symlink.slice()
-    }
-}
+/// Compat re-exports for callers that named the seam-type aliases.
+pub use EntryKind as FsEntryKind;
+pub use dir_entry::Err as DirEntryErr;
 
 // TODO(port): Entry::deinit took allocator and destroyed self; Entry lives in EntryStore (BSSList) so no Drop needed
 
@@ -1053,15 +1194,61 @@ pub(crate) type EntriesOptionMap =
 bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate::counts::DIR_ENTRY, true }
 
 /// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
-/// field-shaped without inlining the (large) backing array. Carries no
-/// methods of its own — all map access goes through [`EntriesGuard`] (obtained
-/// via [`RealFS::entries_locked`]), which structurally ties the
-/// `entries_mutex` lock to every `&mut BSSMapInner` retag instead of relying
-/// on a per-call-site SAFETY contract.
+/// field-shaped without inlining the (large) backing array.
 pub struct EntriesMap(());
 impl EntriesMap {
     #[inline]
     pub const fn new() -> Self { Self(()) }
+    #[inline]
+    fn inner(&self) -> *mut EntriesOptionMap {
+        // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT materialize
+        // a `&'static mut` here — that asserts noalias for the whole map BEFORE
+        // `RealFS.entries_mutex` is taken, which is UB if two threads race. Form the
+        // `&mut` only for the duration of a single operation at the call site.
+        entries_option_map()
+    }
+    /// SAFETY: forms a `&mut BSSMapInner` over the process-global singleton for
+    /// the duration of the call. Caller must hold `RealFS.entries_mutex` so no
+    /// other thread is inside any `EntriesMap` method concurrently. Returns a
+    /// raw `*mut EntriesOption` (matching Zig's `*EntriesOption`) — caller
+    /// forms a short-lived `&mut` at the use site under the same lock; do NOT
+    /// hand out a `&'static mut` (two callers would alias the same slot).
+    pub unsafe fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        let r = unsafe { (*self.inner()).get(key)? };
+        Some(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    /// SAFETY: see [`get`] — mutates the singleton map.
+    pub unsafe fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        unsafe { (*self.inner()).get_or_put(key) }
+    }
+    /// SAFETY: see [`get`].
+    pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        let r = unsafe { (*self.inner()).at_index(index)? };
+        Some(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    /// SAFETY: see [`get`].
+    pub unsafe fn put(
+        &self,
+        result: &mut allocators::Result,
+        value: EntriesOption,
+    ) -> core::result::Result<*mut EntriesOption, AllocError> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        let r = unsafe { (*self.inner()).put(result, value)? };
+        Ok(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    /// SAFETY: see [`get`] — mutates the singleton map.
+    pub unsafe fn mark_not_found(&self, result: allocators::Result) {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        unsafe { (*self.inner()).mark_not_found(result) }
+    }
+    /// SAFETY: see [`get`] — mutates the singleton map.
+    pub unsafe fn remove(&self, key: &[u8]) -> bool {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
+        unsafe { (*self.inner()).remove(key) }
+    }
 }
 
 /// RAII guard over the `entries_option_map()` singleton: holds
@@ -1267,7 +1454,7 @@ impl RealFS {
         generation: Generation,
     ) -> Option<*mut EntriesOption> {
         // PORT NOTE: Zig fs.zig:613 does not lock here; in Rust we must, because every
-        // `EntriesGuard` method auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // `EntriesMap` method auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB under Stacked Borrows. `EntriesGuard` holds
         // `entries_mutex` for the whole operation so the `&mut BSSMapInner` is
@@ -1383,7 +1570,7 @@ impl RealFS {
     /// Returns `true` if an entry was removed
     pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
         // PORT NOTE: Zig fs.zig:778 does not lock here; in Rust we must, because
-        // `EntriesGuard::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // `EntriesMap::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB. `&mut self` alone proves nothing cross-thread since
         // `EntriesMap` is a ZST handle over a process-global singleton.
@@ -1556,8 +1743,12 @@ impl RealFS {
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
         // TODO(port): std.fs.cwd().openFile — bun_sys::open_file
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
-        let _close = self.need_to_close_files().then(|| bun_sys::CloseOnDrop::file(&file));
-        self.mod_key_with_file(path, &file)
+        let need_close = self.need_to_close_files();
+        let result = self.mod_key_with_file(path, &file);
+        if need_close {
+            let _ = bun_sys::close(file.handle());
+        }
+        result
     }
 }
 
@@ -2129,92 +2320,189 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
     // PORT NOTE: allocator param dropped (global mimalloc)
     FileSystem::set_max_fd(file.handle().native());
 
-    if !USE_SHARED_BUFFER {
-        // Heap-owned read: stat-presized pread loop via `File::read_to_end_with_array_list`
-        // (collapses the original 16K-stack-probe → stat → second read_all → dupe path).
-        let mut buf = Vec::new();
-        let hint = match size_hint {
-            // Skip the extra file.stat() call when possible
-            Some(s) => { buf.reserve_exact(s + 16); bun_sys::SizeHint::ProbablySmall }
-            None => bun_sys::SizeHint::UnknownSize,
-        };
-        file.read_to_end_with_array_list(&mut buf, hint)?;
-        debug!("read({}, {}) = {}", file.handle(), buf.capacity(), buf.len());
-
-        if let Some(bom) = BOM::detect(&buf) {
-            debug!("Convert {} BOM", bom.tag_name());
-            buf = bom.remove_and_convert_to_utf8_and_free(buf);
-        }
-        return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
-    }
-
+    // PORT NOTE: in the `USE_SHARED_BUFFER` branch, `file_contents` borrows
+    // `shared_buffer.list`; tracked as a raw (ptr, len) pair so borrowck doesn't tie the
+    // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
+    // reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return). The
+    // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
+    // Definite-init: the read `loop` below assigns both before any `break`/read; the
+    // `else` (non-shared-buffer) arm always early-returns.
+    let mut file_contents_ptr: *const u8;
+    let mut file_contents_len: usize;
     // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
     // This imposes a performance hit because not reading from disk is faster than reading from disk
     // Part of that hit is allocating a temporary buffer to store the file contents in
     // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
-    shared_buffer.reset();
+    if USE_SHARED_BUFFER {
+        shared_buffer.reset();
 
-    if STREAM {
-        // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
-        // stream because we assume that this only realistically happens
-        // during HMR
+        // Skip the extra file.stat() call when possible
         let mut size = match size_hint {
             Some(s) => s,
-            None => file.get_end_pos()?,
+            None => match file.get_end_pos() {
+                Ok(s) => s,
+                Err(err) => return Err(err.into()),
+            },
         };
         debug!("stat({}) = {}", file.handle(), size);
+
+        // Skip the pread call for empty files
+        // Otherwise will get out of bounds errors
+        // plus it's an unnecessary syscall
         if size == 0 {
-            return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+            if USE_SHARED_BUFFER {
+                shared_buffer.reset();
+                return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+            } else {
+                return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+            }
         }
 
         let mut bytes_read: u64 = 0;
         shared_buffer.grow_by(size + 1)?;
         // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
         unsafe { shared_buffer.list.expand_to_capacity() };
+
+        // if you press save on a large file we might not read all the
+        // bytes in the first few pread() calls. we only handle this on
+        // stream because we assume that this only realistically happens
+        // during HMR
         loop {
             // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            let read_count = file.read_all(&mut shared_buffer.list[bytes_read as usize..])?;
+            let read_count = match file.read_all(&mut shared_buffer.list[bytes_read as usize..]) {
+                Ok(n) => n,
+                Err(err) => return Err(err.into()),
+            };
             shared_buffer.list.truncate(read_count + bytes_read as usize);
+            file_contents_ptr = shared_buffer.list.as_ptr();
+            file_contents_len = shared_buffer.list.len();
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-            // check again that stat() didn't change the file size
-            // another reason to only do this when stream
-            let new_size = file.get_end_pos()?;
-            bytes_read += read_count as u64;
-            // don't infinite loop is we're still not reading more
-            if read_count == 0 { break; }
-            if (bytes_read as usize) < new_size {
-                shared_buffer.grow_by(new_size - size)?;
-                // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-                unsafe { shared_buffer.list.expand_to_capacity() };
-                size = new_size;
-                continue;
+            if STREAM {
+                // check again that stat() didn't change the file size
+                // another reason to only do this when stream
+                let new_size = match file.get_end_pos() {
+                    Ok(s) => s,
+                    Err(err) => return Err(err.into()),
+                };
+
+                bytes_read += read_count as u64;
+
+                // don't infinite loop is we're still not reading more
+                if read_count == 0 {
+                    break;
+                }
+
+                if (bytes_read as usize) < new_size {
+                    shared_buffer.grow_by(new_size - size)?;
+                    // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
+                    unsafe { shared_buffer.list.expand_to_capacity() };
+                    size = new_size;
+                    continue;
+                }
             }
             break;
         }
+
+        if shared_buffer.list.capacity() > file_contents_len {
+            // SAFETY: capacity > len, so writing one byte past len is in-bounds
+            unsafe {
+                *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
+            }
+        }
+
+        // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
+        // the read loop above); borrow the Vec directly so the slice ends before the
+        // `&mut shared_buffer.list` reborrow inside the BOM branch.
+        if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
+            debug!("Convert {} BOM", bom.tag_name());
+            // PORT NOTE: Zig passed `&shared_buffer.list` and the returned slice aliases it.
+            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
+            // correct logical size (the read loop above truncated to `file_contents_len`).
+            shared_buffer.list.truncate(file_contents_len);
+            let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
+            file_contents_ptr = converted.as_ptr();
+            file_contents_len = converted.len();
+        }
     } else {
-        let hint = match size_hint {
-            // Skip the extra file.stat() call when possible
-            Some(s) => { shared_buffer.list.reserve_exact(s + 16); bun_sys::SizeHint::ProbablySmall }
-            None => bun_sys::SizeHint::UnknownSize,
+        let mut initial_buf = [0u8; 16384];
+
+        // Optimization: don't call stat() unless the file is big enough
+        // that we need to dynamically allocate memory to read it.
+        let initial_read: &[u8] = if size_hint.is_none() {
+            let buf: &mut [u8] = &mut initial_buf;
+            let read_count = match file.read_all(buf) {
+                Ok(n) => n,
+                Err(err) => return Err(err.into()),
+            };
+            if read_count + 1 < buf.len() {
+                // allocator.dupeZ — own the buffer; caller frees via PathContentsPair drop.
+                // PORT NOTE: Zig returned an allocator-owned `[:0]u8` and the caller freed it
+                // later; Rust returns `Cow::Owned` so the caller's drop frees it. The trailing
+                // NUL sentinel is not part of `contents` (matches Zig `[:0]`).
+                let mut allocation = vec![0u8; read_count + 1];
+                allocation[..read_count].copy_from_slice(&buf[..read_count]);
+                allocation[read_count] = 0;
+                allocation.truncate(read_count);
+
+                if let Some(bom) = BOM::detect(&allocation) {
+                    debug!("Convert {} BOM", bom.tag_name());
+                    allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
+                }
+
+                return Ok(PathContentsPair {
+                    path: Path::init(path),
+                    contents: Cow::Owned(allocation),
+                });
+            }
+
+            &initial_buf[..read_count]
+        } else {
+            &initial_buf[..0]
         };
-        file.read_to_end_with_array_list(&mut shared_buffer.list, hint)?;
-        debug!("read({}, {}) = {}", file.handle(), shared_buffer.list.capacity(), shared_buffer.list.len());
+
+        // Skip the extra file.stat() call when possible
+        let size = match size_hint {
+            Some(s) => s,
+            None => match file.get_end_pos() {
+                Ok(s) => s,
+                Err(err) => return Err(err.into()),
+            },
+        };
+        debug!("stat({}) = {}", file.handle(), size);
+
+        let mut buf = vec![0u8; size + 1];
+        buf[..initial_read.len()].copy_from_slice(initial_read);
+
+        if size == 0 {
+            return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
+        }
+
+        // stick a zero at the end
+        buf[size] = 0;
+
+        let read_count = match file.read_all(&mut buf[initial_read.len()..]) {
+            Ok(n) => n,
+            Err(err) => return Err(err.into()),
+        };
+        let total = read_count + initial_read.len();
+        debug!("read({}, {}) = {}", file.handle(), size, read_count);
+        buf.truncate(total);
+
+        if let Some(bom) = BOM::detect(&buf) {
+            debug!("Convert {} BOM", bom.tag_name());
+            buf = bom.remove_and_convert_to_utf8_and_free(buf);
+        }
+
+        return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
     }
 
-    let mut file_contents_len = shared_buffer.list.len();
-    if shared_buffer.list.capacity() > file_contents_len {
-        // SAFETY: capacity > len, so writing one byte past len is in-bounds
-        unsafe { *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0; }
-    }
-
-    if let Some(bom) = BOM::detect(&shared_buffer.list) {
-        debug!("Convert {} BOM", bom.tag_name());
-        let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
-        file_contents_len = converted.len();
-    }
-
+    // PORT NOTE: `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
+    // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
+    // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
+    // instead of fabricating `'static` via `from_raw_parts`.
+    debug_assert!(core::ptr::eq(file_contents_ptr, shared_buffer.list.as_ptr()));
+    let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
     Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(file_contents) })
 }
@@ -2240,10 +2528,10 @@ impl RealFS {
 
         if is_symlink {
             // TODO(port): existing_fd != 0 — Zig compared FD to integer 0; using is_valid()
-            let file: bun_sys::File = if existing_fd.is_valid() {
-                bun_sys::File::from_fd(existing_fd)
+            let file: Fd = if existing_fd.is_valid() {
+                existing_fd
             } else if store_fd {
-                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
+                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?.handle()
             } else {
                 // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                 // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2251,26 +2539,28 @@ impl RealFS {
                 let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                 #[cfg(not(target_os = "linux"))]
                 let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                bun_sys::File::open(absolute_path, flags, 0)?
+                bun_sys::open(absolute_path, flags, 0)?
             };
-            FileSystem::set_max_fd(file.handle().native());
+            FileSystem::set_max_fd(file.native());
 
             // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
             // BOTH success and error paths — use scopeguard so close-or-store happens even if
             // stat()/get_fd_path() return early with `?`.
             let need_to_close_files = self.need_to_close_files();
             let cache_ptr: *mut EntryCache = &raw mut cache;
-            let _guard = scopeguard::guard(file.handle(), move |fd| {
+            let _guard = scopeguard::guard(file, move |file| {
                 if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                    let _ = bun_sys::close(fd);
+                    let _ = bun_sys::close(file);
                 } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
                     // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                    unsafe { (*cache_ptr).fd = fd };
+                    unsafe { (*cache_ptr).fd = file };
                 }
             });
 
-            let stat_ = file.stat()?;
-            symlink = file.get_path(&mut outpath)?;
+            let stat_ = bun_sys::fstat(*_guard)?;
+
+            symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+
             kind_ = bun_sys::kind_from_mode(stat_.st_mode as bun_sys::Mode);
         }
 
@@ -2413,10 +2703,11 @@ impl RealFS {
             let mut symlink: &[u8] = b"";
 
             if is_symlink {
-                let file: bun_sys::File = if let Some(valid) = existing_fd.unwrap_valid() {
-                    bun_sys::File::from_fd(valid)
+                let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
+                    valid
                 } else if store_fd {
                     bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
+                        .handle()
                 } else {
                     // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                     // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2424,26 +2715,26 @@ impl RealFS {
                     let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                     #[cfg(not(target_os = "linux"))]
                     let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                    bun_sys::File::open(absolute_path_c, flags, 0)?
+                    bun_sys::open(absolute_path_c, flags, 0)?
                 };
-                FileSystem::set_max_fd(file.handle().native());
+                FileSystem::set_max_fd(file.native());
 
                 // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
                 // BOTH success and error paths — use scopeguard so close-or-store happens even if
                 // stat()/get_fd_path() return early with `?`.
                 let need_to_close_files = self.need_to_close_files();
                 let cache_ptr: *mut EntryCache = &raw mut cache;
-                let _guard = scopeguard::guard(file.handle(), move |fd| {
+                let _guard = scopeguard::guard(file, move |file| {
                     if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                        let _ = bun_sys::close(fd);
+                        let _ = bun_sys::close(file);
                     } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
                         // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                        unsafe { (*cache_ptr).fd = fd };
+                        unsafe { (*cache_ptr).fd = file };
                     }
                 });
 
-                let file_stat = file.stat()?;
-                symlink = file.get_path(&mut outpath)?;
+                let file_stat = bun_sys::fstat(*_guard)?;
+                symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
                 file_kind = bun_sys::kind_from_mode(file_stat.st_mode as bun_sys::Mode);
             }
 
@@ -2475,6 +2766,19 @@ pub(crate) type Implementation = RealFS;
 // .wasi, .native => RealFS,
 //     .wasm => WasmFS,
 // };
+
+impl EntryKindResolver for RealFS {
+    #[inline(always)]
+    fn resolve_kind(
+        &mut self,
+        dir: &[u8],
+        base: &[u8],
+        existing_fd: Fd,
+        store_fd: bool,
+    ) -> core::result::Result<EntryCache, bun_core::Error> {
+        self.kind(dir, base, existing_fd, store_fd)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 

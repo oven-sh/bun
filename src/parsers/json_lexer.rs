@@ -25,8 +25,8 @@ use bun_alloc::Arena as Bump;
 
 use bun_ast as js_ast;
 use bun_ast::Indentation;
-use bun_str::strings;
-use bun_str::strings::CodePoint;
+use bun_core::strings;
+use bun_core::strings::CodePoint;
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSONOptions

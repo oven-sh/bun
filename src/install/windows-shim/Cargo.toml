@@ -17,7 +17,8 @@
 # A separate crate keeps the dep graph at `bun_core` + `bun_sys` + `strum`.
 #
 # Dependencies are deliberately tiny: `bun_windows_sys` (leaf Win32 externs,
-# no native C, no `#[no_mangle]` exports) is the ONLY workspace crate. Pulling
+# no native C, no `#[no_mangle]` exports) and `bun_opaque` (zero-dep,
+# `#![no_std]`, zero `#[no_mangle]`) are the ONLY workspace crates. Pulling
 # `bun_core` / `bun_sys` / `bun_string` would drag in their `#[no_mangle]`
 # C-ABI surface (`Bun__*`, `__bun_dispatch__*`), which references
 # libuv/simdutf/highway/ICU and makes those undefined symbols link roots — the
@@ -62,4 +63,5 @@ shim_standalone = []
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
+bun_opaque.workspace = true
 bytemuck = { version = "1", default-features = false }

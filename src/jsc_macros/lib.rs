@@ -380,6 +380,44 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             }
         });
     }
+
+    // Mirror the `Gc` enum that `generate-classes.ts` emits for the build-time
+    // `js_$T` modules, so `js_class_module!` callers get the same
+    // `js::Gc::$prop.get()/.set()/.clear()` surface as the codegen'd modules.
+    // Variant names are the raw prop idents (camelCase) — every caller's prop
+    // set is verified to contain no Rust keywords (see
+    // `codegen_cached_accessors!` call sites); if one is ever added, the
+    // resulting "expected identifier, found keyword" error points exactly here.
+    if !props.is_empty() {
+        let variants = props.iter();
+        let get_arms = props.iter().map(|p| {
+            let f = format_ident!("{}_get_cached", camel_to_snake(&p.to_string()));
+            quote! { Gc::#p => #f(this_value), }
+        });
+        let set_arms = props.iter().map(|p| {
+            let f = format_ident!("{}_set_cached", camel_to_snake(&p.to_string()));
+            quote! { Gc::#p => #f(this_value, global, value), }
+        });
+        out.extend(quote! {
+            /// GC-cached value slots on the JS wrapper (Zig: `js.gc.<field>.get/set/clear`).
+            #[allow(non_camel_case_types, dead_code)]
+            #[derive(Clone, Copy)]
+            #[repr(u8)]
+            pub enum Gc { #( #variants, )* }
+            #[allow(dead_code)]
+            impl Gc {
+                #[inline] pub fn get(self, this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
+                    match self { #( #get_arms )* }
+                }
+                #[inline] pub fn set(self, this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
+                    match self { #( #set_arms )* }
+                }
+                #[inline] pub fn clear(self, this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject) {
+                    self.set(this_value, global, ::bun_jsc::JSValue::ZERO);
+                }
+            }
+        });
+    }
     out.into()
 }
 

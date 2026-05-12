@@ -86,7 +86,7 @@ impl GradientSideKeyword for VerticalPositionKeyword {
 }
 
 /// A CSS [`<gradient>`](https://www.w3.org/TR/css-images-3/#gradients) value.
-#[derive(PartialEq)]
+#[derive(PartialEq, css::DeepClone)]
 pub enum Gradient {
     /// A `linear-gradient()`, and its vendor prefix.
     Linear(LinearGradient),
@@ -109,49 +109,28 @@ impl Gradient {
         let location = input.current_source_location();
         let func = input.expect_function_cloned()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
-            // TODO(port): bun.ComptimeEnumMap(...).getAnyCase — case-insensitive perfect hash.
-            // Using a chain of case-insensitive comparisons for now; Phase B can swap to phf.
-            if strings::eql_case_insensitive_ascii_check_length(func, b"linear-gradient") {
-                Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::NONE)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"repeating-linear-gradient") {
-                Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::NONE)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"radial-gradient") {
-                Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::NONE)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"repeating-radial-gradient") {
-                Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::NONE)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"conic-gradient") {
-                Ok(Gradient::Conic(ConicGradient::parse(input_)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"repeating-conic-gradient") {
-                Ok(Gradient::RepeatingConic(ConicGradient::parse(input_)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-linear-gradient") {
-                Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-repeating-linear-gradient") {
-                Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-radial-gradient") {
-                Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-repeating-radial-gradient") {
-                Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-moz-linear-gradient") {
-                Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::MOZ)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-moz-repeating-linear-gradient") {
-                Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::MOZ)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-moz-radial-gradient") {
-                Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::MOZ)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-moz-repeating-radial-gradient") {
-                Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::MOZ)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-o-linear-gradient") {
-                Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::O)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-o-repeating-linear-gradient") {
-                Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::O)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-o-radial-gradient") {
-                Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::O)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-o-repeating-radial-gradient") {
-                Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::O)?))
-            } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-gradient") {
-                Ok(Gradient::WebkitGradient(WebKitGradient::parse(input_)?))
-            } else {
-                Err(location.new_unexpected_token_error(Token::Ident(func)))
-            }
+            crate::match_ignore_ascii_case! { func, {
+                b"linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
+                b"repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
+                b"radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::NONE)?)),
+                b"repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::NONE)?)),
+                b"conic-gradient" => Ok(Gradient::Conic(ConicGradient::parse(input_)?)),
+                b"repeating-conic-gradient" => Ok(Gradient::RepeatingConic(ConicGradient::parse(input_)?)),
+                b"-webkit-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-webkit-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-webkit-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-webkit-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-moz-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-moz-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-moz-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-moz-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-o-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::O)?)),
+                b"-o-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::O)?)),
+                b"-o-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::O)?)),
+                b"-o-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::O)?)),
+                b"-webkit-gradient" => Ok(Gradient::WebkitGradient(WebKitGradient::parse(input_)?)),
+                _ => Err(location.new_unexpected_token_error(Token::Ident(func))),
+            }}
         })
     }
 
@@ -197,17 +176,8 @@ impl Gradient {
         Some(Gradient::WebkitGradient(WebKitGradient::from_standard(self, bump)?))
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        match self {
-            Gradient::Linear(g) => Gradient::Linear(g.deep_clone(bump)),
-            Gradient::RepeatingLinear(g) => Gradient::RepeatingLinear(g.deep_clone(bump)),
-            Gradient::Radial(g) => Gradient::Radial(g.deep_clone(bump)),
-            Gradient::RepeatingRadial(g) => Gradient::RepeatingRadial(g.deep_clone(bump)),
-            Gradient::Conic(g) => Gradient::Conic(g.deep_clone(bump)),
-            Gradient::RepeatingConic(g) => Gradient::RepeatingConic(g.deep_clone(bump)),
-            Gradient::WebkitGradient(g) => Gradient::WebkitGradient(g.deep_clone(bump)),
-        }
-    }
+    // deep_clone — provided by #[derive(css::DeepClone)] (trait impl;
+    // `use generics::DeepClone as _` already at top of this file).
 
     pub fn eql(&self, other: &Gradient) -> bool {
         self == other
@@ -721,7 +691,7 @@ impl WebKitGradientRadial {
 }
 
 /// A legacy `-webkit-gradient()`.
-#[derive(PartialEq)]
+#[derive(PartialEq, css::DeepClone)]
 pub enum WebKitGradient {
     /// A linear `-webkit-gradient()`.
     Linear(WebKitGradientLinear),
@@ -735,36 +705,37 @@ impl WebKitGradient {
         let ident = input.expect_ident_cloned()?;
         input.expect_comma()?;
 
-        // todo_stuff.match_ignore_ascii_case
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"linear") {
-            // todo_stuff.depth
-            let from = WebKitGradientPoint::parse(input)?;
-            input.expect_comma()?;
-            let to = WebKitGradientPoint::parse(input)?;
-            input.expect_comma()?;
-            let stops = input.parse_comma_separated(WebKitColorStop::parse)?;
-            Ok(WebKitGradient::Linear(WebKitGradientLinear { from, to, stops }))
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"radial") {
-            let from = WebKitGradientPoint::parse(input)?;
-            input.expect_comma()?;
-            let r0 = CSSNumberFns::parse(input)?;
-            input.expect_comma()?;
-            let to = WebKitGradientPoint::parse(input)?;
-            input.expect_comma()?;
-            let r1 = CSSNumberFns::parse(input)?;
-            input.expect_comma()?;
-            // todo_stuff.depth
-            let stops = input.parse_comma_separated(WebKitColorStop::parse)?;
-            Ok(WebKitGradient::Radial(WebKitGradientRadial {
-                from,
-                r0,
-                to,
-                r1,
-                stops,
-            }))
-        } else {
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"linear" => {
+                // todo_stuff.depth
+                let from = WebKitGradientPoint::parse(input)?;
+                input.expect_comma()?;
+                let to = WebKitGradientPoint::parse(input)?;
+                input.expect_comma()?;
+                let stops = input.parse_comma_separated(WebKitColorStop::parse)?;
+                Ok(WebKitGradient::Linear(WebKitGradientLinear { from, to, stops }))
+            },
+            b"radial" => {
+                let from = WebKitGradientPoint::parse(input)?;
+                input.expect_comma()?;
+                let r0 = CSSNumberFns::parse(input)?;
+                input.expect_comma()?;
+                let to = WebKitGradientPoint::parse(input)?;
+                input.expect_comma()?;
+                let r1 = CSSNumberFns::parse(input)?;
+                input.expect_comma()?;
+                // todo_stuff.depth
+                let stops = input.parse_comma_separated(WebKitColorStop::parse)?;
+                Ok(WebKitGradient::Radial(WebKitGradientRadial {
+                    from,
+                    r0,
+                    to,
+                    r1,
+                    stops,
+                }))
+            },
+            _ => Err(location.new_unexpected_token_error(Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -918,12 +889,7 @@ impl WebKitGradient {
         }
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        match self {
-            WebKitGradient::Linear(l) => WebKitGradient::Linear(l.deep_clone(bump)),
-            WebKitGradient::Radial(r) => WebKitGradient::Radial(r.deep_clone(bump)),
-        }
-    }
+    // deep_clone — provided by #[derive(css::DeepClone)].
 
     pub fn eql(&self, other: &WebKitGradient) -> bool {
         self == other
@@ -1104,7 +1070,7 @@ impl<D: GradientPosition> GradientItem<D> {
 /// A `radial-gradient()` [ending shape](https://www.w3.org/TR/css-images-3/#valdef-radial-gradient-ending-shape).
 ///
 /// See [RadialGradient](RadialGradient).
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum EndingShape {
     /// An ellipse.
     Ellipse(Ellipse),
@@ -1113,24 +1079,7 @@ pub enum EndingShape {
 }
 
 impl EndingShape {
-    // TODO(port): css.DeriveParse(@This()).parse — was comptime field-walk.
-    // Hand-expanded: try each variant in order (Ellipse first, matching Zig's
-    // field order), exactly as `DeriveParse` would generate.
-    pub fn parse(input: &mut css::Parser) -> Result<EndingShape> {
-        if let Ok(e) = input.try_parse(Ellipse::parse) {
-            return Ok(EndingShape::Ellipse(e));
-        }
-        Circle::parse(input).map(EndingShape::Circle)
-    }
-
-    // TODO(port): css.DeriveToCss(@This()).toCss — was comptime field-walk.
-    // Hand-expanded.
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        match self {
-            EndingShape::Ellipse(e) => e.to_css(dest),
-            EndingShape::Circle(c) => c.to_css(dest),
-        }
-    }
+    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
 
     pub fn default() -> EndingShape {
         EndingShape::Ellipse(Ellipse::Extent(ShapeExtent::FarthestCorner))
@@ -1273,18 +1222,16 @@ impl WebKitColorStop {
         let location = input.current_source_location();
         let function = input.expect_function_cloned()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
-            // todo_stuff.match_ignore_ascii_case
-            let position: f32 = if strings::eql_case_insensitive_ascii_check_length(function, b"color-stop") {
-                let p: NumberOrPercentage = NumberOrPercentage::parse(i)?;
-                i.expect_comma()?;
-                p.into_f32()
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"from") {
-                0.0
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"to") {
-                1.0
-            } else {
-                return Err(location.new_unexpected_token_error(Token::Ident(function)));
-            };
+            let position: f32 = crate::match_ignore_ascii_case! { function, {
+                b"color-stop" => {
+                    let p: NumberOrPercentage = NumberOrPercentage::parse(i)?;
+                    i.expect_comma()?;
+                    p.into_f32()
+                },
+                b"from" => 0.0,
+                b"to" => 1.0,
+                _ => return Err(location.new_unexpected_token_error(Token::Ident(function))),
+            }};
             let color = CssColor::parse(i)?;
             Ok(WebKitColorStop { color, position })
         })

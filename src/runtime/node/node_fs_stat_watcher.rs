@@ -62,6 +62,8 @@ pub struct StatWatcherScheduler {
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
 
+bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
+
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
 // Intrusive `next`-link accessors for `UnboundedQueue<StatWatcher>` (Zig:

@@ -30,7 +30,7 @@ pub use self::unicode::{
 #[path = "immutable/visible.rs"]            mod visible_impl;
 
 // Transcoding helpers from `unicode_draft` that have no T0 `crate::strings`
-// equivalent yet — re-export so downstream `bun_str::strings::*` callers (e.g.
+// equivalent yet — re-export so downstream `bun_core::strings::*` callers (e.g.
 // runtime/webcore/encoding.rs) resolve. These return `crate::strings::EncodeIntoResult`.
 pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
@@ -384,7 +384,7 @@ pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
 // Transcoding suite re-exported from bun_core (T0).
 pub use self::unicode::to_utf16_literal;
 /// `bun.strings.w` — comptime UTF-8→UTF-16 literal. In Rust this **must** be a
-/// macro (callers write `bun_string::strings::w!("…")`); a `fn` returning
+/// macro (callers write `bun_core::strings::w!("…")`); a `fn` returning
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
 pub use crate::string::w;
 pub use crate::strings::{
@@ -2820,7 +2820,7 @@ unsafe extern "C" {
 
 // Transcoding allocators live in T0 `crate::strings` so collections can
 // reach them without a same-tier cycle. Re-export here for callers that go
-// through `bun_string::strings`.
+// through `bun_core::strings`.
 pub use crate::strings::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
     encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, to_utf8_alloc,
@@ -2834,7 +2834,7 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
 
 // ───────────── B-2 Track A: minimal real impls of gated-submodule fns ─────────────
 // These mirror the same-named fns in `unicode_draft`/`paths_draft` so dependents
-// can link against `bun_string::strings::*` without un-gating the full drafts.
+// can link against `bun_core::strings::*` without un-gating the full drafts.
 // Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
 
 /// `strings.utf8ByteSequenceLength` — returns 0 for invalid lead bytes

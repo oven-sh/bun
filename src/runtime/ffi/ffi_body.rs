@@ -32,36 +32,6 @@ fn dir_exists(path: &'static [u8]) -> bool {
     bun_sys::directory_exists_at(Fd::cwd(), &z).unwrap_or(false)
 }
 
-/// Extension trait for JSC surfaces the upstream crate hasn't exposed yet.
-/// All bodies are thin extern-"C" thunks (Zig: `JSValue.asPtrAddress`, etc.).
-trait JSValueFfiExt: Copy {
-    fn as_ptr_address(self) -> usize;
-    fn is_heap_big_int(self) -> bool;
-    fn to_uint64_no_truncate(self) -> u64;
-}
-impl JSValueFfiExt for JSValue {
-    #[inline]
-    fn as_ptr_address(self) -> usize {
-        // Zig `asPtrAddress`: bit-cast the encoded JSNumber back to a pointer
-        // address (round-trips with `from_ptr_address`).
-        let bits = self.encoded();
-        f64::from_bits(bits as u64) as usize
-    }
-    #[inline]
-    fn is_heap_big_int(self) -> bool {
-        // Upstream exposes `is_big_int()`; HeapBigInt is the only BigInt cell.
-        self.is_big_int()
-    }
-    #[inline]
-    fn to_uint64_no_truncate(self) -> u64 {
-        unsafe extern "C" {
-            fn JSC__JSValue__toUInt64NoTruncate(v: JSValue) -> u64;
-        }
-        // SAFETY: FFI — `self` is a valid encoded JSValue.
-        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
-    }
-}
-
 /// Local non-throwing error-instance helpers — Zig's `toInvalidArguments` /
 /// `toTypeError` create and return the JS Error without throwing, which the
 /// upstream `bun_jsc` surface only offers as throwing variants.

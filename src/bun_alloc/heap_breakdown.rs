@@ -134,30 +134,6 @@ unsafe impl Sync for Zone {}
 unsafe impl Send for Zone {}
 
 impl Zone {
-    /// Recover the raw `*mut Zone` from a shared reference.
-    ///
-    /// Sound because `Zone` contains `UnsafeCell` (is `!Freeze`): a `&Zone`
-    /// grants permission to mutate the opaque C state behind it, matching the
-    /// Zig spec where every method takes `*Zone`.
-    #[inline(always)]
-    fn as_ptr(&self) -> *mut Zone {
-        // SAFETY: route through `UnsafeCell::get()` — the sanctioned way to
-        // derive a writable raw pointer from `&self`. `_p` is the first (and
-        // only sized) field of `#[repr(C)] Zone`, so its address is `self`'s
-        // address; provenance covers the full C `malloc_zone_t` allocation
-        // because every `&Zone` originates from the `*mut Zone` returned by
-        // `malloc_create_zone` (see `Zone::init`). Avoids the
-        // `&T as *const T as *mut T` pattern, which is UB under Stacked
-        // Borrows when `T: Freeze` and a lint hazard regardless.
-        self._p.get().cast::<Zone>()
-    }
-
-    /// Raw `*mut malloc_zone_t` for the FFI surface (public alias of `as_ptr`).
-    #[inline]
-    pub fn as_mut_ptr(&self) -> *mut Zone {
-        self.as_ptr()
-    }
-
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
     ///
     /// # Safety
@@ -199,7 +175,7 @@ impl Zone {
     #[inline]
     pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
         // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
-        unsafe { malloc_zone_free(self.as_ptr(), ptr) }
+        unsafe { malloc_zone_free(self.as_mut_ptr(), ptr) }
     }
 
     fn aligned_alloc(zone: &Zone, len: usize, alignment: usize) -> Option<*mut u8> {
@@ -247,10 +223,10 @@ impl Zone {
         // TODO(port): Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
         // stable equivalent. Passing 0 — the macOS zone API ignores it anyway.
         let raw = Zone::raw_alloc(
-            // SAFETY: vtable context pointer — `as_ptr()` yields the
+            // SAFETY: vtable context pointer — `as_mut_ptr()` yields the
             // interior-mutable `*mut Zone`, erased to `*mut c_void` to match
             // the Zig `*anyopaque` allocator-vtable signature.
-            self.as_ptr().cast::<c_void>(),
+            self.as_mut_ptr().cast::<c_void>(),
             core::mem::size_of::<T>(),
             alignment,
             0,
@@ -265,10 +241,10 @@ impl Zone {
     /// Free a single-item pointer
     #[inline]
     pub fn destroy<T>(&self, ptr: *mut T) {
-        // SAFETY: `self.as_ptr()` is the live malloc zone (interior-mutable,
-        // see `Zone::as_ptr`); `ptr` was returned by `create`/`try_create` on
+        // SAFETY: `self.as_mut_ptr()` is the live malloc zone (interior-mutable,
+        // see `opaque_ffi!`); `ptr` was returned by `create`/`try_create` on
         // this same zone.
-        unsafe { malloc_zone_free(self.as_ptr(), ptr.cast()) };
+        unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
 
     /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`

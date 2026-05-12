@@ -510,6 +510,13 @@ mod inherent_bridge {
     bridge_eql!(Image);
     bridge_deep_clone!(Image);
     bridge_is_compatible!(Image);
+    // Gradient payload structs only carry inherent `deep_clone`; bridge them so
+    // `#[derive(css::DeepClone)]` on `Gradient` / `WebKitGradient` (UFCS trait
+    // dispatch) resolves.
+    use crate::values::gradient::{
+        ConicGradient, LinearGradient, RadialGradient, WebKitGradientLinear, WebKitGradientRadial,
+    };
+    bridge_deep_clone!(LinearGradient, RadialGradient, ConicGradient, WebKitGradientLinear, WebKitGradientRadial);
 
     use crate::values::position::{
         HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,

@@ -222,34 +222,74 @@ pub fn addr_info_to_js_array(
     Ok(array)
 }
 
+// ── shared count-then-walk → JS array helper ───────────────────────────────
+//
+// Every `struct_ares_*_reply` is an intrusive singly-linked list with a
+// `.next: *mut Self` field. Zig open-codes the same two-pass walk (count,
+// then `create_empty_array` + `put_index`) once per record type; here we do
+// it once generically. The trait is `unsafe` because impls promise `next()`
+// is either null or a valid pointer into the same c-ares-owned list.
+// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile in Phase B.
+
+/// SAFETY: impls must return null or a valid pointer into the same
+/// c-ares-owned linked list.
+unsafe trait CAresLinked {
+    fn next(&self) -> *mut Self;
+}
+
+macro_rules! impl_cares_linked {
+    ($($t:ty),+ $(,)?) => {$(
+        // SAFETY: `.next` is the c-ares-owned intrusive list pointer.
+        unsafe impl CAresLinked for $t {
+            #[inline]
+            fn next(&self) -> *mut Self { self.next }
+        }
+    )+};
+}
+
+impl_cares_linked!(
+    c_ares::struct_ares_caa_reply,
+    c_ares::struct_ares_srv_reply,
+    c_ares::struct_ares_mx_reply,
+    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_naptr_reply,
+);
+
+fn cares_list_to_js_array<T: CAresLinked>(
+    head: &mut T,
+    global_this: &JSGlobalObject,
+    mut to_js: impl FnMut(&mut T, &JSGlobalObject) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let mut count: usize = 0;
+    let mut p: *mut T = head;
+    while !p.is_null() {
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
+        unsafe { p = (*p).next() };
+        count += 1;
+    }
+
+    let array = JSValue::create_empty_array(global_this, count)?;
+
+    p = head;
+    let mut i: u32 = 0;
+    while !p.is_null() {
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
+        let node = unsafe { &mut *p };
+        array.put_index(global_this, i, to_js(node, global_this)?)?;
+        p = node.next();
+        i += 1;
+    }
+
+    Ok(array)
+}
+
 // ── struct_ares_caa_reply ──────────────────────────────────────────────────
 pub fn caa_reply_to_js_response(
     this: &mut c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    let mut count: usize = 0;
-    let mut caa: *mut c_ares::struct_ares_caa_reply = this;
-    while !caa.is_null() {
-        // SAFETY: caa walks the c-ares-owned linked list.
-        unsafe { caa = (*caa).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    caa = this;
-    let mut i: u32 = 0;
-    while !caa.is_null() {
-        // SAFETY: caa walks the c-ares-owned linked list.
-        let node = unsafe { &mut *caa };
-        array.put_index(global_this, i, caa_reply_to_js(node, global_this)?)?;
-        caa = node.next;
-        i += 1;
-    }
-
-    Ok(array)
+    cares_list_to_js_array(this, global_this, caa_reply_to_js)
 }
 
 pub fn caa_reply_to_js(
@@ -273,28 +313,7 @@ pub fn srv_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    let mut count: usize = 0;
-    let mut srv: *mut c_ares::struct_ares_srv_reply = this;
-    while !srv.is_null() {
-        // SAFETY: srv walks the c-ares-owned linked list.
-        unsafe { srv = (*srv).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    srv = this;
-    let mut i: u32 = 0;
-    while !srv.is_null() {
-        // SAFETY: srv walks the c-ares-owned linked list.
-        let node = unsafe { &mut *srv };
-        array.put_index(global_this, i, srv_reply_to_js(node, global_this)?)?;
-        srv = node.next;
-        i += 1;
-    }
-
-    Ok(array)
+    cares_list_to_js_array(this, global_this, srv_reply_to_js)
 }
 
 pub fn srv_reply_to_js(
@@ -320,28 +339,7 @@ pub fn mx_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    let mut count: usize = 0;
-    let mut mx: *mut c_ares::struct_ares_mx_reply = this;
-    while !mx.is_null() {
-        // SAFETY: mx walks the c-ares-owned linked list.
-        unsafe { mx = (*mx).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    mx = this;
-    let mut i: u32 = 0;
-    while !mx.is_null() {
-        // SAFETY: mx walks the c-ares-owned linked list.
-        let node = unsafe { &mut *mx };
-        array.put_index(global_this, i, mx_reply_to_js(node, global_this)?)?;
-        mx = node.next;
-        i += 1;
-    }
-
-    Ok(array)
+    cares_list_to_js_array(this, global_this, mx_reply_to_js)
 }
 
 pub fn mx_reply_to_js(
@@ -364,28 +362,7 @@ pub fn txt_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    let mut count: usize = 0;
-    let mut txt: *mut c_ares::struct_ares_txt_reply = this;
-    while !txt.is_null() {
-        // SAFETY: txt walks the c-ares-owned linked list.
-        unsafe { txt = (*txt).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    txt = this;
-    let mut i: u32 = 0;
-    while !txt.is_null() {
-        // SAFETY: txt walks the c-ares-owned linked list.
-        let node = unsafe { &mut *txt };
-        array.put_index(global_this, i, txt_reply_to_js(node, global_this)?)?;
-        txt = node.next;
-        i += 1;
-    }
-
-    Ok(array)
+    cares_list_to_js_array(this, global_this, txt_reply_to_js)
 }
 
 pub fn txt_reply_to_js(
@@ -403,27 +380,9 @@ pub fn txt_reply_to_js_for_any(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let mut count: usize = 0;
-    let mut txt: *mut c_ares::struct_ares_txt_reply = this;
-    while !txt.is_null() {
-        // SAFETY: txt walks the c-ares-owned linked list.
-        unsafe { txt = (*txt).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    txt = this;
-    let mut i: u32 = 0;
-    while !txt.is_null() {
-        // SAFETY: txt walks the c-ares-owned linked list.
-        let node = unsafe { &mut *txt };
-        let value = node.txt_bytes();
-        array.put_index(global_this, i, utf8_to_js(global_this, value)?)?;
-        txt = node.next;
-        i += 1;
-    }
-
+    let array = cares_list_to_js_array(this, global_this, |node, g| {
+        utf8_to_js(g, node.txt_bytes())
+    })?;
     // PORT NOTE: Zig used `JSObject.create(.{ .entries = array }, global)`. No
     // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
     let obj = JSValue::create_empty_object(global_this, 1);
@@ -437,28 +396,7 @@ pub fn naptr_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    let mut count: usize = 0;
-    let mut naptr: *mut c_ares::struct_ares_naptr_reply = this;
-    while !naptr.is_null() {
-        // SAFETY: naptr walks the c-ares-owned linked list.
-        unsafe { naptr = (*naptr).next };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    naptr = this;
-    let mut i: u32 = 0;
-    while !naptr.is_null() {
-        // SAFETY: naptr walks the c-ares-owned linked list.
-        let node = unsafe { &mut *naptr };
-        array.put_index(global_this, i, naptr_reply_to_js(node, global_this)?)?;
-        naptr = node.next;
-        i += 1;
-    }
-
-    Ok(array)
+    cares_list_to_js_array(this, global_this, naptr_reply_to_js)
 }
 
 pub fn naptr_reply_to_js(

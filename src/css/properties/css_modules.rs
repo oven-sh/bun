@@ -55,15 +55,7 @@ impl Composes {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::ident::CustomIdentFns;
-        let mut first = true;
-        for name in self.names.slice() {
-            if first {
-                first = false;
-            } else {
-                dest.write_char(b' ')?;
-            }
-            CustomIdentFns::to_css(name, dest)?;
-        }
+        dest.write_separated(self.names.slice(), |d| d.write_char(b' '), |d, name| CustomIdentFns::to_css(name, d))?;
 
         if let Some(from) = &self.from {
             dest.write_str(b" from ")?;

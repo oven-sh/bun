@@ -60,10 +60,10 @@ impl Time {
         let token = input.next()?.clone();
         match &token {
             Token::Dimension(dim) => {
-                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_core symbol in Phase B.
-                if bun_core::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
+                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol in Phase B.
+                if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
-                } else if bun_core::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
+                } else if bun_core::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
                     Ok(Time::Milliseconds(dim.num.value))
                 } else {
                     Err(location.new_unexpected_token_error(Token::Ident(dim.unit)))
@@ -116,18 +116,13 @@ impl Time {
 
     pub fn try_from_token(token: &Token) -> Maybe<Time, ()> {
         match token {
-            Token::Dimension(dim) => {
-                // todo_stuff.match_ignore_ascii_case
-                if bun_core::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
-                    return Ok(Time::Seconds(dim.num.value));
-                } else if bun_core::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
-                    return Ok(Time::Milliseconds(dim.num.value));
-                }
-            }
-            _ => {}
+            Token::Dimension(dim) => crate::match_ignore_ascii_case! { dim.unit, {
+                b"s" => Ok(Time::Seconds(dim.num.value)),
+                b"ms" => Ok(Time::Milliseconds(dim.num.value)),
+                _ => Err(()),
+            }},
+            _ => Err(()),
         }
-
-        Err(())
     }
 
     pub fn try_from_angle(_: Angle) -> Option<Self> {

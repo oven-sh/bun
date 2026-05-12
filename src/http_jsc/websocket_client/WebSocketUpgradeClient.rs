@@ -1964,14 +1964,10 @@ fn build_request_body(
     }
 
     for (name_slice, value) in extra_headers.iter() {
-        if strings::eql_case_insensitive_ascii(name_slice, b"host", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"connection", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"upgrade", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-version", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-extensions", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-key", true)
-            || strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-protocol", true)
-        {
+        if strings::eql_any_case_insensitive_ascii(name_slice, &[
+            b"host", b"connection", b"upgrade", b"sec-websocket-version",
+            b"sec-websocket-extensions", b"sec-websocket-key", b"sec-websocket-protocol",
+        ]) {
             continue;
         }
         write!(

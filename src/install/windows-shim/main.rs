@@ -163,12 +163,12 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 //
 //  Brought into `bun_shim_impl.rs`'s scope via a single
 //  `#[cfg(feature = "shim_standalone")] use crate::{bun_core, bun_str, w};`
-//  so the inline `bun_core::ffi::slice(...)` / `bun_str::w!(...)` paths
+//  so the inline `bun_core::ffi::slice(...)` / `bun_core::w!(...)` paths
 //  resolve here instead of the extern prelude, and `w` (= the
 //  `bun_sys::windows` namespace) comes from `compat` below.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// `bun_str::w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only).
+/// `bun_core::w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only).
 /// Mirrors `bun_core::w!` (src/string/immutable.rs).
 #[macro_export]
 macro_rules! w_lit {
@@ -189,7 +189,7 @@ macro_rules! w_lit {
     }};
 }
 pub mod bun_str {
-    // Re-export under the path the shared source uses (`bun_str::w!`).
+    // Re-export under the path the shared source uses (`bun_core::w!`).
     pub use crate::w_lit as w;
 }
 
@@ -240,6 +240,13 @@ pub mod bun_core {
 
     /// Mirrors the subset of `bun_core::ffi` the shim calls.
     pub mod ffi {
+        // `core`-only slice/wstr primitives — single audited copy lives in
+        // `bun_opaque::ffi` (zero-dep, zero `#[no_mangle]`, safe for this
+        // freestanding PE to depend on). `Zeroable`/`zeroed` stay local: the
+        // orphan rule blocks `bun_opaque` from `impl Zeroable for
+        // bun_windows_sys::*`, and `bun_core`'s impls drag in link roots.
+        pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
+
         /// Marker: all-zero bit pattern is a valid `Self`. Local re-spelling
         /// of `bun_core::ffi::Zeroable`; impl'd below for the two
         /// `bun_windows_sys` POD types the shim zero-inits.
@@ -257,70 +264,6 @@ pub mod bun_core {
         pub const fn zeroed<T: Zeroable>() -> T {
             // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
             unsafe { core::mem::zeroed() }
-        }
-
-        /// Mirrors `bun_core::ffi::slice` — tolerates `(null, 0)`.
-        ///
-        /// # Safety
-        /// `from_raw_parts` contract when `len > 0`; null only at `len == 0`.
-        #[inline(always)]
-        pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
-            if ptr.is_null() {
-                assert!(len == 0, "ffi::slice: null ptr with non-zero len");
-                &[]
-            } else {
-                // SAFETY: this is the irreducible FFI primitive — `ptr` originates
-                // from Win32 (PEB CommandLine/ImagePathName, NtReadFile output) where
-                // no Rust-owned `&[T]`/Vec exists to slice safely. Caller upholds
-                // `from_raw_parts`'s contract (non-null, aligned, `len` initialized
-                // `T`s readable for `'a`, total size ≤ isize::MAX).
-                unsafe { core::slice::from_raw_parts(ptr, len) }
-            }
-        }
-
-        /// Mirrors `bun_core::ffi::slice_mut`.
-        ///
-        /// # Safety
-        /// As [`slice`], plus exclusive access for `'a`.
-        #[inline(always)]
-        pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
-            if ptr.is_null() {
-                assert!(len == 0, "ffi::slice_mut: null ptr with non-zero len");
-                // Empty mut slice literal: `'static`, no backing needed — no unsafe required.
-                &mut []
-            } else {
-                // SAFETY: irreducible FFI primitive (see `slice` above) — caller
-                // additionally guarantees exclusive access to `ptr[..len]` for `'a`.
-                unsafe { core::slice::from_raw_parts_mut(ptr, len) }
-            }
-        }
-
-        /// Mirrors `bun_core::ffi::wcslen`.
-        ///
-        /// # Safety
-        /// `p` is non-null and NUL-terminated.
-        #[inline(always)]
-        pub unsafe fn wcslen(p: *const u16) -> usize {
-            debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
-            let mut n = 0usize;
-            // SAFETY: caller contract — non-null, NUL-terminated.
-            while unsafe { *p.add(n) } != 0 {
-                n += 1;
-            }
-            n
-        }
-
-        /// Mirrors `bun_core::ffi::wstr_units`.
-        ///
-        /// # Safety
-        /// As [`wcslen`]; borrow must not outlive `p`'s allocation.
-        #[inline(always)]
-        pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
-            // SAFETY: irreducible FFI primitive — `p` is a NUL-terminated wide
-            // string from Win32 (e.g. assembled CreateProcessW command line); no
-            // Rust slice exists to borrow. `wcslen` proves `p[..n]` is readable
-            // and initialized; caller guarantees the allocation outlives `'a`.
-            unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
         }
     }
 }

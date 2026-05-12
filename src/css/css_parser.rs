@@ -6391,10 +6391,8 @@ pub mod to_css {
     }
 
     pub fn integer(this: i32, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PERF(port): Zig used a comptime-sized stack buffer + std.fmt.int.
-        // `itoa` crate would be ideal here but isn't a workspace dep yet;
-        // route through write_fmt (no heap alloc — Printer's dest is the sink).
-        dest.write_fmt(format_args!("{this}"))
+        let mut b = bun_core::fmt::ItoaBuf::new();
+        dest.write_bytes(bun_core::fmt::itoa(&mut b, this))
     }
 
     pub fn float32(this: f32, writer: &mut Printer) -> Result<(), PrintErr> {
@@ -6403,8 +6401,6 @@ pub mod to_css {
         writer.write_bytes(str)
     }
 
-    // `maxDigits` was a comptime helper for the integer buffer size; replaced
-    // by `itoa::Buffer` above.
 }
 
 /// Parse `!important`.

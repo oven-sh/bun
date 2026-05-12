@@ -486,8 +486,8 @@ impl<'a> ByteCursor<'a> {
     /// table lookup for code size.
     #[inline(always)]
     fn put_u64_dec(&mut self, n: u64) {
-        let mut tmp = [0u8; 20];
-        self.put(bun_fmt::itoa_u64(&mut tmp, n));
+        let mut tmp = bun_fmt::ItoaBuf::new();
+        self.put(bun_fmt::itoa(&mut tmp, n));
     }
 
     /// `{:016x}` / `{:016X}` — fixed 16-nibble u64.

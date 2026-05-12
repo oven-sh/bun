@@ -175,26 +175,14 @@ impl SupportsCondition {
                 condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
             }
             SupportsCondition::And(conditions) => {
-                let mut first = true;
-                for cond in conditions.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.write_str(b" and ")?;
-                    }
-                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
-                }
+                dest.write_separated(conditions.iter(), |d| d.write_str(b" and "), |d, cond| {
+                    cond.to_css_with_parens_if_needed(d, cond.needs_parens(self))
+                })?;
             }
             SupportsCondition::Or(conditions) => {
-                let mut first = true;
-                for cond in conditions.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.write_str(b" or ")?;
-                    }
-                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
-                }
+                dest.write_separated(conditions.iter(), |d| d.write_str(b" or "), |d, cond| {
+                    cond.to_css_with_parens_if_needed(d, cond.needs_parens(self))
+                })?;
             }
             SupportsCondition::Declaration(decl) => {
                 Self::declaration_to_css(decl, dest)?;
@@ -223,30 +211,20 @@ impl SupportsCondition {
         }
 
         let name = property_id.name();
-        let mut first = true;
         // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
         // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
         // bitflags!; iterate the ordered single-bit table directly (same pattern as
-        // rules/style.rs).
-        for &flag in css::VendorPrefix::FIELDS {
-            if prefix.contains(flag) {
-                if first {
-                    first = false;
-                } else {
-                    dest.write_str(b") or (")?;
-                }
-
-                // PORT NOTE: Zig builds `var p = VendorPrefix{}; @field(p, field) = true;`
-                // but never reads it — likely intended to feed a prefixed-name
-                // serializer. Ported faithfully as a dead store.
-                let mut p = css::VendorPrefix::empty();
-                p |= flag;
-                let _ = p;
-                dest.serialize_name(name)?;
-                dest.delim(b':', false)?;
-                dest.write_str(value)?;
-            }
-        }
+        // rules/style.rs). The Zig also builds `var p = VendorPrefix{}; @field(p, field) = true;`
+        // but never reads it — dead store dropped.
+        dest.write_separated(
+            css::VendorPrefix::FIELDS.iter().copied().filter(|f| prefix.contains(*f)),
+            |d| d.write_str(b") or ("),
+            |d, _flag| {
+                d.serialize_name(name)?;
+                d.delim(b':', false)?;
+                d.write_str(value)
+            },
+        )?;
 
         if prefix != css::VendorPrefix::NONE {
             dest.write_char(b')')?;

@@ -1381,11 +1381,25 @@ unsafe extern "C" {
 }
 
 // ── Job Object structures (`winnt.h`) ─────────────────────────────────────
+// NOTE: These are the SINGLE canonical definitions. bun_sys::windows and
+// bun_core re-export / impl-Zeroable against these types directly; do NOT
+// re-declare them downstream.
+
+/// `JOBOBJECTINFOCLASS::JobObjectAssociateCompletionPortInformation` (`winnt.h`).
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
 /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — kill all job processes when the
 /// last job handle closes.
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+/// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+    pub CompletionKey: LPVOID, // PVOID
+    pub CompletionPort: HANDLE,
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1396,13 +1410,19 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
     pub MinimumWorkingSetSize: usize,
     pub MaximumWorkingSetSize: usize,
     pub ActiveProcessLimit: DWORD,
+    /// `ULONG_PTR` in `winnt.h` — pointer-width integer, NOT a `*mut ULONG`.
     pub Affinity: usize,
     pub PriorityClass: DWORD,
     pub SchedulingClass: DWORD,
 }
 
+// winnt.h _IO_COUNTERS — out-param of GetProcessIoCounters / embedded in
+// JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
+// (Win32 zero-inits before fill), so `Default` is sound and lets callers write
+// `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
+// Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct IO_COUNTERS {
     pub ReadOperationCount: u64,
     pub WriteOperationCount: u64,

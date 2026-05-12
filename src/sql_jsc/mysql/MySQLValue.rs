@@ -4,7 +4,7 @@
 
 use crate::jsc::{
     bun_string_jsc, js_error_to_mysql, IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _,
-    JSType, JSValue, JSValueSqlExt as _, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _,
+    JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 use bun_core::{OwnedString, String as BunString};
 use bun_core::zig_string::Slice as ZigStringSlice;

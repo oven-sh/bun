@@ -3,32 +3,17 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_parsers::json5;
 use bun_jsc::{
-    self as jsc, wtf, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
+    self as jsc, wtf, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
 };
 use bun_js_parser::{self as ast, lexer};
 use bun_ast::{expr::Data as ExprData, E, Expr};
 use bun_core::{String as BunString, ZigString};
-use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    let object = JSValue::create_empty_object(global, 2);
-    object.put(
-        global,
-        b"parse",
-        JSFunction::create(global, b"parse", __jsc_host_parse, 1, Default::default()),
-    );
-    object.put(
-        global,
-        b"stringify",
-        JSFunction::create(
-            global,
-            b"stringify",
-            __jsc_host_stringify,
-            3,
-            Default::default(),
-        ),
-    );
-    object
+    jsc::create_host_function_object(global, &[
+        ("parse", __jsc_host_parse, 1),
+        ("stringify", __jsc_host_stringify, 3),
+    ])
 }
 
 #[bun_jsc::host_fn]
@@ -61,57 +46,27 @@ pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
 #[bun_jsc::host_fn]
 pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was arena bulk-free — this scope feeds the AST parser, which is
-    // arena-backed in the original. Phase B should thread a `bumpalo::Bump` here
-    // matching `bun_js_parser`'s allocator API.
-    let bump = bun_alloc::Arena::new();
-
-    // TODO(port): ASTMemoryAllocator scope — the Zig enters a typed-slab scope so
-    // Expr/Stmt nodes allocate from `bump`. Mirror whatever `bun_js_parser`
-    // exposes for this (likely `ast::MemoryAllocator::enter(&bump)`).
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&bump);
-    let _ast_scope = ast_memory_allocator.enter();
-
-    let input_value = frame.argument(0);
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
-    }
-
-    let input: BlobOrStringOrBuffer = match BlobOrStringOrBuffer::from_js(global, input_value)? {
-        Some(v) => v,
-        None => {
-            let mut str = input_value.to_bun_string(global)?;
-            // `String::to_slice` consumes `str` (mem::replace to EMPTY) and bundles
-            // the UTF-8 view with its backing ref — equivalent to Zig's
-            // `str.toSlice(allocator)` followed by `defer str.deref()`.
-            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
-        }
-    };
-
-    let mut log = bun_ast::Log::init();
-
-    let source = bun_ast::Source::init_path_string(b"input.json5", input.slice());
-
-    let root = match json5::JSON5Parser::parse(&source, &mut log, &bump) {
-        Ok(r) => r,
-        Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
-        Err(json5::ExternalError::StackOverflow) => return Err(global.throw_stack_overflow()),
-        Err(json5::ExternalError::SyntaxError) => {
-            if !log.msgs.is_empty() {
-                let first_msg = &log.msgs[0];
+    super::with_text_format_source(global, frame, b"input.json5", true, true, |bump, log, source| {
+        let root = match json5::JSON5Parser::parse(source, log, bump) {
+            Ok(r) => r,
+            Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
+            Err(json5::ExternalError::StackOverflow) => return Err(global.throw_stack_overflow()),
+            Err(json5::ExternalError::SyntaxError) => {
+                if !log.msgs.is_empty() {
+                    let first_msg = &log.msgs[0];
+                    return Err(global.throw_value(global.create_syntax_error_instance(format_args!(
+                        "JSON5 Parse error: {}",
+                        bstr::BStr::new(&first_msg.data.text),
+                    ))));
+                }
                 return Err(global.throw_value(global.create_syntax_error_instance(format_args!(
-                    "JSON5 Parse error: {}",
-                    bstr::BStr::new(&first_msg.data.text),
+                    "JSON5 Parse error: Unable to parse JSON5 string",
                 ))));
             }
-            return Err(global.throw_value(global.create_syntax_error_instance(format_args!(
-                "JSON5 Parse error: Unable to parse JSON5 string",
-            ))));
-        }
-    };
+        };
 
-    expr_to_js(root, global)
+        expr_to_js(root, global)
+    })
 }
 
 struct Stringifier {

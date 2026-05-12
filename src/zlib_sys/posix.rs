@@ -1,72 +1,12 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
-use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
+use core::ffi::{c_char, c_int};
 
-type uInt = c_uint;
-type uLong = c_ulong;
-
-#[repr(C)]
-pub struct struct_internal_state {
-    dummy: c_int,
-}
-
-// https://zlib.net/manual.html#Stream
-type voidpf = *mut c_void;
-
-// typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
-// typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
-
-pub type z_alloc_fn = Option<unsafe extern "C" fn(*mut c_void, uInt, uInt) -> voidpf>;
-pub type z_free_fn = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-
-#[repr(C)]
-pub struct zStream_struct {
-    /// next input byte
-    pub next_in: *const u8,
-    /// number of bytes available at next_in
-    pub avail_in: uInt,
-    /// total number of input bytes read so far
-    pub total_in: uLong,
-
-    /// next output byte will go here
-    pub next_out: *mut u8,
-    /// remaining free space at next_out
-    pub avail_out: uInt,
-    /// total number of bytes output so far
-    pub total_out: uLong,
-
-    /// last error message, NULL if no error
-    pub err_msg: *const c_char,
-    /// not visible by applications
-    pub internal_state: *mut struct_internal_state,
-
-    /// used to allocate the internal state
-    pub alloc_func: z_alloc_fn,
-    /// used to free the internal state
-    pub free_func: z_free_fn,
-    /// private data object passed to zalloc and zfree
-    pub user_data: *mut c_void,
-
-    /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    pub data_type: DataType,
-
-    /// Adler-32 or CRC-32 value of the uncompressed data
-    pub adler: uLong,
-    /// reserved for future use
-    pub reserved: uLong,
-}
-
-pub type z_stream = zStream_struct;
-pub type z_streamp = *mut z_stream;
-
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
-// is the documented pre-`inflateInit`/`deflateInit` state (S021).
-unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
-
-pub use crate::shared::DataType;
-pub use crate::shared::FlushValue;
-pub use crate::shared::ReturnCode;
+pub use crate::shared::{
+    DataType, FlushValue, ReturnCode,
+    z_stream, z_streamp, zStream_struct, struct_internal_state,
+    alloc_func, free_func, z_alloc_fn, z_free_fn,
+};
 
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;

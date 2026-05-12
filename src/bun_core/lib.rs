@@ -1,4 +1,5 @@
 #![feature(allocator_api)]
+#![feature(adt_const_params)]
 #![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use, unreachable_pub)]
@@ -48,11 +49,11 @@ pub use string::{slice_to_nul, slice_to_nul_mut, StringPointer, Tag};
 /// `bun.strings` (the full SIMD-backed `immutable` module). Distinct from the
 /// scalar-fallback `crate::strings` shim below — several names
 /// (`index_of_char`, `CodepointIterator`, `Encoding`) differ in signature.
-/// Callers that previously wrote `bun_string::strings::X` import this.
+/// Callers that previously wrote `bun_core::strings::X` import this.
 pub use string::immutable;
 pub use string::{
-    cheap_prefix_normalizer, escape_reg_exp, identifier, lexer, parse_double, printer,
-    quote_for_json, string_joiner, write, zig_string, ByteString,
+    cheap_prefix_normalizer, escape_reg_exp, identifier, lexer, lexer_tables, parse_double,
+    printer, quote_for_json, string_joiner, write, zig_string, ByteString,
     ZigStringGithubActionFormatter, STRING_ALLOCATION_LIMIT,
 };
 pub use ::bstr::{BStr, BString, ByteSlice};
@@ -230,6 +231,29 @@ pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
 
+/// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
+/// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
+/// these as the canonical `is_sep_any` / `is_sep_native`.
+pub mod path_sep {
+    pub use bun_alloc::{SEP, SEP_STR};
+
+    /// Zig: `bun.path.isSepAny` — `/` **or** `\\` on every target.
+    /// Use for parsing user-supplied / cross-platform path strings (tsconfig,
+    /// archive entries, Windows drive prefixes).
+    #[inline(always)]
+    pub const fn is_sep_any(c: u8) -> bool {
+        c == b'/' || c == b'\\'
+    }
+
+    /// Host-OS-native separator predicate: accepts `\` only when *compiled*
+    /// for Windows. Use when matching against real on-disk paths (glob, joins,
+    /// `which`, dirname).
+    #[inline(always)]
+    pub const fn is_sep_native(c: u8) -> bool {
+        c == b'/' || (cfg!(windows) && c == b'\\')
+    }
+}
+
 // ─── libm shims ───────────────────────────────────────────────────────────────
 // Canonical extern for libm's `powf`/`pow` (Zig: `bun.zig` `pub extern "c" fn
 // powf`). Hot CSS color-space conversion paths (gam_srgb, lab, prophoto) call
@@ -366,6 +390,20 @@ pub mod vec {
         // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
         // the write-only contract above.
         core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
+    }}
+
+    /// `reserve(n)` then [`spare_bytes_mut`] — the libuv `uv_alloc_cb` shape
+    /// (and the dominant call pattern at every C-ABI fill site that wants "at
+    /// least `n` bytes of headroom"). Prefer this over `fill_spare` when the
+    /// commit must happen on a separate control-flow arm from the obtain
+    /// (e.g. across an `await`, or after an error-early-return).
+    ///
+    /// # Safety
+    /// Same as [`spare_bytes_mut`].
+    #[inline]
+    pub unsafe fn reserve_spare_bytes(v: &mut Vec<u8>, n: usize) -> &mut [u8] { unsafe {
+        v.reserve(n);
+        spare_bytes_mut(v)
     }}
 
     /// Advance `v.len()` by `n` after a producer has initialized the first
@@ -661,6 +699,68 @@ macro_rules! from_field_ptr {
     };
 }
 
+/// Stamp `&Parent` / `*mut Parent` back-reference accessors on a child type
+/// that is **only ever constructed as the `$field` field of `$Parent`** —
+/// the Zig `@fieldParentPtr("field", this)` pattern, split into a shared/mut
+/// pair because Rust distinguishes the two.
+///
+/// Two forms:
+/// ```ignore
+/// // ref + raw-mut pair
+/// bun_core::impl_field_parent! {
+///     Assets => DevServer.assets;
+///     pub(super) fn owner;      // (&self)     -> &DevServer
+///     fn owner_mut;             // (&mut self) -> *mut DevServer
+/// }
+/// // ref-only (no writable backref needed)
+/// bun_core::impl_field_parent! {
+///     SubscriptionCtx => JSValkeyClient._subscription_ctx;
+///     fn parent;
+/// }
+/// ```
+///
+/// The mut accessor returns `*mut $Parent` (NOT `&mut`) because `self` is a
+/// field of `$Parent` — materializing `&mut $Parent` while `&mut self` is live
+/// would alias. Callers dereference under `unsafe` and must only touch fields
+/// disjoint from `$field`.
+///
+/// # Safety
+/// Expanding this macro asserts that **every** `$Child` instance lives at
+/// `$Parent.$field` for its entire lifetime. If `$Child` can exist
+/// standalone, the generated accessors are unsound; keep a hand-rolled
+/// `pub unsafe fn` instead.
+#[macro_export]
+macro_rules! impl_field_parent {
+    // ref + raw-mut pair
+    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ; $vm:vis fn $mut_name:ident ;) => {
+        impl $Child {
+            #[inline]
+            $v fn $ref_name(&self) -> &$Parent {
+                // SAFETY: macro contract — `self` is the `$field` field of a
+                // live `$Parent`; recovering the parent and reborrowing as `&`
+                // for the lifetime of `&self` is sound.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
+            }
+            #[inline]
+            $vm fn $mut_name(&mut self) -> *mut $Parent {
+                // SAFETY: macro contract — pointer arithmetic only; no
+                // reference is formed here.
+                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
+            }
+        }
+    };
+    // ref-only
+    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ;) => {
+        impl $Child {
+            #[inline]
+            $v fn $ref_name(&self) -> &$Parent {
+                // SAFETY: macro contract — see two-arm form above.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
+            }
+        }
+    };
+}
+
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
 
@@ -712,17 +812,37 @@ impl From<JsError> for crate::Error {
     }
 }
 
-/// Zig `bun.concat(u8, buf, &.{ a, b, ... })` — write `parts` consecutively
-/// into `buf` and return the prefix slice. Panics on overflow (matches Zig
-/// `@memcpy` length assert).
+/// Zig `bun.concat(T, dest, &.{ a, b, ... })` — write `parts` consecutively
+/// into `dest` and return the written prefix as a mutable slice. Panics if
+/// `sum(parts.len()) > dest.len()` (matches Zig `@memcpy` length assert).
 #[inline]
-pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
+pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T] {
     let mut off = 0;
     for p in parts {
-        buf[off..off + p.len()].copy_from_slice(p);
+        dest[off..off + p.len()].copy_from_slice(p);
         off += p.len();
     }
-    &buf[..off]
+    &mut dest[..off]
+}
+
+/// Zig `std.mem.concat(allocator, T, &.{...})` / `bun.strings.concat` — allocate
+/// a fresh `Box<[T]>` holding all `parts` joined. No zero-init: `extend_from_slice`
+/// is `memcpy`-specialized for `T: Copy`, so no `Default` bound is required.
+#[inline]
+pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
+    let len: usize = parts.iter().map(|p| p.len()).sum();
+    let mut v: Vec<T> = Vec::with_capacity(len);
+    for p in parts {
+        v.extend_from_slice(p);
+    }
+    v.into_boxed_slice()
+}
+
+/// Back-compat alias for the original `u8`-only buffer-concat. New code should
+/// call [`concat_into`] directly.
+#[inline]
+pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
+    concat_into(buf, parts)
 }
 
 /// Zig `bun.assertf(cond, fmt, args)` — debug-only formatted assert.
@@ -954,13 +1074,15 @@ pub mod schema {
 pub use output as Output;
 
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
-pub use fmt::{js_lexer, js_printer, parse_int, ParseIntError};
+pub use fmt::{
+    js_lexer, js_printer, parse_decimal, parse_int, parse_unsigned, InvalidCharacter, ParseIntError,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Flattened top-level string/fmt API.
 //
 // `string_immutable` is the full ported `bun.strings` namespace (was the
-// `bun_string::immutable` module before the crate merge). The former
+// `bun_core::immutable` module before the crate merge). The former
 // `pub mod strings { … }` cycle-breaker shim is now an internal
 // `strings_impl` module whose items are glob-re-exported at crate root, and
 // `pub mod strings { pub use super::*; }` keeps `bun_core::strings::X`
@@ -996,7 +1118,7 @@ pub use crate::fmt::{
     hex2_upper, hex2_lower, hex4_upper, hex4_lower, hex_byte_lower, hex_byte_upper,
     hex_char_lower, hex_char_upper, hex_digit_value, hex_u8, hex_u16, hex_lower,
     LOWER_HEX_TABLE, UPPER_HEX_TABLE, HEX_DECODE_TABLE, HEX_INVALID,
-    itoa_u64, print_int, int_as_bytes, count_int, count_float, fast_digit_count,
+    print_int, int_as_bytes, count_int, count_float, fast_digit_count,
     buf_print, buf_print_z, buf_print_len, buf_print_infallible, buf_print_z_infallible,
     raw, Raw, s, utf16, FormatUTF16, FormatUTF8, fmt_path, fmt_path_u8, fmt_path_u16,
     fmt_os_path, PathFormatOptions, FormatOSPath,
@@ -1061,7 +1183,7 @@ pub(crate) mod strings_impl {
     #[inline] pub fn starts_with(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
     #[inline] pub fn ends_with(h: &[u8], p: &[u8]) -> bool { h.ends_with(p) }
     #[inline] pub fn eql(a: &[u8], b: &[u8]) -> bool { a == b }
-    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
+    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, copy_lowercase_if_needed, trim, trim_left, trim_right};
 
     /// `std.mem.replacementSize` — byte length of `input` after replacing every
     /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
@@ -1281,6 +1403,11 @@ pub(crate) mod strings_impl {
     /// Index of first non-ASCII byte, or None if all-ASCII. simdutf-backed.
     #[inline]
     pub fn first_non_ascii(slice: &[u8]) -> Option<usize> {
+        // Short-string fast path: see is_all_ascii() above for the FFI-dispatch
+        // cost rationale. position() autovectorizes; ≤32B beats the shim.
+        if slice.len() <= 32 {
+            return slice.iter().position(|&b| b >= 0x80);
+        }
         // SAFETY: FFI reads exactly slice.len() bytes.
         let r = unsafe { simdutf::simdutf__validate_ascii_with_errors(slice.as_ptr(), slice.len()) };
         if r.status == simdutf::Status::SUCCESS { None } else { Some(r.count) }
@@ -1608,150 +1735,50 @@ pub(crate) mod strings_impl {
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. SWAR fast-path for ASCII spans
-    /// (moved down from `bun_string::immutable::unicode` so the canonical T0 copy
-    /// is the spec-faithful one — TextEncoder.encodeInto / WebSocket frame encode
-    /// hit this in tight loops).
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. The Zig original hand-rolled a
+    /// `@Vector(16,u8)` max-reduce + two SWAR `u64` mask/ctz ladders to find each
+    /// non-ASCII byte; in Rust that work is exactly [`first_non_ascii`] (simdutf
+    /// `validate_ascii_with_errors`, with a ≤32B scalar fast path), so the body
+    /// reduces to "scan the next ASCII span, memcpy it, encode one high byte,
+    /// repeat". Speculative 8-byte over-write is dropped (callers only read
+    /// `buf[..written]`).
     pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
         buf_: &mut [u8],
         latin1_: &[u8],
     ) -> EncodeIntoResult {
-        const ASCII_VECTOR_SIZE: usize = 16;
         let buf_total = buf_.len();
         let latin1_total = latin1_.len();
         let mut buf: &mut [u8] = buf_;
         let mut latin1: &[u8] = latin1_;
 
         while !buf.is_empty() && !latin1.is_empty() {
-            'inner: {
-                // PERF(port): Zig used @Vector(ascii_vector_size, u8) + @reduce(.Max). We emulate
-                // with a scalar high-bit scan over 16-byte chunks, then SWAR via u64 mask below.
-                let mut remaining_runs = buf.len().min(latin1.len()) / ASCII_VECTOR_SIZE;
-                while remaining_runs > 0 {
-                    remaining_runs -= 1;
-                    let chunk = &latin1[..ASCII_VECTOR_SIZE];
-                    let mut has_high = false;
-                    for &b in chunk {
-                        if b > 127 {
-                            has_high = true;
-                            break;
-                        }
-                    }
+            // Find the longest pure-ASCII prefix that fits in `buf` and copy it
+            // in one shot. simdutf provides the index; the subsequent
+            // `copy_from_slice` is a single memcpy.
+            let limit = buf.len().min(latin1.len());
+            let span = first_non_ascii(&latin1[..limit]).unwrap_or(limit);
+            buf[..span].copy_from_slice(&latin1[..span]);
+            buf = &mut buf[span..];
+            latin1 = &latin1[span..];
 
-                    if has_high {
-                        if STOP {
-                            return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                        }
-
-                        // zig or LLVM doesn't do @ctz nicely with SIMD
-                        if ASCII_VECTOR_SIZE >= 8 {
-                            const SIZE: usize = core::mem::size_of::<u64>();
-
-                            {
-                                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                                // https://dotat.at/@/2022-06-27-tolower-swar.html
-                                let mask = bytes & 0x8080808080808080;
-
-                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                                if mask > 0 {
-                                    let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                                    debug_assert!(latin1[first_set_byte] >= 127);
-
-                                    buf = &mut buf[first_set_byte..];
-                                    latin1 = &latin1[first_set_byte..];
-                                    break 'inner;
-                                }
-
-                                latin1 = &latin1[SIZE..];
-                                buf = &mut buf[SIZE..];
-                            }
-
-                            if ASCII_VECTOR_SIZE >= 16 {
-                                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                                // https://dotat.at/@/2022-06-27-tolower-swar.html
-                                let mask = bytes & 0x8080808080808080;
-
-                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                                debug_assert!(mask > 0);
-                                let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                                debug_assert!(latin1[first_set_byte] >= 127);
-
-                                buf = &mut buf[first_set_byte..];
-                                latin1 = &latin1[first_set_byte..];
-                                break 'inner;
-                            }
-                        }
-                        unreachable!();
-                    }
-
-                    buf[..ASCII_VECTOR_SIZE].copy_from_slice(chunk);
-                    latin1 = &latin1[ASCII_VECTOR_SIZE..];
-                    buf = &mut buf[ASCII_VECTOR_SIZE..];
-                }
-
-                {
-                    const SIZE: usize = core::mem::size_of::<u64>();
-                    while buf.len().min(latin1.len()) >= SIZE {
-                        let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                        buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                        // https://dotat.at/@/2022-06-27-tolower-swar.html
-
-                        let mask = bytes & 0x8080808080808080;
-
-                        if mask > 0 {
-                            let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                            if STOP {
-                                return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                            }
-                            debug_assert!(latin1[first_set_byte] >= 127);
-
-                            buf = &mut buf[first_set_byte..];
-                            latin1 = &latin1[first_set_byte..];
-
-                            break 'inner;
-                        }
-
-                        latin1 = &latin1[SIZE..];
-                        buf = &mut buf[SIZE..];
-                    }
-                }
-
-                {
-                    // PORT NOTE: reshaped for borrowck — Zig advanced raw `.ptr`/`.len` independently.
-                    let limit = buf.len().min(latin1.len());
-                    debug_assert!(limit < 8);
-                    let mut k = 0usize;
-                    while k < limit && latin1[k] <= 127 {
-                        buf[k] = latin1[k];
-                        k += 1;
-                    }
-                    buf = &mut buf[k..];
-                    latin1 = &latin1[k..];
-                }
+            // Either we filled `buf`, drained `latin1`, or hit a non-ASCII byte.
+            if latin1.is_empty() || latin1[0] < 0x80 {
+                break;
             }
-
-            if !latin1.is_empty() {
-                if buf.len() >= 2 {
-                    if STOP {
-                        return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                    }
-
-                    let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]);
-                    buf[..2].copy_from_slice(&two);
-                    latin1 = &latin1[1..];
-                    buf = &mut buf[2..];
-                } else {
-                    break;
-                }
+            if STOP {
+                return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
             }
+            if buf.len() < 2 {
+                break;
+            }
+            buf[..2].copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]));
+            latin1 = &latin1[1..];
+            buf = &mut buf[2..];
         }
 
         EncodeIntoResult {
-            written: u32::try_from(buf_total - buf.len()).unwrap(),
-            read: u32::try_from(latin1_total - latin1.len()).unwrap(),
+            written: (buf_total - buf.len()) as u32,
+            read: (latin1_total - latin1.len()) as u32,
         }
     }
 
@@ -1768,7 +1795,11 @@ pub(crate) mod strings_impl {
         crate::ZBox::from_vec_with_nul(to_utf8_alloc(utf16))
     }
 
-    /// Port of `firstNonASCII16`.
+    /// Port of `firstNonASCII16`: index of the first u16 codeunit `>= 0x80`, or
+    /// `None` if all-ASCII. Single SIMD-upgrade target — Zig uses `@Vector(8,u16)`
+    /// max-reduce + `@ctz` bitmask (immutable.zig:1720); simdutf exposes no
+    /// u16-ASCII-index fn and WTF's `charactersAreAllASCII<UChar>` is bool-only,
+    /// so scalar until portable_simd lands.
     #[inline]
     pub fn first_non_ascii16(utf16: &[u16]) -> Option<usize> {
         utf16.iter().position(|&u| u >= 0x80)
@@ -1817,13 +1848,17 @@ pub(crate) mod strings_impl {
         s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
     }
 
+    /// `std.mem.lastIndexOfScalar(T, slice, value)` — generic reverse scan.
+    /// For `T = u8` prefer `bun_core::strings::last_index_of_char` (glibc
+    /// `memrchr` on Linux).
     #[inline]
-    pub fn last_index_of_char<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        s.iter().rposition(|&x| x == c)
+    pub fn last_index_of_char_t<T: Eq>(s: &[T], c: T) -> Option<usize> {
+        s.iter().rposition(|x| *x == c)
     }
+    #[doc(hidden)]
     #[inline]
-    pub fn last_index_of_char_t<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        last_index_of_char(s, c)
+    pub fn last_index_of_char<T: Eq>(s: &[T], c: T) -> Option<usize> {
+        last_index_of_char_t(s, c)
     }
 
     #[inline]
@@ -1832,6 +1867,16 @@ pub(crate) mod strings_impl {
     #[inline]
     pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
         eql_case_insensitive_ascii(a, b, true)
+    }
+
+    /// Zig: open-coded `or`-chains over `eqlCaseInsensitiveASCII` at every site
+    /// (custom.zig:1526, ident.zig:278, WebSocketUpgradeClient.zig:1426 — the
+    /// `css.todo_stuff.match_ignore_ascii_case` markers). Haystacks are 6-12
+    /// const literals; `#[inline]` lets LLVM unroll back to the original
+    /// short-circuit chain. For key→value dispatch use `in_map_case_insensitive`.
+    #[inline]
+    pub fn eql_any_case_insensitive_ascii(needle: &[u8], haystack: &[&[u8]]) -> bool {
+        haystack.iter().any(|h| eql_case_insensitive_ascii(needle, h, true))
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1846,18 +1891,54 @@ pub(crate) mod strings_impl {
         s.iter().position(|b| chars.contains(b))
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // IP-literal predicates. Spec (immutable.zig:1984-2004) calls
+    // `bun.c_ares.ares_inet_pton`, the vendored c-ares implementation.
+    // Do NOT call the system `inet_pton` here: on Windows that resolves into
+    // ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
+    // `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no
+    // preconditions. bun_core sits below bun_cares_sys in the dep graph, so we
+    // re-declare the extern locally (zero new deps; `libc` is already here).
+    // ──────────────────────────────────────────────────────────────────────
+    unsafe extern "C" {
+        pub fn ares_inet_pton(
+            af: core::ffi::c_int,
+            src: *const core::ffi::c_char,
+            dst: *mut core::ffi::c_void,
+        ) -> core::ffi::c_int;
+    }
+    // dep-graph: bun_core < bun_sys, so cannot import the canonical
+    // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
+    // previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback,
+    // which is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
+    const AF_INET: core::ffi::c_int = 2;
+    #[cfg(not(windows))] const AF_INET6: core::ffi::c_int = libc::AF_INET6 as core::ffi::c_int;
+    #[cfg(windows)]      const AF_INET6: core::ffi::c_int = 23; // ws2def.h
+
+    /// Zig: `bun.strings.isIPAddress` — `ares_inet_pton(AF_INET || AF_INET6) > 0`.
+    pub fn is_ip_address(input: &[u8]) -> bool {
+        let mut buf = [0u8; 512];
+        if input.len() >= buf.len() { return false; }
+        buf[..input.len()].copy_from_slice(input);
+        let mut dst = [0u8; 28];
+        // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
+        unsafe {
+            ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
+                || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
+        }
+    }
+
     /// Zig: `bun.strings.isIPV6Address` — `ares_inet_pton(AF_INET6, …) > 0`.
     /// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
     /// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
     /// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
-    #[inline]
-    pub fn is_ipv6_address(s: &[u8]) -> bool {
-        if s.len() >= 512 {
-            return false;
-        }
-        // IPv6 textual grammar is pure ASCII; parse_ascii short-circuits on
-        // any high byte, so no UTF-8 validation walk.
-        crate::fmt::parse_ascii::<core::net::Ipv6Addr>(s).is_some()
+    pub fn is_ipv6_address(input: &[u8]) -> bool {
+        let mut buf = [0u8; 512];
+        if input.len() >= buf.len() { return false; }
+        buf[..input.len()].copy_from_slice(input);
+        let mut dst = [0u8; 28];
+        // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
+        unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
     }
 
     pub fn starts_with_uuid(s: &[u8]) -> bool {
@@ -2088,52 +2169,65 @@ pub(crate) mod strings_impl {
         out[..v.len()].copy_from_slice(&v);
         Ok(&mut out[..v.len()])
     }
-    /// `bun.strings.basename` — pass-through to the path-module impl. Lives
-    /// here so T1 `bun_paths` (which can't depend on `bun_string`) can call it
-    /// via `bun_core::strings`.
-    ///
-    /// PORT NOTE: Zig's `bun.strings.basename` comptime-dispatches to
-    /// `basenameWindows` on Windows (treats `':'` at index 1 as a root
-    /// delimiter: `"C:"` → `""`, `"C:foo"` → `"foo"`, `"C:\\"` → `""`) and
-    /// `basenamePosix` elsewhere. Mirror that split exactly.
-    #[cfg(windows)]
-    #[inline]
-    pub fn basename(path: &[u8]) -> &[u8] {
-        // std.fs.path.basenameWindows — see src/string/immutable/paths.zig.
-        if path.is_empty() { return b""; }
-        let mut end = path.len() - 1;
+    // ─── path basename (std.fs.path.basename{Posix,Windows}) ──────────────────
+    // Minimal code-unit trait so the generic basename impls can live at T0
+    // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
+    // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
+    pub trait PathByte: Copy + Eq + 'static {
+        fn from_u8(b: u8) -> Self;
+    }
+    impl PathByte for u8 {
+        #[inline(always)]
+        fn from_u8(b: u8) -> Self { b }
+    }
+    impl PathByte for u16 {
+        #[inline(always)]
+        fn from_u8(b: u8) -> Self { b as u16 }
+    }
+
+    /// `std.fs.path.basenamePosix` — strip trailing `/` then return the final
+    /// component. `\` is NOT a separator. Empty / all-`/` input → `&[]`.
+    pub fn basename_posix<T: PathByte>(p: &[T]) -> &[T] {
+        let mut end = p.len();
+        while end > 0 && p[end - 1] == T::from_u8(b'/') { end -= 1; }
+        if end == 0 { return &p[..0]; }
+        let mut start = end;
+        while start > 0 && p[start - 1] != T::from_u8(b'/') { start -= 1; }
+        &p[start..end]
+    }
+
+    /// `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a drive
+    /// designator `X:` at index 1 as a root delimiter (`"C:"` → `""`,
+    /// `"C:foo"` → `"foo"`, `"C:\\"` → `""`), then returns the final component.
+    pub fn basename_windows<T: PathByte>(p: &[T]) -> &[T] {
+        if p.is_empty() { return &p[..0]; }
+        let mut end = p.len();
         loop {
-            let byte = path[end];
-            if byte == b'/' || byte == b'\\' {
-                if end == 0 { return b""; }
+            let c = p[end - 1];
+            if c == T::from_u8(b'/') || c == T::from_u8(b'\\') {
                 end -= 1;
+                if end == 0 { return &p[..0]; }
                 continue;
             }
-            if byte == b':' && end == 1 {
-                return b"";
-            }
+            if c == T::from_u8(b':') && end == 2 { return &p[..0]; }
             break;
         }
         let mut start = end;
-        end += 1;
-        while path[start] != b'/' && path[start] != b'\\' && !(path[start] == b':' && start == 1) {
-            if start == 0 { return &path[0..end]; }
+        while start > 0
+            && p[start - 1] != T::from_u8(b'/')
+            && p[start - 1] != T::from_u8(b'\\')
+            && !(p[start - 1] == T::from_u8(b':') && start - 1 == 1)
+        {
             start -= 1;
         }
-        &path[start + 1..end]
+        &p[start..end]
     }
-    #[cfg(not(windows))]
+
+    /// `bun.strings.basename` — comptime-dispatches to `basenameWindows` on
+    /// Windows and `basenamePosix` elsewhere.
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
-        // std.fs.path.basenamePosix — last component after stripping trailing
-        // '/' separators; "/" → "". `\` is NOT a separator on POSIX (matches
-        // Zig basenamePosix and bun_paths::basename_posix).
-        let mut end = path.len();
-        while end > 0 && path[end - 1] == b'/' { end -= 1; }
-        if end == 0 { return b""; }
-        let mut start = end;
-        while start > 0 && path[start - 1] != b'/' { start -= 1; }
-        &path[start..end]
+        if cfg!(windows) { basename_windows(path) } else { basename_posix(path) }
     }
     /// `bun.strings.withoutTrailingSlash`
     #[inline]
@@ -2218,7 +2312,7 @@ pub use strings_impl::*;
 
 /// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
 /// `bun.strings` namespace is `bun_core::immutable` (formerly
-/// `bun_string::strings`); this alias keeps the ~200 existing
+/// `bun_core::strings`); this alias keeps the ~200 existing
 /// `bun_core::strings::` / `crate::strings::` call sites compiling.
 ///
 /// NOTE: a handful of names (`index_of_char`, `eql_long`, `first_non_ascii`,
@@ -2231,7 +2325,7 @@ pub mod strings {
     // `bun_core::Foo`) and the full Zig-spec `bun.strings.*` namespace
     // (`string::immutable::*`). Names that exist in BOTH layers — same
     // identifier, different signature — are explicitly disambiguated below
-    // in favour of `immutable` (matches every former `bun_string::strings::X`
+    // in favour of `immutable` (matches every former `bun_core::strings::X`
     // caller). Internal `bun_core` code that needs the scalar form spells
     // `crate::strings_impl::X` directly.
     pub use super::*;
@@ -2245,6 +2339,9 @@ pub mod strings {
         last_index_of_char_t, remove_leading_dot_slash, starts_with, without_trailing_slash,
         CodepointIterator, Cursor, Encoding,
     };
+    // Disambiguate vs the scalar tier-0 versions in `crate::strings_impl` (now
+    // dedup-hoisted) — `immutable` is the Zig-spec impl callers expect.
+    pub use crate::string::immutable::{ares_inet_pton, copy_lowercase_if_needed};
     // `index_of_any{,_t}` keep the scalar `Option<usize>` form (Zig-spec
     // `immutable` returns `Option<OptionalUsize>` which no caller wants here).
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
@@ -2332,6 +2429,13 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
 /// unwind to catch either. Macro-generated `extern "C"` thunks now call the
 /// user body directly (same end state as Zig `@panic` → `bun.crash_handler`).
 pub mod ffi {
+    // `core`-only primitives shared with the freestanding `bun_shim_impl` PE
+    // (which cannot link `bun_core`'s `#[no_mangle]` C-ABI surface). Single
+    // audited copy lives in `bun_opaque::ffi`; re-exported here so existing
+    // `bun_core::ffi::{wcslen,wstr_units,slice,slice_mut}` call paths are
+    // unchanged.
+    pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
+
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///
     /// Single audited wrapper over `CStr::from_ptr` so the ~180 raw call
@@ -2362,41 +2466,6 @@ pub mod ffi {
         unsafe { cstr(p) }.to_bytes()
     }
 
-    /// `std.mem.len` for `[*:0]const u16` — count u16 code units up to (and
-    /// excluding) the first NUL. Single audited funnel for the hand-rolled
-    /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
-    /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
-    /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
-    /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
-    /// [`cstr`] and as Zig `std.mem.len([*:0]const u16)`.
-    ///
-    /// # Safety
-    /// `p` must be non-null and point to a NUL-terminated u16 sequence
-    /// readable up to and including the terminator.
-    #[inline(always)]
-    pub unsafe fn wcslen(p: *const u16) -> usize {
-        debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
-        let mut n = 0usize;
-        // SAFETY: caller contract — non-null, NUL-terminated.
-        while unsafe { *p.add(n) } != 0 {
-            n += 1;
-        }
-        n
-    }
-
-    /// UTF-16 analogue of [`cstr_bytes`]: scan to NUL and borrow the code
-    /// units as a `&[u16]`. Dominant shape at call sites (Zig
-    /// `std.mem.span([*:0]const u16)` port).
-    ///
-    /// # Safety
-    /// Same contract as [`wcslen`]; the returned borrow must not outlive the
-    /// allocation backing `p`.
-    #[inline(always)]
-    pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
-        // SAFETY: forwarded to `wcslen`; `p[..len]` is readable per contract.
-        unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
-    }
-
     #[cfg(unix)]
     static UTSNAME: crate::Once<libc::utsname> = crate::Once::new();
 
@@ -2410,7 +2479,7 @@ pub mod ffi {
     }
 
     /// Slice up to (excluding) the first NUL byte. Port of Zig `bun.sliceTo(b, 0)`;
-    /// re-exported as `bun_string::slice_to_nul`.
+    /// re-exported as `bun_core::slice_to_nul`.
     #[inline]
     pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
         &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
@@ -2631,51 +2700,6 @@ pub mod ffi {
         // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
         // implement the `Fn` traits and so cannot reach a real instantiation.
         unsafe { core::mem::zeroed() }
-    }
-
-    /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
-    /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
-    /// struct fields). Unlike a bare `from_raw_parts`, tolerates the C
-    /// convention of `(null, 0)` for an empty slice (Rust requires a
-    /// non-null, aligned pointer even at `len == 0`).
-    ///
-    /// Prefer bare `core::slice::from_raw_parts` at hot sites where `ptr` is
-    /// provably non-null (pointer-arith from `&self`, `NonNull::as_ptr()`).
-    ///
-    /// # Safety
-    /// Callers must still wrap the call in `unsafe` and uphold the
-    /// `from_raw_parts` contract: when `len > 0`, `ptr` must be non-null,
-    /// aligned, and point to `len` initialized `T` valid for `'a`. `ptr` may
-    /// be null only when `len == 0`.
-    #[inline(always)]
-    pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
-        if ptr.is_null() {
-            // Hard assert: a `(null, N>0)` pair was UB under bare
-            // `from_raw_parts`; silently returning `&[]` here would mask the
-            // contract violation in release and let callers iterate 0 times
-            // when they expect N. Fail loudly instead.
-            assert!(len == 0, "ffi::slice: null ptr with non-zero len");
-            &[]
-        } else {
-            // SAFETY: caller contract above.
-            unsafe { core::slice::from_raw_parts(ptr, len) }
-        }
-    }
-
-    /// Mutable counterpart of [`slice`]. Same null-at-zero tolerance.
-    ///
-    /// # Safety
-    /// Same as [`slice`], plus the caller must guarantee no other `&`/`&mut`
-    /// to the range is live for `'a`.
-    #[inline(always)]
-    pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
-        if ptr.is_null() {
-            assert!(len == 0, "ffi::slice_mut: null ptr with non-zero len");
-            &mut []
-        } else {
-            // SAFETY: caller contract above.
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
-        }
     }
 
     /// Pointer to the calling thread's libc `errno` (Zig: `std.c._errno()`).

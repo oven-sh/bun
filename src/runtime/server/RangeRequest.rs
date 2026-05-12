@@ -85,19 +85,19 @@ pub fn parse_raw(header: &[u8]) -> Raw {
     let end_s = strings::trim(&rest[dash + 1..], b" \t");
 
     if start_s.is_empty() {
-        let Some(n) = parse_u64(end_s) else {
+        let Some(n) = bun_core::fmt::parse_decimal::<u64>(end_s) else {
             return Raw::None;
         };
         return Raw::Suffix(n);
     }
 
-    let Some(start) = parse_u64(start_s) else {
+    let Some(start) = bun_core::fmt::parse_decimal::<u64>(start_s) else {
         return Raw::None;
     };
     let end: Option<u64> = if end_s.is_empty() {
         None
     } else {
-        match parse_u64(end_s) {
+        match bun_core::fmt::parse_decimal::<u64>(end_s) {
             Some(v) => Some(v),
             None => return Raw::None,
         }
@@ -124,10 +124,6 @@ pub fn raw_from_request(req: &AnyRequest) -> Raw {
     };
     parse_raw(h)
 }
-
-// std.fmt.parseUnsigned(u64, s, 10) — invalid bytes map to None ⇔ Zig `catch return .none`.
-#[inline]
-fn parse_u64(s: &[u8]) -> Option<u64> { bun_core::fmt::parse_int(s, 10).ok() }
 
 /// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +
 /// three `u64::MAX` (20 each) + `'-'` + `'/'` = 68. 96 leaves slack.

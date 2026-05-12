@@ -1,28 +1,17 @@
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSType, JSValue, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_jsc::virtual_machine::GCLevel;
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    let object = JSValue::create_empty_object(global, 3);
-    // Zig used a comptime anonymous struct + std.meta.fieldNames to iterate (name, fn) pairs.
-    // In Rust the elements share a type, so a const array + plain `for` is the direct mapping.
-    // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw `JSHostFn` ABI,
-    // which is what `JSFunction::create` expects.
-    const FIELDS: &[(&str, JSHostFn)] = &[
-        ("gcAggressionLevel", __jsc_host_gc_aggression_level),
-        ("arrayBufferToString", __jsc_host_array_buffer_to_string),
-        ("mimallocDump", __jsc_host_dump_mimalloc),
-        ("memoryFootprint", __jsc_host_memory_footprint),
-    ];
-    for &(name, func) in FIELDS {
-        object.put(
-            global,
-            name.as_bytes(),
-            JSFunction::create(global, name, func, 1, Default::default()),
-        );
-    }
-    object
+    // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
+    // `len = 3` vs 4-entry drift.
+    jsc::create_host_function_object(global, &[
+        ("gcAggressionLevel", __jsc_host_gc_aggression_level, 1),
+        ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
+        ("mimallocDump", __jsc_host_dump_mimalloc, 1),
+        ("memoryFootprint", __jsc_host_memory_footprint, 1),
+    ])
 }
 
 #[bun_jsc::host_fn]

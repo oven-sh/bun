@@ -2433,4 +2433,319 @@ pub type StreamingWriter<P> = PosixStreamingWriter<P>;
 #[cfg(not(unix))]
 pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Parent-vtable shim macros
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Zig's `StreamingWriter(Parent, .{ .onWrite = T.onWrite, ... })` takes a
+// comptime function table; the Rust port replaced it with monomorphic
+// `*WriterParent` traits whose every method is `unsafe fn(this: *mut Self, ..)`
+// that derefs the BACKREF and forwards to an inherent method. Every concrete
+// parent (FileSink, Terminal, WindowsNamedPipe, shell IOWriter,
+// StaticPipeWriter) was hand-stamping the same triple of cfg-gated impls
+// (POSIX + WindowsWriterParent + Windows{Streaming,Buffered}WriterParent),
+// differing only in:
+//   (a) the inherent-method names the vtable forwards to,
+//   (b) whether the body derefs `*mut Self` as `&mut` or `&` (re-entrancy
+//       under Stacked Borrows — see `borrow = shared` callers),
+//   (c) the `event_loop` / `loop_` / refcount accessor expressions.
+// These macros stamp that triple once per parent.
+//
+// `borrow = mut`    → bodies form `&mut *this` (unique access for the
+//                     callback's duration; the writer never holds
+//                     `&mut Parent` itself).
+// `borrow = shared` → bodies form `&*this` (callback may re-enter JS or
+//                     `enqueue(&self)` and observe a fresh `&Self`; aliased
+//                     `&Self` is sound where `&mut Self` is not).
+//
+// Accessor args use closure-literal syntax (`|this| expr`) purely as a binder
+// for the macro — no actual closure is created; `expr` is pasted into an
+// `unsafe` block with `this: *mut Self` in scope.
+
+/// Re-exports for `$crate::`-qualified use inside the macro bodies so callers
+/// need no extra `use` items.
+#[doc(hidden)]
+pub mod __parent_macro {
+    pub use ::bun_sys::Error as SysError;
+    pub use ::bun_uws_sys::Loop as UwsLoop;
+    #[cfg(windows)]
+    pub use ::bun_sys::windows::libuv::Loop as UvLoop;
+}
+
+/// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +
+/// `WindowsStreamingWriterParent` for a parent type. See module comment above.
+#[macro_export]
+macro_rules! impl_streaming_writer_parent {
+    // Internal: project the `borrow` mode onto a raw-ptr deref.
+    (@borrow mut    $p:expr) => { &mut *$p };
+    (@borrow shared $p:expr) => { &*$p };
+
+    // Internal: expand the three impls once generics are normalized.
+    (@emit
+        [$($gen:tt)*] $Ty:ty;
+        poll_tag   = $poll_tag:expr,
+        borrow     = $borrow:tt,
+        on_write   = $on_write:ident,
+        on_error   = $on_error:ident,
+        on_ready   = $on_ready:ident,
+        on_close   = $on_close:ident,
+        event_loop = |$el_this:ident| $el:expr,
+        uws_loop   = |$uws_this:ident| $uws:expr,
+        uv_loop    = |$uv_this:ident| $uv:expr,
+        ref_       = |$ref_this:ident| $ref_:expr,
+        deref      = |$deref_this:ident| $deref:expr,
+    ) => {
+        #[cfg(unix)]
+        impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
+            const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
+            const HAS_ON_READY: bool = true;
+            #[inline]
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
+                // SAFETY: `this` is the BACKREF set via `set_parent`; the
+                // StreamingWriter never materializes `&mut Parent`, so this is
+                // the unique access path for the callback's duration.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_write(amount, status) }
+            }
+            #[inline]
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_error(err) }
+            }
+            #[inline]
+            unsafe fn on_ready(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_ready() }
+            }
+            #[inline]
+            unsafe fn on_close(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_close() }
+            }
+            #[inline]
+            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+                // SAFETY: see on_write. Shared-only read.
+                let $el_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $el }
+            }
+            #[inline]
+            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UwsLoop {
+                // SAFETY: see on_write. Shared-only read.
+                let $uws_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $uws }
+            }
+        }
+
+        #[cfg(windows)]
+        impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
+            #[inline]
+            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
+                // SAFETY: BACKREF set via `set_parent`; shared-only read.
+                let $uv_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $uv }
+            }
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: see loop_. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see loop_. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
+            }
+        }
+
+        #[cfg(windows)]
+        impl $($gen)* $crate::pipe_writer::WindowsStreamingWriterParent for $Ty {
+            // Zig `.onWritable` slot — same body as POSIX `on_ready`.
+            const HAS_ON_WRITABLE: bool = true;
+            #[inline]
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
+                // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_write(amount, status) }
+            }
+            #[inline]
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_error(err) }
+            }
+            #[inline]
+            unsafe fn on_writable(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_ready() }
+            }
+            #[inline]
+            unsafe fn on_close(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_close() }
+            }
+        }
+    };
+
+    // Public entry — generic parent: `for<P: Bound, ...> Type<P>; ...`.
+    (
+        for<$($gp:ident $(: $b0:path)?),+> $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::impl_streaming_writer_parent! {
+            @emit [<$($gp $(: $b0)?),+>] $Ty; $($rest)*
+        }
+    };
+
+    // Public entry — non-generic parent.
+    (
+        $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::impl_streaming_writer_parent! { @emit [] $Ty; $($rest)* }
+    };
+}
+
+/// Stamp `PosixBufferedWriterParent` + `WindowsWriterParent` +
+/// `WindowsBufferedWriterParent` for a parent type. See module comment above.
+///
+/// `win_on_write_guard` runs on Windows immediately before forwarding
+/// `on_write`; bind a keepalive there if the callback may drop the last
+/// external strong ref (and the inline `uv_write_t`) mid-re-entry. Pass
+/// `|_this| ()` for none.
+#[macro_export]
+macro_rules! impl_buffered_writer_parent {
+    (@borrow mut    $p:expr) => { &mut *$p };
+    (@borrow shared $p:expr) => { &*$p };
+
+    (@emit
+        [$($gen:tt)*] $Ty:ty;
+        poll_tag   = $poll_tag:expr,
+        borrow     = $borrow:tt,
+        on_write   = $on_write:ident,
+        on_error   = $on_error:ident,
+        on_close   = $on_close:ident,
+        get_buffer = |$gb_this:ident| $gb:expr,
+        event_loop = |$el_this:ident| $el:expr,
+        uv_loop    = |$uv_this:ident| $uv:expr,
+        ref_       = |$ref_this:ident| $ref_:expr,
+        deref      = |$deref_this:ident| $deref:expr,
+        win_on_write_guard = |$guard_this:ident| $guard:expr,
+    ) => {
+        #[cfg(not(windows))]
+        impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
+            const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
+            #[inline]
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
+                // SAFETY: `this` is the BACKREF set via `set_parent`; the
+                // BufferedWriter never materializes `&mut Parent`, so this is
+                // the unique access path for the callback's duration.
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+            }
+            #[inline]
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+            }
+            const HAS_ON_CLOSE: bool = true;
+            #[inline]
+            unsafe fn on_close(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+            }
+            #[inline]
+            unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+                // SAFETY: see on_write. Shared-only borrow of the buffer storage.
+                let $gb_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $gb }
+            }
+            const HAS_ON_WRITABLE: bool = false;
+            #[inline]
+            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+                // SAFETY: see on_write.
+                let $el_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $el }
+            }
+        }
+
+        #[cfg(windows)]
+        impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
+            #[inline]
+            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
+                // SAFETY: BACKREF set via `set_parent`; shared-only read.
+                let $uv_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $uv }
+            }
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: see loop_. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see loop_. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
+            }
+        }
+
+        #[cfg(windows)]
+        impl $($gen)* $crate::pipe_writer::WindowsBufferedWriterParent for $Ty {
+            #[inline]
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
+                // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
+                let $guard_this = this;
+                #[allow(unused_unsafe, clippy::let_unit_value)]
+                let _guard = unsafe { $guard };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+            }
+            #[inline]
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+            }
+            const HAS_ON_CLOSE: bool = true;
+            #[inline]
+            unsafe fn on_close(this: *mut Self) {
+                // SAFETY: see on_write.
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+            }
+            #[inline]
+            unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+                // SAFETY: see on_write.
+                let $gb_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $gb }
+            }
+            const HAS_ON_WRITABLE: bool = false;
+        }
+    };
+
+    // Public entry — generic parent.
+    (
+        for<$($gp:ident $(: $b0:path)?),+> $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::impl_buffered_writer_parent! {
+            @emit [<$($gp $(: $b0)?),+>] $Ty; $($rest)*
+        }
+    };
+
+    // Public entry — non-generic parent.
+    (
+        $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::impl_buffered_writer_parent! { @emit [] $Ty; $($rest)* }
+    };
+}
+
 // ported from: src/io/PipeWriter.zig

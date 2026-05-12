@@ -1,4 +1,4 @@
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_ast::{Loc, Source};
 use bun_paths::{fs::FileSystem, PathBuffer};
 
@@ -114,15 +114,15 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
         .expect("unreachable");
     mutable.append(b"{\n  \"version\":3,\n  \"sources\": [")?;
 
-    bun_str::quote_for_json(filename, mutable, ASCII_ONLY)?;
+    bun_core::quote_for_json(filename, mutable, ASCII_ONLY)?;
 
     if include_sources_contents {
         mutable.append(b"],\n  \"sourcesContent\": [")?;
-        bun_str::quote_for_json(source.contents(), mutable, ASCII_ONLY)?;
+        bun_core::quote_for_json(source.contents(), mutable, ASCII_ONLY)?;
     }
 
     mutable.append(b"],\n  \"mappings\": ")?;
-    bun_str::quote_for_json(mappings, mutable, ASCII_ONLY)?;
+    bun_core::quote_for_json(mappings, mutable, ASCII_ONLY)?;
     mutable.append(b", \"names\": []\n}")?;
     Ok(())
 }

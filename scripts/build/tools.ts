@@ -381,6 +381,8 @@ export function resolveLlvmToolchain(
   | "ld"
   | "rustLld"
   | "rustLlvmVersion"
+  | "rustSysroot"
+  | "rustHostTriple"
   | "strip"
   | "dsymutil"
   | "ccache"
@@ -484,7 +486,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion } = findRustLld(os);
+  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -507,6 +509,8 @@ export function resolveLlvmToolchain(
     ld,
     rustLld,
     rustLlvmVersion,
+    rustSysroot,
+    rustHostTriple,
     strip,
     dsymutil,
     ccache,
@@ -559,11 +563,19 @@ export interface CargoToolchain {
  * doesn't have the expected layout (e.g. distro-packaged rustc without the
  * `rust-lld` component).
  */
-export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVersion: string | undefined } {
+export function findRustLld(os: OS): {
+  rustLld: string | undefined;
+  rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
+  rustSysroot: string | undefined;
+  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
+  rustHostTriple: string | undefined;
+} {
+  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
-  if (rustc === undefined) return { rustLld: undefined, rustLlvmVersion: undefined };
+  if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
   // `libbun_rust.a` rather than building it, so the pinned nightly may not be
@@ -599,13 +611,13 @@ export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVers
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
   }).stdout;
-  if (!sysroot || !vv) return { rustLld: undefined, rustLlvmVersion: undefined };
+  if (!sysroot || !vv) return none;
 
-  const hostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
+  const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (hostTriple === undefined) return { rustLld: undefined, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
 
-  const bin = join(sysroot, "lib", "rustlib", hostTriple, "bin");
+  const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
     os === "windows"
       ? join(bin, "rust-lld.exe")
@@ -613,7 +625,7 @@ export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVers
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion };
+  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
 }
 
 /**

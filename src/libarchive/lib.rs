@@ -13,7 +13,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{Output, ZStr};
+use bun_core::{slice_as_bytes, Output, ZStr};
 use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
 use bun_core::{self as bun_str, slice_to_nul, strings, MutableString};
 use bun_sys::{self, Fd, FdExt};
@@ -140,31 +140,6 @@ pub mod lib {
         fn archive_entry_set_mtime(e: *mut Entry, secs: time_t, nsecs: c_long);
     }
 
-    /// `bun.sliceTo(ptr, 0)` — make a `&ZStr` from a possibly-null C string.
-    /// SAFETY: `p` must be either null or point at a NUL-terminated buffer
-    /// that outlives `'a` (libarchive owns these and keeps them alive for the
-    /// duration of the `Archive` / `Entry`).
-    #[inline]
-    unsafe fn cstr_to_zstr<'a>(p: *const c_char) -> &'a ZStr {
-        // SAFETY: caller contract — `p` is null or NUL-terminated and valid for `'a`.
-        unsafe { ZStr::from_c_ptr(p) }
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    unsafe fn wcstr_to_wstr<'a>(p: *const u16) -> &'a bun_core::WStr {
-        if p.is_null() {
-            return bun_core::WStr::EMPTY;
-        }
-        let mut len = 0usize;
-        // SAFETY: `p` is non-null and NUL-terminated per caller contract.
-        while unsafe { *p.add(len) } != 0 {
-            len += 1;
-        }
-        // SAFETY: `p[len] == 0` and `p[..len]` is readable for `'a`.
-        unsafe { bun_core::WStr::from_raw(p, len) }
-    }
-
     /// One block from `archive_read_data_block`. `bytes` borrows libarchive's
     /// internal buffer (valid until the next read call on the owning archive).
     pub struct Block<'a> {
@@ -174,15 +149,6 @@ pub mod lib {
     }
 
     impl Archive {
-        #[inline]
-        fn as_mut_ptr(&self) -> *mut Archive {
-            // SAFETY: `Archive` contains `UnsafeCell` (`!Freeze`), so a shared
-            // borrow grants SharedReadWrite provenance and the C side may
-            // mutate through the returned pointer. All `&self` here originate
-            // from a `*mut Archive` returned by `read_new` / `write_new`.
-            self._p.get().cast::<Archive>()
-        }
-
         pub fn read_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
             let p = unsafe { archive_read_new() };
@@ -372,7 +338,7 @@ pub mod lib {
             // archive; callers treat it as borrowed-until-next-call. The
             // `'static` here mirrors Zig's `[]const u8` — caller must not
             // outlive the archive (same as the Zig API).
-            unsafe { cstr_to_zstr(p) }.as_bytes()
+            unsafe { ZStr::from_c_ptr(p) }.as_bytes()
         }
 
         // ── write side ─────────────────────────────────────────────────────
@@ -436,31 +402,23 @@ pub mod lib {
     }
 
     impl Entry {
-        #[inline]
-        fn as_mut_ptr(&self) -> *mut Entry {
-            // SAFETY: `Entry` contains `UnsafeCell` (`!Freeze`), so a shared
-            // borrow grants SharedReadWrite provenance and the C side may
-            // mutate through the returned pointer.
-            self._p.get().cast::<Entry>()
-        }
-
         pub fn pathname(&self) -> &ZStr {
             // SAFETY: self valid; returned string owned by libarchive for the
             // lifetime of this entry.
-            unsafe { cstr_to_zstr(archive_entry_pathname(self.as_mut_ptr())) }
+            unsafe { ZStr::from_c_ptr(archive_entry_pathname(self.as_mut_ptr())) }
         }
         pub fn pathname_utf8(&self) -> &ZStr {
             // SAFETY: self valid.
-            unsafe { cstr_to_zstr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
+            unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
         }
         #[cfg(windows)]
         pub fn pathname_w(&self) -> &bun_core::WStr {
             // SAFETY: self valid.
-            unsafe { wcstr_to_wstr(archive_entry_pathname_w(self.as_mut_ptr())) }
+            unsafe { bun_core::WStr::from_ptr(archive_entry_pathname_w(self.as_mut_ptr())) }
         }
         pub fn symlink(&self) -> &ZStr {
             // SAFETY: self valid.
-            unsafe { cstr_to_zstr(archive_entry_symlink(self.as_mut_ptr())) }
+            unsafe { ZStr::from_c_ptr(archive_entry_symlink(self.as_mut_ptr())) }
         }
         pub fn perm(&self) -> u32 {
             // SAFETY: self valid.
@@ -1291,35 +1249,6 @@ fn is_symlink_target_safe(
 #[cfg(windows)]
 fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
     use bun_sys::{open_dir_at_windows, WindowsOpenDirOp, WindowsOpenDirOptions, E};
-
-    let is_sep = |c: u16| c == b'/' as u16 || c == b'\\' as u16;
-
-    // `std.fs.path.ComponentIterator(.windows, u16)` — collect the end index
-    // of each component so we can walk `previous()` / `next()` by index.
-    let mut ends: Vec<usize> = Vec::with_capacity(8);
-    {
-        let mut i = 0usize;
-        while i < sub_path.len() && is_sep(sub_path[i]) {
-            i += 1;
-        }
-        while i < sub_path.len() {
-            let start = i;
-            while i < sub_path.len() && !is_sep(sub_path[i]) {
-                i += 1;
-            }
-            if i > start {
-                ends.push(i);
-            }
-            while i < sub_path.len() && is_sep(sub_path[i]) {
-                i += 1;
-            }
-        }
-    }
-    // `it.last() orelse Component{ .name = &.{}, .path = sub_path }`
-    if ends.is_empty() {
-        ends.push(sub_path.len());
-    }
-
     // Match Zig's access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) by setting `read_only`,
     // and `FILE_OPEN_IF` via `OpenOrCreate`.
@@ -1328,33 +1257,17 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
         read_only: true,
         ..Default::default()
     };
-
-    let mut idx = ends.len() - 1;
-    loop {
-        let prefix = &sub_path[..ends[idx]];
-        match open_dir_at_windows(dir_fd, prefix, opts) {
-            Ok(fd) => {
-                // `it.next() orelse return result` — final component reached;
-                // `makePath` closes the returned dir. Intermediate handles are
-                // closed before advancing.
-                fd.close();
-                if idx + 1 == ends.len() {
-                    return Ok(());
-                }
-                idx += 1;
-            }
-            Err(e) => match e.get_errno() {
-                E::ENOENT => {
-                    // `it.previous() orelse return error.FileNotFound`
-                    if idx == 0 {
-                        return Err(e.into());
-                    }
-                    idx -= 1;
-                }
-                _ => return Err(e.into()),
-            },
+    // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never
+    // returns BadPathName here.
+    let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
+    bun_paths::make_path_with(it, |prefix| match open_dir_at_windows(dir_fd, prefix, opts) {
+        Ok(fd) => {
+            fd.close();
+            Ok(bun_paths::MakePathStep::Created)
         }
-    }
+        Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
+        Err(e) => Err(e.into()),
+    })
 }
 
 pub struct Archiver;
@@ -2134,13 +2047,6 @@ impl Archiver {
 
         Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
     }
-}
-
-// Helper: std.mem.sliceAsBytes equivalent for OSPathChar slices.
-#[inline]
-fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
-    // OSPathChar is u8 on posix / u16 on windows; both are bytemuck::Pod.
-    bytemuck::cast_slice(s)
 }
 
 // ported from: src/libarchive/libarchive.zig

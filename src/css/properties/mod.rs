@@ -274,9 +274,6 @@ mod generic_registrations {
     impl_parse_tocss_via_inherent!(
         css_values::alpha::AlphaValue,
         css_values::image::Image,
-        css_values::length::LengthPercentageOrAuto,
-        css_values::length::LengthOrNumber,
-        css_values::length::Length,
         css_values::length::LengthPercentage,
         css_values::easing::EasingFunction,
         css_values::time::Time,
@@ -286,8 +283,24 @@ mod generic_registrations {
         css_values::percentage::NumberOrPercentage,
     );
 
-    // CssColor already has `impl generics::ToCss` in `values/color.rs`; supply
-    // `Parse` / `ParseWithOptions` only.
+    // Length derives `css::ToCss` only (custom Calc-unwrapping `parse` is
+    // inherent); CssColor has a hand-written `generics::ToCss` in
+    // `values/color.rs`. Supply `Parse` / `ParseWithOptions` only for both.
+    impl crate::generics::Parse for css_values::length::Length {
+        #[inline]
+        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+            css_values::length::Length::parse(input)
+        }
+    }
+    impl crate::generics::ParseWithOptions for css_values::length::Length {
+        #[inline]
+        fn parse_with_options(
+            input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            css_values::length::Length::parse(input)
+        }
+    }
     impl crate::generics::Parse for css_values::color::CssColor {
         #[inline]
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
@@ -342,7 +355,6 @@ mod generic_registrations {
         // font
         font::Font,
         font::FontFamily,
-        font::FontSize,
         font::FontStretch,
         font::FontStyle,
         font::FontWeight,

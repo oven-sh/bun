@@ -371,27 +371,10 @@ fn format_bitfield<T: BitInt>(w: &mut impl std::io::Write, bits: T, min: u8, max
     }
 }
 
-/// Parse an unsigned decimal from ASCII bytes (replacement for `std.fmt.parseInt(u8, s, 10)`).
+/// Parse an unsigned decimal from ASCII bytes (`std.fmt.parseInt(u8, s, 10)`).
+#[inline]
 fn parse_u8_decimal(s: &[u8]) -> Option<u8> {
-    // Zig's std.fmt.parseInt accepts an optional leading '+' on unsigned ints.
-    let s = match s {
-        [b'+', rest @ ..] => rest,
-        _ => s,
-    };
-    if s.is_empty() {
-        return None;
-    }
-    let mut val: u32 = 0;
-    for &b in s {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        val = val * 10 + u32::from(b - b'0');
-        if val > u32::from(u8::MAX) {
-            return None;
-        }
-    }
-    Some(u8::try_from(val).expect("int cast"))
+    bun_core::parse_int::<u8>(s, 10).ok()
 }
 
 /// Trait bundling the integer ops needed for cron bitset fields (u8/u16/u32/u64).

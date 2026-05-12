@@ -13,10 +13,10 @@ use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
-use bun_str::lexer as identifier;
+use bun_core::lexer as identifier;
 use bun_ast::{E, Expr, G};
 use bun_ast::{Loc, Log, Source};
-use bun_str::strings;
+use bun_core::strings;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 pub struct JSON5Parser<'a> {
@@ -830,10 +830,7 @@ impl<'a> JSON5Parser<'a> {
             _ => {}
         }
 
-        let num_str = &self.source[start..self.pos];
-        // SAFETY: scanner above only advanced past ASCII bytes [0-9.eE+-], so num_str is valid UTF-8.
-        let s = unsafe { core::str::from_utf8_unchecked(num_str) };
-        s.parse::<f64>().map_err(|_| ParseError::InvalidNumber)
+        bun_core::wtf::parse_double(&self.source[start..self.pos]).map_err(|_| ParseError::InvalidNumber)
     }
 
     fn scan_hex_number(&mut self) -> Result<f64, ParseError> {
@@ -848,10 +845,9 @@ impl<'a> JSON5Parser<'a> {
             return Err(ParseError::InvalidHexNumber);
         }
 
-        let hex_str = &self.source[hex_start..self.pos];
-        // SAFETY: only ASCII hex digits per loop above.
-        let s = unsafe { core::str::from_utf8_unchecked(hex_str) };
-        let value = u64::from_str_radix(s, 16).map_err(|_| ParseError::InvalidHexNumber)?;
+        // scanner pre-filters to is_ascii_hexdigit → `_`/sign unreachable
+        let value = bun_core::fmt::parse_int::<u64>(&self.source[hex_start..self.pos], 16)
+            .map_err(|_| ParseError::InvalidHexNumber)?;
         Ok(value as f64)
     }
 

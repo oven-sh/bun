@@ -71,24 +71,6 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     }
 }
 
-/// Local extension: `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267).
-/// Upstream `bun_jsc::JSValue` does not yet expose this; bind the C++ FFI directly.
-trait JSValueAsyncCtxExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueAsyncCtxExt for JSValue {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        // SAFETY: thin FFI; `global` is live, `self` is a valid encoded JSValue.
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-}
-
 use bun_core::immutable::ares_inet_pton as inet_pton;
 
 #[allow(dead_code)]

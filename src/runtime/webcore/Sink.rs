@@ -192,7 +192,7 @@ pub struct UTF8Fallback;
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
-// TODO(b2-blocked): `bun_core::{is_all_ascii, replace_latin1_with_utf8,
+// TODO(b2-blocked): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
 // copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
 
@@ -278,7 +278,7 @@ impl UTF8Fallback {
         }
 
         {
-            // TODO(port): allocation-failure handling — `bun_core::to_utf8_alloc`
+            // TODO(port): allocation-failure handling — `bun_core::strings::to_utf8_alloc`
             // re-exports the bun_core variant which aborts on OOM (returns Vec<u8>, not
             // Result). Phase B should route through a fallible allocator to preserve
             // `.err = oom`.
@@ -349,44 +349,31 @@ impl VTable {
     };
 
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
-        /// Recover `&mut W` from the type-erased `Sink.ptr` field. Centralises
-        /// the per-thunk `unsafe { &mut *this.cast() }` so the five vtable
-        /// entries below are safe callers (one accessor, N safe call sites).
-        ///
-        /// # Safety (encapsulated)
-        /// `this` is the `Sink.ptr` field, set once in [`init_with_type`] from
-        /// `&mut W` (a live, exclusively-owned handler). The vtable is only
-        /// ever paired with that exact erased pointer, the `Sink` is `!Send`,
-        /// and `Sink::end`/`write*` borrow `&mut self` so no second `&mut W`
-        /// can be live across a thunk call. Non-null and properly aligned by
-        /// construction.
-        #[inline(always)]
-        fn handler<'r, W: SinkHandler>(this: *mut ()) -> &'r mut W {
-            debug_assert!(!this.is_null());
-            // SAFETY: see fn doc — `this` was erased from `&mut W` in
-            // `init_with_type`; sole live `&mut` for the thunk's duration.
-            unsafe { &mut *this.cast::<W>() }
-        }
         fn on_write<W: SinkHandler>(this: *mut (), data: streams::Result) -> streams::result::Writable {
-            handler::<W>(this).write(data)
+            // SAFETY: `this` was erased from `&mut W` in init_with_type.
+            unsafe { &mut *this.cast::<W>() }.write(data)
         }
         fn on_connect<W: SinkHandler>(this: *mut (), signal: Signal) -> sys::Result<()> {
-            handler::<W>(this).connect(signal)
+            // SAFETY: see on_write
+            unsafe { &mut *this.cast::<W>() }.connect(signal)
         }
         fn on_write_latin1<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
-            handler::<W>(this).write_latin1(data)
+            // SAFETY: see on_write
+            unsafe { &mut *this.cast::<W>() }.write_latin1(data)
         }
         fn on_write_utf16<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
-            handler::<W>(this).write_utf16(data)
+            // SAFETY: see on_write
+            unsafe { &mut *this.cast::<W>() }.write_utf16(data)
         }
         fn on_end<W: SinkHandler>(this: *mut (), err: Option<SysError>) -> sys::Result<()> {
-            handler::<W>(this).end(err)
+            // SAFETY: see on_write
+            unsafe { &mut *this.cast::<W>() }.end(err)
         }
 
         VTable {
@@ -467,18 +454,15 @@ impl<'a> Sink<'a> {
 // JSSink — Zig: `fn JSSink(comptime SinkType, comptime abi_name) type`
 //
 // Rust cannot pass a `&str` const-generic for symbol-name concatenation in
-// `#[link_name]` / `#[export_name]`. `JSSink` is therefore a macro that expands
-// per (SinkType, abi_name) pair. The `@hasDecl` / `@hasField` checks become
-// trait methods with default impls on `JsSinkType`.
+// `#[link_name]`, so the per-abi extern set is supplied via `JsSinkAbi`
+// (populated by `impl_js_sink_abi!`) and the per-abi `#[no_mangle]` exports
+// are emitted by `generate-jssink.ts → generated_jssink.rs`. The `@hasDecl` /
+// `@hasField` checks become associated consts on `JsSinkType`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Sink.JSSink(SinkType, abi_name)` — generic sink-to-JS wrapper.
-/// In Zig this is a comptime type-generator. The full implementation is the
-/// `js_sink!` macro below (gated). Provide a thin generic stub here so
-/// `crate::webcore::sink::JSSink<T>` resolves for FileSink/NetworkSink/ArrayBufferSink.
-// TODO(b2-blocked): replace with `js_sink!` instantiation once bun_jsc method
-// surface (host_fn proc-macro, JSValue::js_number, ErrorCode, EnsureStillAlive)
-// is green.
+/// `Sink.JSSink(SinkType, abi_name)` — generic sink-to-JS wrapper. In Zig this
+/// is a comptime type-generator; here it is a plain generic over
+/// `T: JsSinkType + JsSinkAbi` with host-fn bodies in the `impl` block below.
 // `repr(transparent)`: the Zig `ThisSink = struct { sink: SinkType }` is
 // allocated as the JSSink wrapper but freed via `this.sink.destroy()` (the
 // inner address). With `transparent` the inner and outer share Layout, so
@@ -590,10 +574,9 @@ macro_rules! impl_js_sink_abi {
     };
 }
 
-/// Per-sink C ABI surface that the `js_sink!` macro would normally emit via
-/// `#[link_name = concat!($abi_name, "__fn")]` externs. Since `&str` const-
-/// generics can't drive `#[link_name]`, each `SinkType` provides the resolved
-/// extern fn-pointers here so the generic `JSSink<T>` stub can dispatch.
+/// Per-sink C ABI surface. `&str` const-generics can't drive `#[link_name]`,
+/// so each `SinkType` provides the resolved `${abi}__*` externs here (normally
+/// via `impl_js_sink_abi!`) for the generic `JSSink<T>` host-fn bodies to call.
 pub trait JsSinkAbi {
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
     fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
@@ -820,11 +803,19 @@ pub trait JsSinkType: Sized {
 // JSSink<T> generic host-fn glue (port of Sink.zig `JSSink(SinkType, abi)`)
 //
 // The codegen (`generate-jssink.ts`) emits `#[no_mangle] extern "C"` thunks
-// for `${name}__{construct,write,end,flush,start,getInternalFd,memoryCost}`
-// that call these. Keeping the host-fn validation here (instead of on each
-// `SinkType`) avoids the inherent-method name collision with the inner
-// `write/end/flush/start` and matches Zig's layering exactly: the JSSink
-// wrapper owns the JS-facing surface, the SinkType owns the streaming logic.
+// for `${name}__{construct,write,end,flush,start,getInternalFd,memoryCost,
+// finalize,close,endWithSink,updateRef}` that call these. Keeping the host-fn
+// validation here (instead of on each `SinkType`) avoids the inherent-method
+// name collision with the inner `write/end/flush/start` and matches Zig's
+// layering exactly: the JSSink wrapper owns the JS-facing surface, the
+// SinkType owns the streaming logic.
+//
+// This is the SOLE implementation. The earlier Phase-B `macro_rules! js_sink`
+// reference port has been deleted — it was never instantiated, half its bodies
+// no longer type-checked against the current `bun_jsc` surface, and every fn
+// it defined is superseded by this generic `impl` + `decl_js_sink_externs!` /
+// `impl_js_sink_abi!`. `write_utf8` is intentionally NOT re-added: it is
+// unexported in Zig, has no lut entry, and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
@@ -1151,538 +1142,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     pub fn js_memory_cost(this: &T) -> usize {
         core::mem::size_of::<JSSink<T>>() + this.memory_cost()
     }
-}
-
-// TODO(b2-blocked): macro body references `bun_jsc::{host_fn, host_call,
-// mark_binding, from_js_host_call_generic, ErrorCode, SystemError,
-// EnsureStillAlive, VirtualMachine::get}` and `streams::Start::from_js` — gated
-// until those land.
-//
-// NOTE: the `${abi_name}__{memoryCost,finalize,close,endWithSink,updateRef,
-// getInternalFd,construct,write,end,flush,start}` C symbols are now owned by
-// `generate-jssink.ts → generated_jssink.rs`, which thunks into
-// `JSSink::<T>::js_*` above. The bodies below are kept as the Phase-B port
-// reference but are NOT exported (no `#[export_name]`) — instantiating this
-// macro alongside the codegen would otherwise produce duplicate symbols.
-
-#[macro_export]
-macro_rules! js_sink {
-    ($SinkType:ty, $abi_name:literal, $mod_name:ident) => {
-        pub mod $mod_name {
-            use super::*;
-            use $crate::sink::JsSinkType;
-            use ::core::ffi::c_void;
-            use ::bun_jsc::{JSGlobalObject, JSValue, CallFrame, JsResult};
-            use ::crate::webcore::{streams, Blob};
-            use ::bun_sys::{self as sys, Error as SysError};
-            use ::bun_collections::{ByteVecExt, VecExt};
-
-            #[repr(C)]
-            pub struct ThisSink {
-                pub sink: $SinkType,
-            }
-
-            // This attaches it to JS
-            #[repr(C)]
-            pub struct SinkSignal {
-                pub cpp: JSValue,
-            }
-
-            impl SinkSignal {
-                pub fn init(cpp: JSValue) -> streams::Signal {
-                    // this one can be null
-                    // SAFETY: @setRuntimeSafety(false) in Zig — the JSValue's bits are
-                    // reinterpreted as a *SinkSignal pointer; never dereferenced as such,
-                    // only round-tripped back to JSValue in close()/ready().
-                    let raw = cpp.encoded() as usize;
-                    unsafe { streams::Signal::init_with_type::<SinkSignal>(raw as *mut SinkSignal) }
-                }
-
-                pub fn close(this: *mut Self, _err: Option<SysError>) {
-                    // SAFETY: `this` is the JSValue bits stashed by `init`; bitcast back.
-                    let cpp = JSValue::from_encoded((this as usize) as i64);
-                    on_close(cpp, JSValue::UNDEFINED);
-                }
-
-                pub fn ready(this: *mut Self, _amt: Option<Blob::SizeType>, _off: Option<Blob::SizeType>) {
-                    // SAFETY: see close()
-                    let cpp = JSValue::from_encoded((this as usize) as i64);
-                    on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED);
-                }
-
-                pub fn start(_this: *mut Self) {}
-            }
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__memoryCost`).
-            pub extern "C" fn memory_cost(this: *mut ThisSink) -> usize {
-                // SAFETY: called from C++ with a valid ThisSink*.
-                let this = unsafe { &*this };
-                ::core::mem::size_of::<ThisSink>() + <$SinkType as JsSinkType>::memory_cost(&this.sink)
-            }
-
-            // TODO(port): move to <area>_sys
-            unsafe extern "C" {
-                #[link_name = concat!($abi_name, "__assignToStream")]
-                // `&JSGlobalObject` discharges the deref'd-param precondition;
-                // `ptr`/`jsvalue_ptr` are opaque — macro-private, sole caller
-                // is the `assign_to_stream` wrapper below.
-                safe fn assign_to_stream_extern(
-                    global: &JSGlobalObject,
-                    stream: JSValue,
-                    ptr: *mut c_void,
-                    jsvalue_ptr: *mut *mut c_void,
-                ) -> JSValue;
-                #[link_name = concat!($abi_name, "__onClose")]
-                safe fn on_close_extern(ptr: JSValue, reason: JSValue);
-                #[link_name = concat!($abi_name, "__onReady")]
-                safe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue);
-                #[link_name = concat!($abi_name, "__onStart")]
-                safe fn on_start_extern(ptr: JSValue, global: &JSGlobalObject);
-                #[link_name = concat!($abi_name, "__createObject")]
-                safe fn create_object_extern(
-                    global: &JSGlobalObject,
-                    object: *mut c_void,
-                    destructor: usize,
-                ) -> JSValue;
-                #[link_name = concat!($abi_name, "__setDestroyCallback")]
-                safe fn set_destroy_callback_extern(value: JSValue, callback: usize);
-                #[link_name = concat!($abi_name, "__detachPtr")]
-                safe fn detach_ptr_extern(ptr: JSValue);
-                #[link_name = concat!($abi_name, "__fromJS")]
-                safe fn from_js_extern(value: JSValue) -> usize;
-            }
-
-            pub fn assign_to_stream(
-                global: &JSGlobalObject,
-                stream: JSValue,
-                ptr: *mut c_void,
-                jsvalue_ptr: *mut *mut c_void,
-            ) -> JSValue {
-                assign_to_stream_extern(global, stream, ptr, jsvalue_ptr)
-            }
-
-            pub fn on_close(ptr: JSValue, reason: JSValue) {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // TODO: this should be got from a parameter
-                let global = ::bun_jsc::VirtualMachine::get().global();
-                // TODO: properly propagate exception upwards
-                let _ = ::bun_jsc::from_js_host_call_generic(global, || {
-                    on_close_extern(ptr, reason)
-                });
-            }
-
-            pub fn on_ready(ptr: JSValue, amount: JSValue, offset: JSValue) {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                on_ready_extern(ptr, amount, offset)
-            }
-
-            pub fn on_start(ptr: JSValue, global: &JSGlobalObject) {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                on_start_extern(ptr, global)
-            }
-
-            pub fn create_object(global: &JSGlobalObject, object: *mut c_void, destructor: usize) -> JSValue {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                create_object_extern(global, object, destructor)
-            }
-
-            pub fn set_destroy_callback(value: JSValue, callback: usize) {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                set_destroy_callback_extern(value, callback)
-            }
-
-            pub fn detach_ptr(global: &JSGlobalObject, ptr: JSValue) -> JsResult<()> {
-                ::bun_jsc::from_js_host_call_generic(global, || detach_ptr_extern(ptr))
-            }
-
-            #[bun_jsc::host_fn]
-            pub fn construct(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                if !<$SinkType as JsSinkType>::HAS_CONSTRUCT {
-                    const MESSAGE: &str =
-                        ::const_format::formatcp!("{} is not constructable", <$SinkType as JsSinkType>::NAME);
-                    let err = ::bun_jsc::SystemError {
-                        message: ::bun_core::String::static_(MESSAGE),
-                        code: ::bun_core::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
-                        ..Default::default()
-                    };
-                    return global.throw_value(err.to_error_instance(global));
-                }
-
-                // Zig: bun.new(SinkType, undefined) then this.construct(bun.default_allocator)
-                // TODO(port): in-place init — `construct` in Zig is an out-param initializer
-                // taking allocator; it must fully write `*this` before assume_init.
-                let mut this: Box<::core::mem::MaybeUninit<$SinkType>> = Box::new_uninit();
-                <$SinkType as JsSinkType>::construct(&mut *this);
-                // SAFETY: JsSinkType::construct fully initializes `*this`.
-                let this: Box<$SinkType> = unsafe { this.assume_init() };
-                Ok(create_object(global, bun_core::heap::into_raw(this).cast(), 0))
-            }
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__finalize`).
-            pub extern "C" fn finalize(ptr: *mut c_void) {
-                // SAFETY: ptr is a ThisSink* allocated by us (create_object).
-                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
-                this.sink.finalize();
-            }
-
-            pub fn detach(this: &mut ThisSink, global: &JSGlobalObject) {
-                if !<$SinkType as JsSinkType>::HAS_SIGNAL {
-                    return;
-                }
-
-                let signal = this.sink.signal();
-                let ptr = signal.ptr();
-                if signal.is_dead() {
-                    return;
-                }
-                signal.clear();
-                // SAFETY: ptr is the JSValue bits stashed by SinkSignal::init.
-                let value = JSValue::from_encoded((ptr as usize) as i64);
-                value.unprotect();
-                // TODO: properly propagate exception upwards
-                let _ = detach_ptr(global, value);
-            }
-
-            // The code generator encodes two distinct failure types using 0 and 1.
-            // Zig's non-exhaustive `enum(usize)` with `_` arm has no direct Rust
-            // equivalent (receiving an out-of-range discriminant into a Rust enum is UB),
-            // so the FFI returns `usize` and we match on the named consts below.
-            pub mod from_js_result {
-                /// The sink has been closed and the wrapped type is freed.
-                pub const DETACHED: usize = 0;
-                /// JS exception has not yet been thrown
-                pub const CAST_FAILED: usize = 1;
-                // any other value => *ThisSink
-            }
-
-            pub fn from_js(value: JSValue) -> Option<*mut ThisSink> {
-                let raw = from_js_extern(value);
-                match raw {
-                    from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
-                    ptr => Some(ptr as *mut ThisSink),
-                }
-            }
-
-            fn get_this<'a>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<&'a mut ThisSink> {
-                let raw = from_js_extern(frame.this());
-                match raw {
-                    from_js_result::DETACHED => global.throw(
-                        concat!(
-                            "This ",
-                            $abi_name,
-                            " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns."
-                        ),
-                    ),
-                    from_js_result::CAST_FAILED => global
-                        .err(::bun_jsc::ErrorCode::INVALID_THIS, concat!("Expected ", $abi_name))
-                        .throw(),
-                    // SAFETY: codegen returns a non-null `*mut ThisSink` for live
-                    // wrappers; GC-heap-owned, lifetime independent of args.
-                    ptr => Ok(unsafe { &mut *(ptr as *mut ThisSink) }),
-                }
-            }
-
-            pub fn unprotect(_this: &mut ThisSink) {}
-
-            #[bun_jsc::host_fn]
-            pub fn write(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = get_this(global, frame)?;
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    return global.throw_value(err);
-                }
-
-                let args_list = frame.arguments_old(4);
-                let args = &args_list.ptr[..args_list.len];
-
-                if args.is_empty() {
-                    return global.throw_value(global.to_type_error(
-                        ::bun_jsc::ErrorCode::MISSING_ARGS,
-                        "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    ));
-                }
-
-                let arg = args[0];
-                arg.ensure_still_alive();
-                let _keep = ::bun_jsc::EnsureStillAlive(arg);
-
-                if arg.is_empty_or_undefined_or_null() {
-                    return global.throw_value(global.to_type_error(
-                        ::bun_jsc::ErrorCode::STREAM_NULL_VALUES,
-                        "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    ));
-                }
-
-                if let Some(buffer) = arg.as_array_buffer(global) {
-                    let slice = buffer.slice();
-                    if slice.is_empty() {
-                        return Ok(JSValue::js_number(0));
-                    }
-
-                    return this
-                        .sink
-                        .write_bytes(streams::Result::Temporary(
-                            bun_ptr::RawSlice::new(slice),
-                        ))
-                        .to_js(global);
-                }
-
-                if !arg.is_string() {
-                    return global.throw_value(global.to_type_error(
-                        ::bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                        "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    ));
-                }
-
-                let str_ = arg.to_js_string(global)?;
-
-                let view = str_.view(global);
-
-                if view.is_empty() {
-                    return Ok(JSValue::js_number(0));
-                }
-
-                let _keep_str = ::bun_jsc::EnsureStillAlive(str_.as_value());
-                if view.is_16bit() {
-                    let utf16 = view.utf16_slice_aligned();
-                    let bytes: &[u8] = bytemuck::cast_slice(utf16);
-                    return this
-                        .sink
-                        .write_utf16(streams::Result::Temporary(
-                            bun_ptr::RawSlice::new(bytes),
-                        ))
-                        .to_js(global);
-                }
-
-                this.sink
-                    .write_latin1(streams::Result::Temporary(
-                        bun_ptr::RawSlice::new(view.slice()),
-                    ))
-                    .to_js(global)
-            }
-
-            #[bun_jsc::host_fn]
-            pub fn write_utf8(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = get_this(global, frame)?;
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    return global.throw_value(err);
-                }
-
-                let args_list = frame.arguments_old(4);
-                let args = &args_list.ptr[..args_list.len];
-                if args.is_empty() || !args[0].is_string() {
-                    let err = global.to_type_error(
-                        if args.is_empty() {
-                            ::bun_jsc::ErrorCode::MISSING_ARGS
-                        } else {
-                            ::bun_jsc::ErrorCode::INVALID_ARG_TYPE
-                        },
-                        "writeUTF8() expects a string",
-                    );
-                    return global.throw_value(err);
-                }
-
-                let arg = args[0];
-
-                let str_ = arg.to_string(global);
-                if global.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
-
-                let view = str_.view(global);
-                if view.is_empty() {
-                    return Ok(JSValue::js_number(0));
-                }
-
-                let _keep_str = ::bun_jsc::EnsureStillAlive(str_.as_value());
-                if str_.is_16bit() {
-                    // TODO(port): Zig passed `view.utf16SliceAligned()` directly into
-                    // `.temporary` (a Vec<u8>) — relying on implicit slice coercion.
-                    let utf16 = view.utf16_slice_aligned();
-                    let bytes: &[u8] = bytemuck::cast_slice(utf16);
-                    return this
-                        .sink
-                        .write_utf16(streams::Result::Temporary(
-                            bun_ptr::RawSlice::new(bytes),
-                        ))
-                        .to_js(global);
-                }
-
-                this.sink
-                    .write_latin1(streams::Result::Temporary(
-                        bun_ptr::RawSlice::new(view.slice()),
-                    ))
-                    .to_js(global)
-            }
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__close`).
-            pub extern "C" fn close(global: &JSGlobalObject, sink_ptr: *mut c_void) -> JSValue {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                let Some(sink_ptr) = ::core::ptr::NonNull::new(sink_ptr) else {
-                    return JSValue::UNDEFINED;
-                };
-                // SAFETY: sink_ptr is a ThisSink* from C++.
-                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(sink_ptr.as_ptr()) };
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    // VM::throw_error returns JsError (no payload); set pending
-                    // exception and return ZERO so the caller exception-checks.
-                    let _ = global.vm().throw_error(global, err);
-                    return JSValue::ZERO;
-                }
-
-                // TODO: properly propagate exception upwards
-                this.sink.end(None).to_js(global).unwrap_or(JSValue::ZERO)
-            }
-
-            #[bun_jsc::host_fn]
-            pub fn flush(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                let this_ptr: *mut ThisSink = get_this(global, frame)?;
-
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                if let Some(err) = unsafe { (*this_ptr).sink.get_pending_error() } {
-                    return global.throw_value(err);
-                }
-
-                ::scopeguard::defer! {
-                    // SAFETY: this_ptr remains live for the duration of this fn; the
-                    // defer runs at scope exit after all body borrows have ended.
-                    // Raw-ptr capture avoids overlapping &mut with the body below.
-                    let this = unsafe { &mut *this_ptr };
-                    if <$SinkType as JsSinkType>::HAS_DONE && this.sink.done() {
-                        unprotect(this);
-                    }
-                }
-
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *this_ptr };
-
-                if <$SinkType as JsSinkType>::HAS_FLUSH_FROM_JS {
-                    let wait = frame.arguments_count() > 0
-                        && frame.argument(0).is_boolean()
-                        && frame.argument(0).as_boolean();
-                    let maybe_value: sys::Result<JSValue> = this.sink.flush_from_js(global, wait);
-                    return match maybe_value {
-                        sys::Result::Ok(value) => Ok(value),
-                        sys::Result::Err(err) => global.throw_value(err.to_js(global)?),
-                    };
-                }
-
-                this.sink.flush().to_js(global)
-            }
-
-            #[bun_jsc::host_fn]
-            pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = get_this(global, frame)?;
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    return global.throw_value(err);
-                }
-
-                // TODO(port): `@hasField(streams.Start, abi_name)` + `@field(streams.Start, abi_name)`
-                // selects a tagged variant of `streams::Start` by the literal abi_name. Rust
-                // cannot reflect on enum variant names; Phase B should add an associated
-                // const `START_TAG: Option<streams::StartTag>` on JsSinkType and dispatch
-                // to `streams::Start::from_js_with_tag` when Some.
-                let config = if frame.arguments_count() > 0 {
-                    streams::Start::from_js(global, frame.argument(0))?
-                } else {
-                    streams::Start::Empty
-                };
-                this.sink.start(config).to_js(global)
-            }
-
-            #[bun_jsc::host_fn]
-            pub fn end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = get_this(global, frame)?;
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    return global.throw_value(err);
-                }
-
-                let result = this.sink.end_from_js(global).to_js(global);
-
-                // Protect the JS wrapper from GC while an async operation is pending.
-                // This prevents the JS wrapper from being collected before the Promise resolves.
-                if <$SinkType as JsSinkType>::HAS_PROTECT_JS_WRAPPER {
-                    if this.sink.pending_state_is_pending() {
-                        this.sink.protect_js_wrapper(global, frame.this());
-                    }
-                }
-
-                result
-            }
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__endWithSink`).
-            // TODO(port): callconv(jsc.conv) — #[bun_jsc::host_call] emits the right ABI.
-            #[bun_jsc::host_call]
-            pub extern fn end_with_sink(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-
-                // SAFETY: ptr is a ThisSink* from C++.
-                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
-
-                if let Some(err) = this.sink.get_pending_error() {
-                    return match global.throw_value(err) {
-                        Ok(v) => v,
-                        Err(_) => JSValue::ZERO,
-                    };
-                }
-
-                // TODO: properly propagate exception upwards
-                this.sink.end_from_js(global).to_js(global).unwrap_or(JSValue::ZERO)
-            }
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__updateRef`).
-            pub extern "C" fn update_ref(ptr: *mut c_void, value: bool) {
-                ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: ptr is a ThisSink*.
-                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
-                if <$SinkType as JsSinkType>::HAS_UPDATE_REF {
-                    this.sink.update_ref(value);
-                }
-            }
-
-            // Zig: `const jsWrite = jsc.toJSHostFn(@This().write);` etc.
-            // In Rust the #[bun_jsc::host_fn] attribute on write/flush/start/end above
-            // already emits the raw-ABI shim; the `@export` block below maps via
-            // #[export_name] on those shims. Phase B: ensure the macro emits the shim
-            // under the concatenated symbol name.
-            // TODO(port): proc-macro — host_fn attribute must accept
-            // `#[export_name = concat!($abi_name, "__write")]` for js_write/js_flush/js_start/js_end/js_construct.
-
-            // Symbol owned by generated_jssink.rs (`${abi_name}__getInternalFd`).
-            extern "C" fn js_get_internal_fd(ptr: *mut c_void) -> JSValue {
-                // SAFETY: ptr is a ThisSink*.
-                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
-                if <$SinkType as JsSinkType>::HAS_GET_FD {
-                    return JSValue::js_number(this.sink.get_fd());
-                }
-                JSValue::NULL
-            }
-
-            // Zig `comptime { @export(...) }` block is replaced by the
-            // #[export_name = concat!($abi_name, "__...")] attributes above, gated by
-            // bun.Environment.export_cpp_apis → handled by cfg in Phase B.
-            // TODO(port): gate exports on cfg(feature = "export_cpp_apis").
-        }
-    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

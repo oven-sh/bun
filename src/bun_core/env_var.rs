@@ -37,7 +37,7 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
-// MOVE_DOWN: bun_str::ZStr → bun_core (move-in pass).
+// MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -574,46 +574,17 @@ pub(crate) mod kind {
                     }
                 }
 
-                // Zig used `std.fmt.parseInt(u64, raw_env, 10)` which distinguishes Overflow vs
-                // InvalidCharacter. Env-var values are arbitrary bytes, so per PORTING.md we parse
-                // the byte slice directly instead of round-tripping through `core::str::from_utf8`.
-                // Mirrors Zig std.fmt.parseInt(u64, _, 10): optional leading '+' OR '-',
-                // base-10 digits, and interior '_' separators are skipped
-                // (vendor/zig/lib/std/fmt.zig:454). Leading/trailing '_' rejected. A leading
-                // '-' is accepted by Zig even for unsigned targets: "-0" parses to 0 and any
-                // other "-N" yields error.Overflow.
-                let formatted = {
-                    let (digits, negative) = if let Some(d) = raw_env.strip_prefix(b"+") {
-                        (d, false)
-                    } else if let Some(d) = raw_env.strip_prefix(b"-") {
-                        (d, true)
-                    } else {
-                        (raw_env, false)
-                    };
-                    if digits.is_empty()
-                        || *digits.first().unwrap() == b'_'
-                        || *digits.last().unwrap() == b'_'
-                    {
-                        return self.handle_error(raw_env, "is not a valid integer");
-                    }
-                    let mut acc: u64 = 0;
-                    for &b in digits {
-                        if b == b'_' {
-                            continue;
-                        }
-                        let d = match b {
-                            b'0'..=b'9' => (b - b'0') as u64,
-                            _ => return self.handle_error(raw_env, "is not a valid integer"),
-                        };
-                        acc = match acc.checked_mul(10).and_then(|v| v.checked_add(d)) {
-                            Some(v) => v,
-                            None => return self.handle_error(raw_env, "overflows u64"),
-                        };
-                    }
-                    if negative && acc != 0 {
+                // Zig: `std.fmt.parseInt(u64, raw_env, 10)` — distinguishes Overflow vs
+                // InvalidCharacter. Exact parity incl. '-0'→0, '-N'→Overflow,
+                // leading/trailing-`_` reject.
+                let formatted = match crate::fmt::parse_int::<u64>(raw_env, 10) {
+                    Ok(v) => v,
+                    Err(crate::fmt::ParseIntError::Overflow) => {
                         return self.handle_error(raw_env, "overflows u64");
                     }
-                    acc
+                    Err(crate::fmt::ParseIntError::InvalidCharacter) => {
+                        return self.handle_error(raw_env, "is not a valid integer");
+                    }
                 };
 
                 if formatted == NOT_SET_SENTINEL || formatted == UNKNOWN_SENTINEL {

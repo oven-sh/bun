@@ -171,7 +171,7 @@ pub mod pdeathsig {
 
 pub use spawn_process::{
     rusage_zeroed, Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions,
-    PosixSpawnResult, PosixStdio, Rusage, StdioKind, WinRusage, WinTimeval,
+    PosixSpawnResult, PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval,
 };
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;

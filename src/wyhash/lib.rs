@@ -664,6 +664,44 @@ pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash::hash(seed, bytes)
 }
 
+/// `std.hash.Wyhash` over the ASCII-lowercased view of `bytes`, streamed
+/// through a 48-byte stack scratch so no heap allocation occurs regardless of
+/// input length. ASCII-only (`b'A'..=b'Z' → b'a'..=b'z'`); non-ASCII bytes
+/// pass through unchanged.
+///
+/// Chunk size and "copy unconditionally" vs "borrow if already lowercase" are
+/// output-irrelevant — streaming Wyhash is chunk-invariant and the bytes fed
+/// to the hasher are identical either way — so this collapses the three
+/// open-coded copies in `http::hash_header_name`,
+/// `s3_signing::S3Credentials::hash_const`, and
+/// `collections::CaseInsensitiveAsciiStringContext::hash_bytes` (Zig has the
+/// same triplication: http.zig:828, credentials.zig:23, bun.zig:1011).
+#[inline]
+pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {
+    let mut buf = [0u8; 48];
+    if bytes.len() <= buf.len() {
+        // Fast path: one-shot hash on the lowered copy — skips the streaming
+        // `Wyhash` state's 48-byte buf zero-fill + `final_` shallow-copy.
+        let dst = &mut buf[..bytes.len()];
+        for (d, &s) in dst.iter_mut().zip(bytes) {
+            *d = s.to_ascii_lowercase();
+        }
+        return Wyhash::hash(seed, dst);
+    }
+    let mut h = Wyhash::init(seed);
+    let mut remain = bytes;
+    while !remain.is_empty() {
+        let n = remain.len().min(buf.len());
+        let dst = &mut buf[..n];
+        for (d, &s) in dst.iter_mut().zip(&remain[..n]) {
+            *d = s.to_ascii_lowercase();
+        }
+        h.update(dst);
+        remain = &remain[n..];
+    }
+    h.final_()
+}
+
 /// `std.hash.Wyhash.hash(seed, input)` as a `const fn`.
 ///
 /// This is a parallel one-shot port of [`Wyhash::hash`] for compile-time
@@ -927,6 +965,30 @@ mod tests {
                 h.update(&data[first..total]);
                 assert_eq!(direct, h.final_(), "total={total} first={first}");
             }
+        }
+    }
+
+    #[test]
+    fn test_hash_ascii_lowercase() {
+        // Chunked streaming path must equal one-shot over the fully-lowered
+        // buffer (guards the "chunk-invariant" claim in the doc comment), and
+        // mixed-case inputs must hash equal to their lowercase form.
+        let mut data = [0u8; 200];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = b'A' + (i as u8 % 58); // mix of A..Z, punct, a..z
+        }
+        for total in [0usize, 1, 16, 47, 48, 49, 95, 96, 97, 200] {
+            let lowered: Vec<u8> = data[..total].iter().map(u8::to_ascii_lowercase).collect();
+            assert_eq!(
+                hash_ascii_lowercase(0, &data[..total]),
+                Wyhash::hash(0, &lowered),
+                "total={total}"
+            );
+            assert_eq!(
+                hash_ascii_lowercase(0, &data[..total]),
+                hash_ascii_lowercase(0, &lowered),
+                "case-fold total={total}"
+            );
         }
     }
 

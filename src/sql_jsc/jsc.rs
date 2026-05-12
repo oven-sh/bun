@@ -5,8 +5,8 @@
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
-//! this tier are provided as extension traits ([`JSValueSqlExt`],
-//! [`JSGlobalObjectSqlExt`], [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
+//! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
+//! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -85,39 +85,6 @@ fn from_js_host_call(global: &JSGlobalObject, v: JSValue) -> JsResult<JSValue> {
 #[inline]
 fn from_js_host_call_generic<R>(global: &JSGlobalObject, r: R) -> JsResult<R> {
     if global.has_exception() { Err(JsError::Thrown) } else { Ok(r) }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSValue — SQL-specific extension surface (methods bun_jsc doesn't expose).
-// ──────────────────────────────────────────────────────────────────────────
-
-/// SQL-side helpers on `JSValue` not (yet) provided by `bun_jsc`.
-pub trait JSValueSqlExt: Sized + Copy {
-    fn js_double_number(n: f64) -> JSValue;
-    fn to_uint64_no_truncate(self) -> u64;
-    fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool;
-    fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool;
-}
-
-const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
-
-impl JSValueSqlExt for JSValue {
-    /// `JSValue::jsDoubleNumber` — boxes an f64 (always double-encoded; no
-    /// int32 fast path). FFI.zig: `DOUBLE_TO_JSVALUE`.
-    fn js_double_number(n: f64) -> JSValue {
-        JSValue::from_encoded(
-            (n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET) as usize,
-        )
-    }
-    fn to_uint64_no_truncate(self) -> u64 {
-        JSC__JSValue__toUInt64NoTruncate(self)
-    }
-    fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
-        JSC__isBigIntInInt64Range(self, min, max)
-    }
-    fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
-        JSC__isBigIntInUInt64Range(self, min, max)
-    }
 }
 
 // `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
@@ -445,37 +412,6 @@ impl TimerHeap {
         // inserted by the caller.
         unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
     }
-}
-
-/// Stamp out `from_timer_ptr` / `from_max_lifetime_timer_ptr` on a SQL
-/// connection type. Both connection types embed two private
-/// `JsCell<EventLoopTimer>` slots; `bun_runtime::__bun_fire_timer` recovers
-/// the owner via `container_of` but cannot name the private fields, so each
-/// type exposes this pair of thunks. (Zig inlines `@fieldParentPtr` directly
-/// — these accessors are purely a Rust-visibility port artifact.)
-#[doc(hidden)]
-#[macro_export]
-macro_rules! impl_timer_backref {
-    ($T:ty, $timer:ident, $max:ident) => {
-        impl $T {
-            /// Recover `*mut Self` from its intrusive idle-timeout timer slot.
-            /// # Safety
-            /// `t` must point at this type's idle-timeout `EventLoopTimer` field.
-            #[inline]
-            pub unsafe fn from_timer_ptr(t: *mut $crate::jsc::EventLoopTimer) -> *mut Self {
-                // SAFETY: caller contract.
-                unsafe { bun_core::from_field_ptr!(Self, $timer, t) }
-            }
-            /// Recover `*mut Self` from its intrusive max-lifetime timer slot.
-            /// # Safety
-            /// `t` must point at this type's max-lifetime `EventLoopTimer` field.
-            #[inline]
-            pub unsafe fn from_max_lifetime_timer_ptr(t: *mut $crate::jsc::EventLoopTimer) -> *mut Self {
-                // SAFETY: caller contract.
-                unsafe { bun_core::from_field_ptr!(Self, $max, t) }
-            }
-        }
-    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -843,6 +779,28 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+/// `bun_jsc::JSValue::put_host_functions`-shaped helper for the SQL binding
+/// objects. Macro (not fn) because each entry's `$f` is a *distinct* fn-item
+/// ZST routed through [`IntoJSHostFn`] — a `&[(&str, JSHostFn, u32)]` slice
+/// can't hold heterogeneous safe-Rust signatures. Expands to the same
+/// `put`/`JSFunction::create` ladder the open-coded sites used; returns the
+/// receiver for chaining.
+#[macro_export]
+macro_rules! put_host_functions {
+    ($obj:expr, $global:expr, [ $( ($name:literal, $f:expr, $arity:expr) ),* $(,)? ]) => {{
+        let __obj: $crate::jsc::JSValue = $obj;
+        let __g = $global;
+        $(
+            __obj.put(
+                __g,
+                $name.as_bytes(),
+                $crate::jsc::JSFunction::create(__g, $name, $f, $arity, ::core::default::Default::default()),
+            );
+        )*
+        __obj
+    }};
+}
+
 impl JSFunction {
     /// Accepts either a raw [`JSHostFn`] (C-ABI) or a safe Rust
     /// `fn(&JSGlobalObject, &CallFrame) -> JSValue` / `-> JsResult<JSValue>`
@@ -970,9 +928,6 @@ unsafe extern "C" {
     // JSValue — by-value `JSValue` (encoded NaN-boxed u64) + scalar args; the
     // C++ side reads no caller memory and upholds no invariants the caller must
     // discharge, so these are `safe fn`.
-    safe fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
-    safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
-    safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
 
     // JSGlobalObject — `&JSGlobalObject` is ABI-identical to a non-null
     // `*const JSGlobalObject`; the reference type discharges the validity

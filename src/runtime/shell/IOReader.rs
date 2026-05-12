@@ -371,44 +371,19 @@ impl IOReader {
 // BufferedReaderParent — wires the bun_io BufferedReader vtable
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_io::buffered_reader_parent_link!(ShellIoReader for IOReader);
-impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellIoReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. These dereference `this` only to call
-    // `&self` inherent methods (autoref → `&*this`); no `&mut IOReader` is
-    // materialized, satisfying the init() *const→*mut invariant. Aliasing with
-    // the caller's live `&mut ReaderImpl` is handled by the state/reader
-    // UnsafeCell split — callbacks touch only `state`, never `reader()`.
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
-        unsafe { (*this).on_read_chunk_cb(chunk, has_more) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done_cb() };
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        unsafe { (*this).on_reader_error(err) };
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Spec: IOReader.zig `loop()`. On Windows, `io_evtloop().loop_()`
-        // returns the uws `WindowsLoop*` wrapper, which owns the libuv loop
-        // via its `uv_loop` field — we must project that field, not type-pun
-        // the wrapper pointer (the wrapper's first bytes are InternalLoopData,
-        // not a uv_loop_t). On POSIX the uws Loop *is* the async loop.
-        #[cfg(windows)]
-        {
-            unsafe { (*(*this).io_evtloop().loop_()).uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            unsafe { (*this).io_evtloop() }.loop_().cast()
-        }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        unsafe { (*this).io_evtloop() }
-    }
+// Derefs `this` only to call `&self` inherent methods (autoref → `&*this`);
+// no `&mut IOReader` is materialized, satisfying the init() *const→*mut
+// invariant. Aliasing with the caller's live `&mut ReaderImpl` is handled by
+// the state/reader UnsafeCell split — callbacks touch only `state`, never
+// `reader()`. `loop_` spec: IOReader.zig `loop()`.
+bun_io::impl_buffered_reader_parent! {
+    ShellIoReader for IOReader;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
+    on_reader_done  = |this| (*this).on_reader_done_cb();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    loop_           = |this| (*this).io_evtloop().native_loop();
+    event_loop      = |this| (*this).io_evtloop();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

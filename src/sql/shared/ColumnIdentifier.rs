@@ -16,20 +16,10 @@ impl ColumnIdentifier {
             _ => false,
         };
         if might_be_int {
-            'might_be_int: {
-                // use a u64 to avoid overflow
-                let mut int: u64 = 0;
-                for &byte in name.slice() {
-                    int = int * 10
-                        + match byte {
-                            b'0'..=b'9' => (byte - b'0') as u64,
-                            _ => break 'might_be_int,
-                        };
-                }
-
-                // JSC only supports indexed property names up to 2^32
+            if let Ok(int) = bun_core::parse_unsigned::<u64>(name.slice(), 10) {
+                // keep `<` (not ≤): JSC indexed-property bound
                 if int < u32::MAX as u64 {
-                    return Ok(Self::Index(u32::try_from(int).expect("int cast")));
+                    return Ok(Self::Index(int as u32));
                 }
             }
         }

@@ -1,14 +1,14 @@
 use core::ffi::c_void;
-use core::sync::atomic::AtomicU32;
 
 use bun_io::StreamBuffer;
 use bun_threading::Mutex;
 
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
     pub buffer: StreamBuffer,
     pub mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
-    pub ref_count: AtomicU32,
+    pub ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
     pub callback: Option<Callback>,
@@ -41,16 +41,11 @@ impl Default for ThreadSafeStreamBuffer {
             buffer: StreamBuffer::default(),
             mutex: Mutex::default(),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
-            ref_count: AtomicU32::new(2),
+            ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
         }
     }
 }
-
-// `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// → intrusive atomic refcount; ref/deref provided by IntrusiveArc over the
-//   embedded `ref_count` field. `deref` drops + deallocates on 0.
-// TODO(port): wire `ref_count` field offset / destructor into bun_ptr::IntrusiveArc impl
 
 impl ThreadSafeStreamBuffer {
     /// `bun.TrivialNew(@This())` — heap-allocate with the given field values.
@@ -76,19 +71,13 @@ impl ThreadSafeStreamBuffer {
     }
 
     pub fn ref_(this: *mut Self) {
-        // TODO(port): delegate to bun_ptr::IntrusiveArc::ref over `ref_count`
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { (*this).ref_count.fetch_add(1, core::sync::atomic::Ordering::Relaxed) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) };
     }
 
     pub fn deref(this: *mut Self) {
-        // TODO(port): delegate to bun_ptr::IntrusiveArc::deref (calls deinit on 0)
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe {
-            if (*this).ref_count.fetch_sub(1, core::sync::atomic::Ordering::AcqRel) == 1 {
-                drop(bun_core::heap::take(this));
-            }
-        }
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {

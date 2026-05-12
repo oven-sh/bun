@@ -612,15 +612,7 @@ pub mod serialize {
         context: Option<&StyleContext>,
         is_relative: bool,
     ) -> Result<(), PrintErr> {
-        let mut first = true;
-        for selector in list {
-            if !first {
-                dest.delim(b',', false)?;
-            }
-            first = false;
-            serialize_selector(selector, dest, context, is_relative)?;
-        }
-        Ok(())
+        dest.write_comma_separated(list, |d, sel| serialize_selector(sel, d, context, is_relative))
     }
 
     pub fn serialize_selector(
@@ -1001,15 +993,7 @@ pub mod serialize {
         match pseudo_class {
             PseudoClass::Lang { languages } => {
                 dest.write_str(b":lang(")?;
-                let mut first = true;
-                for lang in languages.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.delim(b',', false)?;
-                    }
-                    dest.serialize_identifier(lang)?;
-                }
+                dest.write_comma_separated(languages.iter(), |d, lang| d.serialize_identifier(lang))?;
                 return dest.write_str(b")");
             }
             PseudoClass::Dir { direction } => {

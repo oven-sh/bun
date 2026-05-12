@@ -8,18 +8,15 @@ use core::{mem, ptr};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask};
 use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
+use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;
 // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
 use bun_zlib::NodeMode;
 
-// `jsc.Codegen.JSNativeZstd` cached-property accessors — wraps the
+// `jsc.Codegen.JSNativeZstd` cached-property accessors (`mod js`) are emitted
+// by `__impl_compression_stream!` below — wraps the
 // `NativeZstdPrototype__${prop}{Get,Set}CachedValue` C++ symbols emitted by
 // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
-#[allow(unused)]
-mod js {
-    bun_jsc::codegen_cached_accessors!("NativeZstd"; writeCallback, errorCallback, dictionary);
-}
 
 /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
 /// before the task is ever scheduled (mirrors Zig `.{ .callback = undefined }`).
@@ -435,70 +432,12 @@ impl Context {
 }
 
 // ─── CompressionStream mixin wiring ───────────────────────────────────────
-// Trait impls let `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/
-// close/emit_error/...) reach this struct's fields the way the Zig comptime
-// mixin did via duck-typed `this.field` access.
-
-impl CompressionContext for Context {
-    #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Context::set_buffers(self, in_, out) }
-    #[inline] fn set_flush(&mut self, flush: i32) { Context::set_flush(self, flush) }
-    #[inline] fn do_work(&mut self) { Context::do_work(self) }
-    #[inline] fn reset(&mut self) -> Error { Context::reset(self) }
-    #[inline] fn close(&mut self) { Context::close(self) }
-    #[inline] fn get_error_info(&mut self) -> Error { Context::get_error_info(self) }
-    #[inline] fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) {
-        Context::update_write_result(self, avail_in, avail_out)
-    }
-}
-
-impl bun_event_loop::Taskable for NativeZstd {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NativeZstd;
-}
-
-impl CompressionStreamImpl for NativeZstd {
-    type Stream = Context;
-
-    #[inline] fn global_this(&self) -> &JSGlobalObject { self.global_this.get() }
-    #[inline] fn stream(&self) -> &JsCell<Self::Stream> { &self.stream }
-    #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get() }
-    #[inline] fn poll_ref(&self) -> &JsCell<CountedKeepAlive> { &self.poll_ref }
-    #[inline] fn this_value(&self) -> &JsCell<StrongOptional> { &self.this_value }
-    #[inline] fn task(&self) -> &JsCell<WorkPoolTask> { &self.task }
-    #[inline] fn write_in_progress(&self) -> &Cell<bool> { &self.write_in_progress }
-    #[inline] fn pending_close(&self) -> &Cell<bool> { &self.pending_close }
-    #[inline] fn pending_reset(&self) -> &Cell<bool> { &self.pending_reset }
-    #[inline] fn closed(&self) -> &Cell<bool> { &self.closed }
-
-    #[inline]
-    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
-        // Intrusive parent recovery. `task` field is `JsCell<WorkPoolTask>`
-        // (`#[repr(transparent)]`), so `offset_of!(Self, task)` is the value's offset.
-        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
-        unsafe { bun_core::from_field_ptr!(NativeZstd, task, task) }
-    }
-
-    fn ref_(&self) {
-        <Self as bun_ptr::CellRefCounted>::ref_(self)
-    }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: forwarded trait contract — `this` is live; allocated via
-        // `constructor()`. The derived `CellRefCounted::deref` runs the default
-        // `Box::from_raw` destroy on zero (matches Zig `bun.destroy(this)`).
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
-    }
-
-    // Per-class codegen accessors (`jsc.Codegen.JSNativeZstd.*GetCached/SetCached`).
-    fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::write_callback_get_cached(this_value)
-    }
-    fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::error_callback_get_cached(this_value)
-    }
-    fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        js::error_callback_set_cached(this_value, global, cb)
-    }
-}
-
+// Stamps `impl CompressionContext for Context`, `impl Taskable`/
+// `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
+// `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
+// emit_error/…) can reach this struct's fields the way the Zig comptime mixin
+// did via duck-typed `this.field` access.
+crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
 crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
 

@@ -470,6 +470,8 @@ pub struct SourceMapStore {
     pub weak_ref_sweep_timer: EventLoopTimer,
 }
 
+bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
+
 impl Default for SourceMapStore {
     fn default() -> Self {
         Self {
@@ -498,17 +500,8 @@ impl SourceMapStore {
         }
     }
 
-    /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()`
-    /// in the low-tier `VirtualMachine`; the real value lives in
-    /// `RuntimeState`). PORT NOTE: Zig `store.owner().vm.timer.*` — routed
-    /// through `runtime_state()` to avoid an aliased `&mut DevServer` while
-    /// `&mut self` is live.
     #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-        // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-        unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-    }
+    fn timer_all<'a>() -> &'a mut crate::timer::All { crate::jsc_hooks::timer_all_mut() }
 
     pub fn put_or_increment_ref_count(
         &mut self,
@@ -670,9 +663,7 @@ impl SourceMapStore {
     ) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
-        let store: &mut SourceMapStore = unsafe {
-            &mut *bun_core::from_field_ptr!(SourceMapStore, weak_ref_sweep_timer, timer)
-        };
+        let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
         debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 

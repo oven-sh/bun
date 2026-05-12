@@ -14,16 +14,8 @@ pub fn create_mysql_error(
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    if let Some(errno) = options.errno {
-        opts_obj.put(global, b"errno", JSValue::js_number(f64::from(errno)));
-    }
-    if let Some(state) = options.sql_state {
-        opts_obj.put(
-            global,
-            b"sqlState",
-            bun_string_jsc::create_utf8_for_js(global, &state[..])?,
-        );
-    }
+    opts_obj.put_optional(global, b"errno", options.errno.map(f64::from));
+    opts_obj.put_optional_utf8(global, b"sqlState", options.sql_state.as_ref().map(|s| &s[..]))?;
     opts_obj.put(
         global,
         b"message",

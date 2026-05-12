@@ -820,6 +820,19 @@ pub mod command {
 
         let tag = which();
 
+        // Collapses the `init::<{Tag::X}> -> X::exec(ctx)? -> return Ok(())` ladder that 16 of the
+        // match arms below share. Kept fn-local so it closes over `log` and `init` directly.
+        // The trailing `return` is allow-guarded for commands whose `exec` diverges
+        // (e.g. `AuditCommand::exec -> Result<Infallible, _>`), where it is provably dead.
+        macro_rules! simple_cmd {
+            ($InitTag:ident => $Cmd:ty) => {{
+                let ctx = init::<{ Tag::$InitTag }>(log)?;
+                <$Cmd>::exec(ctx)?;
+                #[allow(unreachable_code)]
+                return Ok(());
+            }};
+        }
+
         match tag {
             Tag::DiscordCommand => return DiscordCommand::exec(),
             Tag::HelpCommand => return HelpCommand::exec(),
@@ -843,50 +856,15 @@ pub mod command {
                 InstallCompletionsCommand::exec()?;
                 return Ok(());
             }
-            Tag::InstallCommand => {
-                let ctx = init::<{ Tag::InstallCommand }>(log)?;
-                InstallCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::AddCommand => {
-                let ctx = init::<{ Tag::AddCommand }>(log)?;
-                AddCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::UpdateCommand => {
-                let ctx = init::<{ Tag::UpdateCommand }>(log)?;
-                UpdateCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::PatchCommand => {
-                let ctx = init::<{ Tag::PatchCommand }>(log)?;
-                PatchCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::PatchCommitCommand => {
-                let ctx = init::<{ Tag::PatchCommitCommand }>(log)?;
-                PatchCommitCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::OutdatedCommand => {
-                let ctx = init::<{ Tag::OutdatedCommand }>(log)?;
-                OutdatedCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::UpdateInteractiveCommand => {
-                let ctx = init::<{ Tag::UpdateInteractiveCommand }>(log)?;
-                UpdateInteractiveCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::PublishCommand => {
-                let ctx = init::<{ Tag::PublishCommand }>(log)?;
-                PublishCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::AuditCommand => {
-                let ctx = init::<{ Tag::AuditCommand }>(log)?;
-                AuditCommand::exec(ctx)?;
-            }
+            Tag::InstallCommand => simple_cmd!(InstallCommand => InstallCommand),
+            Tag::AddCommand => simple_cmd!(AddCommand => AddCommand),
+            Tag::UpdateCommand => simple_cmd!(UpdateCommand => UpdateCommand),
+            Tag::PatchCommand => simple_cmd!(PatchCommand => PatchCommand),
+            Tag::PatchCommitCommand => simple_cmd!(PatchCommitCommand => PatchCommitCommand),
+            Tag::OutdatedCommand => simple_cmd!(OutdatedCommand => OutdatedCommand),
+            Tag::UpdateInteractiveCommand => simple_cmd!(UpdateInteractiveCommand => UpdateInteractiveCommand),
+            Tag::PublishCommand => simple_cmd!(PublishCommand => PublishCommand),
+            Tag::AuditCommand => simple_cmd!(AuditCommand => AuditCommand),
             Tag::WhyCommand => {
                 let mut ctx = init::<{ Tag::WhyCommand }>(log)?;
                 WhyCommand::exec(&mut ctx)?;
@@ -901,36 +879,13 @@ pub mod command {
                 BunxCommand::exec(&mut ctx, &bunx_argv)?;
                 return Ok(());
             }
-            Tag::ReplCommand => {
-                let ctx = init::<{ Tag::RunCommand }>(log)?;
-                ReplCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::RemoveCommand => {
-                let ctx = init::<{ Tag::RemoveCommand }>(log)?;
-                RemoveCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::LinkCommand => {
-                let ctx = init::<{ Tag::LinkCommand }>(log)?;
-                LinkCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::UnlinkCommand => {
-                let ctx = init::<{ Tag::UnlinkCommand }>(log)?;
-                UnlinkCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::PackageManagerCommand => {
-                let ctx = init::<{ Tag::PackageManagerCommand }>(log)?;
-                PackageManagerCommand::exec(ctx)?;
-                return Ok(());
-            }
-            Tag::TestCommand => {
-                let ctx = init::<{ Tag::TestCommand }>(log)?;
-                test_command::TestCommand::exec(ctx)?;
-                return Ok(());
-            }
+            // Intentionally inits with RunCommand's parser (mirrors src/cli/cli.zig:704).
+            Tag::ReplCommand => simple_cmd!(RunCommand => ReplCommand),
+            Tag::RemoveCommand => simple_cmd!(RemoveCommand => RemoveCommand),
+            Tag::LinkCommand => simple_cmd!(LinkCommand => LinkCommand),
+            Tag::UnlinkCommand => simple_cmd!(UnlinkCommand => UnlinkCommand),
+            Tag::PackageManagerCommand => simple_cmd!(PackageManagerCommand => PackageManagerCommand),
+            Tag::TestCommand => simple_cmd!(TestCommand => test_command::TestCommand),
             Tag::GetCompletionsCommand => {
                 bun_getcompletes(log)?;
                 return Ok(());
@@ -973,11 +928,7 @@ pub mod command {
                 debug_assert!(PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed));
                 RunCommand::exec_as_if_node(ctx)?;
             }
-            Tag::UpgradeCommand => {
-                let ctx = init::<{ Tag::UpgradeCommand }>(log)?;
-                UpgradeCommand::exec(ctx)?;
-                return Ok(());
-            }
+            Tag::UpgradeCommand => simple_cmd!(UpgradeCommand => UpgradeCommand),
             Tag::AutoCommand => {
                 let mut ctx = match init::<{ Tag::AutoCommand }>(log) {
                     Ok(c) => c,

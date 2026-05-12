@@ -205,15 +205,6 @@ pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
     unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
 }
 
-/// Same as [`bytes_as_slice_mut`] — alias kept for call sites ported from
-/// `bun.reinterpretSlice(T, &buf)` (Zig) which is spelled differently but is
-/// identical to `std.mem.bytesAsSlice` for the `&mut [u8]` → `&mut [T]` shape.
-#[inline]
-pub unsafe fn reinterpret_slice<T>(bytes: &mut [u8]) -> &mut [T] {
-    // SAFETY: forwarded to bytes_as_slice_mut; caller upholds its contract.
-    unsafe { bytes_as_slice_mut::<T>(bytes) }
-}
-
 // ─── Unaligned<T> ─────────────────────────────────────────────────────────────
 /// Port of Zig's `align(1) T` element type. Rust references and slices require
 /// natural alignment for `T`; producing a `&[u16]` from an odd address is
@@ -871,10 +862,7 @@ impl core::ops::DerefMut for WPathBuffer {
 /// Zig: `bun.Dirname.dirname(u8, path)` → `std.fs.path.dirnamePosix` /
 /// `dirnameWindows`. Faithful port (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
-    // Intentionally local copy of `bun_paths::is_sep_native` — bun_core does
-    // not depend on bun_paths and the one-liner isn't worth a crate edge.
-    #[inline]
-    fn is_sep(b: u8) -> bool { b == b'/' || (cfg!(windows) && b == b'\\') }
+    use crate::path_sep::is_sep_native as is_sep;
 
     if path.is_empty() {
         return None;
@@ -2804,9 +2792,9 @@ macro_rules! __runtime_embed_impl {
 // without self-referential lifetimes, callers stash `(offset, len)` via
 // `StringPointer` (see install/hosted_git_info.rs).
 //
-// Canonical `StringBuilder` lives in `bun_string::StringBuilder`
+// Canonical `StringBuilder` lives in `bun_core::StringBuilder`
 // (src/string/StringBuilder.rs). Cannot re-export here (`bun_string` depends
-// on `bun_core` → cycle); callers import `bun_string::StringBuilder` directly.
+// on `bun_core` → cycle); callers import `bun_core::StringBuilder` directly.
 // `StringPointer` stays here as the layered #[repr(C)] ABI type re-exported by
 // `bun_string` et al.
 
@@ -2871,6 +2859,19 @@ pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
     bytemuck::bytes_of_mut(v)
 }
 
+// ─── Slice reinterpretation (canonical) ───────────────────────────────────────
+// Port of Zig `bun.reinterpretSlice` / `std.mem.bytesAsSlice` / `sliceAsBytes`.
+// Zig has ONE polymorphic `reinterpretSlice(comptime T, slice: anytype)` that
+// handles const+mut via comptime; Rust splits by mutability and offers two
+// safety surfaces:
+//   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
+//     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
+//   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
+//     TRUNCATES trailing bytes (Zig `@divTrunc`). Use only when `T` is not
+//     `AnyBitPattern` or the input length is intentionally not a multiple.
+// Every current caller targets `u16` over an even-length buffer, so the safe
+// path is the default.
+
 /// Port of Zig `std.mem.sliceAsBytes` / `bun.reinterpretSlice` for the
 /// read-only `&[A]` → `&[B]` direction. Safe: the [`bytemuck::NoUninit`] bound
 /// on `A` guarantees every source byte is initialized, and
@@ -2879,6 +2880,15 @@ pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
 #[inline]
 pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
     bytemuck::cast_slice(a)
+}
+
+/// Mutable counterpart of [`cast_slice`]: reinterpret `&mut [A]` as `&mut [B]`.
+/// Safe: both [`bytemuck::Pod`] bounds guarantee every byte pattern is valid in
+/// both directions and there are no uninitialized bytes. Panics on misalignment
+/// or if `a.len() * size_of::<A>() % size_of::<B>() != 0` (same as `bytemuck`).
+#[inline]
+pub fn cast_slice_mut<A: bytemuck::Pod, B: bytemuck::Pod>(a: &mut [A]) -> &mut [B] {
+    bytemuck::cast_slice_mut(a)
 }
 
 /// Port of Zig `std.mem.sliceAsBytes`: reinterpret `&[T]` as `&[u8]`.
@@ -2891,6 +2901,95 @@ pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) ->
 #[inline]
 pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
     bytemuck::cast_slice(s)
+}
+
+// ─── extern_union_accessors! ──────────────────────────────────────────────────
+// Zig accesses bare-union fields inline (`this.value.npm`) with no ceremony; the
+// Rust port wraps each read in a tag-asserted `unsafe` accessor so call sites
+// stay safe. Four crates hand-rolled the same accessor shape (Resolution, Bin,
+// DependencyVersion, PackageManager Task) — this macro is the single definition.
+//
+// Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
+// `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
+// `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
+//
+// Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
+// formed (defensive against partially-initialized padding). The trailing
+// `as *const $Ty` cast is identity for plain fields and unwraps
+// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `Task::Request`/`Data`
+// case without needing a separate macro arm.
+//
+// Syntax:
+//   extern_union_accessors! {
+//       tag: <tag_field> as <TagTy>, value: <union_field>;
+//       Variant => accessor: Ty;                          // ro, accessor==union field
+//       Variant => accessor: Ty, mut accessor_mut;        // ro+rw
+//       Variant => accessor @ union_field: Ty;            // ro, accessor≠union field
+//       Variant => accessor @ union_field: Ty, mut accessor_mut;
+//   }
+#[macro_export]
+macro_rules! extern_union_accessors {
+    (
+        tag: $tag_field:ident as $TagTy:ident, value: $value_field:ident;
+        $($arms:tt)*
+    ) => {
+        $crate::extern_union_accessors!(@arms [$tag_field, $TagTy, $value_field] $($arms)*);
+    };
+
+    // arm: accessor name == union-field name, ro only
+    (@arms [$tf:ident, $TT:ident, $vf:ident]
+        $Variant:ident => $field:ident: $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
+    };
+    // arm: accessor name == union-field name, ro + rw
+    (@arms [$tf:ident, $TT:ident, $vf:ident]
+        $Variant:ident => $field:ident: $Ty:ty, mut $field_mut:ident;
+        $($rest:tt)*
+    ) => {
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $field, $field_mut, $Ty);
+        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
+    };
+    // arm: accessor name ≠ union-field name (`accessor @ ufield`), ro only
+    (@arms [$tf:ident, $TT:ident, $vf:ident]
+        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
+        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
+    };
+    // arm: accessor name ≠ union-field name, ro + rw
+    (@arms [$tf:ident, $TT:ident, $vf:ident]
+        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty, mut $accessor_mut:ident;
+        $($rest:tt)*
+    ) => {
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
+        $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $ufield, $accessor_mut, $Ty);
+        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
+    };
+    (@arms [$tf:ident, $TT:ident, $vf:ident]) => {};
+
+    (@emit_ro [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor:ident, $Ty:ty) => {
+        #[inline]
+        pub fn $accessor(&self) -> &$Ty {
+            debug_assert!(self.$tf == $TT::$Variant);
+            // SAFETY: tag-guarded; `addr_of!` projects without forming an
+            // intermediate `&Union`. Cast is identity for plain fields and
+            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
+            unsafe { &*(::core::ptr::addr_of!(self.$vf.$ufield) as *const $Ty) }
+        }
+    };
+    (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor_mut:ident, $Ty:ty) => {
+        #[inline]
+        pub fn $accessor_mut(&mut self) -> &mut $Ty {
+            debug_assert!(self.$tf == $TT::$Variant);
+            // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
+            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$ufield) as *mut $Ty) }
+        }
+    };
 }
 
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
@@ -3496,7 +3595,7 @@ pub fn set_bun_options_argc(n: usize) {
 }
 
 /// Trait for arg types accepted by [`append_options_env`] (replaces Zig
-/// `comptime ArgType` in `bun.appendOptionsEnv`). Impl'd for `bun_string::String`
+/// `comptime ArgType` in `bun.appendOptionsEnv`). Impl'd for `bun_core::String`
 /// and `Box<ZStr>` in their owning crates.
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
@@ -3762,7 +3861,7 @@ pub fn which<'a>(
 ) -> Option<&'a ZStr> {
     if bin.is_empty() { return None; }
     // If `bin` contains a separator, resolve relative to cwd only.
-    let has_sep = bin.iter().any(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+    let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
     #[inline]
     fn is_absolute(p: &[u8]) -> bool {
         if p.first() == Some(&b'/') { return true; }

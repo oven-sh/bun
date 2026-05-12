@@ -650,6 +650,25 @@ impl VirtualMachine {
         unsafe { &mut *Self::get_mut_ptr() }
     }
 
+    /// `&'static mut` to this thread's VM singleton — the static-fn counterpart
+    /// of [`Self::as_mut`]. Exists so per-type `fn vm_mut(&self)` shims (sql,
+    /// bake, cron) collapse to one call instead of each open-coding
+    /// `unsafe { &mut *self.vm.as_ptr() }` against a stored `BackRef`.
+    ///
+    /// Returns `'static` (not tied to any `&self`) so callers may pair the VM
+    /// borrow with a disjoint `&mut self.field` in the same expression. Same
+    /// single-JS-thread soundness contract as [`JsCell::get_mut`] and
+    /// [`Self::as_mut`]: keep the borrow short and do not hold it across
+    /// reentrant JS calls. Provenance is the thread-local `*mut` installed by
+    /// `init()`, so this is sound regardless of how the caller's own
+    /// `BackRef<VirtualMachine>` was constructed.
+    #[inline(always)]
+    pub fn get_mut() -> &'static mut VirtualMachine {
+        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // Provenance comes from the thread-local `*mut` set in `init()`.
+        unsafe { &mut *Self::get_mut_ptr() }
+    }
+
     #[inline(always)]
     pub fn get_or_null() -> Option<*mut VirtualMachine> {
         // thread-local set by init() on this thread; one VM per thread

@@ -394,6 +394,12 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
 }
 
+// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
+// `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
+// field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
+// method this reaches is `&self`.
+bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
+
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // TODO(port): cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
@@ -949,9 +955,7 @@ impl ValkeyClient {
                 } else {
                     // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
                     // then this is an unexpected path.
-                    #[cold]
-                    fn cold() {}
-                    cold();
+                    bun_core::hint::cold();
                     self.fail(
                         b"Push message is not a subscription message.",
                         RedisError::InvalidResponseType,
@@ -1139,9 +1143,7 @@ impl ValkeyClient {
                             return Ok(());
                         }
                     } else {
-                        #[cold]
-                        fn cold() {}
-                        cold();
+                        bun_core::hint::cold();
                         self.fail(
                             b"Unexpected push message kind without promise",
                             RedisError::InvalidResponseType,
@@ -1240,14 +1242,7 @@ impl ValkeyClient {
         // If using a specific database, send SELECT command
         if self.database > 0 {
             let mut int_buf = [0u8; 64];
-            // TODO(port): std.fmt.bufPrintZ — using itoa-style write into stack buf.
-            let db_str = {
-                use std::io::Write;
-                let mut cursor = &mut int_buf[..];
-                write!(cursor, "{}", self.database).expect("unreachable");
-                let written = 64 - cursor.len();
-                &int_buf[..written]
-            };
+            let db_str = bun_core::fmt::int_as_bytes(&mut int_buf, self.database);
             let select_cmd = Command {
                 command: b"SELECT",
                 args: Args::Raw(&[db_str]),
@@ -1516,19 +1511,6 @@ impl ValkeyClient {
         unsafe { JSValkeyClient::deref(parent) };
     }
 
-    #[inline]
-    fn parent(&mut self) -> &JSValkeyClient {
-        // SAFETY: self points to JSValkeyClient.client (intrusive embed via
-        // `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`,
-        // so the field offset is unchanged. R-2: shared `&` only — every
-        // `JSValkeyClient` method this reaches is now `&self`, so a `&mut`
-        // backref (which would alias the outer host-fn `&self`) is no longer
-        // needed nor sound.
-        unsafe {
-            &*(bun_core::from_field_ptr!(JSValkeyClient, client, std::ptr::from_mut::<Self>(self))
-                .cast_const())
-        }
-    }
 
     #[inline]
     fn global_object(&mut self) -> GlobalRef {

@@ -71,7 +71,7 @@ pub type Unmanaged<T> = Vec<T>;
 pub type Slice<T> = Box<[T]>;
 
 // TODO(port): `SentinelSlice` — sentinel-terminated slices have no std Rust equivalent; only
-// needed if a caller uses `fromOwnedSliceSentinel`. Map to `bun_str::ZStr`/`WStr` at call site.
+// needed if a caller uses `fromOwnedSliceSentinel`. Map to `bun_core::ZStr`/`WStr` at call site.
 
 impl<T> ArrayListAlignedIn<T> {
     pub fn items(&self) -> &[T] {

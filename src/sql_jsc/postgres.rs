@@ -1,39 +1,17 @@
-use crate::jsc::{JSFunction, JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    // NB: the win-x64 segfault originally observed here was an ABI mismatch in
-    // the `get_constructor!` extern declaration — fixed at source by switching
-    // to `jsc_abi_extern!` in `crate::jsc::codegen`. Statement order below is
-    // not load-bearing.
-    let connection_ctor = postgres_sql_connection::js::get_constructor(global_object);
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    binding.put(global_object, b"PostgresSQLConnection", connection_ctor);
-    // `JSFunction::create` accepts safe `fn(&JSGlobalObject, &CallFrame) -> JSValue` /
-    // `-> JsResult<JSValue>` directly via `IntoJSHostFn` (Zig: `jsc.toJSHostFn(fn)`);
-    // the JSC-ABI thunk + raw-ptr deref live in `crate::jsc` — no per-binding
-    // `unsafe { &*g }` boilerplate here.
     binding.put(
         global_object,
-        b"init",
-        JSFunction::create(global_object, "init", PostgresSQLContext::init, 0, Default::default()),
+        b"PostgresSQLConnection",
+        postgres_sql_connection::js::get_constructor(global_object),
     );
-    binding.put(
-        global_object,
-        b"createQuery",
-        JSFunction::create(global_object, "createQuery", PostgresSQLQuery::call, 6, Default::default()),
-    );
-    binding.put(
-        global_object,
-        b"createConnection",
-        JSFunction::create(
-            global_object,
-            "createConnection",
-            postgres_sql_connection::call,
-            2,
-            Default::default(),
-        ),
-    );
-    binding
+    crate::put_host_functions!(binding, global_object, [
+        ("init", PostgresSQLContext::init, 0),
+        ("createQuery", PostgresSQLQuery::call, 6),
+        ("createConnection", postgres_sql_connection::call, 2),
+    ])
 }
 
 // ──────────────────────────────────────────────────────────────────────────

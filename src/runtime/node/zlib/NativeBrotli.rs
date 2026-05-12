@@ -60,7 +60,7 @@ use core::ffi::c_uint;
 
 use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions, StrongOptional, WorkPoolTask};
 
-use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
+use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
@@ -84,7 +84,7 @@ pub struct NativeBrotli {
     pub stream: JsCell<Context>,
     /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
     /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
-    pub write_result: Cell<Option<NonNull<u32>>>,
+    pub write_result: Cell<Option<*mut u32>>,
     pub poll_ref: JsCell<CountedKeepAlive>,
     // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
     pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
@@ -181,12 +181,12 @@ impl NativeBrotli {
         let write_callback =
             validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
-        self.write_result.set(NonNull::new(write_result));
+        self.write_result.set(Some(write_result));
 
         js::write_callback_set_cached(
             this_value,
             global_this,
-            with_async_context_if_needed(write_callback, global_this),
+            write_callback.with_async_context_if_needed(global_this),
         );
 
         let mut err = self.stream.with_mut(|s| s.init());
@@ -494,115 +494,10 @@ impl Context {
 }
 
 // ─── CompressionStream mixin glue ─────────────────────────────────────────
-
-impl CompressionContext for Context {
-    #[inline]
-    fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-        Context::set_buffers(self, in_, out)
-    }
-    #[inline]
-    fn set_flush(&mut self, flush: i32) {
-        Context::set_flush(self, flush as c_int)
-    }
-    #[inline]
-    fn do_work(&mut self) {
-        Context::do_work(self)
-    }
-    #[inline]
-    fn reset(&mut self) -> Error {
-        Context::reset(self)
-    }
-    #[inline]
-    fn close(&mut self) {
-        Context::close(self)
-    }
-    #[inline]
-    fn get_error_info(&mut self) -> Error {
-        Context::get_error_info(self)
-    }
-    #[inline]
-    fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) {
-        Context::update_write_result(&*self, avail_in, avail_out)
-    }
-}
-
-impl bun_event_loop::Taskable for NativeBrotli {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NativeBrotli;
-}
-
-impl CompressionStreamImpl for NativeBrotli {
-    type Stream = Context;
-
-    #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        self.global_this.get()
-    }
-    #[inline]
-    fn stream(&self) -> &JsCell<Self::Stream> {
-        &self.stream
-    }
-    #[inline]
-    fn write_result_ptr(&self) -> Option<*mut u32> {
-        self.write_result.get().map(|p| p.as_ptr())
-    }
-    #[inline]
-    fn poll_ref(&self) -> &JsCell<CountedKeepAlive> {
-        &self.poll_ref
-    }
-    #[inline]
-    fn this_value(&self) -> &JsCell<StrongOptional> {
-        &self.this_value
-    }
-    #[inline]
-    fn task(&self) -> &JsCell<WorkPoolTask> {
-        &self.task
-    }
-    #[inline]
-    fn write_in_progress(&self) -> &Cell<bool> {
-        &self.write_in_progress
-    }
-    #[inline]
-    fn pending_close(&self) -> &Cell<bool> {
-        &self.pending_close
-    }
-    #[inline]
-    fn pending_reset(&self) -> &Cell<bool> {
-        &self.pending_reset
-    }
-    #[inline]
-    fn closed(&self) -> &Cell<bool> {
-        &self.closed
-    }
-
-    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
-        // Intrusive parent recovery: recover the owning NativeBrotli.
-        // `task` field is `JsCell<WorkPoolTask>` (`#[repr(transparent)]`).
-        // SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
-        unsafe {
-            bun_core::from_field_ptr!(NativeBrotli, task, task)
-        }
-    }
-
-    fn ref_(&self) {
-        <Self as bun_ptr::CellRefCounted>::ref_(self)
-    }
-
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: forwarded trait contract — `this` is live; the derived
-        // `CellRefCounted::deref` routes zero to `Self::destroy_on_zero`.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
-    }
-
-    fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::write_callback_get_cached(this_value)
-    }
-    fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::error_callback_get_cached(this_value)
-    }
-    fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        js::error_callback_set_cached(this_value, global, cb)
-    }
-}
+// Stamps `impl CompressionContext for Context`, `impl Taskable`/
+// `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
+// `NativeBrotliPrototype__*CachedValue` accessors).
+crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
 
 fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
     // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
@@ -648,28 +543,6 @@ fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
 /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
 /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
 unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
-
-/// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on `bun_jsc::JSValue`).
-/// Wraps a callback so it restores the current AsyncLocalStorage context when invoked.
-fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
-    unsafe extern "C" {
-        safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-            global: &JSGlobalObject,
-            callback: JSValue,
-        ) -> JSValue;
-    }
-    AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
-}
-
-// Codegen accessor namespace (JSNativeBrotli generated bindings).
-// In Zig this is `jsc.Codegen.JSNativeBrotli`; the C++ side
-// (`NativeBrotliPrototype__*CachedValue`) is emitted by generate-classes.ts
-// with `extern JSC_CALLCONV` (= sysv64 on win-x64), so we must go through
-// `codegen_cached_accessors!` for the ABI cfg-split — a hand-written
-// `extern "C"` block here is wrong-ABI on Windows.
-mod js {
-    bun_jsc::codegen_cached_accessors!("NativeBrotli"; writeCallback, errorCallback);
-}
 
 crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl

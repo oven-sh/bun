@@ -37,6 +37,18 @@ use syn::{
     LifetimeParam, Meta,
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// CANONICAL: the existing `bun_css_derive` proc-macros — **NO new code required**.
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The five derives below already exist (entry points: `DeepClone`, `CssEql`,
+// `IsCompatible`, `Parse`, `ToCss`) and already emit exactly the per-variant
+// dispatch the hand-expansions at the listed sites spell out by hand. They are
+// the direct Rust port of Zig's `css.DeriveParse` / `css.DeriveToCss` /
+// `css.implementDeepClone` / `css.implementEql` / `comptime is_compatible`
+// field-walks. Nothing is added here; this comment is the contract surface the
+// `css-value-enum-to_css-deep_clone-hand-dispatch` migration relies on.
+
 #[proc_macro_derive(DeepClone)]
 pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

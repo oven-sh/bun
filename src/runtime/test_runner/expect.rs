@@ -1998,6 +1998,49 @@ impl_asymmetric_matcher_class!(
     ExpectStringMatching,
 );
 
+// ─── unary-predicate matcher scaffold ────────────────────────────────────
+// Dedups the 22 hand-rolled `expect/toBe*.rs` files (~1270 LOC → ~300 LOC) and
+// fixes two latent port bugs (throw_fmt wrapper drop; post_match-before-throw
+// ordering). Mirrors the Zig per-file scaffold exactly.
+impl Expect {
+    /// Shared scaffold for zero-arg `expect(v).toBeX()` matchers whose pass/fail
+    /// is a pure infallible predicate on the received `JSValue` and whose failure
+    /// message is the stock `"\n\nReceived: <red>{value}<r>\n"`.
+    ///
+    /// Replaces ~45 LOC of identical boilerplate per matcher: post_match guard,
+    /// `get_value`, `increment_expect_call_counter`, `not`-xor, formatter,
+    /// `get_signature`, `throw`.
+    #[inline]
+    pub fn run_unary_predicate(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher_name: &'static str,
+        pred: impl FnOnce(JSValue) -> bool,
+    ) -> JsResult<JSValue> {
+        let this = self.post_match_guard(global);
+        let value = this.get_value(global, frame.this(), matcher_name, "")?;
+        this.increment_expect_call_counter();
+        let not = this.flags.get().not();
+        if pred(value) != not {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let mut formatter = make_formatter(global);
+        let signature = Self::get_signature(matcher_name, "", not);
+        this.throw(
+            global,
+            signature,
+            format_args!("\n\nReceived: <red>{}<r>\n", value.to_fmt(&mut formatter)),
+        )
+    }
+}
+
+// `unary_predicate_matcher!` is defined in `test_runner/mod.rs` (top-level,
+// outside `cfg_jsc!`) so it can be addressed as `crate::unary_predicate_matcher!`
+// from each `expect/toBe*.rs` file — `#[macro_export]` from inside a
+// macro-expanded module is not addressable by absolute path
+// (`macro_expanded_macro_exports_accessed_by_absolute_paths`).
+
 // ─── matcher dispatch ──────────────────────────────────────────────────────
 // The generate-classes.ts Rust emitter calls every prototype matcher as
 // `Expect::to_*(&mut *this, global, callframe)`. Roughly half the
@@ -2024,26 +2067,11 @@ macro_rules! __forward_matcher {
     };
 }
 __forward_matcher! {
-    to_be_array                              => to_be_array::to_be_array,
     to_be_array_of_size                      => to_be_array_of_size::to_be_array_of_size,
-    to_be_boolean                            => to_be_boolean::to_be_boolean,
-    to_be_date                               => to_be_date::to_be_date,
-    to_be_defined                            => to_be_defined::to_be_defined,
     to_be_empty                              => to_be_empty::to_be_empty,
     to_be_empty_object                       => to_be_empty_object::to_be_empty_object,
-    to_be_even                               => to_be_even::to_be_even,
-    to_be_function                           => to_be_function::to_be_function,
-    to_be_greater_than_or_equal              => to_be_greater_than_or_equal::to_be_greater_than_or_equal,
     to_be_instance_of                        => to_be_instance_of::to_be_instance_of,
-    to_be_integer                            => to_be_integer::to_be_integer,
-    // codegen snake-cases `toBeNaN` → `to_be_na_n`; the matcher module/file uses `to_be_nan`.
-    to_be_na_n                               => to_be_nan::to_be_nan,
-    to_be_negative                           => to_be_negative::to_be_negative,
-    to_be_number                             => to_be_number::to_be_number,
-    to_be_odd                                => to_be_odd::to_be_odd,
     to_be_one_of                             => to_be_one_of::to_be_one_of,
-    to_be_positive                           => to_be_positive::to_be_positive,
-    to_be_truthy                             => to_be_truthy::to_be_truthy,
     to_be_type_of                            => to_be_type_of::to_be_type_of,
     to_be_valid_date                         => to_be_valid_date::to_be_valid_date,
     to_contain_all_keys                      => to_contain_all_keys::to_contain_all_keys,
@@ -2809,17 +2837,68 @@ pub mod mock {
         })
     }
 
-    pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator<'_>> {
-        let returns: JSValue = JSMockFunction__getReturns(global_this, value)?;
-        if !returns.js_type().is_array() {
-            let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(format_args!(
-                "Expected value must be a mock function: {}",
-                value.to_fmt(&mut formatter),
-            )));
-        }
+    /// Which mock-backed array a `toHave*` matcher inspects, plus which of the two
+    /// "received is not a mock" error styles it emits. The three `*CalledWith`
+    /// matchers use the Jest-style `Matcher error:` form routed through
+    /// [`Expect::throw`]; everything else uses the bare `global.throw(...)` form.
+    #[derive(Clone, Copy)]
+    pub enum MockKind {
+        /// `mock.calls`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
+        /// toHaveBeenCalled / toHaveBeenCalledOnce / toHaveBeenCalledTimes.
+        Calls,
+        /// `mock.calls`; not-a-mock → `this.throw(signature, "Matcher error: received value must be a mock function …")`.
+        /// toHaveBeenCalledWith / toHaveBeenLastCalledWith / toHaveBeenNthCalledWith.
+        CallsWithSig,
+        /// `mock.results`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
+        /// toHaveReturned* / toHave*ReturnedWith.
+        Returns,
+    }
 
-        returns.array_iterator(global_this)
+    impl Expect {
+        /// Shared prologue for every `expect(mockFn).toHave*` matcher: arms the
+        /// `post_match` guard, resolves the captured value (handling `.resolves`/
+        /// `.rejects`), bumps the assertion counter, fetches the requested
+        /// mock-backed array, and emits the kind-appropriate "not a mock" error.
+        ///
+        /// Returns the [`PostMatchGuard`] (so `post_match` runs when the caller
+        /// drops it), the `mock.calls` / `mock.results` JSArray, and the raw
+        /// received value (some matchers print it again on later error paths).
+        pub fn mock_prologue<'a>(
+            &'a self,
+            global: &'a JSGlobalObject,
+            this_value: JSValue,
+            matcher_name: &'static str,
+            matcher_params: &'static str,
+            kind: MockKind,
+        ) -> JsResult<(PostMatchGuard<'a>, JSValue, JSValue)> {
+            let this = self.post_match_guard(global);
+            let value = this.get_value(global, this_value, matcher_name, matcher_params)?;
+            this.increment_expect_call_counter();
+            let arr = match kind {
+                MockKind::Calls | MockKind::CallsWithSig => JSMockFunction__getCalls(global, value)?,
+                MockKind::Returns => JSMockFunction__getReturns(global, value)?,
+            };
+            if !arr.js_type().is_array() {
+                let mut formatter = make_formatter(global);
+                return Err(match kind {
+                    MockKind::CallsWithSig => this
+                        .throw(
+                            global,
+                            Self::get_signature(matcher_name, matcher_params, false),
+                            format_args!(
+                                "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
+                                value.to_fmt(&mut formatter),
+                            ),
+                        )
+                        .unwrap_err(),
+                    MockKind::Calls | MockKind::Returns => global.throw(format_args!(
+                        "Expected value must be a mock function: {}",
+                        value.to_fmt(&mut formatter),
+                    )),
+                });
+            }
+            Ok((this, arr, value))
+        }
     }
 
     pub fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {

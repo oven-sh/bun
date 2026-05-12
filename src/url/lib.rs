@@ -18,38 +18,7 @@ pub mod api {
     pub use bun_core::StringPointer;
 }
 
-// TODO(b2-blocked): bun_io::Write — bun_io crate gated (does not compile yet).
-// Local minimal byte-writer trait so PercentEncoding/join_write can compile.
-mod bun_io {
-    pub trait Write {
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
-        fn write_byte(&mut self, byte: u8) -> Result<(), bun_core::Error> {
-            self.write_all(core::slice::from_ref(&byte))
-        }
-    }
-    impl Write for Vec<u8> {
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-            self.extend_from_slice(bytes);
-            Ok(())
-        }
-    }
-    /// Fixed-buffer writer for `decode_into` — mirrors Zig's `std.io.fixedBufferStream`.
-    pub(crate) struct FixedBufferWriter<'a> {
-        pub buf: &'a mut [u8],
-        pub pos: usize,
-    }
-    impl<'a> Write for FixedBufferWriter<'a> {
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-            let end = self.pos + bytes.len();
-            if end > self.buf.len() {
-                return Err(bun_core::err!("NoSpaceLeft"));
-            }
-            self.buf[self.pos..end].copy_from_slice(bytes);
-            self.pos = end;
-            Ok(())
-        }
-    }
-}
+use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
@@ -439,15 +408,14 @@ impl<'a> URL<'a> {
     /// into a `Vec<u8>` directly rather than going through `format!` and
     /// risking lossy UTF-8 round-trips.
     pub fn href_without_auth(&self) -> Box<[u8]> {
-        use std::io::Write as _;
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
 
         let mut buf: Vec<u8> = Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
         buf.extend_from_slice(proto);
         buf.extend_from_slice(b"://");
-        // io::Write on Vec<u8> is infallible.
-        let _ = write!(&mut buf, "{}", self.display_host());
+        // bun_core::io::Write on Vec<u8> is infallible.
+        let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
         buf.extend_from_slice(path);
         buf.push(b'/');
@@ -537,7 +505,7 @@ impl<'a> URL<'a> {
 
     pub fn join_write(
         &self,
-        writer: &mut impl bun_io::Write,
+        writer: &mut impl bun_core::io::Write,
         prefix: &[u8],
         dirname: &[u8],
         basename: &[u8],
@@ -1306,7 +1274,7 @@ impl From<DecodeError> for bun_core::Error {
 }
 
 impl PercentEncoding {
-    pub fn decode(writer: &mut impl bun_io::Write, input: &[u8]) -> Result<u32, DecodeError> {
+    pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
         // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
         Self::decode_fault_tolerant::<_, false>(writer, input, None)
     }
@@ -1329,11 +1297,11 @@ impl PercentEncoding {
     /// Decode percent-encoded `input` into the caller-provided `out` buffer.
     /// Returns number of bytes written. `out.len()` must be >= `input.len()`.
     pub fn decode_into(out: &mut [u8], input: &[u8]) -> Result<u32, DecodeError> {
-        let mut w = bun_io::FixedBufferWriter { buf: out, pos: 0 };
+        let mut w = bun_core::fmt::SliceCursor::new(out);
         Self::decode(&mut w, input)
     }
 
-    pub fn decode_fault_tolerant<W: bun_io::Write, const FAULT_TOLERANT: bool>(
+    pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
         writer: &mut W,
         input: &[u8],
         needs_redirect: Option<&mut bool>,

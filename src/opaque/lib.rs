@@ -47,9 +47,9 @@
 /// }
 /// ```
 ///
-/// The generated `_p` field is reachable from the call-site module, so
-/// `self._p.get()` can be used to derive an interior-mut `*mut Self` from
-/// `&self` (see `bun_alloc::Zone::as_mut_ptr`).
+/// Every generated type gets an `as_mut_ptr(&self) -> *mut Self` accessor that
+/// derives an interior-mutable FFI pointer from a shared borrow; prefer it over
+/// reaching into `_p` directly.
 #[macro_export]
 macro_rules! opaque_ffi {
     // `pub struct Name;` form — preferred (reads like the decl it replaces).
@@ -76,6 +76,20 @@ macro_rules! opaque_ffi {
             #[allow(dead_code)]
             pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
                 $crate::opaque_deref_mut(p)
+            }
+            /// `&self → *mut Self` for FFI calls that take a non-const handle.
+            ///
+            /// Sound because `_p: UnsafeCell<_>` sits at offset 0 of this
+            /// `#[repr(C)]` ZST, so `UnsafeCell::get()` yields `self`'s own
+            /// address with **write** provenance from a shared borrow — the
+            /// sanctioned interior-mutability route, vs. the UB-under-Stacked-
+            /// Borrows `&T as *const T as *mut T` cast. The C/C++ side may
+            /// freely mutate the real allocation through the returned pointer;
+            /// `&Self` covers zero Rust-visible bytes so cannot alias it.
+            #[inline(always)]
+            #[allow(dead_code)]
+            pub fn as_mut_ptr(&self) -> *mut Self {
+                self._p.get().cast::<Self>()
             }
         }
     )+};
@@ -251,4 +265,92 @@ pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
     assert!(!p.is_null(), "opaque_deref_mut: null FFI handle");
     // SAFETY: see `opaque_deref`; zero-byte `&mut` cannot alias.
     unsafe { &mut *p }
+}
+
+/// `core`-only FFI slice/string primitives shared between `bun_core::ffi` and
+/// the freestanding `bun_shim_impl` PE. Lives here (not `bun_core`) because
+/// `bun_core` carries `#[no_mangle]` C-ABI exports that become unsatisfiable
+/// link roots in a `#![no_std]`/`no_main` binary; this crate has none. Mirrors
+/// Zig `std.mem.{len,span}` / `bun.sliceTo`, which both consumers re-spelled
+/// verbatim before this single audited copy existed.
+pub mod ffi {
+    /// `std.mem.len` for `[*:0]const u16` — count u16 code units up to (and
+    /// excluding) the first NUL. Single audited funnel for the hand-rolled
+    /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
+    /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
+    /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
+    /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
+    /// `CStr::from_ptr` and Zig `std.mem.len([*:0]const u16)`.
+    ///
+    /// # Safety
+    /// `p` must be non-null and point to a NUL-terminated u16 sequence
+    /// readable up to and including the terminator.
+    #[inline(always)]
+    pub unsafe fn wcslen(p: *const u16) -> usize {
+        debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
+        let mut n = 0usize;
+        // SAFETY: caller contract — non-null, NUL-terminated.
+        while unsafe { *p.add(n) } != 0 {
+            n += 1;
+        }
+        n
+    }
+
+    /// UTF-16 analogue of `cstr_bytes`: scan to NUL and borrow the code units
+    /// as a `&[u16]`. Dominant shape at call sites (Zig
+    /// `std.mem.span([*:0]const u16)` port).
+    ///
+    /// # Safety
+    /// Same contract as [`wcslen`]; the returned borrow must not outlive the
+    /// allocation backing `p`.
+    #[inline(always)]
+    pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
+        // SAFETY: forwarded to `wcslen`; `p[..len]` is readable per contract.
+        unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
+    }
+
+    /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
+    /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
+    /// struct fields). Unlike a bare `from_raw_parts`, tolerates the C
+    /// convention of `(null, 0)` for an empty slice (Rust requires a
+    /// non-null, aligned pointer even at `len == 0`).
+    ///
+    /// Prefer bare `core::slice::from_raw_parts` at hot sites where `ptr` is
+    /// provably non-null (pointer-arith from `&self`, `NonNull::as_ptr()`).
+    ///
+    /// # Safety
+    /// Callers must still wrap the call in `unsafe` and uphold the
+    /// `from_raw_parts` contract: when `len > 0`, `ptr` must be non-null,
+    /// aligned, and point to `len` initialized `T` valid for `'a`. `ptr` may
+    /// be null only when `len == 0`.
+    #[inline(always)]
+    pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+        if ptr.is_null() {
+            // Hard assert: a `(null, N>0)` pair was UB under bare
+            // `from_raw_parts`; silently returning `&[]` here would mask the
+            // contract violation in release and let callers iterate 0 times
+            // when they expect N. Fail loudly instead.
+            assert!(len == 0, "ffi::slice: null ptr with non-zero len");
+            &[]
+        } else {
+            // SAFETY: caller contract above.
+            unsafe { core::slice::from_raw_parts(ptr, len) }
+        }
+    }
+
+    /// Mutable counterpart of [`slice`]. Same null-at-zero tolerance.
+    ///
+    /// # Safety
+    /// Same as [`slice`], plus the caller must guarantee no other `&`/`&mut`
+    /// to the range is live for `'a`.
+    #[inline(always)]
+    pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
+        if ptr.is_null() {
+            assert!(len == 0, "ffi::slice_mut: null ptr with non-zero len");
+            &mut []
+        } else {
+            // SAFETY: caller contract above.
+            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        }
+    }
 }

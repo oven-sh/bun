@@ -378,10 +378,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     let mut working_mem = bun_paths::w_path_buffer_pool::get();
     working_mem[..usize::from(len)].copy_from_slice(path);
 
-    #[inline]
-    fn is_sep(c: u16) -> bool {
-        c == u16::from(b'\\') || c == u16::from(b'/')
-    }
+    use bun_paths::is_sep_any_t as is_sep;
 
     // Walk back until creating a parent succeeds (or one already exists).
     let mut i: u16 = len - 1;

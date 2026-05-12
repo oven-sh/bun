@@ -89,7 +89,7 @@ use core::ptr;
 
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
 use bun_collections::VecExt as _;
-use bun_str::MutableString;
+use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
 use crate::{append_mapping_to_buffer, LineColumnOffset, Mapping, SourceMapState, VLQ};
@@ -1058,13 +1058,12 @@ impl Builder {
             cap += 8 + n_deltas * MAX_VARINT_LEN;
         }
 
-        let base = self.win_stream.len();
-        // `cap` bytes are reserved past `base`. All writes below go through
-        // `buf_ptr` into [base..base+cap). The cursor `w` is bounded by
+        // `cap` bytes are reserved past `len()`. All writes below go through
+        // `buf_ptr` into spare capacity. The cursor `w` is bounded by
         // construction: `cap` is the worst-case sum of every section's max length
         // (each varint <= MAX_VARINT_LEN, each optional section gated on `flags`),
         // so `w <= cap` and `w + MAX_VARINT_LEN <= cap` at every `write_varint`
-        // call. The trailing `set_len(base + w)` exposes only the written prefix.
+        // call. The trailing `commit_spare(w)` exposes only the written prefix.
         let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
         unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
 
@@ -1156,8 +1155,8 @@ impl Builder {
         }
 
         debug_assert!(w <= cap);
-        // SAFETY: w <= cap (reserved); all bytes in [base..base+w) were written above.
-        unsafe { self.win_stream.set_len(base + w) };
+        // SAFETY: w <= cap (reserved); all bytes in spare[..w] were written above.
+        unsafe { bun_core::vec::commit_spare(&mut self.win_stream, w) };
         self.pending_n = 0;
     }
 

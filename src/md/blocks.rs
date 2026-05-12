@@ -3,6 +3,7 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, VerbatimLine, OFF};
 
+use bun_collections::VecExt as _;
 use core::mem::{align_of, size_of};
 
 type BlockHeader = parser::BlockHeader;
@@ -850,8 +851,7 @@ impl Parser<'_> {
         let cur_len = self.block_bytes.len();
         let aligned = (cur_len + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
-        self.block_bytes
-            .reserve(needed.saturating_sub(self.block_bytes.len()));
+        self.block_bytes.ensure_total_capacity(needed);
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
         // overwritten by the BlockHeader write below.
         self.block_bytes.resize(needed, 0);

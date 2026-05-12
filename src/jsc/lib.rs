@@ -428,6 +428,7 @@ pub mod garbage_collection_controller;
 
 #[rustfmt::skip]
 #[path = "host_fn.rs"] pub mod host_fn;
+#[path = "host_object.rs"] pub mod host_object;
 #[path = "AnyPromise.rs"] pub mod any_promise;
 #[path = "CachedBytecode.rs"] pub mod cached_bytecode;
 #[path = "DOMFormData.rs"] pub mod dom_form_data;
@@ -685,6 +686,7 @@ pub use self::host_fn::{
     to_js_host_fn_with_context, JSHostFn, JSHostFnZig, JSHostFnZigWithContext,
     JSHostFunctionTypeWithContext,
 };
+pub use self::host_object::{create_host_function_object, HostFnEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `__macro_support` — runtime helpers invoked by `#[bun_jsc::host_fn]` /
@@ -1387,7 +1389,7 @@ impl FromJsEnum for bun_sys::SignalCode {
         }
         let s = bun_string_jsc::from_js(v, global)?;
         let utf8 = s.to_utf8();
-        let hit = bun_sys::signal_code::MAP.get(utf8.slice()).copied();
+        let hit = bun_sys::signal_code::from_name(utf8.slice());
         drop(utf8);
         s.deref();
         match hit {

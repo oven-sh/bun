@@ -4,7 +4,7 @@ use bun_io::Loop as AsyncLoop;
 use bun_io::BufferedReader;
 use bun_io::FilePollFlag;
 use bun_io::max_buf::MaxBuf;
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::pipe_reader::PosixFlags;
 use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
@@ -413,45 +413,19 @@ impl PipeReader {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
 // `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
-bun_io::buffered_reader_parent_link!(SubprocessPipeReader for PipeReader);
-impl BufferedReaderParent for PipeReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SubprocessPipeReader;
-    const HAS_ON_READ_CHUNK: bool = false;
-
-    unsafe fn on_read_chunk(_this: *mut Self, _chunk: &[u8], _has_more: ReadState) -> bool {
-        // Never called when HAS_ON_READ_CHUNK == false.
-        true
-    }
-
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. `on_reader_done`/`on_reader_error` are
-    // tail-position (the reader is finished with `self`), so `&mut *this` is OK.
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done() };
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { (*this).on_reader_error(err) };
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
-        // be borrowed mutably by the caller).
-        unsafe { (*this).loop_().cast() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` is non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
-    unsafe fn on_max_buffer_overflow(
-        this: *mut Self,
-        maxbuf: NonNull<bun_io::max_buf::MaxBuf>,
-    ) {
-        // SAFETY: `this` is live per trait contract; raw place read of the
-        // `process` backref (the embedded reader may hold `&mut self` higher
-        // on the stack, so no `&Self` is materialized).
-        let Some(process) = (unsafe { (*this).process }) else { return };
+// `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
+// with `self`), so `&mut *this` autoref is OK.
+bun_io::impl_buffered_reader_parent! {
+    SubprocessPipeReader for PipeReader;
+    has_on_read_chunk = false;
+    on_reader_done  = |this| (*this).on_reader_done();
+    on_reader_error = |this, err| (*this).on_reader_error(err);
+    loop_           = |this| (*this).loop_().cast();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
+    on_max_buffer_overflow = |this, maxbuf| {
+        // Raw place read of the `process` backref (the embedded reader may
+        // hold `&mut self` higher on the stack, so no `&Self` is materialized).
+        let Some(process) = (*this).process else { return };
         // `process` is the owning Subprocess back-pointer; live until
         // `detach()`/finalize, both of which clear `(*this).process` first.
         let sp = process.get();
@@ -467,7 +441,7 @@ impl BufferedReaderParent for PipeReader {
             bun_io::max_buf::Kind::Stderr
         };
         sp.on_max_buffer(kind);
-    }
+    };
 }
 
 // ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

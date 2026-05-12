@@ -1,5 +1,4 @@
 #![warn(unreachable_pub)]
-use core::ffi::c_void;
 use core::ptr;
 
 pub use bun_brotli_sys::brotli_c as c;
@@ -12,46 +11,10 @@ use bun_core::{self as bun, err, Error};
 // BrotliAllocator
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct BrotliAllocator;
-
-impl BrotliAllocator {
-    pub extern "C" fn alloc(_: *mut c_void, len: usize) -> *mut c_void {
-        #[cfg(feature = "heap_breakdown")]
-        {
-            // TODO(port): bun.heap_breakdown is macOS-only malloc-zone tagging
-            let zone = bun_core::heap_breakdown::get_zone(b"brotli");
-            return zone
-                .malloc_zone_malloc(len)
-                .unwrap_or_else(|| bun_core::out_of_memory());
-        }
-
-        #[cfg(not(feature = "heap_breakdown"))]
-        {
-            // `mi_malloc` is declared `safe fn` in the extern block (sound for
-            // any len; returns null on OOM) — null-checked below.
-            let p = bun_alloc::mimalloc::mi_malloc(len);
-            if p.is_null() {
-                bun_core::out_of_memory();
-            }
-            p
-        }
-    }
-
-    pub extern "C" fn free(_: *mut c_void, data: *mut c_void) {
-        #[cfg(feature = "heap_breakdown")]
-        {
-            let zone = bun_core::heap_breakdown::get_zone(b"brotli");
-            zone.malloc_zone_free(data);
-            return;
-        }
-
-        #[cfg(not(feature = "heap_breakdown"))]
-        // SAFETY: data was allocated by mi_malloc in BrotliAllocator::alloc (or
-        // is null, which mi_free accepts).
-        unsafe {
-            bun_alloc::mimalloc::mi_free(data);
-        }
-    }
+#[allow(non_snake_case)]
+pub mod BrotliAllocator {
+    bun_alloc::c_thunks_for_zone!("brotli");
+    pub use malloc_size as alloc;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -221,26 +184,17 @@ impl<'a> BrotliReaderArrayList<'a> {
         debug_assert!(self.list_ptr.as_ptr() != self.input.as_ptr());
 
         while self.state == ReaderState::Uninitialized || self.state == ReaderState::Inflating {
-            let mut unused_capacity = self.list_ptr.spare_capacity_mut();
-
-            if unused_capacity.len() < 4096 {
-                self.list_ptr.reserve(4096);
-                unused_capacity = self.list_ptr.spare_capacity_mut();
-            }
-
-            debug_assert!(!unused_capacity.is_empty());
+            // SAFETY: write-only spare; brotli initializes the bytes it consumes.
+            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
+            let out_len = spare.len();
+            let mut next_out_ptr: *mut u8 = spare.as_mut_ptr();
+            // `spare` borrow ends here (NLL); only raw ptr/len survive across FFI.
 
             let next_in = &self.input[self.total_in..];
-
             let in_len = next_in.len();
-            let out_len = unused_capacity.len();
             let mut in_remaining = in_len;
             let mut out_remaining = out_len;
-
             let mut next_in_ptr: *const u8 = next_in.as_ptr();
-            let mut next_out_ptr: *mut u8 = unused_capacity.as_mut_ptr().cast::<u8>();
-            // `next_in` / `unused_capacity` borrows end here (NLL); only the
-            // raw pointers and captured lengths survive across the FFI call.
 
             // https://github.com/google/brotli/blob/fef82ea10435abb1500b615b1b2c6175d429ec6c/go/cbrotli/reader.go#L15-L27
             let result = BrotliDecoder::decompress_stream(
@@ -257,10 +211,7 @@ impl<'a> BrotliReaderArrayList<'a> {
 
             // SAFETY: brotli wrote `bytes_written` initialized bytes into the
             // spare-capacity region starting at the previous `len()`.
-            unsafe {
-                let new_len = self.list_ptr.len() + bytes_written;
-                self.list_ptr.set_len(new_len);
-            }
+            unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
 
             match result {

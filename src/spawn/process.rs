@@ -3726,8 +3726,8 @@ pub mod sync {
             if bytes.try_reserve(16384).is_err() {
                 return Some(bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::recv));
             }
-            // SAFETY: `recv_non_block` only writes into the spare bytes; we
-            // commit `bytes_read` of them via `set_len` below.
+            // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read.
+            // Keep the fallible `try_reserve` above — do NOT use fill_spare here.
             let spare_slice = unsafe { bun_core::vec::spare_bytes_mut(bytes) };
             match bun_sys::recv_non_block(*fd, spare_slice) {
                 Err(err) => {
@@ -3738,7 +3738,7 @@ pub mod sync {
                 }
                 Ok(bytes_read) => {
                     // SAFETY: recv wrote `bytes_read` bytes into spare capacity
-                    unsafe { bytes.set_len(bytes.len() + bytes_read) };
+                    unsafe { bun_core::vec::commit_spare(bytes, bytes_read) };
                     if bytes_read == 0 {
                         fd.close();
                         *fd = Fd::INVALID;

@@ -775,13 +775,11 @@ impl EventLoop {
         // loop (the recursion check).
         if unsafe { (*this).next_immediate_tasks.capacity() } > 0 {
             // this would only occur if we were recursively running tickImmediateTasks.
-            #[cold]
-            fn cold_merge(this: &mut EventLoop) {
-                let next = core::mem::take(&mut this.next_immediate_tasks);
-                this.immediate_tasks.extend_from_slice(&next);
-            }
+            bun_core::hint::cold();
             // SAFETY: as above.
-            cold_merge(unsafe { &mut *this });
+            let r = unsafe { &mut *this };
+            let next = core::mem::take(&mut r.next_immediate_tasks);
+            r.immediate_tasks.extend_from_slice(&next);
         }
 
         if to_run_now.capacity() > 1024 * 128 {

@@ -106,16 +106,7 @@ impl LayerName {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let mut first = true;
-        for name in self.v.slice() {
-            if first {
-                first = false;
-            } else {
-                dest.write_char(b'.')?;
-            }
-            dest.serialize_identifier(name)?;
-        }
-        Ok(())
+        dest.write_separated(self.v.slice(), |d| d.write_char(b'.'), |d, name| d.serialize_identifier(name))
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {

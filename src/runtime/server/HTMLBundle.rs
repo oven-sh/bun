@@ -106,7 +106,7 @@ const _: () = {
             // `this` is a live `IntrusiveRc::new`-boxed allocation; ownership
             // of one ref transfers to the C++ wrapper (deref'd via
             // `HTMLBundleClass__finalize` → `finalize()`).
-            __create(global.as_ptr(), this)
+            __create(global.as_mut_ptr(), this)
         }
     }
 };

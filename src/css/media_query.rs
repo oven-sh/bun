@@ -595,53 +595,48 @@ impl FeatureIdTrait for MediaFeatureId {
         // Zig: `css.DefineEnumProperty(@This()).parse` — case-insensitive
         // ASCII tag-name table. No dependency on the gated `values/` lattice.
         use MediaFeatureId::*;
-        macro_rules! lookup {
-            ($($lit:literal => $variant:ident),* $(,)?) => {{
-                $(if s.eq_ignore_ascii_case($lit) { return Some($variant); })*
-                None
-            }};
-        }
-        lookup! {
-            b"width" => Width,
-            b"height" => Height,
-            b"aspect-ratio" => AspectRatio,
-            b"orientation" => Orientation,
-            b"overflow-block" => OverflowBlock,
-            b"overflow-inline" => OverflowInline,
-            b"horizontal-viewport-segments" => HorizontalViewportSegments,
-            b"vertical-viewport-segments" => VerticalViewportSegments,
-            b"display-mode" => DisplayMode,
-            b"resolution" => Resolution,
-            b"scan" => Scan,
-            b"grid" => Grid,
-            b"update" => Update,
-            b"environment-blending" => EnvironmentBlending,
-            b"color" => Color,
-            b"color-index" => ColorIndex,
-            b"monochrome" => Monochrome,
-            b"color-gamut" => ColorGamut,
-            b"dynamic-range" => DynamicRange,
-            b"inverted-colors" => InvertedColors,
-            b"pointer" => Pointer,
-            b"hover" => Hover,
-            b"any-pointer" => AnyPointer,
-            b"any-hover" => AnyHover,
-            b"nav-controls" => NavControls,
-            b"video-color-gamut" => VideoColorGamut,
-            b"video-dynamic-range" => VideoDynamicRange,
-            b"scripting" => Scripting,
-            b"prefers-reduced-motion" => PrefersReducedMotion,
-            b"prefers-reduced-transparency" => PrefersReducedTransparency,
-            b"prefers-contrast" => PrefersContrast,
-            b"forced-colors" => ForcedColors,
-            b"prefers-color-scheme" => PrefersColorScheme,
-            b"prefers-reduced-data" => PrefersReducedData,
-            b"device-width" => DeviceWidth,
-            b"device-height" => DeviceHeight,
-            b"device-aspect-ratio" => DeviceAspectRatio,
-            b"-webkit-device-pixel-ratio" => WebkitDevicePixelRatio,
-            b"-moz-device-pixel-ratio" => MozDevicePixelRatio,
-        }
+        crate::match_ignore_ascii_case! { s, {
+            b"width" => Some(Width),
+            b"height" => Some(Height),
+            b"aspect-ratio" => Some(AspectRatio),
+            b"orientation" => Some(Orientation),
+            b"overflow-block" => Some(OverflowBlock),
+            b"overflow-inline" => Some(OverflowInline),
+            b"horizontal-viewport-segments" => Some(HorizontalViewportSegments),
+            b"vertical-viewport-segments" => Some(VerticalViewportSegments),
+            b"display-mode" => Some(DisplayMode),
+            b"resolution" => Some(Resolution),
+            b"scan" => Some(Scan),
+            b"grid" => Some(Grid),
+            b"update" => Some(Update),
+            b"environment-blending" => Some(EnvironmentBlending),
+            b"color" => Some(Color),
+            b"color-index" => Some(ColorIndex),
+            b"monochrome" => Some(Monochrome),
+            b"color-gamut" => Some(ColorGamut),
+            b"dynamic-range" => Some(DynamicRange),
+            b"inverted-colors" => Some(InvertedColors),
+            b"pointer" => Some(Pointer),
+            b"hover" => Some(Hover),
+            b"any-pointer" => Some(AnyPointer),
+            b"any-hover" => Some(AnyHover),
+            b"nav-controls" => Some(NavControls),
+            b"video-color-gamut" => Some(VideoColorGamut),
+            b"video-dynamic-range" => Some(VideoDynamicRange),
+            b"scripting" => Some(Scripting),
+            b"prefers-reduced-motion" => Some(PrefersReducedMotion),
+            b"prefers-reduced-transparency" => Some(PrefersReducedTransparency),
+            b"prefers-contrast" => Some(PrefersContrast),
+            b"forced-colors" => Some(ForcedColors),
+            b"prefers-color-scheme" => Some(PrefersColorScheme),
+            b"prefers-reduced-data" => Some(PrefersReducedData),
+            b"device-width" => Some(DeviceWidth),
+            b"device-height" => Some(DeviceHeight),
+            b"device-aspect-ratio" => Some(DeviceAspectRatio),
+            b"-webkit-device-pixel-ratio" => Some(WebkitDevicePixelRatio),
+            b"-moz-device-pixel-ratio" => Some(MozDevicePixelRatio),
+            _ => None,
+        }}
     }
 }
 
@@ -665,15 +660,7 @@ impl MediaList {
         if self.media_queries.is_empty() {
             return dest.write_str("not all");
         }
-        let mut first = true;
-        for query in &self.media_queries {
-            if !first {
-                dest.delim(b',', false)?;
-            }
-            first = false;
-            query.to_css(dest)?;
-        }
-        Ok(())
+        dest.write_comma_separated(&self.media_queries, |d, q| q.to_css(d))
     }
 }
 

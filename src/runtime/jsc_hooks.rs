@@ -122,6 +122,43 @@ pub fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
+/// Recover this thread's `timer::All` heap as a raw pointer.
+///
+/// PORT NOTE (b2-cycle): `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
+/// the real `All` lives in [`RuntimeState::timer`] until that slot widens.
+/// Null only before [`init_runtime_state`] has run (e.g. `bun_jsc` unit tests
+/// with no high tier, or `Bun__Timer__getNextID` racing init).
+///
+/// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
+/// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
+/// per-field under `// SAFETY:` without forming an aliased `&mut All` while
+/// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
+#[inline]
+pub fn timer_all() -> *mut timer::All {
+    let state = runtime_state();
+    if state.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: `state` is the live boxed `RuntimeState` for this thread;
+    // `timer` is an embedded field at a stable address for the VM lifetime.
+    unsafe { ptr::addr_of_mut!((*state).timer) }
+}
+
+/// [`timer_all`] but `&'static mut` — only valid once `RuntimeState` is
+/// installed (true for every JS host-call entry point) and only for callers
+/// that are NOT themselves fields of `All` (`Subprocess`, `DevServer`,
+/// `cron`, sockets). Single JS thread + boxed-for-process-lifetime ⇒ the
+/// borrow is sound; callers must not hold it across a JS re-entry that could
+/// itself call this (every use is single-expression).
+#[inline]
+pub fn timer_all_mut() -> &'static mut timer::All {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "RuntimeState not installed");
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread so no concurrent `&mut`.
+    unsafe { &mut (*state).timer }
+}
+
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
 /// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
 /// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
@@ -5006,7 +5043,7 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
             ..Default::default()
         }),
         mime_type: bun_http_types::MimeType::NONE,
-        ref_count: core::sync::atomic::AtomicU32::new(2),
+        ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
         is_all_ascii: None,
     });
     bun_core::heap::into_raw(store).cast()

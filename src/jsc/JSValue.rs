@@ -85,7 +85,9 @@ impl JSValue {
     /// context through `Promise.then` reaction arguments.
     #[inline]
     pub fn from_ptr_address(addr: usize) -> JSValue {
-        Self::js_number(addr as f64)
+        // Matches Zig `fromPtrAddress` → `jsDoubleNumber` (always double-encoded;
+        // never the int32 fast path), so `as_ptr_address` round-trips bit-exact.
+        Self::js_double_number(addr as f64)
     }
 
     /// `JSValue.asPtrAddress` (JSValue.zig) — inverse of `from_ptr_address`:
@@ -280,6 +282,15 @@ impl JSValue {
         }
         JSC__JSValue__isBigInt32(self)
     }
+    /// `JSValue.isHeapBigInt()` (JSValue.zig:1070) — true iff this is a
+    /// heap-allocated `JSBigInt` cell. Distinct from [`is_big_int`], which
+    /// also returns `true` for the packed `BigInt32` immediate.
+    #[inline] pub fn is_heap_big_int(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isHeapBigInt(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isHeapBigInt(self)
+    }
     /// `JSValue.isBigIntInInt64Range` (JSValue.zig:40) — `self` must already be
     /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline] pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
@@ -428,6 +439,15 @@ impl JSValue {
     }
     pub fn js_number(n: f64) -> JSValue {
         JSC__JSValue__jsNumberFromDouble(n)
+    }
+    /// `JSValue::jsDoubleNumber` (JSCJSValueInlines.h) — boxes an `f64`
+    /// *always* as a double-encoded immediate (no int32 fast path). Required
+    /// when the consumer round-trips through `f64::to_bits` / `as_number` and
+    /// must see the original bit pattern (e.g. [`from_ptr_address`]).
+    #[inline]
+    pub fn js_double_number(n: f64) -> JSValue {
+        const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
+        JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__jsEmptyString(global)
@@ -1165,6 +1185,38 @@ impl JSValue {
     /// `&ZigString`, `bun.String`, or `&bun.String` exactly as in Zig.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
+    }
+    /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
+    /// `undefined`) when `None`. Collapses the open-coded
+    /// `if let Some(v) = field { obj.put(g, key, v.into()) }` used when
+    /// serializing optional struct fields to a JS object (S3 list-objects,
+    /// SQL error options, etc.).
+    #[inline]
+    pub fn put_optional<K: PutKey, V: Into<JSValue>>(
+        self,
+        global: &JSGlobalObject,
+        key: K,
+        val: Option<V>,
+    ) {
+        if let Some(v) = val {
+            self.put(global, key, v.into());
+        }
+    }
+    /// [`put_optional`] specialized for `Option<impl AsRef<[u8]>>` → JS string
+    /// via [`bun_string_jsc::create_utf8_for_js`]. The 7-line
+    /// `if let Some(s) = field { obj.put(g, key, create_utf8_for_js(g, s)?) }`
+    /// pattern collapses to a single fallible call.
+    #[inline]
+    pub fn put_optional_utf8<K: PutKey, S: AsRef<[u8]>>(
+        self,
+        global: &JSGlobalObject,
+        key: K,
+        val: Option<S>,
+    ) -> JsResult<()> {
+        if let Some(s) = val {
+            self.put(global, key, bun_string_jsc::create_utf8_for_js(global, s.as_ref())?);
+        }
+        Ok(())
     }
     /// `JSValue.deleteProperty` (JSValue.zig:334) — delete an own property by name.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {

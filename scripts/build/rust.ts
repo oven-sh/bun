@@ -754,10 +754,20 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   // (sibling of rust-lld in `${sysroot}/lib/rustlib/<host>/bin/`); fall back
   // to clang's sibling-of-ar otherwise. The script itself further falls back
   // to PATH `nm` if neither path exists.
-  // rust-lld and llvm-nm are siblings in `${sysroot}/lib/rustlib/<host>/bin/`,
-  // so one dirname (not two — that was the bug at #53609).
-  const rustNm = cfg.rustLld ? join(dirname(cfg.rustLld), "llvm-nm") : undefined;
-  const nm = rustNm && existsSync(rustNm) ? rustNm : join(dirname(cfg.ar), "llvm-nm");
+  //
+  // rust-lld lives at `${sysroot}/lib/rustlib/<host>/bin/gcc-ld/ld.lld`;
+  // llvm-nm is one dir up at `${sysroot}/lib/rustlib/<host>/bin/llvm-nm`.
+  // `cfg.rustLld` is only set when the gcc-ld component is present, so also
+  // probe via `cfg.rustSysroot` directly — the bitcode mismatch happens
+  // regardless of whether rust-lld is the linker (#53609, #53656). 0ca9f24b
+  // wrongly dropped the second `dirname` (rust-lld is in `gcc-ld/`); reverted.
+  const rustNmCandidates = [
+    cfg.rustLld ? join(dirname(dirname(cfg.rustLld)), "llvm-nm") : undefined,
+    cfg.rustSysroot && cfg.host.rustTriple
+      ? join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin", "llvm-nm")
+      : undefined,
+  ].filter((p): p is string => p !== undefined && existsSync(p));
+  const nm = rustNmCandidates[0] ?? join(dirname(cfg.ar), "llvm-nm");
   // The `.llvm.<N>` ThinLTO local-promotion suffix and the post-ICF C++
   // ctor/dtor representative are only observable *after* the link, so the
   // resolver also reads the *previous* link's `-Wl,-Map=` output. Both are

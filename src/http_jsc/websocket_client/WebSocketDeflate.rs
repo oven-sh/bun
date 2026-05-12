@@ -245,20 +245,16 @@ impl PerMessageDeflate {
             u32::try_from(in_with_trailer.len()).expect("unreachable");
 
         loop {
-            out.reserve(COMPRESSION_BUFFER_SIZE);
-            // PORT NOTE: reshaped for borrowck — capture spare ptr/len before handing to zlib.
-            let spare = out.spare_capacity_mut();
-            let spare_len = spare.len();
-            self.decompress_stream.next_out = spare.as_mut_ptr().cast::<u8>();
-            self.decompress_stream.avail_out = u32::try_from(spare_len).expect("unreachable");
-
-            // SAFETY: decompress_stream was initialized by inflateInit2_ in init();
-            // next_in is valid for avail_in bytes (in_with_trailer kept alive on stack);
-            // next_out is valid for avail_out bytes (spare capacity of `out`).
-            let res = unsafe { zlib::inflate(&raw mut self.decompress_stream, zlib::FlushValue::NoFlush) };
-            let written = spare_len - self.decompress_stream.avail_out as usize;
-            // SAFETY: zlib initialized `written` bytes at the start of spare capacity.
-            unsafe { out.set_len(out.len() + written) };
+            let stream = &mut self.decompress_stream;
+            // SAFETY: `stream` was initialized by inflateInit2_ in init();
+            // next_in is valid for avail_in bytes (in_with_trailer kept alive on
+            // stack); next_out is valid for spare.len() bytes (spare capacity of `out`).
+            let res = unsafe { bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
+                stream.next_out = spare.as_mut_ptr();
+                stream.avail_out = spare.len() as u32;
+                let res = zlib::inflate(&raw mut *stream, zlib::FlushValue::NoFlush);
+                (spare.len() - stream.avail_out as usize, res)
+            }) };
 
             // Check for decompression bomb
             if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
@@ -294,20 +290,16 @@ impl PerMessageDeflate {
         self.compress_stream.avail_in = u32::try_from(in_buf.len()).expect("unreachable");
 
         loop {
-            out.reserve(COMPRESSION_BUFFER_SIZE);
-            // PORT NOTE: reshaped for borrowck — capture spare ptr/len before handing to zlib.
-            let spare = out.spare_capacity_mut();
-            let spare_len = spare.len();
-            self.compress_stream.next_out = spare.as_mut_ptr().cast::<u8>();
-            self.compress_stream.avail_out = u32::try_from(spare_len).expect("unreachable");
-
-            // SAFETY: compress_stream was initialized by deflateInit2_ in init();
+            let stream = &mut self.compress_stream;
+            // SAFETY: `stream` was initialized by deflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_buf borrowed for this call);
-            // next_out is valid for avail_out bytes (spare capacity of `out`).
-            let res = unsafe { zlib::deflate(&raw mut self.compress_stream, zlib::FlushValue::SyncFlush) };
-            let written = spare_len - self.compress_stream.avail_out as usize;
-            // SAFETY: zlib initialized `written` bytes at the start of spare capacity.
-            unsafe { out.set_len(out.len() + written) };
+            // next_out is valid for spare.len() bytes (spare capacity of `out`).
+            let res = unsafe { bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
+                stream.next_out = spare.as_mut_ptr();
+                stream.avail_out = spare.len() as u32;
+                let res = zlib::deflate(&raw mut *stream, zlib::FlushValue::SyncFlush);
+                (spare.len() - stream.avail_out as usize, res)
+            }) };
             if res != zlib::ReturnCode::Ok {
                 return Err(CompressError::DeflateFailed);
             }

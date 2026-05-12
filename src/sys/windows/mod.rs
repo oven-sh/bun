@@ -3486,56 +3486,14 @@ pub use bun_windows_sys::externs::AssignProcessToJobObject;
 
 pub use bun_windows_sys::externs::ResumeThread;
 
-#[repr(C)]
-pub struct JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
-    pub CompletionKey: *mut c_void, // PVOID
-    pub CompletionPort: HANDLE,
-}
-
-#[repr(C)]
-pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-    pub BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
-    /// Reserved
-    pub IoInfo: IO_COUNTERS,
-    pub ProcessMemoryLimit: usize,
-    pub JobMemoryLimit: usize,
-    pub PeakProcessMemoryUsed: usize,
-    pub PeakJobMemoryUsed: usize,
-}
-
-#[repr(C)]
-pub struct IO_COUNTERS {
-    pub ReadOperationCount: ULONGLONG,
-    pub WriteOperationCount: ULONGLONG,
-    pub OtherOperationCount: ULONGLONG,
-    pub ReadTransferCount: ULONGLONG,
-    pub WriteTransferCount: ULONGLONG,
-    pub OtherTransferCount: ULONGLONG,
-}
-
-#[repr(C)]
-pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
-    pub PerProcessUserTimeLimit: LARGE_INTEGER,
-    pub PerJobUserTimeLimit: LARGE_INTEGER,
-    pub LimitFlags: DWORD,
-    pub MinimumWorkingSetSize: usize,
-    pub MaximumWorkingSetSize: usize,
-    pub ActiveProcessLimit: DWORD,
-    pub Affinity: *mut ULONG,
-    pub PriorityClass: DWORD,
-    pub SchedulingClass: DWORD,
-}
-// SAFETY: `#[repr(C)]` POD — integers + one raw pointer (null-valid). Nested
-// in JOBOBJECT_EXTENDED_LIMIT_INFORMATION which is zero-init before
-// `SetInformationJobObject`.
-unsafe impl bun_core::ffi::Zeroable for JOBOBJECT_BASIC_LIMIT_INFORMATION {}
-// SAFETY: `#[repr(C)]` POD — six u64 counters.
-unsafe impl bun_core::ffi::Zeroable for IO_COUNTERS {}
-// SAFETY: `#[repr(C)]` POD — nested Zeroable + usize fields.
-unsafe impl bun_core::ffi::Zeroable for JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
-
-pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
-pub const JobObjectExtendedLimitInformation: DWORD = 9;
+// Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions
+// live in bun_windows_sys::externs; Zeroable impls for these nominal types
+// live in bun_core/lib.rs (orphan-rule home). Do NOT re-declare here.
+pub use bun_windows_sys::externs::{
+    IO_COUNTERS, JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
+    JobObjectExtendedLimitInformation,
+};
 
 pub use bun_windows_sys::externs::SetInformationJobObject;
 

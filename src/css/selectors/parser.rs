@@ -1293,14 +1293,11 @@ impl<'a> SelectorParser<'a> {
 
     /// Whether the given function name is an alias for the `:is()` function.
     fn parse_any_prefix(&self, name: &[u8]) -> Option<css::VendorPrefix> {
-        // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getAnyCase`.
-        if strings::eql_case_insensitive_ascii_check_length(name, b"-webkit-any") {
-            return Some(css::VendorPrefix::WEBKIT);
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"-moz-any") {
-            return Some(css::VendorPrefix::MOZ);
-        }
-        None
+        crate::match_ignore_ascii_case! { name, {
+            b"-webkit-any" => Some(css::VendorPrefix::WEBKIT),
+            b"-moz-any" => Some(css::VendorPrefix::MOZ),
+            _ => None,
+        }}
     }
 
     pub fn parse_non_ts_pseudo_class(
@@ -3425,11 +3422,10 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
 /// double-colon syntax, which can be used for all pseudo-elements).
 pub fn is_css2_pseudo_element(name: &[u8]) -> bool {
     // ** Do not add to this list! **
-    // TODO: todo_stuff.match_ignore_ascii_case
-    strings::eql_case_insensitive_ascii_check_length(name, b"before")
-        || strings::eql_case_insensitive_ascii_check_length(name, b"after")
-        || strings::eql_case_insensitive_ascii_check_length(name, b"first-line")
-        || strings::eql_case_insensitive_ascii_check_length(name, b"first-letter")
+    crate::match_ignore_ascii_case! { name, {
+        b"before" | b"after" | b"first-line" | b"first-letter" => true,
+        _ => false,
+    }}
 }
 
 /// Parses one compound selector suitable for nested stuff like :-moz-any, etc.

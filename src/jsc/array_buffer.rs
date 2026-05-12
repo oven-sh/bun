@@ -962,22 +962,12 @@ impl MarkedArrayBuffer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Deallocators (exported to C++)
+// Deallocators
 // ──────────────────────────────────────────────────────────────────────────
 
-#[unsafe(no_mangle)]
-pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c_void) {
-    // zig's memory allocator interface won't work here
-    // mimalloc knows the size of things
-    // but we don't
-    // if cfg!(debug_assertions) {
-    //     debug_assert!(mimalloc::mi_check_owned(bytes) ||
-    //         mimalloc::mi_heap_check_owned(jsc::VirtualMachine::get().arena.heap.unwrap(), bytes));
-    // }
-
-    // SAFETY: bytes was allocated by mimalloc (default_allocator); mi_free is null-safe.
-    unsafe { mimalloc::mi_free(bytes) };
-}
+// `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
+#[allow(non_upper_case_globals)]
+pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
 // LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a
 // `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`

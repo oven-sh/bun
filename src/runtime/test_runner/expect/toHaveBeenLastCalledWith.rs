@@ -12,33 +12,14 @@ pub fn to_have_been_last_called_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let this_value = frame.this();
     let arguments = frame.arguments();
-
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
-    // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-    let this: &Expect = *this;
-
-    let value: JSValue =
-        this.get_value(global, this_value, "toHaveBeenLastCalledWith", "<green>...expected<r>")?;
-
-    this.increment_expect_call_counter();
-
-    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
-    if !calls.js_type().is_array() {
-        let mut formatter = super::make_formatter(global);
-        return this.throw(
-            global,
-            get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false),
-            format_args!(
-                "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
-                value.to_fmt(&mut formatter),
-            ),
-        );
-    }
+    let (this, calls, value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveBeenLastCalledWith",
+        "<green>...expected<r>",
+        super::mock::MockKind::CallsWithSig,
+    )?;
 
     let total_calls: u32 = calls.get_length(global)? as u32;
     let mut last_call_value: JSValue = JSValue::ZERO;

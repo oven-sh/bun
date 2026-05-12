@@ -10,7 +10,7 @@ use bun_sourcemap::{
     self as sourcemap, internal_source_map, line_offset_table, LineOffsetTable,
     LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
 };
-use bun_str::{self, strings, ZigStringSlice};
+use bun_core::{self, strings, ZigStringSlice};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -788,8 +788,8 @@ impl ByteRangeMapping {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ByteRangeMapping__generate(
-    str_: bun_str::String,
-    source_contents_str: bun_str::String,
+    str_: bun_core::String,
+    source_contents_str: bun_core::String,
     source_id: i32,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
@@ -815,7 +815,7 @@ pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__find(path: bun_str::String) -> Option<NonNull<ByteRangeMapping>> {
+pub extern "C" fn ByteRangeMapping__find(path: bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;
@@ -829,7 +829,7 @@ pub extern "C" fn ByteRangeMapping__find(path: bun_str::String) -> Option<NonNul
 #[unsafe(no_mangle)]
 pub extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
-    source_url: bun_str::String,
+    source_url: bun_core::String,
     blocks_ptr: *const BasicBlockRange,
     blocks_len: usize,
     function_start_offset: usize,

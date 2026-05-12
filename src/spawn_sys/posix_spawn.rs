@@ -292,6 +292,26 @@ pub mod posix_spawn {
         pub status: u32,
     }
 
+    /// Map a `posix_spawn*` errno to `Result<(), Error>`. Shared across all
+    /// `posix_spawnattr_*` / `posix_spawn_file_actions_*` wrappers — they only
+    /// differ in which errnos are *documented* impossible for a given call.
+    /// Those were previously per-site `unreachable!()`; here they become error
+    /// returns, which widens the contract without changing observable behaviour
+    /// for any errno the libc calls actually produce. `INVAL` stays a panic: it
+    /// indicates a corrupted attr/actions object, i.e. a Bun bug.
+    #[cfg(target_os = "macos")]
+    #[inline]
+    fn spawn_errno(e: Errno) -> Result<(), Error> {
+        match e {
+            Errno::SUCCESS => Ok(()),
+            Errno::NOMEM => Err(err!("SystemResources")),
+            Errno::BADF => Err(err!("InvalidFileDescriptor")),
+            Errno::NAMETOOLONG => Err(err!("NameTooLong")),
+            Errno::INVAL => unreachable!(), // attr/actions object is invalid
+            e => Err(unexpected_errno(e)),
+        }
+    }
+
     // ─── libc posix_spawn wrappers ───────────────────────────────────────────
     // `PosixSpawnAttr`/`PosixSpawnActions` wrap `libc::posix_spawn*` directly.
     // On Linux/FreeBSD the runtime path goes through `bun_spawn` (vfork-based
@@ -311,28 +331,16 @@ pub mod posix_spawn {
         pub fn init() -> Result<PosixSpawnAttr, Error> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
             // SAFETY: posix_spawnattr_init writes into attr on SUCCESS
-            match errno(unsafe { system::posix_spawnattr_init(attr.as_mut_ptr()) }) {
-                Errno::SUCCESS => Ok(PosixSpawnAttr {
-                    // SAFETY: SUCCESS guarantees initialization
-                    attr: unsafe { attr.assume_init() },
-                    detached: false,
-                    pty_slave_fd: -1,
-                }),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::INVAL => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            spawn_errno(errno(unsafe { system::posix_spawnattr_init(attr.as_mut_ptr()) }))?;
+            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
+            Ok(PosixSpawnAttr { attr: unsafe { attr.assume_init() }, detached: false, pty_slave_fd: -1 })
         }
 
         pub fn get(&self) -> Result<u16, Error> {
             let mut flags: c_short = 0;
             // SAFETY: self.attr is a live posix_spawnattr_t
-            match errno(unsafe { system::posix_spawnattr_getflags(&self.attr, &mut flags) }) {
-                // Zig: `@as(u16, @bitCast(flags))`
-                Errno::SUCCESS => Ok(flags as u16),
-                Errno::INVAL => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            spawn_errno(errno(unsafe { system::posix_spawnattr_getflags(&self.attr, &mut flags) }))?;
+            Ok(flags as u16) // Zig: `@as(u16, @bitCast(flags))`
         }
 
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
@@ -340,11 +348,7 @@ pub mod posix_spawn {
             // signed/unsigned is the bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
-            match errno(unsafe { system::posix_spawnattr_setflags(&mut self.attr, flags_s) }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::INVAL => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            spawn_errno(errno(unsafe { system::posix_spawnattr_setflags(&mut self.attr, flags_s) }))
         }
 
         pub fn reset_signals(&mut self) -> Result<(), Error> {
@@ -381,15 +385,9 @@ pub mod posix_spawn {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
-            match errno(unsafe { system::posix_spawn_file_actions_init(actions.as_mut_ptr()) }) {
-                Errno::SUCCESS => Ok(PosixSpawnActions {
-                    // SAFETY: SUCCESS guarantees initialization
-                    actions: unsafe { actions.assume_init() },
-                }),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::INVAL => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            spawn_errno(errno(unsafe { system::posix_spawn_file_actions_init(actions.as_mut_ptr()) }))?;
+            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
+            Ok(PosixSpawnActions { actions: unsafe { actions.assume_init() } })
         }
 
         pub fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: mode_t) -> Result<(), Error> {
@@ -407,7 +405,7 @@ pub mod posix_spawn {
             // Zig: `@as(c_int, @bitCast(flags))`
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
-            match errno(unsafe {
+            spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_addopen(
                     &mut self.actions,
                     fd.native(),
@@ -415,28 +413,14 @@ pub mod posix_spawn {
                     flags_c,
                     mode,
                 )
-            }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::BADF => Err(err!("InvalidFileDescriptor")),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::NAMETOOLONG => Err(err!("NameTooLong")),
-                Errno::INVAL => unreachable!(), // the value of file actions is invalid
-                e => Err(unexpected_errno(e)),
-            }
+            }))
         }
 
         pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
-            match errno(unsafe {
+            spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
-            }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::BADF => Err(err!("InvalidFileDescriptor")),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::INVAL => unreachable!(), // the value of file actions is invalid
-                Errno::NAMETOOLONG => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            }))
         }
 
         pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
@@ -445,33 +429,19 @@ pub mod posix_spawn {
             }
 
             // SAFETY: self.actions is live
-            match errno(unsafe {
+            spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_adddup2(&mut self.actions, fd.native(), newfd.native())
-            }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::BADF => Err(err!("InvalidFileDescriptor")),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::INVAL => unreachable!(), // the value of file actions is invalid
-                Errno::NAMETOOLONG => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            }))
         }
 
         pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
-            match errno(unsafe {
+            spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
                     &mut self.actions,
                     fd.native(),
                 )
-            }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::BADF => Err(err!("InvalidFileDescriptor")),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::INVAL => unreachable!(), // the value of file actions is invalid
-                Errno::NAMETOOLONG => unreachable!(),
-                e => Err(unexpected_errno(e)),
-            }
+            }))
         }
 
         pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
@@ -482,19 +452,12 @@ pub mod posix_spawn {
         // deliberately not pub
         fn chdir_z(&mut self, path: &CStr) -> Result<(), Error> {
             // SAFETY: self.actions is live; path is NUL-terminated
-            match errno(unsafe {
+            spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
                     &mut self.actions,
                     path.as_ptr(),
                 )
-            }) {
-                Errno::SUCCESS => Ok(()),
-                Errno::NOMEM => Err(err!("SystemResources")),
-                Errno::NAMETOOLONG => Err(err!("NameTooLong")),
-                Errno::BADF => unreachable!(),
-                Errno::INVAL => unreachable!(), // the value of file actions is invalid
-                e => Err(unexpected_errno(e)),
-            }
+            }))
         }
     }
 

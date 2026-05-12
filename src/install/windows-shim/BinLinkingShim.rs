@@ -274,7 +274,7 @@ impl<'a> Shebang<'a> {
     /// std.fs.path.extension but utf16
     pub fn extension_w(path: &[u16]) -> &[u16] {
         let filename = Self::basename_w(path);
-        let Some(index) = last_index_of_scalar_u16(filename, b'.' as u16) else {
+        let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
             return &path[path.len()..];
         };
         if index == 0 {
@@ -385,11 +385,6 @@ impl<'a> Shebang<'a> {
     pub fn encoded_length(&self) -> usize {
         (b" ".len() + self.utf16_len as usize) * size_of::<u16>() + size_of::<u32>() * 2
     }
-}
-
-#[inline]
-fn last_index_of_scalar_u16(slice: &[u16], value: u16) -> Option<usize> {
-    slice.iter().rposition(|&c| c == value)
 }
 
 pub struct BinLinkingShim<'a> {
@@ -532,20 +527,9 @@ pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
     }
 
     Some(Decoded {
-        bin_path: reinterpret_slice_u16(bin_path_u8),
+        bin_path: bun_core::cast_slice::<u8, u16>(bin_path_u8),
         flags,
     })
-}
-
-#[inline]
-fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
-    // Zig's `bun.reinterpretSlice` uses `@alignCast(bytes.ptr)` which runtime-checks
-    // alignment in safe builds. `bytemuck::cast_slice` performs the same alignment
-    // + even-length check and panics on mismatch — no `unsafe` needed.
-    // `loose_decode`'s caller (`PackageInstall::is_dangling_windows_bin_link`)
-    // forwards an externally-supplied `&mut [u8]` with no alignment guarantee, so
-    // the panic-on-misalign behaviour matches the previous explicit `assert!`.
-    bytemuck::cast_slice(bytes)
 }
 } // mod host
 

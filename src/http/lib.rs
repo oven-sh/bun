@@ -530,23 +530,10 @@ pub trait SocketTimeout {
 
 // lowercase hash header names so that we can be sure
 pub fn hash_header_name(name: &[u8]) -> u64 {
-    // TODO(port): spec http.zig:781 uses `std.hash.Wyhash` (NOT Wyhash11 — see
-    // PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
-    // this alias once `bun_wyhash::Wyhash` (std algorithm) lands.
-    use bun_wyhash::Wyhash11 as Wyhash;
-    let mut hasher = Wyhash::init(0);
-    let mut remain = name;
-    // TODO(port): @sizeOf(@TypeOf(hasher.buf)) — Wyhash internal buffer size
-    const WYHASH_BUF_LEN: usize = 48;
-    let mut buf = [0u8; WYHASH_BUF_LEN];
-
-    while !remain.is_empty() {
-        let end = WYHASH_BUF_LEN.min(remain.len());
-        hasher.update(bun_core::strings::copy_lowercase_if_needed(&remain[0..end], &mut buf));
-        remain = &remain[end..];
-    }
-
-    hasher.final_()
+    // Also fixes the Wyhash11→Wyhash port bug noted in the deleted TODO; safe —
+    // `hash_header_const` at :809 is computed by this same fn at runtime, no
+    // persisted hashes.
+    bun_wyhash::hash_ascii_lowercase(0, name)
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
@@ -748,7 +735,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::ArrayHashMap;
 use bun_core::{FeatureFlags, Global, Output, err};
-use bun_core::{strings, OwnedString, String as BunString, Tag as BunStringTag};
+use bun_core::{immutable as strings, OwnedString, String as BunString, Tag as BunStringTag};
 use bun_core::StringBuilder;
 use bun_uws as uws;
 // TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
@@ -1945,10 +1932,9 @@ impl<'a> HTTPClient<'a> {
     /// `&self` borrow used to compute the call's other arguments.
     /// HTTP-thread-only — sole live `&mut`. Centralises the raw
     /// `(*ctx).release_socket(..)` deref open-coded at the three
-    /// `release_socket` sites and the `resolve_pending_h2` upgrade, and reused
-    /// by `h2::ClientSession` for its `ctx` backref (same set-once invariant).
+    /// `release_socket` sites and the `resolve_pending_h2` upgrade.
     #[inline]
-    pub(crate) fn ssl_ctx_mut<'c, const IS_SSL: bool>(
+    fn ssl_ctx_mut<'c, const IS_SSL: bool>(
         ctx: *mut GenHttpContext<IS_SSL>,
     ) -> &'c mut GenHttpContext<IS_SSL> {
         // SAFETY: see INVARIANT above.
@@ -2125,16 +2111,15 @@ impl<'a> HTTPClient<'a> {
                     header_count += 1;
                 }
             } else {
-                use std::io::Write;
-                let buf_len = self.request_content_len_buf.len();
-                let buf_ptr = self.request_content_len_buf.as_ptr();
-                let mut cursor = &mut self.request_content_len_buf[..];
-                let value: &[u8] = match write!(cursor, "{}", body_len) {
-                    Ok(()) => {
-                        let written = buf_len - cursor.len();
-                        // SAFETY: borrows self.request_content_len_buf which lives for self
-                        unsafe { bun_core::ffi::slice(buf_ptr, written) }
-                    }
+                // Zig http.zig:1051 — `std.fmt.bufPrint(&buf, "{d}", .{body_len}) catch "0"`.
+                // 11-byte buf vs 64-bit usize: must fall back to "0" on
+                // overflow (same latent bug as Zig), NOT panic.
+                let value: &[u8] = match bun_core::fmt::buf_print(
+                    &mut self.request_content_len_buf,
+                    format_args!("{body_len}"),
+                ) {
+                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
+                    Ok(s) => unsafe { bun_ptr::detach_lifetime(s) },
                     Err(_) => b"0",
                 };
                 request_headers_buf[header_count] =
@@ -4053,25 +4038,8 @@ impl<'a> HTTPClient<'a> {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // byte-level parse — header.value() is network bytes, not &str
-                    let content_length = 'cl: {
-                        if header.value().is_empty() {
-                            break 'cl 0;
-                        }
-                        let mut n: usize = 0;
-                        for &b in header.value() {
-                            if !b.is_ascii_digit() {
-                                break 'cl 0;
-                            }
-                            n = match n
-                                .checked_mul(10)
-                                .and_then(|n| n.checked_add((b - b'0') as usize))
-                            {
-                                Some(v) => v,
-                                None => break 'cl 0,
-                            };
-                        }
-                        n
-                    };
+                    let content_length =
+                        bun_core::parse_unsigned::<usize>(header.value(), 10).unwrap_or(0);
                     if self.method.has_body() {
                         self.state.content_length = Some(content_length);
                     } else {

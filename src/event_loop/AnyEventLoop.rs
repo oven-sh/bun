@@ -67,6 +67,13 @@ impl<'a> AnyEventLoop<'a> {
         self.r#loop()
     }
 
+    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
+    /// Windows). See [`bun_io::uws_to_native`].
+    #[inline]
+    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
+        bun_io::uws_to_native(self.r#loop())
+    }
+
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -583,19 +590,21 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
-    /// Windows convenience: skip the `WindowsLoop` wrapper and return the
-    /// embedded `uv_loop_t*` directly. Exists because `loop_()` returns a raw
-    /// pointer and Rust forbids field access (`.uv_loop`) on `*mut T` without
-    /// an explicit deref — which would push every Windows call site into an
-    /// `unsafe` block just to project a field that is set once at loop
-    /// creation and never changes.
+    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
+    /// Windows). See [`bun_io::uws_to_native`] — collapses the per-site
+    /// `#[cfg(windows)]` `.uv_loop` projection that previously appeared at
+    /// every `BufferedReaderParent::loop_` impl.
+    #[inline]
+    pub fn native_loop(self) -> *mut bun_io::Loop {
+        bun_io::uws_to_native(self.r#loop())
+    }
+
+    /// Windows convenience alias for [`native_loop`](Self::native_loop)
+    /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(self) -> *mut bun_io::Loop {
-        // SAFETY: `r#loop()` returns the live us_loop allocated by
-        // `us_create_loop`; `uv_loop` is initialised in C before any Rust
-        // caller can observe the handle and is immutable thereafter.
-        unsafe { (*self.r#loop()).uv_loop }
+        self.native_loop()
     }
 
     /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors

@@ -83,17 +83,9 @@ impl core::fmt::Debug for GlobalRef {
 }
 
 impl JSGlobalObject {
-    /// Raw `*mut JSGlobalObject` for FFI. Sound for callees that mutate: the
-    /// `UnsafeCell` field gives `&self` interior-mutable provenance, so the
-    /// returned pointer carries write permission without laundering a
-    /// read-only borrow.
-    #[inline(always)]
-    pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
-        self._p.get().cast::<JSGlobalObject>()
-    }
-
-    /// Alias of [`as_mut_ptr`] kept for call-site readability where mutation
-    /// is not the intent (Zig passes `*JSGlobalObject` everywhere).
+    /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
+    /// call-site readability where mutation is not the intent (Zig passes
+    /// `*JSGlobalObject` everywhere).
     #[inline(always)]
     pub fn as_ptr(&self) -> *mut JSGlobalObject {
         self.as_mut_ptr()

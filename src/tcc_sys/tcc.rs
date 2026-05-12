@@ -344,12 +344,12 @@ impl State {
             let sym_ptr = buf.as_ptr().cast::<c_char>();
 
             // Zig: `std.fmt.bufPrintZ(&buf, "{d}", .{value}) catch unreachable`
-            let mut itoa = itoa::Buffer::new();
-            let digits = itoa.format(value);
+            let mut ibuf = bun_core::fmt::ItoaBuf::new();
+            let digits = bun_core::fmt::itoa(&mut ibuf, value);
             let val_off = name_len + 1;
             let val_end = val_off + digits.len();
             debug_assert!(val_end < buf.len());
-            buf[val_off..val_end].copy_from_slice(digits.as_bytes());
+            buf[val_off..val_end].copy_from_slice(digits);
             buf[val_end] = 0;
             let val_ptr = buf[val_off..].as_ptr().cast::<c_char>();
 

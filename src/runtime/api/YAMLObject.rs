@@ -4,36 +4,18 @@ use core::ffi::c_void;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_parsers::yaml::{YamlParseError, YAML};
-use bun_ast::ASTMemoryAllocator;
 use bun_jsc::{
-    self as jsc, wtf, CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator,
+    self as jsc, wtf, CallFrame, JSGlobalObject, JSPropertyIterator,
     JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer,
 };
 use bun_ast::{expr::Data as ExprData, Expr};
 use bun_core::{OwnedString, String as BunString};
 
-use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
-    let object = JSValue::create_empty_object(global_this, 2);
-    object.put(
-        global_this,
-        b"parse",
-        JSFunction::create(global_this, b"parse", __jsc_host_parse, 1, Default::default()),
-    );
-    object.put(
-        global_this,
-        b"stringify",
-        JSFunction::create(
-            global_this,
-            b"stringify",
-            __jsc_host_stringify,
-            3,
-            Default::default(),
-        ),
-    );
-
-    object
+    jsc::create_host_function_object(global_this, &[
+        ("parse", __jsc_host_parse, 1),
+        ("stringify", __jsc_host_stringify, 3),
+    ])
 }
 
 #[bun_jsc::host_fn]
@@ -993,62 +975,38 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // TODO(port): arena + ASTMemoryAllocator scope — feeds bun_js_parser AST allocations.
-    // Non-AST crate per PORTING.md but the YAML parser builds Expr nodes; keep arena semantics.
-    let arena = bun_alloc::Arena::new();
-    // PERF(port): was arena bulk-free — profile in Phase B
-
-    let mut ast_memory_allocator = ASTMemoryAllocator::new(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
-
-    let [input_value] = call_frame.arguments_as_array::<1>();
-
-    let input: BlobOrStringOrBuffer = 'input: {
-        if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
-            break 'input v;
-        }
-        let mut str = OwnedString::new(input_value.to_bun_string(global)?);
-        // PORT NOTE: Zig's `str.toSlice(allocator)` is a `SliceWithUnderlyingString`
-        // bundling the (possibly-transcoded) UTF-8 view with its backing
-        // `bun.String` ref. Rust's `to_slice` moves the +1 into `.underlying`
-        // and leaves `str` as `EMPTY`, so the `OwnedString` drop is a no-op —
-        // it exists to match Zig's `defer str.deref()` on the type level.
-        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
-    };
-
-    let mut log = bun_ast::Log::init();
-
-    let source = bun_ast::Source::init_path_string(b"input.yaml", input.slice());
-
-    let root = match YAML::parse(&source, &mut log, &arena) {
-        Ok(root) => root,
-        Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
-        Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
-        Err(YamlParseError::SyntaxError) => {
-            if !log.msgs.is_empty() {
-                let first_msg = &log.msgs[0];
-                let error_text = &first_msg.data.text;
+    // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
+    super::with_text_format_source(global, call_frame, b"input.yaml", true, false, |arena, log, source| {
+        let root = match YAML::parse(source, log, arena) {
+            Ok(root) => root,
+            Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+            Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+            Err(YamlParseError::SyntaxError) => {
+                if !log.msgs.is_empty() {
+                    let first_msg = &log.msgs[0];
+                    let error_text = &first_msg.data.text;
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                    )));
+                }
                 return Err(global.throw_value(global.create_syntax_error_instance(
-                    format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                    format_args!("YAML Parse error: Unable to parse YAML string"),
                 )));
             }
-            return Err(global.throw_value(global.create_syntax_error_instance(
-                format_args!("YAML Parse error: Unable to parse YAML string"),
-            )));
-        }
-    };
+        };
 
-    let mut ctx = ParserCtx {
-        seen_objects: HashMap::default(),
-        stack_check: StackCheck::init(),
-        global,
-        root,
-        result: JSValue::ZERO,
-    };
+        let mut ctx = ParserCtx {
+            seen_objects: HashMap::default(),
+            stack_check: StackCheck::init(),
+            global,
+            root,
+            result: JSValue::ZERO,
+        };
 
-    MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
+        MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
 
-    Ok(ctx.result)
+        Ok(ctx.result)
+    })
 }
 
 pub struct ParserCtx<'a> {

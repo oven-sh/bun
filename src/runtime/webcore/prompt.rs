@@ -1,5 +1,6 @@
 //! Implements prompt, alert, and confirm Web API
 
+use bun_collections::VecExt as _;
 use bun_core::Output;
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::zig_string::ZigString;
@@ -342,7 +343,7 @@ pub mod prompt {
                 return Ok(JSValue::NULL);
             }
 
-            input.reserve(4096usize.saturating_sub(input.len()));
+            input.ensure_total_capacity(4096);
             // Note: Zig returned `.null` on OOM here; Rust `reserve` aborts on OOM.
 
             if let Err(e2) =

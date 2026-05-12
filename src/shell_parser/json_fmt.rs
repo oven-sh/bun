@@ -24,26 +24,7 @@ use super::parse::SmolList;
 
 // ───────────────────────────── primitives ─────────────────────────────
 
-/// `std.json.encodeJsonString` with default options (`.escape_unicode = false`):
-/// pass through 0x20–0xFF except `"` and `\`; escape control chars.
-pub fn encode_json_string(w: &mut impl Write, s: &[u8]) -> fmt::Result {
-    w.write_char('"')?;
-    for &b in s {
-        match b {
-            b'"' => w.write_str("\\\"")?,
-            b'\\' => w.write_str("\\\\")?,
-            0x08 => w.write_str("\\b")?,
-            0x0c => w.write_str("\\f")?,
-            b'\n' => w.write_str("\\n")?,
-            b'\r' => w.write_str("\\r")?,
-            b'\t' => w.write_str("\\t")?,
-            0x00..=0x1f => write!(w, "\\u{:04x}", b)?,
-            // SAFETY: 0x20..=0xFF; pass-through identical to Zig's "normal bytes" arm.
-            _ => w.write_char(b as char)?,
-        }
-    }
-    w.write_char('"')
-}
+pub use bun_core::fmt::encode_json_string;
 
 #[inline]
 fn write_bool(w: &mut impl Write, b: bool) -> fmt::Result {

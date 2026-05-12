@@ -1453,14 +1453,7 @@ fn dupe<T: Copy>(s: &[T]) -> Box<[T]> {
     Box::<[T]>::from(s)
 }
 
-fn concat<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
-    let len: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.into_boxed_slice()
-}
+use bun_core::concat_boxed as concat;
 
 fn index_of_diff<T: Eq>(a: &[T], b: &[T]) -> Option<usize> {
     let shortest = a.len().min(b.len());

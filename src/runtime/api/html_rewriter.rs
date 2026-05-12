@@ -119,6 +119,84 @@ fn eat_content_args(
     Ok((content, opts))
 }
 
+/// Emit the per-wrapper `content_handler` plus one `(${name}_, $name)` pair
+/// per lol-html content op. Restores the Zig shape (`host_fn.wrapInstanceMethod`
+/// invoked N×) that the Rust port hand-expanded for lack of comptime reflection,
+/// and additionally collapses the 5× duplicated `content_handler` body that Zig
+/// never deduped.
+///
+/// - `$Raw`      — bare ident under `lolhtml::` (also paths the raw op as
+///                 `lolhtml::$Raw::$name`, which holds for all 16 ops).
+/// - `$field`    — the `Cell<*mut lolhtml_sys::$Raw>` field on `self`.
+/// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
+///                 `JSValue::UNDEFINED` for TextChunk/Element,
+///                 `JSValue::NULL` for DocEnd/Comment/EndTag (matches Zig).
+/// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
+///
+/// Expands inside an `impl $Wrapper { ... }` block to associated items.
+macro_rules! lol_content_ops {
+    (
+        $Raw:ident, $field:ident, $null_ret:expr;
+        $( $(#[$attr:meta])* $name:ident / $name_:ident ),* $(,)?
+    ) => {
+        fn content_handler(
+            &self,
+            callback: fn(&mut lolhtml::$Raw, &[u8], bool) -> Result<(), lolhtml::Error>,
+            this_object: JSValue,
+            global_object: &JSGlobalObject,
+            content: ZigString,
+            content_options: Option<ContentOptions>,
+        ) -> JSValue {
+            let Some(raw) = lolhtml::$Raw::from_ptr(self.$field.get()) else {
+                return $null_ret;
+            };
+            let content_slice = content.to_slice();
+            if callback(
+                raw,
+                content_slice.slice(),
+                content_options.map_or(false, |o| o.html),
+            )
+            .is_err()
+            {
+                return create_lolhtml_error(global_object);
+            }
+            this_object
+        }
+
+        $(
+            $(#[$attr])*
+            pub fn $name_(
+                &self,
+                call_frame: &CallFrame,
+                global_object: &JSGlobalObject,
+                content: ZigString,
+                content_options: Option<ContentOptions>,
+            ) -> JSValue {
+                self.content_handler(
+                    lolhtml::$Raw::$name,
+                    call_frame.this(),
+                    global_object,
+                    content,
+                    content_options,
+                )
+            }
+
+            // host_fn.wrapInstanceMethod hand-expansion: decode
+            // `(content: ZigString, contentOptions: ?ContentOptions)` then
+            // forward.
+            $(#[$attr])*
+            pub fn $name(
+                &self,
+                global: &JSGlobalObject,
+                call_frame: &CallFrame,
+            ) -> JsResult<JSValue> {
+                let (content, opts) = eat_content_args(global, call_frame)?;
+                Ok(self.$name_(call_frame, global, content, opts))
+            }
+        )*
+    };
+}
+
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────
 
 pub struct LOLHTMLContext {
@@ -1181,6 +1259,38 @@ pub trait WrapperLike {
     const HAS_INVALIDATE: bool = false;
 }
 
+/// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
+/// pass-through to inherent / `CellRefCounted`-derived / `JsClass`-codegen
+/// methods. Mirrors Zig's `HandlerCallback` comptime duck-typing (which needs
+/// no impl block at all — html_rewriter.zig:890). The optional `, invalidate`
+/// tail wires up types (Element) that hand out sub-objects which must be
+/// detached alongside the lol-html value.
+macro_rules! impl_wrapper_like {
+    ($ty:ty, $raw:ty $(, $invalidate:ident)?) => {
+        impl WrapperLike for $ty {
+            type Raw = $raw;
+            fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
+            fn ref_(&self) { self.ref_() }
+            fn deref(this: *mut Self) {
+                // SAFETY: `WrapperLike::deref` contract — `this` is a live
+                // `heap::alloc` allocation with refcount >= 1.
+                unsafe { Self::deref(this) }
+            }
+            fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+                // SAFETY: `this` is a live `heap::alloc` allocation
+                // (refcount >= 1); ownership is shared with the GC wrapper via
+                // the intrusive refcount (`${T}Class__finalize` →
+                // `Self::finalize` → `deref`).
+                unsafe { Self::to_js_ptr(this, g) }
+            }
+            $(
+                fn invalidate(&self) { Self::$invalidate(self) }
+                const HAS_INVALIDATE: bool = true;
+            )?
+        }
+    };
+}
+
 fn handler_callback<H, Z, L>(
     this: *mut H,
     value: *mut L,
@@ -1468,77 +1578,10 @@ impl TextChunk {
         }))
     }
 
-    fn content_handler(
-        &self,
-        callback: fn(&mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
-        this_object: JSValue,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
-            return JSValue::UNDEFINED;
-        };
-        let content_slice = content.to_slice();
-
-        if callback(
-            chunk,
-            content_slice.slice(),
-            content_options.map_or(false, |o| o.html),
-        )
-        .is_err()
-        {
-            return create_lolhtml_error(global_object);
-        }
-
-        this_object
-    }
-
-    pub fn before_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::TextChunk::before, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn after_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::TextChunk::after, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn replace_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::TextChunk::replace, call_frame.this(), global_object, content, content_options)
-    }
-
-    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-
-    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.before_(call_frame, global, content, opts))
-    }
-
-    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.after_(call_frame, global, content, opts))
-    }
-
-    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.replace_(call_frame, global, content, opts))
+    lol_content_ops! { TextChunk, text_chunk, JSValue::UNDEFINED;
+        before / before_,
+        after / after_,
+        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1577,22 +1620,7 @@ impl TextChunk {
     pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
-impl WrapperLike for TextChunk {
-    type Raw = lolhtml::TextChunk;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount
-        // (`${T}Class__finalize` → `Self::finalize` → `deref`).
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-}
+impl_wrapper_like!(TextChunk, lolhtml::TextChunk);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
@@ -1675,21 +1703,7 @@ impl DocType {
     }
 }
 
-impl WrapperLike for DocType {
-    type Raw = lolhtml::DocType;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount.
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-}
+impl_wrapper_like!(DocType, lolhtml::DocType);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
@@ -1712,67 +1726,14 @@ impl DocEnd {
         }))
     }
 
-    fn content_handler(
-        &self,
-        callback: fn(&mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
-        this_object: JSValue,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        let Some(doc_end) = lolhtml::DocEnd::from_ptr(self.doc_end.get()) else {
-            return JSValue::NULL;
-        };
-        let content_slice = content.to_slice();
-
-        if callback(
-            doc_end,
-            content_slice.slice(),
-            content_options.map_or(false, |o| o.html),
-        )
-        .is_err()
-        {
-            return create_lolhtml_error(global_object);
-        }
-
-        this_object
-    }
-
-    pub fn append_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::DocEnd::append, call_frame.this(), global_object, content, content_options)
-    }
-
-    // ── host_fn.wrapInstanceMethod hand-expansion ────────────────────────
-
-    pub fn append(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.append_(call_frame, global, content, opts))
+    lol_content_ops! { DocEnd, doc_end, JSValue::NULL;
+        append / append_,
     }
 
     pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
-impl WrapperLike for DocEnd {
-    type Raw = lolhtml::DocEnd;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount.
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-}
+impl_wrapper_like!(DocEnd, lolhtml::DocEnd);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
@@ -1795,77 +1756,10 @@ impl Comment {
         }))
     }
 
-    fn content_handler(
-        &self,
-        callback: fn(&mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
-        this_object: JSValue,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
-            return JSValue::NULL;
-        };
-        let content_slice = content.to_slice();
-
-        if callback(
-            comment,
-            content_slice.slice(),
-            content_options.map_or(false, |o| o.html),
-        )
-        .is_err()
-        {
-            return create_lolhtml_error(global_object);
-        }
-
-        this_object
-    }
-
-    pub fn before_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::Comment::before, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn after_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::Comment::after, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn replace_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::Comment::replace, call_frame.this(), global_object, content, content_options)
-    }
-
-    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-
-    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.before_(call_frame, global, content, opts))
-    }
-
-    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.after_(call_frame, global, content, opts))
-    }
-
-    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.replace_(call_frame, global, content, opts))
+    lol_content_ops! { Comment, comment, JSValue::NULL;
+        before / before_,
+        after / after_,
+        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1911,21 +1805,7 @@ impl Comment {
     pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
-impl WrapperLike for Comment {
-    type Raw = lolhtml::Comment;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount.
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-}
+impl_wrapper_like!(Comment, lolhtml::Comment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
@@ -1980,78 +1860,10 @@ impl EndTag {
 
     pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 
-    fn content_handler(
-        &self,
-        callback: fn(&mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
-        this_object: JSValue,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
-            return JSValue::NULL;
-        };
-        let content_slice = content.to_slice();
-
-        if callback(
-            end_tag,
-            content_slice.slice(),
-            content_options.map_or(false, |o| o.html),
-        )
-        .is_err()
-        {
-            return create_lolhtml_error(global_object);
-        }
-
-        this_object
-    }
-
-    pub fn before_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::EndTag::before, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn after_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::EndTag::after, call_frame.this(), global_object, content, content_options)
-    }
-
-    pub fn replace_(
-        &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        self.content_handler(lolhtml::EndTag::replace, call_frame.this(), global_object, content, content_options)
-    }
-
-    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-
-    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.before_(call_frame, global, content, opts))
-    }
-
-    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.after_(call_frame, global, content, opts))
-    }
-
-    #[allow(dead_code)]
-    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.replace_(call_frame, global, content, opts))
+    lol_content_ops! { EndTag, end_tag, JSValue::NULL;
+        before / before_,
+        after / after_,
+        #[allow(dead_code)] replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2085,21 +1897,7 @@ impl EndTag {
     }
 }
 
-impl WrapperLike for EndTag {
-    type Raw = lolhtml::EndTag;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount.
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-}
+impl_wrapper_like!(EndTag, lolhtml::EndTag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
@@ -2420,92 +2218,19 @@ impl Element {
         Ok(self.remove_attribute_(call_frame, global, name))
     }
 
-    fn content_handler(
-        &self,
-        callback: fn(&mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
-        this_object: JSValue,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
-    ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
-        };
-        let content_slice = content.to_slice();
-
-        if callback(
-            el,
-            content_slice.slice(),
-            content_options.map_or(false, |o| o.html),
-        )
-        .is_err()
-        {
-            return create_lolhtml_error(global_object);
-        }
-
-        this_object
-    }
-
-    /// Inserts content before the element.
-    pub fn before_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::before, call_frame.this(), global_object, content, content_options)
-    }
-
-    /// Inserts content right after the element.
-    pub fn after_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::after, call_frame.this(), global_object, content, content_options)
-    }
-
-    /// Inserts content right after the start tag of the element.
-    pub fn prepend_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::prepend, call_frame.this(), global_object, content, content_options)
-    }
-
-    /// Inserts content right before the end tag of the element.
-    pub fn append_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::append, call_frame.this(), global_object, content, content_options)
-    }
-
-    /// Removes the element and inserts content in place of it.
-    pub fn replace_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::replace, call_frame.this(), global_object, content, content_options)
-    }
-
-    /// Replaces content of the element.
-    pub fn set_inner_content_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
-        self.content_handler(lolhtml::Element::set_inner_content, call_frame.this(), global_object, content, content_options)
-    }
-
-    // ── host_fn.wrapInstanceMethod hand-expansions (content ops) ─────────
-
-    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.before_(call_frame, global, content, opts))
-    }
-
-    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.after_(call_frame, global, content, opts))
-    }
-
-    pub fn prepend(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.prepend_(call_frame, global, content, opts))
-    }
-
-    pub fn append(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.append_(call_frame, global, content, opts))
-    }
-
-    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.replace_(call_frame, global, content, opts))
-    }
-
-    pub fn set_inner_content(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (content, opts) = eat_content_args(global, call_frame)?;
-        Ok(self.set_inner_content_(call_frame, global, content, opts))
+    lol_content_ops! { Element, element, JSValue::UNDEFINED;
+        /// Inserts content before the element.
+        before / before_,
+        /// Inserts content right after the element.
+        after / after_,
+        /// Inserts content right after the start tag of the element.
+        prepend / prepend_,
+        /// Inserts content right before the end tag of the element.
+        append / append_,
+        /// Removes the element and inserts content in place of it.
+        replace / replace_,
+        /// Replaces content of the element.
+        set_inner_content / set_inner_content_,
     }
 
     /// Removes the element with all its content.
@@ -2610,22 +2335,6 @@ impl Element {
     }
 }
 
-impl WrapperLike for Element {
-    type Raw = lolhtml::Element;
-    fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-    fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) {
-        // SAFETY: `WrapperLike::deref` contract — `this` is a live
-        // `heap::alloc` allocation with refcount >= 1.
-        unsafe { Self::deref(this) }
-    }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
-        // ownership is shared with the GC wrapper via the intrusive refcount.
-        unsafe { Self::to_js_ptr(this, g) }
-    }
-    fn invalidate(&self) { Element::invalidate(self) }
-    const HAS_INVALIDATE: bool = true;
-}
+impl_wrapper_like!(Element, lolhtml::Element, invalidate);
 
 // ported from: src/runtime/api/html_rewriter.zig

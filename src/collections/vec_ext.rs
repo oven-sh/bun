@@ -626,19 +626,11 @@ impl ByteVecExt for Vec<u8> {
     }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
-        self.reserve(suggested);
-        let len = self.len();
-        let cap = self.capacity();
-        // SAFETY: `[len, cap)` is allocated; caller contract forbids reading
-        // these bytes until written.
-        unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr().add(len), cap - len) }
+        unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {
-        let new_len = self.len() + nread;
-        debug_assert!(new_len <= self.capacity());
-        // SAFETY: caller contract — `nread` bytes at the tail were initialised.
-        unsafe { self.set_len(new_len) };
+        unsafe { bun_core::vec::commit_spare(self, nread) }
     }
 }
 

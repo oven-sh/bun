@@ -10,29 +10,15 @@ pub fn to_have_been_called_times(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // jsc.markBinding(@src()) — debug-only tracing; dropped in port.
-
-    // `defer this.postMatch(globalThis)` — RAII guard owns the `&mut Expect` borrow and
-    // runs post_match on drop for every exit path.
-    let this = this.post_match_guard(global);
-
-    let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
     let arguments: &[JSValue] = arguments_.slice();
-    let value: JSValue =
-        this.get_value(global, this_value, "toHaveBeenCalledTimes", "<green>expected<r>")?;
-
-    this.increment_expect_call_counter();
-
-    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
-    if !calls.js_type().is_array() {
-        let mut formatter = super::make_formatter(global);
-        // `defer formatter.deinit()` — handled by Drop.
-        return Err(global.throw(format_args!(
-            "Expected value must be a mock function: {}",
-            value.to_fmt(&mut formatter)
-        )));
-    }
+    let (this, calls, _value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveBeenCalledTimes",
+        "<green>expected<r>",
+        super::mock::MockKind::Calls,
+    )?;
 
     if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
         return Err(global.throw_invalid_arguments(format_args!(

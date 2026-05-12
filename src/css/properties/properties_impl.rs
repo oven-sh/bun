@@ -52,25 +52,19 @@ pub mod property_id_mixin {
     use super::*;
 
     pub fn to_css(this: &PropertyId, dest: &mut Printer) -> Result<(), PrintErr> {
-        let mut first = true;
         let name = this.name();
         let prefix_value = this.prefix().or_none();
 
         // PORT NOTE: Zig `inline for (VendorPrefix.FIELDS) |field|` + `@field` iterates each
         // bitflag field and tests it. `PREFIX_FLAGS` is the same set in the same order;
         // `contains` replaces the `@field` test.
-        for &prefix in &PREFIX_FLAGS {
-            if prefix_value.contains(prefix) {
-                if first {
-                    first = false;
-                } else {
-                    dest.delim(b',', false)?;
-                }
-                prefix.to_css(dest)?;
-                dest.write_str(name)?;
-            }
-        }
-        Ok(())
+        dest.write_comma_separated(
+            PREFIX_FLAGS.iter().copied().filter(|p| prefix_value.contains(*p)),
+            |d, p| {
+                p.to_css(d)?;
+                d.write_str(name)
+            },
+        )
     }
 
     pub fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
@@ -124,28 +118,26 @@ pub mod property_mixin {
             return Ok(());
         }
         let (name, prefix) = this.__to_css_helper();
-        let mut first = true;
 
         // PORT NOTE: see property_id_mixin::to_css for the `inline for` + `@field` mapping.
-        for &p in &PREFIX_FLAGS {
-            if prefix.contains(p) {
-                if first {
-                    first = false;
-                } else {
-                    dest.write_char(b';')?;
-                    dest.newline()?;
-                }
-                p.to_css(dest)?;
-                dest.write_str(name)?;
-                dest.delim(b':', false)?;
-                this.value_to_css(dest)?;
+        dest.write_separated(
+            PREFIX_FLAGS.iter().copied().filter(|p| prefix.contains(*p)),
+            |d| {
+                d.write_char(b';')?;
+                d.newline()
+            },
+            |d, p| {
+                p.to_css(d)?;
+                d.write_str(name)?;
+                d.delim(b':', false)?;
+                this.value_to_css(d)?;
                 if important {
-                    dest.whitespace()?;
-                    dest.write_str(b"!important")?;
+                    d.whitespace()?;
+                    d.write_str(b"!important")?;
                 }
-            }
-        }
-        Ok(())
+                Ok(())
+            },
+        )
     }
 }
 

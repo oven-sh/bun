@@ -249,30 +249,22 @@ pub fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    let function = JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default());
-    // Zig used `inline for` + `@field(HashObject, name)` to look up each fn
-    // by string name at comptime. Rust pairs the JS-visible name with the
-    // C-ABI shim (`__jsc_host_*`, emitted by `#[bun_jsc::host_fn]`) explicitly.
-    const FNS: &[(&str, jsc::JSHostFn)] = &[
-        ("wyhash", __jsc_host_wyhash),
-        ("adler32", __jsc_host_adler32),
-        ("crc32", __jsc_host_crc32),
-        ("cityHash32", __jsc_host_city_hash32),
-        ("cityHash64", __jsc_host_city_hash64),
-        ("xxHash32", __jsc_host_xx_hash32),
-        ("xxHash64", __jsc_host_xx_hash64),
-        ("xxHash3", __jsc_host_xx_hash3),
-        ("murmur32v2", __jsc_host_murmur32v2),
-        ("murmur32v3", __jsc_host_murmur32v3),
-        ("murmur64v2", __jsc_host_murmur64v2),
-        ("rapidhash", __jsc_host_rapidhash),
-    ];
-    for &(name, host_fn) in FNS {
-        let value = JSFunction::create(global, name, host_fn, 1, Default::default());
-        function.put(global, name.as_bytes(), value);
-    }
-
-    function
+    // `Bun.hash` is itself callable (wyhash); the named algorithms hang off it.
+    JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default())
+        .put_host_functions(global, &[
+            ("wyhash", __jsc_host_wyhash, 1),
+            ("adler32", __jsc_host_adler32, 1),
+            ("crc32", __jsc_host_crc32, 1),
+            ("cityHash32", __jsc_host_city_hash32, 1),
+            ("cityHash64", __jsc_host_city_hash64, 1),
+            ("xxHash32", __jsc_host_xx_hash32, 1),
+            ("xxHash64", __jsc_host_xx_hash64, 1),
+            ("xxHash3", __jsc_host_xx_hash3, 1),
+            ("murmur32v2", __jsc_host_murmur32v2, 1),
+            ("murmur32v3", __jsc_host_murmur32v3, 1),
+            ("murmur64v2", __jsc_host_murmur64v2, 1),
+            ("rapidhash", __jsc_host_rapidhash, 1),
+        ])
 }
 
 fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

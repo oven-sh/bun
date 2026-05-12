@@ -393,25 +393,8 @@ impl Expr {
                     }
 
                     let index_str: &[u8] = &name[idx + 1..end_idx];
-                    // std.fmt.parseInt(u32, index_str, 10) — parse ASCII digits directly from &[u8];
-                    // do NOT route through core::str::from_utf8 (path segments are bytes, not UTF-8).
-                    let index: u32 = 'parse: {
-                        if index_str.is_empty() {
-                            return None;
-                        }
-                        let mut acc: u32 = 0;
-                        for &b in index_str {
-                            let d: u8 = b.wrapping_sub(b'0');
-                            if d > 9 {
-                                return None;
-                            }
-                            acc = match acc.checked_mul(10).and_then(|a| a.checked_add(d as u32)) {
-                                Some(v) => v,
-                                None => return None,
-                            };
-                        }
-                        break 'parse acc;
-                    };
+                    // std.fmt.parseInt(u32, index_str, 10) — path segments are bytes, not UTF-8.
+                    let index: u32 = bun_core::parse_unsigned(index_str, 10).ok()?;
                     let rest: &[u8] = if name.len() > end_idx { &name[end_idx + 1..] } else { b"" };
                     let result = base_expr.get_by_index(index, index_str, bump)?;
                     if !rest.is_empty() {

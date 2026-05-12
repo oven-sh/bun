@@ -1395,7 +1395,7 @@ impl core::fmt::Display for ErrorCode {
 }
 
 // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*mut`); `bun_string::String` is `#[repr(C)]` and
+// ABI-identical to non-null `*mut`); `bun_core::String` is `#[repr(C)]` and
 // the C++ side reads it in-place (clones the impl into a JSString); `ErrorCode`
 // is a by-value `#[repr(u16)]` POD.
 unsafe extern "C" {

@@ -196,18 +196,6 @@ impl AbortSignal {
         // (see doc comment).
         NonNull::new(ptr).map(|p| unsafe { p.as_ref() })
     }
-
-    #[inline(always)]
-    fn as_mut_ptr(&self) -> *mut AbortSignal {
-        // SAFETY: `AbortSignal` is an opaque zero-sized FFI handle whose first
-        // (and only sized) field is an `UnsafeCell` at offset 0 of this
-        // `repr(C)` struct. `UnsafeCell::get` legitimately yields a `*mut`
-        // from `&self`, and casting it back to `*mut AbortSignal` preserves
-        // address and provenance. No Rust-visible bytes exist at this address;
-        // all mutation happens inside C++ memory that the `&self` borrow does
-        // not cover — interior mutability is the intended contract.
-        self._p.get().cast::<AbortSignal>()
-    }
 }
 
 // SAFETY: `WebCore::AbortSignal` is intrusively refcounted on the C++ side
@@ -308,6 +296,8 @@ pub struct Timeout {
     /// file must not fire abort handlers in the new global.
     pub generation: u32,
 }
+
+bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {

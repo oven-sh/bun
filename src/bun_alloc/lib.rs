@@ -19,6 +19,7 @@ use std::collections::HashMap;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_mimalloc_sys::mimalloc;
+pub mod c_thunks;
 
 // ── Allocator vtable (mirrors std.mem.Allocator) ──────────────────────────
 #[repr(transparent)]
@@ -61,10 +62,31 @@ pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
+    /// `alloc` impl that always fails. For vtables that only ever `free` an
+    /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
+    /// foreign string) and never allocate or grow it. Zig has no `std.mem.
+    /// Allocator.noAlloc`; every Zig site hand-rolls `fn alloc(...) ?[*]u8 {
+    /// return null; }`. This is the Rust-side improvement.
+    pub const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
+        |_, _, _, _| core::ptr::null_mut();
     pub const NO_RESIZE: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool =
         |_, _, _, _, _| false;
     pub const NO_REMAP: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8 =
         |_, _, _, _, _| core::ptr::null_mut();
+
+    /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
+    /// only `free` is meaningful. Each call site still gets its own `static`
+    /// (vtable address is an identity tag for `is_instance`/`allocator_has_pointer`).
+    pub const fn free_only(
+        free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
+    ) -> Self {
+        Self {
+            alloc: Self::NO_ALLOC,
+            resize: Self::NO_RESIZE,
+            remap: Self::NO_REMAP,
+            free,
+        }
+    }
 }
 
 /// `std.mem.Allocator` — fat (ptr + vtable). Distinct from the `Allocator` trait below.
@@ -336,6 +358,19 @@ pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     &out[0..in_.len()]
 }
 
+/// Zig: `strings.copyLowercaseIfNeeded` (src/string/immutable.zig:664). If
+/// `in_` contains no ASCII uppercase byte, returns `in_` unchanged and leaves
+/// `out` UNTOUCHED. Otherwise identical to [`copy_lowercase`]: writes the
+/// lowercased bytes into `out[..in_.len()]` and returns that prefix. Both
+/// borrows share `'a` so the return may alias either.
+pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
+    if in_.iter().any(u8::is_ascii_uppercase) {
+        copy_lowercase(in_, out)
+    } else {
+        in_
+    }
+}
+
 /// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
 /// `Some((buf, input.len()))` or `None` if `input.len() > N`. The unused tail
 /// of `buf` is zero-filled. Covers the ubiquitous "lowercase a short key into
@@ -384,6 +419,58 @@ pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
     // `error.WriteFailed => unreachable`.
     let _ = core::fmt::write(&mut w, args);
     w.0
+}
+
+/// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
+/// [`buf_print`] / [`buf_print_len`] (and `bun_core::fmt::buf_print_z`).
+///
+/// This is the single port of Zig `std.fmt.bufPrint`'s internal cursor. It
+/// lives at T0 so `bun_alloc` itself can use it (`BSSStringList::print`); T1
+/// `bun_core::fmt` re-exports it and adds an `io::Write` impl so the same
+/// struct also serves as Zig's `std.io.fixedBufferStream` for write-only sites.
+pub struct SliceCursor<'a> {
+    pub buf: &'a mut [u8],
+    pub at: usize,
+}
+impl<'a> SliceCursor<'a> {
+    #[inline]
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, at: 0 }
+    }
+}
+impl core::fmt::Write for SliceCursor<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let end = self.at + bytes.len();
+        if end > self.buf.len() { return Err(core::fmt::Error); }
+        self.buf[self.at..end].copy_from_slice(bytes);
+        self.at = end;
+        Ok(())
+    }
+}
+
+/// Port of `std.fmt.bufPrint` — render into `buf`, return the written sub-slice.
+/// Fails (`fmt::Error`) when `buf` is too short.
+pub fn buf_print<'a>(
+    buf: &'a mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> core::result::Result<&'a [u8], core::fmt::Error> {
+    let mut c = SliceCursor { buf, at: 0 };
+    core::fmt::write(&mut c, args)?;
+    let len = c.at;
+    Ok(&c.buf[..len])
+}
+
+/// [`buf_print`] returning only the byte count — `std.fmt.bufPrint(..).len`.
+#[inline]
+pub fn buf_print_len(
+    buf: &mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> core::result::Result<usize, core::fmt::Error> {
+    let mut c = SliceCursor { buf, at: 0 };
+    core::fmt::write(&mut c, args)?;
+    Ok(c.at)
 }
 
 // ── RAII Mutex ────────────────────────────────────────────────────────────
@@ -1076,7 +1163,7 @@ impl String {
     /// Zig `eqlComptime` — compare against a (typically literal) byte slice.
     /// PERF(port): Zig dispatched to SIMD `bun.strings.eqlComptime*`; this T0
     /// version uses scalar `==` / widening compare. Phase B re-routes to
-    /// `bun_str::strings` via inlining once tier ordering settles.
+    /// `bun_core::strings` via inlining once tier ordering settles.
     pub fn eql_comptime(&self, other: &[u8]) -> bool {
         let zs = self.to_zig_string();
         if zs.is_16bit() {
@@ -2340,30 +2427,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         buf[buf_len - 1] = 0;
 
         // ── std.fmt.bufPrint(buf[0..len-1], fmt, args) catch unreachable
-        // duplicated from bun_core::fmt::SliceCursor — bun_alloc is below bun_core
-        // in the crate graph, so we can't route to the canonical copy.
-        struct SliceCursor<'a> {
-            buf: &'a mut [u8],
-            pos: usize,
-        }
-        impl<'a> core::fmt::Write for SliceCursor<'a> {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                let bytes = s.as_bytes();
-                let end = self.pos + bytes.len();
-                if end > self.buf.len() {
-                    return Err(core::fmt::Error);
-                }
-                self.buf[self.pos..end].copy_from_slice(bytes);
-                self.pos = end;
-                Ok(())
-            }
-        }
-        let written = {
-            let mut cursor = SliceCursor { buf: &mut buf[..buf_len - 1], pos: 0 };
-            // `catch unreachable`: we counted the exact length above.
-            core::fmt::write(&mut cursor, args).expect("counted length");
-            cursor.pos
-        };
+        // `catch unreachable`: we counted the exact length above.
+        let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
         Ok(&buf[..written])
     }
 

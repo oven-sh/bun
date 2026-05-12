@@ -247,6 +247,49 @@ pub struct TimerCallback {
     pub event_loop_timer: EventLoopTimer,
 }
 
+/// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
+/// `(method => field)` pair: each recovers the embedding owner from a pointer
+/// to the named intrusive [`EventLoopTimer`] slot — Rust's typed analogue of
+/// Zig's inline `@fieldParentPtr("$field", t)`.
+///
+/// The accessor layer exists only as a cross-crate visibility shim: the
+/// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
+/// fields on owners defined elsewhere, so each owner exports a named thunk per
+/// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
+/// call site); the field may be a bare `EventLoopTimer` or any
+/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>` — the
+/// underlying `from_field_ptr!` infers the field type.
+///
+/// ```ignore
+/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
+///     from_timer_ptr => timer,
+///     from_reconnect_timer_ptr => reconnect_timer,
+/// );
+/// ```
+#[macro_export]
+macro_rules! impl_timer_owner {
+    ($Owner:ty; $($method:ident => $field:ident),+ $(,)?) => {
+        impl $Owner {
+            $(
+                /// Recover `*mut Self` from a pointer to its intrusive
+                #[doc = concat!("`", stringify!($field), "` [`EventLoopTimer`] slot.")]
+                /// # Safety
+                #[doc = concat!("`t` must point at the `", stringify!($field), "` field of a live `Self`.")]
+                #[inline]
+                pub unsafe fn $method(
+                    t: *const $crate::EventLoopTimer::EventLoopTimer,
+                ) -> *mut Self {
+                    // SAFETY: caller contract — `t` addresses `Self.$field`
+                    // with whole-`Self` provenance.
+                    unsafe { ::bun_core::from_field_ptr!(Self, $field, t) }
+                }
+            )+
+        }
+    };
+}
+
+crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub enum State {

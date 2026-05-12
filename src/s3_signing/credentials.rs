@@ -298,24 +298,8 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    fn hash_const(acl: &[u8]) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash11::init(0);
-        let mut remain = acl;
-
-        // Zig std.hash.Wyhash buffers internally; mirror the chunked-lowercase update.
-        // bun_wyhash::Wyhash11's internal buf is 32 bytes; chunk size only affects the
-        // lowercase scratch sizing, not the hash output (streaming Wyhash is chunk-invariant).
-        const BUF_LEN: usize = 32;
-        let mut buf = [0u8; BUF_LEN];
-
-        while !remain.is_empty() {
-            let end = BUF_LEN.min(remain.len());
-            hasher.update(strings::copy_lowercase_if_needed(&remain[..end], &mut buf));
-            remain = &remain[end..];
-        }
-
-        hasher.final_()
-    }
+    // `hash_const` DELETED — dead code (no callers in Rust or Zig). If
+    // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
 
     // Zig: `pub const getCredentialsWithOptions = @import("../runtime/webcore/s3/credentials_jsc.zig").getCredentialsWithOptions;`
     // Deleted per PORTING.md — *_jsc alias; the JS-facing fn lives in the *_jsc crate.

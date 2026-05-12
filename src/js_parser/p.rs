@@ -4227,7 +4227,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Forbid declaring a symbol with a reserved word in strict mode
             if self.is_strict_mode()
                 && name.as_ptr() != arguments_str.as_ptr()
-                && bun_ast::lexer_tables::STRICT_MODE_RESERVED_WORDS.contains(name)
+                && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
             {
                 self.mark_strict_mode_feature(
                     StrictModeFeature::ReservedWord,

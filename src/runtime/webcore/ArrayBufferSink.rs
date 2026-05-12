@@ -95,7 +95,7 @@ impl ArrayBufferSink {
     }
 
     // PORT NOTE: NOT a `host_fn_finalize` target — JSSink uses its own
-    // `${abi_name}__finalize` thunk (Sink.rs `js_sink!` macro), which calls
+    // `${abi_name}__finalize` thunk (generated_jssink.rs), which calls
     // the trait `JsSinkType::finalize(&mut self)`; that forwards here. The
     // `Box<Self>` contract applies only to generate-classes.ts classes.
     pub fn finalize(this: *mut Self) {

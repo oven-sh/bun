@@ -9,8 +9,6 @@ use core::ffi::c_int;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
-
     safe fn WTF__numberOfProcessorCores() -> c_int;
 }
 
@@ -24,27 +22,11 @@ pub fn number_of_processor_cores() -> u32 {
 // without a T6 dep. Re-exported here to keep the original Zig namespace shape.
 pub use bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ParseDoubleError {
-    #[error("InvalidCharacter")]
-    InvalidCharacter,
-}
-bun_core::named_error_set!(ParseDoubleError);
-
-pub fn parse_double(buf: &[u8]) -> Result<f64, ParseDoubleError> {
-    if buf.is_empty() {
-        return Err(ParseDoubleError::InvalidCharacter);
-    }
-
-    let mut count: usize = 0;
-    // SAFETY: buf.as_ptr() is valid for buf.len() bytes; `count` is a valid out-param.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
-
-    if count == 0 {
-        return Err(ParseDoubleError::InvalidCharacter);
-    }
-    Ok(res)
-}
+// `WTF.parseDouble` canonical lives in bun_core::fmt (tier-0); re-exported here
+// to keep the Zig namespace shape (`bun_jsc::wtf::parse_double`).
+pub use bun_core::fmt::{parse_double, InvalidCharacter};
+/// Back-compat alias for the Zig `error{InvalidCharacter}` set name.
+pub type ParseDoubleError = bun_core::fmt::InvalidCharacter;
 
 // Canonical lives in bun_core (tier-0) so install/ can call it without bun_jsc.
 pub use bun_core::wtf::{parse_es5_date, parse_es5_date_raw, InvalidDate};

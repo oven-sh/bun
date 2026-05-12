@@ -12,29 +12,14 @@ pub fn to_have_been_called_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let this_value = frame.this();
     let arguments = frame.arguments();
-    // PORT NOTE: reshaped for borrowck — `defer this.post_match(global)` becomes an IIFE so the
-    // body's `&mut *this` borrow ends before `post_match` runs on every return path (no raw ptrs).
-    let result = (|| -> JsResult<JSValue> {
-    let value: JSValue = this.get_value(global, this_value, "toHaveBeenCalledWith", "<green>...expected<r>")?;
-
-    this.increment_expect_call_counter();
-
-    // TODO(port): move to *_jsc — bun.cpp.JSMockFunction__getCalls is a C++ extern binding
-    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
-    if !calls.js_type().is_array() {
-        let mut formatter = super::make_formatter(global);
-        return this.throw(
-            global,
-            Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false),
-            format_args!(
-                "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
-                value.to_fmt(&mut formatter),
-            ),
-        );
-    }
+    let (this, calls, _value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveBeenCalledWith",
+        "<green>...expected<r>",
+        mock::MockKind::CallsWithSig,
+    )?;
 
     let mut pass = false;
 
@@ -135,7 +120,7 @@ pub fn to_have_been_called_with(
     // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
     // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
     // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
-    return this.throw(
+    this.throw(
         global,
         signature,
         format_args!(
@@ -144,10 +129,7 @@ pub fn to_have_been_called_with(
             list_formatter,
             calls_count,
         ),
-    );
-    })();
-    this.post_match(global);
-    result
+    )
 }
 
 // ported from: src/test_runner/expect/toHaveBeenCalledWith.zig

@@ -1503,7 +1503,7 @@ impl AutoBitSet {
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
-        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_str::strings).
+        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_core::strings).
         self.raw_bytes() == b.raw_bytes()
     }
 

@@ -2445,15 +2445,17 @@ pub type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // ──────────────────────────────────────────────────────────────────────────
 // BufferAction
 // ──────────────────────────────────────────────────────────────────────────
+//
+// Zig models this as `union(enum) { text/arrayBuffer/blob/bytes/json: JSPromise.Strong }`
+// purely so `switch (this.*) { inline else => |p| ... }` gives a one-line forwarder and
+// `@typeInfo(...).tag_type` gives a free Tag enum. In Rust neither shortcut exists, and
+// every variant carries the *same* payload, so the idiomatic shape is `{tag, payload}`.
+// No caller pattern-matches on the variant — they only read `.tag()` or forward to the
+// promise — so this is layout-only, behaviour-identical.
 
-#[derive(bun_core::EnumTag)]
-#[enum_tag(existing = BufferActionTag)]
-pub enum BufferAction {
-    Text(JSPromiseStrong),
-    ArrayBuffer(JSPromiseStrong),
-    Blob(JSPromiseStrong),
-    Bytes(JSPromiseStrong),
-    Json(JSPromiseStrong),
+pub struct BufferAction {
+    tag: BufferActionTag,
+    promise: JSPromiseStrong,
 }
 
 #[repr(u8)]
@@ -2467,6 +2469,14 @@ pub enum BufferActionTag {
 }
 
 impl BufferAction {
+    pub fn new(tag: BufferActionTag, global: &JSGlobalObject) -> Self {
+        Self { tag, promise: JSPromiseStrong::init(global) }
+    }
+
+    pub const fn tag(&self) -> BufferActionTag {
+        self.tag
+    }
+
     // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
@@ -2499,38 +2509,20 @@ impl BufferAction {
     }
 
     pub fn value(&self) -> JSValue {
-        match self {
-            BufferAction::Text(p)
-            | BufferAction::ArrayBuffer(p)
-            | BufferAction::Blob(p)
-            | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.value(),
-        }
+        self.promise.value()
     }
 
     pub fn get(&self) -> *mut JSPromise {
-        match self {
-            BufferAction::Text(p)
-            | BufferAction::ArrayBuffer(p)
-            | BufferAction::Blob(p)
-            | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>(p.get()),
-        }
+        std::ptr::from_mut(self.promise.get())
     }
 
     pub fn swap(&mut self) -> *mut JSPromise {
-        match self {
-            BufferAction::Text(p)
-            | BufferAction::ArrayBuffer(p)
-            | BufferAction::Blob(p)
-            | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>(p.swap()),
-        }
+        std::ptr::from_mut(self.promise.swap())
     }
 }
 
-// PORT NOTE: Zig `BufferAction.deinit` only deinits the JSPromiseStrong payload of each
-// variant. JSPromiseStrong implements Drop, so the enum drops it automatically — no explicit
+// PORT NOTE: Zig `BufferAction.deinit` only deinits the JSPromiseStrong payload.
+// JSPromiseStrong implements Drop, so the struct drops it automatically — no explicit
 // `impl Drop for BufferAction` needed.
 
 // ──────────────────────────────────────────────────────────────────────────

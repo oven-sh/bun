@@ -175,36 +175,28 @@ const _: () = {
         // TODO(port): the Zig defines a ComptimeStringMap over FieldEnum but never uses it
         // (usage is commented out). Preserved the active if/else-if chain instead.
         fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
-            // todo_stuff.match_ignore_ascii_case
-
-            //   if (Map.getASCIIICaseInsensitive(
-            //   name)) |field| {
-            //     return switch (field) {
-            //         .syntax => |syntax| {
-
-            if strings::eql_case_insensitive_ascii_check_length(b"syntax", name) {
-                let syntax = SyntaxString::parse(input)?;
-                this.syntax = Some(syntax);
-            } else if strings::eql_case_insensitive_ascii_check_length(b"inherits", name) {
-                let location = input.current_source_location();
-                let ident = input.expect_ident_cloned()?;
-                let inherits = if strings::eql_case_insensitive_ascii_check_length(b"true", ident) {
-                    true
-                } else if strings::eql_case_insensitive_ascii_check_length(b"false", ident) {
-                    false
-                } else {
-                    return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
-                };
-                this.inherits = Some(inherits);
-            } else if strings::eql_case_insensitive_ascii_check_length(b"initial-value", name) {
-                // Buffer the value into a string. We will parse it later.
-                let start = input.position();
-                while input.next().is_ok() {}
-                let initial_value = input.slice_from_cloned(start);
-                this.initial_value = Some(initial_value);
-            } else {
-                return Err(input.new_custom_error(ParserError::invalid_declaration));
-            }
+            crate::match_ignore_ascii_case! { name, {
+                b"syntax" => {
+                    this.syntax = Some(SyntaxString::parse(input)?);
+                },
+                b"inherits" => {
+                    let location = input.current_source_location();
+                    let ident = input.expect_ident_cloned()?;
+                    this.inherits = Some(crate::match_ignore_ascii_case! { ident, {
+                        b"true" => true,
+                        b"false" => false,
+                        _ => return Err(location.new_unexpected_token_error(css::Token::Ident(ident))),
+                    }});
+                },
+                b"initial-value" => {
+                    // Buffer the value into a string. We will parse it later.
+                    let start = input.position();
+                    while input.next().is_ok() {}
+                    let initial_value = input.slice_from_cloned(start);
+                    this.initial_value = Some(initial_value);
+                },
+                _ => return Err(input.new_custom_error(ParserError::invalid_declaration)),
+            }}
 
             Ok(())
         }

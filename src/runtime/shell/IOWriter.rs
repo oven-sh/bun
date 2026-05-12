@@ -1016,90 +1016,28 @@ enum WriteOutcome {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// PosixBufferedWriterParent — wires the bun_io BufferedWriter callbacks
+// BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
-impl bun_io::pipe_writer::PosixBufferedWriterParent for IOWriter {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
-        // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
-        // holds `&mut writer` (a field of `*this`) but never materializes
-        // `&mut IOWriter`, so we re-enter via `&self` (UnsafeCell aliasing
-        // model — child callbacks may re-enter `enqueue(&self)`).
-        unsafe { (*this).on_write_pollable(amount, status) };
-    }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) };
-    }
-    const HAS_ON_CLOSE: bool = true;
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() };
-    }
-    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
-        // SAFETY: see on_write. Shared-only borrow of the buffer storage.
-        unsafe { (*this).get_buffer() }
-    }
-    const HAS_ON_WRITABLE: bool = false;
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write.
-        unsafe { (*this).io_evtloop() }
-    }
-}
-
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsWriterParent for IOWriter {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
-        // SAFETY: BACKREF set via set_parent; shared-only read of `evtloop`.
-        // `EventLoopHandle::loop_()` returns the uws `WindowsLoop*`, which owns
-        // the libuv loop via its `uv_loop` field.
-        unsafe { (*(*this).evtloop().loop_()).uv_loop }
-    }
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: INVARIANT — `this` MUST be the data pointer of a live
-        // `Arc<IOWriter>` (it is `Arc::as_ptr` stashed via `writer.set_parent`
-        // in `IOWriter::init`, the sole constructor). `increment_strong_count`
-        // reads the `ArcInner` header 16 bytes before `this`; passing a non-Arc
-        // backed pointer here is UB.
-        unsafe { std::sync::Arc::increment_strong_count(this as *const Self) };
-    }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see `ref_` — `this` is `Arc::as_ptr` of a live `Arc<IOWriter>`.
-        // May drop the last strong ref.
-        unsafe { std::sync::Arc::decrement_strong_count(this as *const Self) };
-    }
-}
-
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
-    unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
-        // SAFETY: BACKREF set via set_parent; re-enter via `&self` (UnsafeCell model).
-        // Hold a keepalive across re-entry: `on_write_pollable` → `run_yield` →
-        // `bump` may fire `on_io_writer_chunk`, which can drop the last external
-        // `Arc<IOWriter>`. Spec defers free via `asyncDeinit`; the Rust port uses
-        // a stack-held strong ref instead (see POSIX `on_poll` above for the
-        // analogous guard). Without this, the Arc inner — including the inline
-        // `uv_write_t` — would free mid-callback while PipeWriter is still on
-        // the stack.
-        let _keepalive = unsafe { &*this }.keepalive();
-        unsafe { (*this).on_write_pollable(amount, status) };
-    }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) };
-    }
-    const HAS_ON_CLOSE: bool = true;
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() };
-    }
-    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
-        // SAFETY: see on_write.
-        unsafe { (*this).get_buffer() }
-    }
-    const HAS_ON_WRITABLE: bool = false;
+bun_io::impl_buffered_writer_parent! {
+    IOWriter;
+    poll_tag   = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER,
+    // UnsafeCell aliasing model — child callbacks may re-enter `enqueue(&self)`.
+    borrow     = shared,
+    on_write   = on_write_pollable,
+    on_error   = on_error,
+    on_close   = on_close,
+    get_buffer = |this| (*this).get_buffer(),
+    event_loop = |this| (*this).io_evtloop(),
+    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
+    // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
+    // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
+    ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
+    deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
+    // Hold a keepalive across Windows on_write re-entry: `on_write_pollable` →
+    // `run_yield` → `bump` may fire `on_io_writer_chunk`, which can drop the
+    // last external `Arc<IOWriter>` (and the inline `uv_write_t`) mid-callback.
+    win_on_write_guard = |this| (&*this).keepalive(),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

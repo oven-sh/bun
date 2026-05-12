@@ -27,19 +27,12 @@ impl Resolution {
         if let Token::Dimension(dim) = &tok {
             let value = dim.num.value;
             let unit = dim.unit;
-            // css.todo_stuff.match_ignore_ascii_case
-            if strings::eql_case_insensitive_ascii_check_length(unit, b"dpi") {
-                return Ok(Resolution::Dpi(value));
-            }
-            if strings::eql_case_insensitive_ascii_check_length(unit, b"dpcm") {
-                return Ok(Resolution::Dpcm(value));
-            }
-            if strings::eql_case_insensitive_ascii_check_length(unit, b"dppx")
-                || strings::eql_case_insensitive_ascii_check_length(unit, b"x")
-            {
-                return Ok(Resolution::Dppx(value));
-            }
-            return Err(location.new_unexpected_token_error(Token::Ident(unit)));
+            return crate::match_ignore_ascii_case! { unit, {
+                b"dpi" => Ok(Resolution::Dpi(value)),
+                b"dpcm" => Ok(Resolution::Dpcm(value)),
+                b"dppx" | b"x" => Ok(Resolution::Dppx(value)),
+                _ => Err(location.new_unexpected_token_error(Token::Ident(unit))),
+            }};
         }
         Err(location.new_unexpected_token_error(tok))
     }
@@ -49,18 +42,12 @@ impl Resolution {
             Token::Dimension(dim) => {
                 let value = dim.num.value;
                 let unit = dim.unit;
-                // todo_stuff.match_ignore_ascii_case
-                if strings::eql_case_insensitive_ascii_check_length(unit, b"dpi") {
-                    Ok(Resolution::Dpi(value))
-                } else if strings::eql_case_insensitive_ascii_check_length(unit, b"dpcm") {
-                    Ok(Resolution::Dpcm(value))
-                } else if strings::eql_case_insensitive_ascii_check_length(unit, b"dppx")
-                    || strings::eql_case_insensitive_ascii_check_length(unit, b"x")
-                {
-                    Ok(Resolution::Dppx(value))
-                } else {
-                    Err(())
-                }
+                crate::match_ignore_ascii_case! { unit, {
+                    b"dpi" => Ok(Resolution::Dpi(value)),
+                    b"dpcm" => Ok(Resolution::Dpcm(value)),
+                    b"dppx" | b"x" => Ok(Resolution::Dppx(value)),
+                    _ => Err(()),
+                }}
             }
             _ => Err(()),
         }

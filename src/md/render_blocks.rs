@@ -146,7 +146,7 @@ impl Parser<'_> {
                 // GFM: \| in table cells should be consumed at the table level,
                 // replacing \| with | before inline processing. This matters for
                 // code spans where backslash escapes don't apply.
-                if bun_str::strings::index_of(cell_content, b"\\|").is_some() {
+                if bun_core::strings::index_of(cell_content, b"\\|").is_some() {
                     let mut buf: Vec<u8> = Vec::new();
                     let unescaped: &[u8] = if buf.try_reserve(cell_content.len()).is_ok() {
                         let mut ci: usize = 0;

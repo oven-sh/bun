@@ -119,7 +119,7 @@ impl GarbageCollectionController {
 
         let mut gc_timer_interval: i32 = 1000;
         if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
-            if let Some(parsed) = parse_int_i32(timer) {
+            if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
                 if parsed > 0 {
                     gc_timer_interval = parsed;
                 }
@@ -128,7 +128,7 @@ impl GarbageCollectionController {
         self.gc_timer_interval = gc_timer_interval;
 
         if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
-            if let Some(parsed) = parse_int_c_int(val) {
+            if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
                 if parsed >= 0 {
                     crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
                         .store(parsed, core::sync::atomic::Ordering::Relaxed);
@@ -305,10 +305,5 @@ pub enum GCTimerState {
     Scheduled,
     RunOnNextTick,
 }
-
-#[inline]
-fn parse_int_i32(s: &[u8]) -> Option<i32> { bun_core::fmt::parse_int(s, 10).ok() }
-#[inline]
-fn parse_int_c_int(s: &[u8]) -> Option<c_int> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // ported from: src/jsc/GarbageCollectionController.zig

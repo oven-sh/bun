@@ -748,28 +748,11 @@ impl Number {
 
             // std.fmt.allocPrint(arena, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
             // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
-            struct StackWriter {
-                buf: [u8; 16],
-                len: usize,
-            }
-            impl core::fmt::Write for StackWriter {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    let b = s.as_bytes();
-                    let end = self.len + b.len();
-                    if end > self.buf.len() {
-                        return Err(core::fmt::Error);
-                    }
-                    self.buf[self.len..end].copy_from_slice(b);
-                    self.len = end;
-                    Ok(())
-                }
-            }
-            use core::fmt::Write as _;
-            let mut w = StackWriter { buf: [0u8; 16], len: 0 };
-            if write!(w, "{}", int_value as i32).is_err() {
+            let mut stack = [0u8; 16];
+            let Ok(s) = bun_core::fmt::buf_print(&mut stack, format_args!("{}", int_value as i32)) else {
                 return None;
-            }
-            return Some(Str::new(bump.alloc_slice_copy(&w.buf[..w.len])));
+            };
+            return Some(Str::new(bump.alloc_slice_copy(s)));
         }
 
         if value.is_nan() {

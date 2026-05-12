@@ -1,6 +1,6 @@
 use bun_core::CodePoint;
 use enum_map::Enum;
-use phf::{phf_map, phf_set};
+use phf::phf_map;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Enum, strum::IntoStaticStr)]
@@ -243,27 +243,13 @@ pub fn keyword(s: &[u8]) -> Option<T> {
     }
 }
 
-/// Hot-path strict-mode reserved-word check. Same strategy as [`keyword`]:
-/// length-bucketed fixed-array compare to avoid the SipHash inside
-/// `phf::Set::contains`. All entries are 3..=10 ASCII bytes.
-#[inline]
-pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
-    macro_rules! by_len {
-        ($n:literal: $($lit:literal,)*) => {{
-            let arr: &[u8; $n] = s.try_into().unwrap();
-            matches!(arr, $($lit)|*)
-        }};
-    }
-    match s.len() {
-        3 => by_len!(3: b"let",),
-        5 => by_len!(5: b"yield",),
-        6 => by_len!(6: b"public", b"static",),
-        7 => by_len!(7: b"package", b"private",),
-        9 => by_len!(9: b"interface", b"protected",),
-        10 => by_len!(10: b"implements",),
-        _ => false,
-    }
-}
+// Strict-mode reserved-word table sunk to `bun_core::lexer_tables` (single
+// source of truth shared with `MutableString::ensure_valid_identifier`).
+// `STRICT_MODE_RESERVED_WORDS` is now `[&[u8]; 9]` — `.len()`/`.iter()`-
+// compatible with the former `phf::Set` callers (renamer.rs).
+pub use bun_core::lexer_tables::{
+    is_strict_mode_reserved_word, strict_mode_reserved_word_remap, STRICT_MODE_RESERVED_WORDS,
+};
 
 // Kept for non-hot-path callers (e.g. error formatting, `to_string` on the
 // token). The lexer hot loop uses `keyword()` above instead.
@@ -305,54 +291,6 @@ pub static KEYWORDS: phf::Map<&'static [u8], T> = phf_map! {
     b"while" => T::TWhile,
     b"with" => T::TWith,
 };
-
-pub static STRICT_MODE_RESERVED_WORDS: phf::Set<&'static [u8]> = phf_set! {
-    b"implements",
-    b"interface",
-    b"let",
-    b"package",
-    b"private",
-    b"protected",
-    b"public",
-    b"static",
-    b"yield",
-};
-
-/// Same key set as [`is_strict_mode_reserved_word`], mapped to an
-/// underscore-prefixed replacement. Used by `MutableString::ensure_valid_identifier`
-/// to mangle a name that is already a syntactically valid identifier but would
-/// collide with a strict-mode reserved word. 9 entries, lengths 3/5/6/7/9/10 —
-/// length-gate rejects almost every miss in one `usize` compare, no SipHash.
-#[inline]
-pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
-    macro_rules! by_len {
-        ($n:literal: $($lit:literal => $out:literal,)*) => {{
-            let arr: &[u8; $n] = s.try_into().unwrap();
-            match arr {
-                $($lit => Some($out.as_slice()),)*
-                _ => None,
-            }
-        }};
-    }
-    match s.len() {
-        3 => by_len!(3: b"let" => b"_let",),
-        5 => by_len!(5: b"yield" => b"_yield",),
-        6 => by_len!(6:
-            b"public" => b"_public",
-            b"static" => b"_static",
-        ),
-        7 => by_len!(7:
-            b"package" => b"_package",
-            b"private" => b"_private",
-        ),
-        9 => by_len!(9:
-            b"interface" => b"_interface",
-            b"protected" => b"_protected",
-        ),
-        10 => by_len!(10: b"implements" => b"_implements",),
-        _ => None,
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropertyModifierKeyword {
@@ -939,12 +877,14 @@ mod tests {
     fn strict_mode_reserved_fn_matches_phf_set() {
         for k in STRICT_MODE_RESERVED_WORDS.iter() {
             assert!(is_strict_mode_reserved_word(k), "{:?}", k);
+            assert!(strict_mode_reserved_word_remap(k).is_some(), "{:?}", k);
         }
         for k in [
             b"" as &[u8], b"le", b"lett", b"publi", b"publics", b"var",
             b"function", b"interfac", b"interfaces",
         ] {
             assert!(!is_strict_mode_reserved_word(k), "{:?}", k);
+            assert!(strict_mode_reserved_word_remap(k).is_none(), "{:?}", k);
         }
     }
 

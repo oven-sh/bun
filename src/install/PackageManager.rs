@@ -301,7 +301,7 @@ pub use self::run_tasks::{
 };
 
 pub use self::update_package_json_and_install::{
-    update_package_json_and_install_and_cli, update_package_json_and_install_catch_error,
+    update_package_json_and_install_and_cli,
     update_package_json_and_install_with_manager,
 };
 
@@ -1175,8 +1175,8 @@ fn configure_env_for_scripts_run(
         if thread_count > 2 {
             let t_env = this_transpiler.env_mut();
             if !t_env.has(b"JOBS") {
-                let mut int_buf = [0u8; 10];
-                let jobs_str = bun_core::fmt::int_as_bytes(&mut int_buf, thread_count);
+                let mut int_buf = bun_core::fmt::ItoaBuf::new();
+                let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
                 t_env
                     .map
                     .put_alloc_value(b"JOBS", jobs_str)

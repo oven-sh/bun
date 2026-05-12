@@ -33,24 +33,11 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Hand-rolled decimal parse — hot in `bun install` (every version
-        // string in every package manifest). Skips the UTF-8 validation +
-        // sign/radix dispatch of `str::from_utf8(..)?.parse()`.
         // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
-        // the non-digit None case for pre-release identifier ordering.
-        if s.is_empty() {
-            return None;
-        }
-        let mut n: u64 = 0;
-        for &b in s {
-            let d = b.wrapping_sub(b'0');
-            if d > 9 {
-                return None;
-            }
-            n = n.checked_mul(10)?.checked_add(u64::from(d))?;
-        }
-        Some(n)
+        // the non-digit None case for pre-release identifier ordering
+        // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
+        bun_core::parse_unsigned::<u64>(s, 10).ok()
     }
 }
 
@@ -60,19 +47,7 @@ impl VersionInt for u32 {
     type TagPadding = [u8; 4];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // See u64 impl above.
-        if s.is_empty() {
-            return None;
-        }
-        let mut n: u32 = 0;
-        for &b in s {
-            let d = b.wrapping_sub(b'0');
-            if d > 9 {
-                return None;
-            }
-            n = n.checked_mul(10)?.checked_add(u32::from(d))?;
-        }
-        Some(n)
+        bun_core::parse_unsigned::<u32>(s, 10).ok()
     }
 }
 

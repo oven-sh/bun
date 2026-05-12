@@ -21,23 +21,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOption
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
 use crate::node::util::validators;
 
-// Local extension: `JSValue::withAsyncContextIfNeeded` is not yet on the
-// upstream `bun_jsc::JSValue`; shim it via the C++ FFI symbol like NativeZstd does.
-trait JSValueZlibExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueZlibExt for JSValue {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-}
-
 /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
 /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
 unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}

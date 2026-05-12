@@ -167,6 +167,8 @@ pub struct Subprocess<'a> {
     pub exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
+bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
+
 // PORT NOTE: a `Default` impl for `Subprocess` was scaffolded here in Phase A
 // to support `..Default::default()` struct-update syntax in
 // `js_bun_spawn_bindings::spawn_maybe_sync`. That call site now fills every
@@ -676,23 +678,8 @@ impl Subprocess<'_> {
         Self::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
-    /// Recover this thread's `timer::All` heap. b2-cycle: `vm.timer` is `()`
-    /// on the low-tier `bun_jsc::VirtualMachine`; the real value lives in
-    /// `jsc_hooks::RuntimeState.timer`.
-    ///
-    /// Returns `&'static mut` because the boxed `RuntimeState` is per-thread
-    /// (`!Send`), lives for the process lifetime, and `Subprocess` is heap-
-    /// allocated separately (not a field of `All`), so a live `&mut self` here
-    /// never aliases the returned borrow. Callers must not hold the result
-    /// across a JS re-entry that could itself call `timer_all()`; all uses in
-    /// this file are single-expression.
     #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-        // single JS thread so no concurrent `&mut`.
-        unsafe { &mut (*state).timer }
-    }
+    fn timer_all() -> &'static mut crate::timer::All { crate::jsc_hooks::timer_all_mut() }
 
     pub fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);

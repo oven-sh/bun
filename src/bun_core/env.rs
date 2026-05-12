@@ -252,7 +252,7 @@ const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static 
     // pointer arithmetic.
     //
     // ALLOWED `core::str::from_utf8`: this is the ONE permitted call site in
-    // the codebase. simdutf is the runtime validator (`bun_string::strings::
+    // the codebase. simdutf is the runtime validator (`bun_core::strings::
     // {is_valid_utf8, str_utf8}`); `const fn` cannot call FFI, and this body
     // const-evals at compile time only (git-SHA slicing).
     let (head, _) = s.as_bytes().split_at(end);

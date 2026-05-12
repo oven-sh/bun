@@ -50,7 +50,7 @@ impl IsZigString for &mut [u8] {}
 impl<const N: usize> IsZigString for &[u8; N] {}
 impl<const N: usize> IsZigString for &mut [u8; N] {}
 
-// Sentinel-terminated slices ([:S]const u8 / [:S]u8) — bun_str::ZStr carries len+NUL.
+// Sentinel-terminated slices ([:S]const u8 / [:S]u8) — bun_core::ZStr carries len+NUL.
 
 #[inline]
 pub const fn is_zig_string<T: IsZigString>() -> bool {

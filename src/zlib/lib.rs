@@ -4,9 +4,7 @@
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::mem::size_of;
 
-use bun_alloc::mimalloc;
 use bun_collections::VecExt as _;
-use bun_core as bun;
 
 // TODO(port): move externs to zlib_sys crate
 
@@ -341,59 +339,16 @@ bun_core::impl_tag_error!(ZlibError);
 
 bun_core::named_error_set!(ZlibError);
 
-/// zlib `alloc_func` thunk → mimalloc (non-zeroing). Shared by `ZlibReader` and
-/// `ZlibCompressorArrayList`. Mirrors zlib.zig:138 / :779 — intentionally
-/// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
-/// heap-breakdown variant used by `ZlibReaderArrayList`).
-pub(crate) unsafe extern "C" fn zlib_mi_malloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-    let p = mimalloc::mi_malloc((items * len) as usize);
-    if p.is_null() {
-        unreachable!();
-    }
-    p
-}
+// zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
+// `ZlibCompressorArrayList`. Mirrors zlib.zig:138 / :779 — intentionally
+// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
+// heap-breakdown variant used by `ZlibReaderArrayList`).
+pub(crate) use bun_alloc::c_thunks::{mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc};
 
-/// zlib `free_func` thunk → mimalloc. Paired with `zlib_mi_malloc`.
-pub(crate) unsafe extern "C" fn zlib_mi_free(_: *mut c_void, data: *mut c_void) {
-    // SAFETY: data was allocated by mi_malloc in `zlib_mi_malloc`.
-    unsafe { mimalloc::mi_free(data) };
-}
-
-struct ZlibAllocator;
-
-impl ZlibAllocator {
-    pub(crate) unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        if bun_alloc::heap_breakdown::ENABLED {
-            let zone = bun_alloc::get_zone!("zlib");
-            // Zig: `zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory()`.
-            // The method derives its `*mut Zone` through `UnsafeCell` (see
-            // `Zone::as_mut_ptr`), so no `*const → *mut` cast is needed here.
-            return match zone.malloc_zone_calloc(items as usize, len as usize) {
-                Some(p) => p,
-                None => bun::out_of_memory(),
-            };
-        }
-
-        let p = mimalloc::mi_calloc(items as usize, len as usize);
-        if p.is_null() {
-            bun::out_of_memory();
-        }
-        p
-    }
-
-    pub(crate) unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
-        if bun_alloc::heap_breakdown::ENABLED {
-            let zone = bun_alloc::get_zone!("zlib");
-            // SAFETY: `data` was allocated by `malloc_zone_calloc` on this same
-            // zone in `alloc` above. The method derives its `*mut Zone` through
-            // `UnsafeCell` (see `Zone::as_mut_ptr`).
-            unsafe { zone.malloc_zone_free(data) };
-            return;
-        }
-
-        // SAFETY: data was allocated by mi_calloc above.
-        unsafe { mimalloc::mi_free(data) };
-    }
+#[allow(non_snake_case)]
+mod ZlibAllocator {
+    bun_alloc::c_thunks_for_zone!("zlib");
+    pub(crate) use calloc_items as alloc;
 }
 
 pub struct ZlibReaderArrayList<'a> {

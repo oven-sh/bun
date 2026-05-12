@@ -5,7 +5,7 @@ use crate::string::ZigStringSlice;
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no
 // upward dependency. Re-exported here for back-compat with existing
-// `bun_string::wtf::*` / `bun_string::WTFStringImpl*` import paths.
+// `bun_core::wtf::*` / `bun_core::WTFStringImpl*` import paths.
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
@@ -27,7 +27,7 @@ pub type StringImpl = WTFStringImplStruct;
 /// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
 /// `crate::string::strings::*` transcoding. Kept as a trait because the struct is
 /// defined in `bun_alloc` and an inherent `impl` here would violate the orphan
-/// rule. Glob-imported via `bun_string::WTFStringImplExt` so method-call syntax
+/// rule. Glob-imported via `bun_core::WTFStringImplExt` so method-call syntax
 /// keeps working at every existing callsite.
 pub trait WTFStringImplExt {
     fn to_latin1_slice(&self) -> ZigStringSlice;
@@ -151,32 +151,9 @@ impl WTFStringImplExt for WTFStringImplStruct {
 // WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit
 // ownership variant — see `to_latin1_slice` above. No allocator trait needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// move-in: parse_double (MOVE_DOWN ← src/jsc/WTF.zig `WTF.parseDouble`)
-//
-// Thin wrapper around WebKit's WTF__parseDouble. Lives here so
-// `bun_interchange` (yaml) and `bun_js_parser::lexer` can call it without
-// depending on `bun_jsc`.
-// ──────────────================================================────────────
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct InvalidCharacter;
-
-pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
-    if buf.is_empty() {
-        return Err(InvalidCharacter);
-    }
-    let mut count: usize = 0;
-    // SAFETY: buf is a valid slice; WTF__parseDouble reads at most `length` bytes.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
-    if count == 0 {
-        return Err(InvalidCharacter);
-    }
-    Ok(res)
-}
-
-unsafe extern "C" {
-    fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
-}
+// `WTF.parseDouble` canonical now lives in bun_core::fmt (tier-0) so
+// `bun_interchange` (yaml/toml) and `bun_js_parser::lexer` can call it without
+// any string/jsc dep. Re-exported here to keep the Zig namespace shape.
+pub use crate::fmt::{parse_double, InvalidCharacter};
 
 // ported from: src/string/wtf.zig

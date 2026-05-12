@@ -12,7 +12,7 @@ use crate::output as Output; // @import("./output.zig")
 
 use bun_alloc as alloc;
 use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungate in B-2)
-// MOVE_DOWN: bun_str::ZStr → bun_core (move-in pass).
+// MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -211,70 +211,63 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
     }
 }
 
-// ─── SIGNAL_NAMES — single source of truth for `@tagName(SignalCode)` ─────
-// Zig has ONE `enum(u8) { …, _ }` (src/sys/SignalCode.zig) and uses the
-// compiler-intrinsic `@tagName` — there is no hand-written switch in Zig.
-// The Rust port split the type across two crates (open newtype in bun_sys,
-// closed enum here); this const table is the shared `@tagName` surrogate.
-// Index = POSIX signal number; `[0]` is a sentinel ("") that callers must
-// guard out themselves — bun_sys::SignalCode::name() range-checks `1..=31`,
-// bun_core::SignalCode is `#[repr(u8)]` exhaustive over `1..=31` so it
-// indexes directly.
-pub const SIGNAL_NAMES: [&str; 32] = [
-    "",        "SIGHUP",  "SIGINT",  "SIGQUIT", "SIGILL",   "SIGTRAP",
-    "SIGABRT", "SIGBUS",  "SIGFPE",  "SIGKILL", "SIGUSR1",  "SIGSEGV",
-    "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIG16",    "SIGCHLD",
-    "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU",  "SIGURG",
-    "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO",
-    "SIGPWR",  "SIGSYS",
-];
-
-// ─── SignalCode (from bun_sys, TYPE_ONLY) ─────────────────────────────────
-// Zig: src/sys/SignalCode.zig — enum(u8) with POSIX numbering. Only the
-// discriminant is needed at this tier (raise_ignoring_panic_handler casts to c_int).
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(clippy::upper_case_acronyms)]
-pub enum SignalCode {
-    SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
-    SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
-    SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
-    SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
-    SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
-    SIGSYS = 31,
-}
-impl SignalCode {
-    pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
-
-    /// Zig `@enumFromInt` for the closed `1..=31` range. Returns `None` for
-    /// `0` or any out-of-range value (the open Zig enum's `_` tail).
-    #[inline]
-    pub const fn from_raw(n: u8) -> Option<SignalCode> {
-        match n {
-            1 => Some(Self::SIGHUP), 2 => Some(Self::SIGINT), 3 => Some(Self::SIGQUIT),
-            4 => Some(Self::SIGILL), 5 => Some(Self::SIGTRAP), 6 => Some(Self::SIGABRT),
-            7 => Some(Self::SIGBUS), 8 => Some(Self::SIGFPE), 9 => Some(Self::SIGKILL),
-            10 => Some(Self::SIGUSR1), 11 => Some(Self::SIGSEGV), 12 => Some(Self::SIGUSR2),
-            13 => Some(Self::SIGPIPE), 14 => Some(Self::SIGALRM), 15 => Some(Self::SIGTERM),
-            16 => Some(Self::SIG16), 17 => Some(Self::SIGCHLD), 18 => Some(Self::SIGCONT),
-            19 => Some(Self::SIGSTOP), 20 => Some(Self::SIGTSTP), 21 => Some(Self::SIGTTIN),
-            22 => Some(Self::SIGTTOU), 23 => Some(Self::SIGURG), 24 => Some(Self::SIGXCPU),
-            25 => Some(Self::SIGXFSZ), 26 => Some(Self::SIGVTALRM), 27 => Some(Self::SIGPROF),
-            28 => Some(Self::SIGWINCH), 29 => Some(Self::SIGIO), 30 => Some(Self::SIGPWR),
-            31 => Some(Self::SIGSYS),
-            _ => None,
+// ─── SignalCode — single source of truth (Zig: src/sys/SignalCode.zig) ────
+// Zig declares ONE `enum(u8) { …, _ }` and derives the name table via
+// `@tagName` + `ComptimeEnumMap`. Rust has no enum reflection, so the 31
+// (name,number) pairs live in ONE X-macro below; every consumer — the closed
+// enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
+// `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
+#[macro_export]
+macro_rules! for_each_signal {
+    ($cb:ident) => {
+        $cb! {
+            SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
+            SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
+            SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
+            SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
+            SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
+            SIGSYS = 31,
         }
-    }
-
-    /// Zig: `SignalCode.name(self) ?[]const u8` — maps a signal to its
-    /// canonical `"SIGxxx"` name. The bun_core enum is exhaustive (1..=31),
-    /// so every variant has a name; the `Option` in bun_sys exists only for
-    /// the open-ended `enum(u8) { _, }` newtype port.
-    #[inline]
-    pub fn name(self) -> &'static str {
-        SIGNAL_NAMES[self as u8 as usize]
-    }
+    };
 }
+
+macro_rules! __define_signal_code {
+    ($($name:ident = $n:literal),* $(,)?) => {
+        /// `@tagName` surrogate. Index = POSIX signal number; `[0]` is "" sentinel
+        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
+        pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
+
+        /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in
+        /// `bun_sys::SignalCode`). Generated from `for_each_signal!`.
+        #[repr(u8)]
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        #[allow(clippy::upper_case_acronyms)]
+        pub enum SignalCode { $($name = $n,)* }
+
+        impl SignalCode {
+            pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
+
+            /// Zig `@enumFromInt` for the closed `1..=31` range; `None` for `0`
+            /// or the open enum's `_` tail.
+            #[inline]
+            pub const fn from_raw(n: u8) -> Option<SignalCode> {
+                match n { $($n => Some(Self::$name),)* _ => None }
+            }
+
+            /// Zig `@tagName` — every variant is named (enum is exhaustive).
+            #[inline]
+            pub fn name(self) -> &'static str { SIGNAL_NAMES[self as u8 as usize] }
+
+            /// Zig `bun.ComptimeEnumMap(SignalCode).get` — name-bytes → variant.
+            /// 31-arm match; the optimizer turns it into a small string switch.
+            #[inline]
+            pub fn from_name(s: &[u8]) -> Option<SignalCode> {
+                match s { $(_ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
+            }
+        }
+    };
+}
+for_each_signal!(__define_signal_code);
 
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
 // Zig: src/analytics/analytics.zig::Features — bag of `pub var X: usize`.

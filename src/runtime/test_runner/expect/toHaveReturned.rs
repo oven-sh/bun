@@ -31,20 +31,15 @@ fn to_have_returned_times_fn(
     mode: Mode,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let this_value = callframe.this();
     let arguments = callframe.arguments();
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — the guard owns the &mut Expect and runs post_match on
-    // every exit path; access goes through DerefMut so the unique borrow is never aliased.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
-    let value: JSValue =
-        this.get_value(global, this_value, mode.tag_name(), "<green>expected<r>")?;
-
-    this.increment_expect_call_counter();
-
-    let mut returns = mock::jest_mock_iterator(global, value)?;
+    let (this, returns_arr, _value) = this.mock_prologue(
+        global,
+        callframe.this(),
+        mode.tag_name(),
+        "<green>expected<r>",
+        mock::MockKind::Returns,
+    )?;
+    let mut returns = returns_arr.array_iterator(global)?;
 
     let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
         if arguments.len() > 0 && !arguments[0].is_undefined() {

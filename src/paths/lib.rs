@@ -84,47 +84,16 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool { is_absolute_windows_t::<u1
 /// letter; UNC requires a *matching* separator pair (`//` or `\\`, not mixed),
 /// rejects a third leading separator, and requires BOTH server and share
 /// tokens — otherwise returns `b""`.
+#[inline]
 pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
-    if p.len() >= 2 && p[1] == b':' {
-        return &p[..2];
-    }
-    // Single leading sep (not UNC) → no designator.
-    if p.len() >= 1
-        && (p[0] == b'/' || p[0] == b'\\')
-        && (p.len() == 1 || (p[1] != b'/' && p[1] != b'\\'))
-    {
-        return b"";
-    }
-    if p.len() < b"//a/b".len() {
-        return b"";
-    }
-    for &this_sep in b"/\\" {
-        if p[0] == this_sep && p[1] == this_sep {
-            if p[2] == this_sep {
-                return b"";
-            }
-            // mem.tokenizeScalar(u8, p, this_sep): skip runs of `this_sep`,
-            // yield non-sep tokens. Require two tokens (server + share);
-            // designator is `p[..index_after_share]`.
-            let mut idx = 0usize;
-            let mut next = || -> Option<()> {
-                while idx < p.len() && p[idx] == this_sep { idx += 1; }
-                if idx == p.len() { return None; }
-                while idx < p.len() && p[idx] != this_sep { idx += 1; }
-                Some(())
-            };
-            if next().is_none() { return b""; } // server
-            if next().is_none() { return b""; } // share
-            return &p[..idx];
-        }
-    }
-    b""
+    &p[..crate::path::disk_designator_len_windows::<u8>(p)]
 }
 
-/// Character types valid in path slices (u8 / u16). Defined in resolve_path
-/// (richer: IS_U16/to_ascii_upper/lit); re-exported here so `is_absolute_*_t`
-/// shares the same trait as resolve_path's generics.
-pub use resolve_path::PathChar;
+/// Character types valid in path slices (u8 / u16). Canonical definition;
+/// `resolve_path`, `Path::PathUnit`, `bun_sys::make_path::MakePathUnit`,
+/// `bun_runtime::node::path::PathCharCwd`, and `bun_core::Ch` all extend it.
+mod path_char;
+pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 
 /// `bun.pathLiteral("a/b")` → NUL-terminated path with platform separators.
@@ -200,6 +169,75 @@ pub fn is_absolute(p: &[u8]) -> bool {
     #[cfg(not(windows))] { p.first() == Some(&b'/') }
     #[cfg(windows)] { is_absolute_windows(p) }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
+// legitimate callers:
+//
+//   1. bun_paths::is_absolute(p)           — host cfg-dispatched (Zig:
+//      std.fs.path.isAbsolute). Use when the path came from THIS host's
+//      filesystem.
+//
+//   2. bun_paths::resolve_path::Platform::Loose.is_absolute(p) — host-agnostic
+//      (accepts '/', '\\', and 'X:/'|'X:\\' on ANY host). Use when the path is
+//      a normalized cross-platform map key / bundler specifier.
+//
+// `is_absolute_loose` is a thin discoverable wrapper for (2) so call sites
+// don't have to spell out `resolve_path::Platform::Loose.is_absolute(..)`.
+/// Host-agnostic absolute-path check: accepts `/…`, `\…`, and `X:/…`/`X:\…`
+/// on ANY host. Faithful to Zig std `isAbsoluteWindows` (no alphabetic gate
+/// on the drive byte). Use for cross-platform map keys / bundler specifiers
+/// where the input may have come from either OS.
+#[inline]
+pub fn is_absolute_loose(p: &[u8]) -> bool {
+    resolve_path::Platform::Loose.is_absolute(p)
+}
+
+// ───── std.fs.path.join / joinZ (non-normalizing) ─────
+// Faithful port of vendor/zig/lib/std/fs/path.zig `joinSepMaybeZ` with
+// `sep = path.sep`, `isSep = path.isSep` (both '/' and '\\' on Windows):
+// concatenates `parts`, skipping empties, inserting SEP only when neither
+// seam side already has one, and stripping exactly one leading sep when both
+// sides have one. Byte-level / ASCII-sep only — never normalizes.
+fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut prev_last: Option<u8> = None;
+    for p in parts {
+        if p.is_empty() {
+            continue;
+        }
+        let this = match prev_last {
+            None => *p,
+            Some(prev) => {
+                let prev_sep = is_sep_native(prev);
+                let this_sep = is_sep_native(p[0]);
+                if !prev_sep && !this_sep {
+                    out.push(SEP);
+                }
+                if prev_sep && this_sep { &p[1..] } else { *p }
+            }
+        };
+        out.extend_from_slice(this);
+        prev_last = Some(p[p.len() - 1]);
+    }
+    out
+}
+/// `std.fs.path.join` / `std.fs.path.joinZ` — non-normalizing concatenation
+/// with the native separator. When `SENTINEL` the trailing NUL is included in
+/// the returned slice (Zig: `[:0]u8` coerced to `[]u8`).
+#[inline]
+pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
+    let mut out = join_sep_vec(parts);
+    if SENTINEL {
+        out.push(0);
+    }
+    out.into_boxed_slice()
+}
+/// `std.fs.path.joinZ` — non-normalizing concatenation, owned NUL-terminated.
+#[inline]
+pub fn join_sep_z(parts: &[&[u8]]) -> bun_core::ZBox {
+    bun_core::ZBox::from_vec(join_sep_vec(parts))
+}
 /// NOT a port of `std.fs.path.dirname` — this is the naive "slice before last
 /// separator" used by a handful of callers that want exactly that. For Zig-std
 /// `dirname` semantics (Option, trailing-slash handling, root preservation)
@@ -210,51 +248,8 @@ pub fn dirname_simple(p: &[u8]) -> &[u8] {
 }
 /// Port of `std.fs.path.basename` — strips trailing separators before slicing
 /// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
-/// Canonical `u8` impl lives in `bun_core::strings`; the width-generic
-/// `basename_{posix,windows}<T: PathChar>` wrappers below stay here for `u16`
-/// callers (crash_handler, BinLinkingShim).
-pub use bun_core::strings::basename;
-
-/// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
-/// final component. `\` is NOT a separator. Generic over `u8`/`u16` so the
-/// `bun_core::immutable::paths` re-exports can serve wide-path callers.
-pub fn basename_posix<T: PathChar>(p: &[T]) -> &[T] {
-    if p.is_empty() { return &[]; }
-    let mut end = p.len();
-    while end > 0 && p[end - 1] == T::from_u8(b'/') { end -= 1; }
-    if end == 0 { return &[]; }
-    let mut start = end;
-    while start > 0 && p[start - 1] != T::from_u8(b'/') { start -= 1; }
-    &p[start..end]
-}
-
-/// Port of `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a
-/// drive designator (`X:`) as a boundary, then returns the final component.
-/// Generic over `u8`/`u16` so the `bun_core::immutable::paths` re-exports
-/// can serve wide-path callers.
-pub fn basename_windows<T: PathChar>(p: &[T]) -> &[T] {
-    if p.is_empty() { return &[]; }
-    let mut end = p.len();
-    loop {
-        let c = p[end - 1];
-        if c == T::from_u8(b'/') || c == T::from_u8(b'\\') {
-            end -= 1;
-            if end == 0 { return &[]; }
-            continue;
-        }
-        if c == T::from_u8(b':') && end == 2 { return &[]; }
-        break;
-    }
-    let mut start = end;
-    while start > 0
-        && p[start - 1] != T::from_u8(b'/')
-        && p[start - 1] != T::from_u8(b'\\')
-        && !(p[start - 1] == T::from_u8(b':') && start - 1 == 1)
-    {
-        start -= 1;
-    }
-    &p[start..end]
-}
+/// Canonical impls (width-generic over `PathByte`) live in `bun_core::strings`.
+pub use bun_core::strings::{basename, basename_posix, basename_windows, PathByte};
 
 /// Port of `std.fs.path.extension` — returns the file extension of `p`
 /// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
@@ -316,6 +311,10 @@ pub mod path_buffer_pool;
 // Zig "valid until next call" semantics).
 pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
+pub mod component_iterator;
+pub use component_iterator::{
+    component_iterator, make_path_with, Component, ComponentIterator, MakePathStep, PathFormat,
+};
 // Crate-root re-exports for the path-mutation helpers callers spell as
 // `bun.path.*` in Zig (e.g. `bun.path.dangerouslyConvertPathToPosixInPlace`,
 // `bun.path.pathToPosixBuf`). Zig flattens `resolve_path` into the `bun.path`
@@ -324,6 +323,8 @@ pub use resolve_path::{Platform, PlatformT, platform};
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place,
     dangerously_convert_path_to_windows_in_place,
+    slashes_to_posix_in_place,
+    slashes_to_windows_in_place,
     join_abs_string_buf,
     dirname_w,
     is_drive_letter,
@@ -334,6 +335,8 @@ pub use resolve_path::{
     is_sep_native_t,
     is_sep_posix,
     is_sep_posix_t,
+    is_sep_win32,
+    is_sep_win32_t,
     join_abs_string_buf_z,
     join_string_buf_wz,
     path_to_posix_buf,
@@ -407,7 +410,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` (src/sys/windows/windows.zig) so tier-1 callers
-// (`bun_str::immutable::paths`, this crate's `Path.rs`) can resolve them
+// (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {

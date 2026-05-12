@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use bun_collections::VecExt as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 use bun_core::strings;
@@ -108,8 +109,7 @@ impl TextEncoderStreamEncoder {
                 buffer.reserve(2);
             } else if buffer.len() == buffer.capacity() && !remain.is_empty() {
                 // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
-                let target = buffer.len() + remain.len() + 1;
-                buffer.reserve(target.saturating_sub(buffer.len()));
+                buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
             }
         }
 

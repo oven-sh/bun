@@ -188,17 +188,6 @@ impl From<ZstdError> for bun_core::Error {
     }
 }
 
-/// Port of Zig `bun.sliceTo(ptr, 0)` for the static C strings returned by `ZSTD_getErrorName`.
-///
-/// SAFETY: `ptr` must be non-null, NUL-terminated, and valid for `'static`.
-#[inline]
-unsafe fn zstr_from_c_ptr(ptr: *const c_char) -> &'static ZStr {
-    // SAFETY: caller guarantees `ptr` is a NUL-terminated static C string.
-    let len = unsafe { libc::strlen(ptr) };
-    // SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'static`.
-    unsafe { ZStr::from_raw(ptr.cast::<u8>(), len) }
-}
-
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.
 ///  NOTE: Providing `dstCapacity >= ZSTD_compressBound(srcSize)` guarantees that zstd will have
@@ -223,7 +212,7 @@ pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
     };
     if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { zstr_from_c_ptr(c::ZSTD_getErrorName(result)) });
+        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
     Result::Success(result)
 }
@@ -252,7 +241,7 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
     };
     if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { zstr_from_c_ptr(c::ZSTD_getErrorName(result)) });
+        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
     Result::Success(result)
 }
@@ -388,31 +377,17 @@ impl<'a> ZstdReaderArrayList<'a> {
                 return Ok(());
             }
 
-            // PORT NOTE: reshaped for borrowck — capture spare-capacity ptr/len, then
-            // drop the borrow before calling set_len below.
-            let mut unused_len = self.list_ptr.spare_capacity_mut().len();
-            if unused_len < 4096 {
-                self.list_ptr.reserve(4096);
-                unused_len = self.list_ptr.spare_capacity_mut().len();
-            }
-            let unused_ptr = self.list_ptr.spare_capacity_mut().as_mut_ptr().cast::<u8>();
-
+            // SAFETY: write-only spare; ZSTD_decompressStream initializes the
+            // first `out_buf.pos` bytes.
+            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
             let mut in_buf = c::ZSTD_inBuffer {
-                src: if !next_in.is_empty() {
-                    next_in.as_ptr().cast::<c_void>()
-                } else {
-                    core::ptr::null()
-                },
+                src: next_in.as_ptr().cast::<c_void>(),
                 size: next_in.len(),
                 pos: 0,
             };
             let mut out_buf = c::ZSTD_outBuffer {
-                dst: if unused_len > 0 {
-                    unused_ptr.cast::<c_void>()
-                } else {
-                    core::ptr::null_mut()
-                },
-                size: unused_len,
+                dst: spare.as_mut_ptr().cast::<c_void>(),
+                size: spare.len(),
                 pos: 0,
             };
 
@@ -428,10 +403,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             let bytes_read = in_buf.pos;
             // SAFETY: ZSTD_decompressStream wrote exactly `bytes_written` initialized bytes
             // into the spare capacity starting at the previous len.
-            unsafe {
-                let new_len = self.list_ptr.len() + bytes_written;
-                self.list_ptr.set_len(new_len);
-            }
+            unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
             self.total_out += bytes_written;
 

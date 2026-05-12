@@ -34,7 +34,7 @@
     clippy::all
 )]
 
-// Generated `generated_host_exports.rs` may spell `bun_string::String` or
+// Generated `generated_host_exports.rs` may spell `bun_core::String` or
 // `bun_core::String` depending on which side of the merge the codegen ran on;
 // alias here so both resolve.
 #[allow(unused_imports)]

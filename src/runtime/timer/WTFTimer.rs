@@ -56,6 +56,8 @@ pub struct WTFTimer {
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
 
+bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
     // SAFETY: caller (C++) guarantees `vm` is the live VirtualMachine for this thread.

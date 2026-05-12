@@ -556,7 +556,7 @@ impl PmVersionCommand {
                     break 'blk current_prerelease[..dot_index as usize].to_vec();
                 }
 
-                break 'blk if parse_u32(current_prerelease).is_some() {
+                break 'blk if bun_core::fmt::parse_decimal::<u32>(current_prerelease).is_some() {
                     Vec::new()
                 } else {
                     current_prerelease.to_vec()
@@ -653,7 +653,7 @@ impl PmVersionCommand {
                         strings::last_index_of_char(current_prerelease, b'.')
                     {
                         let number_str = &current_prerelease[(dot_index as usize) + 1..];
-                        let next_num = parse_u32(number_str).unwrap_or(0);
+                        let next_num = bun_core::fmt::parse_decimal::<u32>(number_str).unwrap_or(0);
                         return Ok(fmt_bytes(format_args!(
                             "{}.{}.{}-{}.{}",
                             new_version.major,
@@ -663,7 +663,7 @@ impl PmVersionCommand {
                             next_num + 1
                         )));
                     } else {
-                        let num = parse_u32(current_prerelease);
+                        let num = bun_core::fmt::parse_decimal::<u32>(current_prerelease);
                         if let Some(n) = num {
                             if !preid.is_empty() {
                                 return Ok(fmt_bytes(format_args!(
@@ -971,9 +971,6 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     v.write_fmt(args).expect("unreachable");
     v
 }
-
-#[inline]
-fn parse_u32(s: &[u8]) -> Option<u32> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
 // slices (Zig was `&.{...}` of `[]const u8`).

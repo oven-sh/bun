@@ -5,6 +5,7 @@ use crate::dependencies::UrlDependency;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
+use crate::generics::DeepClone as _;
 use crate::values::url::Url;
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
@@ -120,7 +121,7 @@ impl Image {
         match self {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url { import_record_idx: u.import_record_idx, loc: u.loc }),
-            Image::Gradient(g) => Image::Gradient(Box::new(g.deep_clone(arena))),
+            Image::Gradient(g) => Image::Gradient(g.deep_clone(arena)),
             Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
         }
     }
@@ -293,16 +294,11 @@ impl ImageSet {
         // SAFETY: borrow detached (Phase-A `'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
         let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
-        let vendor_prefix = 'vendor_prefix: {
-            // todo_stuff.match_ignore_ascii_case
-            if strings::eql_case_insensitive_ascii_check_length(b"image-set", f) {
-                break 'vendor_prefix VendorPrefix::NONE;
-            } else if strings::eql_case_insensitive_ascii_check_length(b"-webkit-image-set", f) {
-                break 'vendor_prefix VendorPrefix::WEBKIT;
-            } else {
-                return Result::Err(location.new_unexpected_token_error(css::Token::Ident(f)));
-            }
-        };
+        let vendor_prefix = crate::match_ignore_ascii_case! { f, {
+            b"image-set" => VendorPrefix::NONE,
+            b"-webkit-image-set" => VendorPrefix::WEBKIT,
+            _ => return Result::Err(location.new_unexpected_token_error(css::Token::Ident(f))),
+        }};
 
         let options = input.parse_nested_block(|i: &mut css::Parser| {
             i.parse_comma_separated(ImageSetOption::parse)
@@ -317,15 +313,8 @@ impl ImageSet {
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
         self.vendor_prefix.to_css(dest)?;
         dest.write_str("image-set(")?;
-        let mut first = true;
-        for option in self.options.iter() {
-            if first {
-                first = false;
-            } else {
-                dest.delim(b',', false)?;
-            }
-            option.to_css(dest, self.vendor_prefix != VendorPrefix::NONE)?;
-        }
+        let prefixed = self.vendor_prefix != VendorPrefix::NONE;
+        dest.write_comma_separated(self.options.iter(), |d, opt| opt.to_css(d, prefixed))?;
         dest.write_char(b')')
     }
 

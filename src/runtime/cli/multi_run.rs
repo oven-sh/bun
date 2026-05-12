@@ -68,42 +68,21 @@ impl<'a> PipeReader<'a> {
     }
 }
 
-// SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-// `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader may
-// be live on the caller's stack. Callbacks here touch only `line_buffer` /
-// `handle` / the State backref, never `reader`.
-bun_io::buffered_reader_parent_link!(MultiRunPipeReader for PipeReader<'static>);
-impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::MultiRunPipeReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _has_more: ReadState) -> bool {
-        // SAFETY: backrefs set in ProcessHandle::start(); State outlives all handles.
-        let state = unsafe { &mut *((*(*this).handle).state as *mut State) };
-        let _ = state.read_chunk(unsafe { &mut *this }, chunk);
+// Callbacks here touch only `line_buffer` / `handle` / the State backref,
+// never `reader`. Backrefs set in `ProcessHandle::start()`; `State` outlives
+// all handles (lives on `run`'s stack frame for the whole event loop).
+bun_io::impl_buffered_reader_parent! {
+    MultiRunPipeReader for PipeReader<'a>;
+    has_on_read_chunk = true;
+    on_read_chunk = |this, chunk, _has_more| {
+        let state = &mut *((*(*this).handle).state as *mut State);
+        let _ = state.read_chunk(&mut *this, chunk);
         true
-    }
-
-    unsafe fn on_reader_done(_this: *mut Self) {}
-
-    unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
-
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // SAFETY: backref; see on_read_chunk. State outlives all handles.
-        unsafe { (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx() }
-    }
-
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is the
-        // platform's uws wrapper; on POSIX `bun_io::Loop` *is* that wrapper
-        // (identity cast); on Windows project the embedded `uv_loop_t*`.
-        #[cfg(not(windows))]
-        { unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_io::Loop>() } }
-        #[cfg(windows)]
-        // SAFETY: `loop_` is the live `us_loop`; `uv_loop` set once at init.
-        { unsafe { (*(*(*this).event_loop_ptr()).loop_).uv_loop } }
-    }
+    };
+    on_reader_done  = |_this| {};
+    on_reader_error = |_this, _err| {};
+    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
+    event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
 
 struct ProcessSlot {
@@ -272,15 +251,16 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
+use bun_core::output::ansi;
 const COLORS: [&[u8]; 6] = [
-    b"\x1b[36m", // cyan
-    b"\x1b[33m", // yellow
-    b"\x1b[35m", // magenta
-    b"\x1b[32m", // green
-    b"\x1b[34m", // blue
-    b"\x1b[31m", // red
+    ansi::CYAN.as_bytes(),
+    ansi::YELLOW.as_bytes(),
+    ansi::MAGENTA.as_bytes(),
+    ansi::GREEN.as_bytes(),
+    ansi::BLUE.as_bytes(),
+    ansi::RED.as_bytes(),
 ];
-const RESET: &[u8] = b"\x1b[0m";
+const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,

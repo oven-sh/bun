@@ -428,22 +428,9 @@ impl Token {
 // output is byte-compatible.
 
 fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
-    use std::io::Write as _;
-    out.push(b'"');
-    for &b in s {
-        match b {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0x00..=0x1f => {
-                let _ = write!(out, "\\u{:04x}", b);
-            }
-            _ => out.push(b),
-        }
-    }
-    out.push(b'"');
+    // debug-only path; canonical's run-batched write_str preserves verbatim
+    // bytes so no regression vs old out.push(b).
+    let _ = bun_core::fmt::encode_json_string(&mut bun_core::fmt::VecWriter(out), s);
 }
 
 pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {

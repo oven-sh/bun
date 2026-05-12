@@ -463,14 +463,10 @@ impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        // css.todo_stuff.match_ignore_ascii_case
-        // PORT NOTE: Zig fn name has typo `ASCIII` (3 I's); bun_core exports both spellings.
-        let valid = !(strings::eql_case_insensitive_ascii_check_length(ident, b"initial")
-            || strings::eql_case_insensitive_ascii_check_length(ident, b"inherit")
-            || strings::eql_case_insensitive_ascii_check_length(ident, b"unset")
-            || strings::eql_case_insensitive_ascii_check_length(ident, b"default")
-            || strings::eql_case_insensitive_ascii_check_length(ident, b"revert")
-            || strings::eql_case_insensitive_ascii_check_length(ident, b"revert-layer"));
+        let valid = crate::match_ignore_ascii_case! { ident, {
+            b"initial" | b"inherit" | b"unset" | b"default" | b"revert" | b"revert-layer" => false,
+            _ => true,
+        }};
 
         if !valid {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));

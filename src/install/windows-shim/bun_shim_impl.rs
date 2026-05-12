@@ -559,9 +559,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     let suffix: &'static [u16] = if IS_STANDALONE {
-        bun_str::w!("exe")
+        bun_core::w!("exe")
     } else {
-        bun_str::w!("bunx")
+        bun_core::w!("bunx")
     };
     if DBG {
         if !image_path_u16.ends_with(suffix) {
@@ -621,7 +621,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // so we need the prefix here. This is an extra sanity check.
         if DBG {
             debug_assert!(unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX));
-            debug_assert!(unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_str::w!(".bunx")));
+            debug_assert!(unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx")));
         }
         // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
         let rc = unsafe {
@@ -1311,7 +1311,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     debug_assert!(flags.has_shebang());
                                     if DBG {
                                         debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
-                                            .starts_with(bun_str::w!("node ")));
+                                            .starts_with(bun_core::w!("node ")));
                                     }
 
                                     // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
@@ -1320,7 +1320,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     //                  ^~~ replace these three bytes with 'bun'
                                     // SAFETY: spawn_command_line[1..4] is within the buffer.
                                     unsafe {
-                                        let bun = bun_str::w!("bun");
+                                        let bun = bun_core::w!("bun");
                                         core::ptr::copy_nonoverlapping(
                                             bun.as_ptr(),
                                             spawn_command_line.add(1),
@@ -1339,7 +1339,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     // This script calls for 'bun', but it was not found.
                                     if DBG {
                                         debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
-                                            .starts_with(bun_str::w!("bun ")));
+                                            .starts_with(bun_core::w!("bun ")));
                                     }
                                     return LauncherMode::fail(MODE, FailReason::InterpreterNotFoundBun);
                                 }
@@ -1349,7 +1349,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             if attempt_number == 1 {
                                 if DBG {
                                     debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
-                                        .starts_with(bun_str::w!("bun ")));
+                                        .starts_with(bun_core::w!("bun ")));
                                 }
                                 return LauncherMode::fail(MODE, FailReason::InterpreterNotFoundBun);
                             }

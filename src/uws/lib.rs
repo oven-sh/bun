@@ -1849,6 +1849,35 @@ impl AnySocket {
     }
 }
 
+/// Stamp out `AnySocket::$m` as a two-arm forward to `NewSocketHandler<SSL>::$m`.
+/// Mirrors Zig `switch (this) { inline else => |s| s.$m(...) }` (src/uws_sys/socket.zig:532-628).
+/// All receivers are `&self` — `NewSocketHandler<SSL>` methods in this crate are `&self`
+/// (unlike `bun_uws_sys::AnySocket`, which uses `&mut self`); the two are NOT unified.
+macro_rules! any_socket_forward {
+    ($( fn $name:ident(&self $(, $arg:ident : $ty:ty)* ) $(-> $ret:ty)? ; )*) => {$(
+        #[inline]
+        pub fn $name(&self $(, $arg: $ty)*) $(-> $ret)? {
+            match self {
+                AnySocket::SocketTcp(s) => s.$name($($arg),*),
+                AnySocket::SocketTls(s) => s.$name($($arg),*),
+            }
+        }
+    )*};
+}
+
+impl AnySocket {
+    any_socket_forward! {
+        fn is_closed(&self) -> bool;
+        fn is_shutdown(&self) -> bool;
+        fn close(&self, code: CloseKind);
+        fn write(&self, data: &[u8]) -> i32;
+        fn set_timeout(&self, seconds: c_uint);
+        fn shutdown(&self);
+        fn shutdown_read(&self);
+        fn local_port(&self) -> i32;
+    }
+}
+
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
 /// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket
 /// `WebSocketProxyTunnel`) where the inner socket may be either transport and

@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering
 
 use crate::env_var;
 use crate::Global;
-// MOVE_DOWN: bun_str::strings → bun_core (move-in pass).
+// MOVE_DOWN: bun_core::strings → bun_core (move-in pass).
 use crate::strings;
 // MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
 use crate::Fd;
@@ -1719,9 +1719,8 @@ pub mod color_map {
     }
 }
 
-pub use bun_output_tags::RESET;
-pub const BOLD: &str = "\x1b[1m";
-pub const DIM: &str = "\x1b[2m";
+pub use bun_output_tags::ansi;
+pub use ansi::{RESET, BOLD, DIM};
 
 /// `bun.Output.pretty(fmt, args)` — write to stdout with `<tag>` color expansion.
 /// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered

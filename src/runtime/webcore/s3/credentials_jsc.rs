@@ -10,6 +10,47 @@ use bun_core::{strings, String as BunString, Tag as BunStringTag};
 use bun_s3_signing::{MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, ACL, StorageClass};
 use bun_url::URL;
 
+/// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
+/// JS string, and non-empty. Shared ladder for the S3 option parsers
+/// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
+///
+///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → to_utf8
+///
+/// The intermediate `BunString` is `deref()`ed before return; the returned
+/// `ZigStringSlice` owns (or independently refs) its bytes.
+///
+/// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`
+///   (credentials_jsc.zig behaviour).
+/// * `strict = false` — non-string is silently ignored (list_objects.zig
+///   behaviour).
+pub fn get_truthy_string_utf8(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    key: &[u8],
+    strict: bool,
+) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    let Some(js_value) = opts.get_truthy(global, key)? else {
+        return Ok(None);
+    };
+    if js_value.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+    if !js_value.is_string() {
+        if strict {
+            return Err(global.throw_invalid_argument_type_value(key, b"string", js_value));
+        }
+        return Ok(None);
+    }
+    let str = BunString::from_js(js_value, global)?;
+    if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
+        str.deref();
+        return Ok(None);
+    }
+    let utf8 = str.to_utf8();
+    str.deref();
+    Ok(Some(utf8))
+}
+
 // PORT NOTE: Zig stores `str.toUTF8()` results in `_*_slice` fields and then
 // borrows `.slice()` into `credentials.*` — a self-referential struct. The
 // Rust `S3Credentials` fields are owned `Box<[u8]>`, so for credential strings
@@ -53,53 +94,20 @@ pub fn get_credentials_with_options(
 
     if let Some(opts) = options {
         if opts.is_object() {
-            if let Some(js_value) = opts.get_truthy(global_object, "accessKeyId")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
-                            new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
-                            new_credentials._access_key_id_slice = Some(utf8);
-                            new_credentials.changed_credentials = true;
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"accessKeyId", b"string", js_value));
-                    }
-                }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
+                new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
+                new_credentials._access_key_id_slice = Some(utf8);
+                new_credentials.changed_credentials = true;
             }
-            if let Some(js_value) = opts.get_truthy(global_object, "secretAccessKey")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
-                            new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
-                            new_credentials._secret_access_key_slice = Some(utf8);
-                            new_credentials.changed_credentials = true;
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"secretAccessKey", b"string", js_value));
-                    }
-                }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)? {
+                new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
+                new_credentials._secret_access_key_slice = Some(utf8);
+                new_credentials.changed_credentials = true;
             }
-            if let Some(js_value) = opts.get_truthy(global_object, "region")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
-                            new_credentials.credentials.region = Box::<[u8]>::from(utf8.slice());
-                            new_credentials._region_slice = Some(utf8);
-                            new_credentials.changed_credentials = true;
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"region", b"string", js_value));
-                    }
-                }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
+                new_credentials.credentials.region = Box::<[u8]>::from(utf8.slice());
+                new_credentials._region_slice = Some(utf8);
+                new_credentials.changed_credentials = true;
             }
             if let Some(js_value) = opts.get_truthy(global_object, "endpoint")? {
                 if !js_value.is_empty_or_undefined_or_null() {
@@ -131,21 +139,10 @@ pub fn get_credentials_with_options(
                     }
                 }
             }
-            if let Some(js_value) = opts.get_truthy(global_object, "bucket")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
-                            new_credentials.credentials.bucket = Box::<[u8]>::from(utf8.slice());
-                            new_credentials._bucket_slice = Some(utf8);
-                            new_credentials.changed_credentials = true;
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"bucket", b"string", js_value));
-                    }
-                }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
+                new_credentials.credentials.bucket = Box::<[u8]>::from(utf8.slice());
+                new_credentials._bucket_slice = Some(utf8);
+                new_credentials.changed_credentials = true;
             }
 
             if let Some(virtual_hosted_style) = opts.get_boolean_strict(global_object, "virtualHostedStyle")? {
@@ -153,21 +150,10 @@ pub fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(js_value) = opts.get_truthy(global_object, "sessionToken")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
-                            new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
-                            new_credentials._session_token_slice = Some(utf8);
-                            new_credentials.changed_credentials = true;
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"bucket", b"string", js_value));
-                    }
-                }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)? {
+                new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
+                new_credentials._session_token_slice = Some(utf8);
+                new_credentials.changed_credentials = true;
             }
 
             if let Some(page_size) = opts.get_optional_int::<i64>(global_object, "pageSize")? {
@@ -245,70 +231,34 @@ pub fn get_credentials_with_options(
                 new_credentials.storage_class = Some(storage_class);
             }
 
-            if let Some(js_value) = opts.get_truthy(global_object, "contentDisposition")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            new_credentials._content_disposition_slice = Some(str.to_utf8());
-                            let slice = new_credentials._content_disposition_slice.as_ref().unwrap().slice();
-                            if contains_newline_or_cr(slice) {
-                                str.deref();
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "contentDisposition must not contain newline characters (CR/LF)"
-                                )));
-                            }
-                            new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(slice));
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"contentDisposition", b"string", js_value));
-                    }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)? {
+                if contains_newline_or_cr(utf8.slice()) {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "contentDisposition must not contain newline characters (CR/LF)"
+                    )));
                 }
+                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials._content_disposition_slice = Some(utf8);
             }
 
-            if let Some(js_value) = opts.get_truthy(global_object, "type")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            new_credentials._content_type_slice = Some(str.to_utf8());
-                            let slice = new_credentials._content_type_slice.as_ref().unwrap().slice();
-                            if contains_newline_or_cr(slice) {
-                                str.deref();
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "type must not contain newline characters (CR/LF)"
-                                )));
-                            }
-                            new_credentials.content_type = Some(bun_ptr::RawSlice::new(slice));
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"type", b"string", js_value));
-                    }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
+                if contains_newline_or_cr(utf8.slice()) {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "type must not contain newline characters (CR/LF)"
+                    )));
                 }
+                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials._content_type_slice = Some(utf8);
             }
 
-            if let Some(js_value) = opts.get_truthy(global_object, "contentEncoding")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            new_credentials._content_encoding_slice = Some(str.to_utf8());
-                            let slice = new_credentials._content_encoding_slice.as_ref().unwrap().slice();
-                            if contains_newline_or_cr(slice) {
-                                str.deref();
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "contentEncoding must not contain newline characters (CR/LF)"
-                                )));
-                            }
-                            new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(slice));
-                        }
-                        str.deref();
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(b"contentEncoding", b"string", js_value));
-                    }
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)? {
+                if contains_newline_or_cr(utf8.slice()) {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "contentEncoding must not contain newline characters (CR/LF)"
+                    )));
                 }
+                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials._content_encoding_slice = Some(utf8);
             }
 
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {

@@ -3,7 +3,7 @@
 use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 use bun_sourcemap::Ordinal;
-use bun_str::MutableString;
+use bun_core::MutableString;
 
 pub struct TestingAPIs;
 

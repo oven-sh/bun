@@ -10,4 +10,5 @@
 pub mod HardcodedModule;
 
 pub use HardcodedModule::{Alias, Cfg, HardcodedModule as Module};
+pub mod node_builtins;
 use bun_ast::Target;

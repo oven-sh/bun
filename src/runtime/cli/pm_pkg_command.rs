@@ -517,7 +517,7 @@ impl PmPkgCommand {
                         return Err(err!("InvalidPath"));
                     }
 
-                    if let Some(index) = parse_usize(index_str) {
+                    if let Some(index) = bun_core::fmt::parse_decimal::<usize>(index_str) {
                         let ExprData::EArray(arr) = &current.data else {
                             return Err(err!("NotFound"));
                         };
@@ -541,7 +541,7 @@ impl PmPkgCommand {
                     }
                 }
             } else {
-                if let Some(index) = parse_usize(part) {
+                if let Some(index) = bun_core::fmt::parse_decimal::<usize>(part) {
                     match &current.data {
                         ExprData::EArray(arr) => {
                             if index >= arr.items.len_u32() as usize {
@@ -774,7 +774,7 @@ impl PmPkgCommand {
                 return Ok(Expr::init(E::Null {}, Loc::EMPTY));
             }
 
-            if let Some(int_val) = parse_i64(value) {
+            if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
                 return Ok(Expr::init(E::Number { value: int_val as f64 }, Loc::EMPTY));
             }
 
@@ -954,10 +954,6 @@ impl PmPkgCommand {
 
 // ───── helpers ────────────────────────────────────────────────────────────
 
-#[inline]
-fn parse_usize(s: &[u8]) -> Option<usize> { bun_core::fmt::parse_int(s, 10).ok() }
-#[inline]
-fn parse_i64(s: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(s, 10).ok() }
 use bun_core::fmt::parse_f64;
 
 // ported from: src/cli/pm_pkg_command.zig

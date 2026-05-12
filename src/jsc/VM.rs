@@ -222,18 +222,6 @@ impl VM {
     pub fn perform_opportunistically_scheduled_tasks(&self, until: f64) {
         JSC__VM__performOpportunisticallyScheduledTasks(self, until)
     }
-
-    /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
-    /// `UnsafeCell`, so `&VM` carries interior-mutable provenance and deriving
-    /// a writable pointer via `UnsafeCell::get` does not launder a read-only
-    /// borrow (unlike a bare `&T as *const T as *mut T` cast).
-    #[inline(always)]
-    pub fn as_mut_ptr(&self) -> *mut VM {
-        // SAFETY: `_p` is at offset 0 of a `#[repr(C)]` ZST handle, so its
-        // address is the address of `self`; `UnsafeCell::get` yields a `*mut`
-        // with write provenance from a shared borrow.
-        self._p.get().cast::<VM>()
-    }
 }
 
 /// RAII JSLockHolder returned by [`VM::get_api_lock`]. Mirrors Zig

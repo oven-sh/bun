@@ -810,6 +810,70 @@ impl Interpreter {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// shell_state_dispatch! — single source of truth for the StateKind→handler
+// table. Zig (`interpreter.zig:1527 StatePtrUnion`) derives `start`/`next`/
+// `childDone` from one `inline for (tags)` over a comptime type tuple; the
+// Rust port hand-unrolled that into three parallel 11-arm matches. This
+// macro restores the single-table property: each row declares
+// `Variant [=> HandlerType]` once and the macro emits `child_done`,
+// `next_node`, and `start_node`. Same precedent as `shell_builtins!`
+// (Builtin.rs).
+//
+// PERF(port): expands to the *same* literal `match` arms as the hand-written
+// version — direct calls per arm so LLVM inlines the hot states
+// (Stmt/Pipeline/Cmd) exactly as Zig's `inline else` did. No vtable, no
+// extra indirection.
+//
+// Invoked once, inside `impl Interpreter` below. `deinit_node` is kept
+// hand-rolled for now (irregular Async/Free arms) — see the NOTE there.
+macro_rules! shell_state_dispatch {
+    // ── internal: tt-munch rows into normalized `(Variant, Handler)` pairs ──
+    (@norm [$($done:tt)*] $v:ident => $h:ident , $($rest:tt)*) => {
+        shell_state_dispatch!(@norm [$($done)* ($v, $h)] $($rest)*);
+    };
+    (@norm [$($done:tt)*] $v:ident , $($rest:tt)*) => {
+        shell_state_dispatch!(@norm [$($done)* ($v, $v)] $($rest)*);
+    };
+    // ── internal: emit the three dispatch fns from the normalized table ──
+    (@norm [ $( ($v:ident, $h:ident) )+ ]) => {
+        /// Signal to `parent` that `child` finished with `exit_code`. This is the
+        /// single hoisted `match` that replaces every per-state
+        /// `parent.childDone(this, exit)` call in Zig.
+        pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+            if parent == NodeId::INTERPRETER {
+                return self.on_root_child_done(child, exit_code);
+            }
+            match self.nodes.get()[parent.idx()].kind() {
+                $( StateKind::$v => $h::child_done(self, parent, child, exit_code), )+
+                StateKind::Free => unreachable!("child_done on freed {}", parent),
+            }
+        }
+
+        /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
+        /// this; replaces the per-variant `&mut State` dispatch in Yield.
+        pub fn next_node(&self, id: NodeId) -> Yield {
+            match self.nodes.get()[id.idx()].kind() {
+                $( StateKind::$v => $h::next(self, id), )+
+                StateKind::Free => unreachable!("next on freed {}", id),
+            }
+        }
+
+        /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
+        /// the trampoline then calls `next_node`.
+        pub fn start_node(&self, id: NodeId) -> Yield {
+            match self.nodes.get()[id.idx()].kind() {
+                $( StateKind::$v => $h::start(self, id), )+
+                StateKind::Free => unreachable!("start on freed {}", id),
+            }
+        }
+    };
+    // ── public entry (first token must be an ident, so `@norm` recursion never lands here) ──
+    ( $first:ident $($rest:tt)* ) => {
+        shell_state_dispatch!(@norm [] $first $($rest)*);
+    };
+}
+
 impl Interpreter {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
@@ -930,68 +994,18 @@ impl Interpreter {
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
 
-    /// Signal to `parent` that `child` finished with `exit_code`. This is the
-    /// single hoisted `match` that replaces every per-state
-    /// `parent.childDone(this, exit)` call in Zig.
-    ///
-    /// PERF(port): was `inline else` switch — direct calls per arm so LLVM
-    /// inlines the hot states (Stmt/Pipeline/Cmd) the same way Zig did.
-    pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
-        if parent == NodeId::INTERPRETER {
-            return self.on_root_child_done(child, exit_code);
-        }
-        match self.nodes.get()[parent.idx()].kind() {
-            StateKind::Script => Script::child_done(self, parent, child, exit_code),
-            StateKind::Stmt => Stmt::child_done(self, parent, child, exit_code),
-            StateKind::Binary => Binary::child_done(self, parent, child, exit_code),
-            StateKind::Pipeline => Pipeline::child_done(self, parent, child, exit_code),
-            StateKind::Cmd => Cmd::child_done(self, parent, child, exit_code),
-            StateKind::Assign => Assigns::child_done(self, parent, child, exit_code),
-            StateKind::Expansion => Expansion::child_done(self, parent, child, exit_code),
-            StateKind::IfClause => If::child_done(self, parent, child, exit_code),
-            StateKind::Condexpr => CondExpr::child_done(self, parent, child, exit_code),
-            StateKind::Async => Async::child_done(self, parent, child, exit_code),
-            StateKind::Subshell => Subshell::child_done(self, parent, child, exit_code),
-            StateKind::Free => unreachable!("child_done on freed {}", parent),
-        }
-    }
-
-    /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
-    /// this; replaces the per-variant `&mut State` dispatch in Yield.
-    pub fn next_node(&self, id: NodeId) -> Yield {
-        match self.nodes.get()[id.idx()].kind() {
-            StateKind::Script => Script::next(self, id),
-            StateKind::Stmt => Stmt::next(self, id),
-            StateKind::Binary => Binary::next(self, id),
-            StateKind::Pipeline => Pipeline::next(self, id),
-            StateKind::Cmd => Cmd::next(self, id),
-            StateKind::Assign => Assigns::next(self, id),
-            StateKind::Expansion => Expansion::next(self, id),
-            StateKind::IfClause => If::next(self, id),
-            StateKind::Condexpr => CondExpr::next(self, id),
-            StateKind::Async => Async::next(self, id),
-            StateKind::Subshell => Subshell::next(self, id),
-            StateKind::Free => unreachable!("next on freed {}", id),
-        }
-    }
-
-    /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
-    /// the trampoline then calls `next_node`.
-    pub fn start_node(&self, id: NodeId) -> Yield {
-        match self.nodes.get()[id.idx()].kind() {
-            StateKind::Script => Script::start(self, id),
-            StateKind::Stmt => Stmt::start(self, id),
-            StateKind::Binary => Binary::start(self, id),
-            StateKind::Pipeline => Pipeline::start(self, id),
-            StateKind::Cmd => Cmd::start(self, id),
-            StateKind::Assign => Assigns::start(self, id),
-            StateKind::Expansion => Expansion::start(self, id),
-            StateKind::IfClause => If::start(self, id),
-            StateKind::Condexpr => CondExpr::start(self, id),
-            StateKind::Async => Async::start(self, id),
-            StateKind::Subshell => Subshell::start(self, id),
-            StateKind::Free => unreachable!("start on freed {}", id),
-        }
+    shell_state_dispatch! {
+        Script,
+        Stmt,
+        Binary,
+        Pipeline,
+        Cmd,
+        Assign   => Assigns,
+        Expansion,
+        IfClause => If,
+        Condexpr => CondExpr,
+        Async,
+        Subshell,
     }
 
     /// Init + start a child state node for an `ast::Expr`. Replaces the
@@ -1052,6 +1066,7 @@ impl Interpreter {
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
+        // NOTE: keep in sync with shell_state_dispatch! table (irregular Async/Free arms keep this hand-rolled for v1).
         match self.nodes.get()[id.idx()].kind() {
             StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),

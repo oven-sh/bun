@@ -327,14 +327,6 @@ impl LinuxMemFdAllocator {
 mod allocator_interface {
     use super::*;
 
-    /// # Safety
-    /// No preconditions; marked `unsafe` only to match the allocator-vtable
-    /// fn-pointer signature.
-    unsafe fn alloc(_ptr: *mut c_void, _len: usize, _alignment: Alignment, _ret_addr: usize) -> *mut u8 {
-        // it should perform no allocations or resizes
-        core::ptr::null_mut()
-    }
-
     /// Zig: `fn free(ptr: *anyopaque, buf: []u8, _, _) void`
     ///
     /// # Safety
@@ -369,13 +361,9 @@ mod allocator_interface {
         unsafe { LinuxMemFdAllocator::deref(this) };
     }
 
-    /// `std.mem.Allocator.VTable{ .alloc, .resize = noResize, .remap = noRemap, .free }`
-    pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable {
-        alloc,
-        resize: AllocatorVTable::NO_RESIZE,
-        remap: AllocatorVTable::NO_REMAP,
-        free,
-    };
+    /// `std.mem.Allocator.VTable{ .alloc = noAlloc, .resize = noResize, .remap = noRemap, .free }`
+    /// Own static — address is the identity tag for `is_instance`.
+    pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 }
 
 /// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).

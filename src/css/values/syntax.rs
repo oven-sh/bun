@@ -45,16 +45,7 @@ impl SyntaxString {
         match self {
             SyntaxString::Universal => dest.write_char(b'*')?,
             SyntaxString::Components(components) => {
-                let mut first = true;
-                for component in components.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.delim(b'|', true)?;
-                    }
-
-                    component.to_css(dest)?;
-                }
+                dest.write_separated(components.iter(), |d| d.delim(b'|', true), |d, c| c.to_css(d))?;
             }
         }
 
@@ -303,38 +294,23 @@ impl SyntaxComponentKind {
                 None => return Err(()),
             };
             let name = &input[1..end_idx];
-            // todo_stuff.match_ignore_ascii_case
-            let component: SyntaxComponentKind = if strings::eql_case_insensitive_ascii_check_length(name, b"length") {
-                SyntaxComponentKind::Length
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"number") {
-                SyntaxComponentKind::Number
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"percentage") {
-                SyntaxComponentKind::Percentage
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"length-percentage") {
-                SyntaxComponentKind::LengthPercentage
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"color") {
-                SyntaxComponentKind::Color
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"image") {
-                SyntaxComponentKind::Image
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"url") {
-                SyntaxComponentKind::Url
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"integer") {
-                SyntaxComponentKind::Integer
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"angle") {
-                SyntaxComponentKind::Angle
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"time") {
-                SyntaxComponentKind::Time
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"resolution") {
-                SyntaxComponentKind::Resolution
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"transform-function") {
-                SyntaxComponentKind::TransformFunction
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"transform-list") {
-                SyntaxComponentKind::TransformList
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"custom-ident") {
-                SyntaxComponentKind::CustomIdent
-            } else {
-                return Err(());
-            };
+            let component: SyntaxComponentKind = crate::match_ignore_ascii_case! { name, {
+                b"length" => SyntaxComponentKind::Length,
+                b"number" => SyntaxComponentKind::Number,
+                b"percentage" => SyntaxComponentKind::Percentage,
+                b"length-percentage" => SyntaxComponentKind::LengthPercentage,
+                b"color" => SyntaxComponentKind::Color,
+                b"image" => SyntaxComponentKind::Image,
+                b"url" => SyntaxComponentKind::Url,
+                b"integer" => SyntaxComponentKind::Integer,
+                b"angle" => SyntaxComponentKind::Angle,
+                b"time" => SyntaxComponentKind::Time,
+                b"resolution" => SyntaxComponentKind::Resolution,
+                b"transform-function" => SyntaxComponentKind::TransformFunction,
+                b"transform-list" => SyntaxComponentKind::TransformList,
+                b"custom-ident" => SyntaxComponentKind::CustomIdent,
+                _ => return Err(()),
+            }};
 
             *input = &input[end_idx + 1..];
             Ok(component)
@@ -475,22 +451,15 @@ impl ParsedComponent {
             ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
             ParsedComponent::Literal(v) => dest.serialize_identifier(v.v()),
-            ParsedComponent::Repeated(r) => {
-                let mut first = true;
-                for component in r.components.iter() {
-                    if !first {
-                        match r.multiplier {
-                            Multiplier::Comma => dest.delim(b',', false)?,
-                            Multiplier::Space => dest.write_char(b' ')?,
-                            Multiplier::None => unreachable!(),
-                        }
-                    } else {
-                        first = false;
-                    }
-                    component.to_css(dest)?;
-                }
-                Ok(())
-            }
+            ParsedComponent::Repeated(r) => dest.write_separated(
+                r.components.iter(),
+                |d| match r.multiplier {
+                    Multiplier::Comma => d.delim(b',', false),
+                    Multiplier::Space => d.write_char(b' '),
+                    Multiplier::None => unreachable!(),
+                },
+                |d, c| c.to_css(d),
+            ),
             ParsedComponent::TokenList(t) => t.to_css(dest, false),
         }
     }

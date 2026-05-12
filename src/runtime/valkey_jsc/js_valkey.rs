@@ -113,6 +113,10 @@ pub struct SubscriptionCtx {
 /// `pub const js = jsc.Codegen.JSRedisClient`).
 pub use crate::generated_classes::js_RedisClient as Js;
 
+// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
+// (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
+bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
@@ -131,16 +135,6 @@ impl SubscriptionCtx {
         })
     }
 
-    fn parent(&self) -> &JSValkeyClient {
-        // SAFETY: self points to JSValkeyClient._subscription_ctx (intrusive
-        // backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`, so the
-        // field offset is unchanged. R-2: shared `&` only — every
-        // `JSValkeyClient` method this reaches is now `&self`.
-        unsafe {
-            &*(bun_core::from_field_ptr!(JSValkeyClient, _subscription_ctx, std::ptr::from_ref::<Self>(self))
-                .cast_const())
-        }
-    }
 
     fn subscription_callback_map(&self) -> &mut JSMap {
         let parent_this = self.parent().this_value.get().try_get().expect("unreachable");
@@ -398,6 +392,11 @@ pub struct JSValkeyClient {
     pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
+
+bun_event_loop::impl_timer_owner!(JSValkeyClient;
+    from_timer_ptr => timer,
+    from_reconnect_timer_ptr => reconnect_timer,
+);
 
 // `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
 // live in that generated module.
@@ -1067,33 +1066,13 @@ impl JSValkeyClient {
     // PORT NOTE: `onconnect`/`onclose` are declared with `this: true` in
     // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
     // `this_value` (between `&self` and `global`). No `host_fn` attribute —
-    // the extern "C" shim lives in generated_classes.rs.
-    pub fn get_on_connect(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        Js::onconnect_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_connect(
-        &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
-        Js::onconnect_set_cached(this_value, global_object, value);
-        true
-    }
-
-    pub fn get_on_close(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        Js::onclose_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_close(
-        &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
-        Js::onclose_set_cached(this_value, global_object, value);
-        true
+    // the extern "C" shim lives in generated_classes.rs. Setter now returns
+    // `()` — `IntoHostSetterReturn for ()` ⇒ `true` at the ABI, identical to
+    // the old `-> bool { true }`.
+    bun_jsc::cached_prop_hostfns! {
+        crate::generated_classes::js_RedisClient;
+        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
+        (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
@@ -1248,9 +1227,7 @@ impl JSValkeyClient {
         }
 
         if self.vm().is_shutting_down() {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             return;
         }
 
@@ -1672,9 +1649,7 @@ impl JSValkeyClient {
     ) -> Result<*mut JSPromise, bun_core::Error> {
 
         if self.client.get().flags.needs_to_open_socket {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
 
             if let Err(err) = self.connect() {
                 self.client_mut().flags.needs_to_open_socket = true;

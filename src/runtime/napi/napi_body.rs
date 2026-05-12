@@ -1,7 +1,6 @@
 //! Node-API (N-API) implementation.
 //! Port of src/napi/napi.zig.
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU8, Ordering};
@@ -33,15 +32,13 @@ trait JSValueNapiExt {
     fn js_type_loose(self) -> jsc::JSType;
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
     fn is_async_context_frame(self) -> bool;
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue>;
 }
 
 unsafe extern "C" {
     fn JSC__JSValue__isStrictEqual(this: JSValue, other: JSValue, global: *mut JSGlobalObject) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(global: &JSGlobalObject, callback: JSValue) -> JSValue;
-    safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
+    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
 }
 
 impl JSValueNapiExt for JSValue {
@@ -55,7 +52,7 @@ impl JSValueNapiExt for JSValue {
         // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
         // check_slow (open scope before call, then `returnIfException`).
         bun_jsc::call_check_slow!(global, || unsafe {
-            JSC__JSValue__isStrictEqual(self, other, global.as_ptr())
+            JSC__JSValue__isStrictEqual(self, other, global.as_mut_ptr())
         })
     }
     #[inline]
@@ -63,14 +60,11 @@ impl JSValueNapiExt for JSValue {
         // SAFETY: trivial FFI.
         unsafe { Bun__JSValue__isAsyncContextFrame(self) }
     }
-    #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        // FFI; allocates a wrapper object when an async context is active.
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
-        // FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
-        bun_jsc::call_zero_is_throw!(global, || JSBuffer__bufferFromLength(global, len as i64))
+        // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
+        bun_jsc::call_zero_is_throw!(global, || unsafe {
+            JSBuffer__bufferFromLength(global.as_mut_ptr(), len as i64)
+        })
     }
 }
 
@@ -117,17 +111,14 @@ unsafe extern "C" {
 // NapiEnv
 // ──────────────────────────────────────────────────────────────────────────
 
-/// This is `struct napi_env__` from napi.h
-///
-/// Opaque C++ object. The `UnsafeCell` marker makes this type `!Freeze` so that
-/// `&NapiEnv` does not assert immutability — C++ mutates the underlying object
-/// (e.g. `napi_set_last_error`, handle-scope push/pop) through pointers derived
-/// from `&self`. See [`Self::as_mut_ptr`].
-#[repr(C)]
-pub struct NapiEnv {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _cell: UnsafeCell<()>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// This is `struct napi_env__` from napi.h
+    ///
+    /// Opaque C++ object. `!Freeze` so that `&NapiEnv` does not assert
+    /// immutability — C++ mutates the underlying object (e.g.
+    /// `napi_set_last_error`, handle-scope push/pop) through pointers derived
+    /// from `&self`. See [`Self::as_mut_ptr`].
+    pub struct NapiEnv;
 }
 
 unsafe extern "C" {
@@ -140,19 +131,6 @@ unsafe extern "C" {
 }
 
 impl NapiEnv {
-    /// Recover the `*mut NapiEnv` FFI pointer from `&self`.
-    ///
-    /// SAFETY rationale: every `&NapiEnv` in this module originates from a
-    /// `napi_env` (`*mut NapiEnv`) passed in by C++ and reborrowed via
-    /// [`get_env!`] / `as_ref()`. The type carries an `UnsafeCell` marker so the
-    /// shared borrow does not impose a read-only restriction, and the underlying
-    /// allocation is owned and mutated by C++. This mirrors Zig's `*NapiEnv`
-    /// (single-pointer, freely aliased) semantics.
-    #[inline(always)]
-    pub fn as_mut_ptr(&self) -> *mut NapiEnv {
-        ptr::from_ref(self).cast_mut()
-    }
-
     pub fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
@@ -263,13 +241,9 @@ pub type napi_ref = *mut Ref;
 // NapiHandleScope
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque C++ handle-scope object. `UnsafeCell` marker permits interior
-/// mutation through `&self` (see [`NapiEnv`] for rationale).
-#[repr(C)]
-pub struct NapiHandleScope {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _cell: UnsafeCell<()>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque C++ handle-scope object (see [`NapiEnv`] for rationale).
+    pub struct NapiHandleScope;
 }
 
 // `crate::ffi::ffi_body` re-declares `NapiHandleScope__{open,close}` locally
@@ -298,13 +272,6 @@ impl From<EscapeError> for bun_core::Error {
 }
 
 impl NapiHandleScope {
-    /// Recover the `*mut NapiHandleScope` FFI pointer from `&self`. See
-    /// [`NapiEnv::as_mut_ptr`] for the soundness argument.
-    #[inline(always)]
-    fn as_mut_ptr(&self) -> *mut NapiHandleScope {
-        ptr::from_ref(self).cast_mut()
-    }
-
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
     pub fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {

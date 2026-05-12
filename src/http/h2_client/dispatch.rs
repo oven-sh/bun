@@ -608,16 +608,10 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
                 continue;
             }
             seen_status = true;
-            // RFC 9110 §15: status-code is a 3-digit integer. Parse bytes
-            // directly — HTTP header values are octets, not guaranteed UTF-8.
+            // RFC 9110 §15: status-code is a 3-digit integer. Header values
+            // are octets, not guaranteed UTF-8.
             status = if result.value.len() == 3 {
-                result
-                    .value
-                    .iter()
-                    .try_fold(0u32, |a, &b| {
-                        (b'0'..=b'9').contains(&b).then(|| a * 10 + (b - b'0') as u32)
-                    })
-                    .unwrap_or(0)
+                bun_core::parse_unsigned::<u32>(result.value, 10).unwrap_or(0)
             } else {
                 0
             };

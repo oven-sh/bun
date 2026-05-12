@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 
-use bun_jsc::bun_string_jsc::{create_utf8_for_js, from_js as bstr_from_js};
+use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+// Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
+use super::__s3_credentials_jsc::get_truthy_string_utf8;
 use bun_ptr::RawSlice;
 use bun_core::{self as bstr, strings, ZigStringSlice as Utf8Slice};
 
@@ -88,84 +90,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
-        if let Some(name) = self.name {
-            js_result.put(
-                global_object,
-                b"name",
-                create_utf8_for_js(global_object, name)?,
-            );
-        }
-
-        if let Some(prefix) = self.prefix {
-            js_result.put(
-                global_object,
-                b"prefix",
-                create_utf8_for_js(global_object, prefix)?,
-            );
-        }
-
-        if let Some(delimiter) = self.delimiter {
-            js_result.put(
-                global_object,
-                b"delimiter",
-                create_utf8_for_js(global_object, delimiter)?,
-            );
-        }
-
-        if let Some(start_after) = self.start_after {
-            js_result.put(
-                global_object,
-                b"startAfter",
-                create_utf8_for_js(global_object, start_after)?,
-            );
-        }
-        if let Some(encoding_type) = self.encoding_type {
-            js_result.put(
-                global_object,
-                b"encodingType",
-                create_utf8_for_js(global_object, encoding_type)?,
-            );
-        }
-
-        if let Some(continuation_token) = self.continuation_token {
-            js_result.put(
-                global_object,
-                b"continuationToken",
-                create_utf8_for_js(global_object, continuation_token)?,
-            );
-        }
-
-        if let Some(next_continuation_token) = self.next_continuation_token {
-            js_result.put(
-                global_object,
-                b"nextContinuationToken",
-                create_utf8_for_js(global_object, next_continuation_token)?,
-            );
-        }
-
-        if let Some(is_truncated) = self.is_truncated {
-            js_result.put(
-                global_object,
-                b"isTruncated",
-                JSValue::from(is_truncated),
-            );
-        }
-
-        if let Some(key_count) = self.key_count {
-            js_result.put(
-                global_object,
-                b"keyCount",
-                JSValue::js_number(key_count as f64),
-            );
-        }
-
-        if let Some(max_keys) = self.max_keys {
-            js_result.put(
-                global_object,
-                b"maxKeys",
-                JSValue::js_number(max_keys as f64),
-            );
-        }
+        js_result.put_optional_utf8(global_object, b"name", self.name)?;
+        js_result.put_optional_utf8(global_object, b"prefix", self.prefix)?;
+        js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter)?;
+        js_result.put_optional_utf8(global_object, b"startAfter", self.start_after)?;
+        js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type)?;
+        js_result.put_optional_utf8(global_object, b"continuationToken", self.continuation_token)?;
+        js_result.put_optional_utf8(global_object, b"nextContinuationToken", self.next_continuation_token)?;
+        js_result.put_optional(global_object, b"isTruncated", self.is_truncated);
+        js_result.put_optional(global_object, b"keyCount", self.key_count.map(|n| n as f64));
+        js_result.put_optional(global_object, b"maxKeys", self.max_keys.map(|n| n as f64));
 
         if let Some(contents) = &self.contents {
             let js_contents = JSValue::create_empty_array(global_object, contents.len())?;
@@ -178,72 +112,17 @@ impl<'a> S3ListObjectsV2Result<'a> {
                     create_utf8_for_js(global_object, item.key)?,
                 );
 
-                if let Some(etag) = &item.etag {
-                    object_info.put(
-                        global_object,
-                        b"eTag",
-                        create_utf8_for_js(global_object, etag.as_ref())?,
-                    );
-                }
-
-                if let Some(checksum_algorithme) = item.checksum_algorithme {
-                    object_info.put(
-                        global_object,
-                        b"checksumAlgorithme",
-                        create_utf8_for_js(global_object, checksum_algorithme)?,
-                    );
-                }
-
-                if let Some(checksum_type) = item.checksum_type {
-                    object_info.put(
-                        global_object,
-                        b"checksumType",
-                        create_utf8_for_js(global_object, checksum_type)?,
-                    );
-                }
-
-                if let Some(last_modified) = item.last_modified {
-                    object_info.put(
-                        global_object,
-                        b"lastModified",
-                        create_utf8_for_js(global_object, last_modified)?,
-                    );
-                }
-
-                if let Some(object_size) = item.object_size {
-                    object_info.put(
-                        global_object,
-                        b"size",
-                        JSValue::js_number(object_size as f64),
-                    );
-                }
-
-                if let Some(storage_class) = item.storage_class {
-                    object_info.put(
-                        global_object,
-                        b"storageClass",
-                        create_utf8_for_js(global_object, storage_class)?,
-                    );
-                }
+                object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
+                object_info.put_optional_utf8(global_object, b"checksumAlgorithme", item.checksum_algorithme)?;
+                object_info.put_optional_utf8(global_object, b"checksumType", item.checksum_type)?;
+                object_info.put_optional_utf8(global_object, b"lastModified", item.last_modified)?;
+                object_info.put_optional(global_object, b"size", item.object_size.map(|n| n as f64));
+                object_info.put_optional_utf8(global_object, b"storageClass", item.storage_class)?;
 
                 if let Some(owner) = &item.owner {
                     let js_owner = JSValue::create_empty_object(global_object, 0);
-                    if let Some(id) = owner.id {
-                        js_owner.put(
-                            global_object,
-                            b"id",
-                            create_utf8_for_js(global_object, id)?,
-                        );
-                    }
-
-                    if let Some(display_name) = owner.display_name {
-                        js_owner.put(
-                            global_object,
-                            b"displayName",
-                            create_utf8_for_js(global_object, display_name)?,
-                        );
-                    }
-
+                    js_owner.put_optional_utf8(global_object, b"id", owner.id)?;
+                    js_owner.put_optional_utf8(global_object, b"displayName", owner.display_name)?;
                     object_info.put(global_object, b"owner", js_owner);
                 }
 
@@ -364,7 +243,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         let size = &xml[i..i + __tag_end];
 
-                                        object_size = parse_i64(size);
+                                        object_size = bun_core::fmt::parse_decimal::<i64>(size);
                                         i = i + __tag_end + 7;
                                     }
                                 } else if inner_tag_name_or_tag_end == b"StorageClass" {
@@ -568,14 +447,14 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                 } else if tag_name == b"KeyCount" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
                         let key_count = &xml[i..i + _end];
-                        result.key_count = parse_i64(key_count);
+                        result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
 
                         i = i + _end;
                     }
                 } else if tag_name == b"MaxKeys" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
                         let max_keys = &xml[i..i + _end];
-                        result.max_keys = parse_i64(max_keys);
+                        result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
 
                         i = i + _end;
                     }
@@ -644,9 +523,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     result
 }
 
-#[inline]
-fn parse_i64(bytes: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(bytes, 10).ok() }
-
 pub fn get_list_objects_options_from_js(
     global_this: &JSGlobalObject,
     list_options: JSValue,
@@ -671,41 +547,19 @@ pub fn get_list_objects_options_from_js(
         return Ok(list_objects_options);
     }
 
-    if let Some(val) = list_options.get_truthy(global_this, b"continuationToken")? {
-        if val.is_string() {
-            let str = bstr_from_js(val, global_this)?;
-
-            // TODO(port): bun_core::String tag accessors (Empty/Dead)
-            if !str.is_empty() && !str.is_dead() {
-                let slice = str.to_utf8();
-                list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
-                list_objects_options._continuation_token = Some(slice);
-            }
-        }
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)? {
+        list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
+        list_objects_options._continuation_token = Some(slice);
     }
 
-    if let Some(val) = list_options.get_truthy(global_this, b"delimiter")? {
-        if val.is_string() {
-            let str = bstr_from_js(val, global_this)?;
-
-            if !str.is_empty() && !str.is_dead() {
-                let slice = str.to_utf8();
-                list_objects_options.delimiter = Some(RawSlice::new(slice.slice()));
-                list_objects_options._delimiter = Some(slice);
-            }
-        }
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"delimiter", false)? {
+        list_objects_options.delimiter = Some(RawSlice::new(slice.slice()));
+        list_objects_options._delimiter = Some(slice);
     }
 
-    if let Some(val) = list_options.get_truthy(global_this, b"encodingType")? {
-        if val.is_string() {
-            let str = bstr_from_js(val, global_this)?;
-
-            if !str.is_empty() && !str.is_dead() {
-                let slice = str.to_utf8();
-                list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
-                list_objects_options._encoding_type = Some(slice);
-            }
-        }
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)? {
+        list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
+        list_objects_options._encoding_type = Some(slice);
     }
 
     // PORT NOTE: `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
@@ -720,28 +574,14 @@ pub fn get_list_objects_options_from_js(
         }
     }
 
-    if let Some(val) = list_options.get_truthy(global_this, b"prefix")? {
-        if val.is_string() {
-            let str = bstr_from_js(val, global_this)?;
-
-            if !str.is_empty() && !str.is_dead() {
-                let slice = str.to_utf8();
-                list_objects_options.prefix = Some(RawSlice::new(slice.slice()));
-                list_objects_options._prefix = Some(slice);
-            }
-        }
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", false)? {
+        list_objects_options.prefix = Some(RawSlice::new(slice.slice()));
+        list_objects_options._prefix = Some(slice);
     }
 
-    if let Some(val) = list_options.get_truthy(global_this, b"startAfter")? {
-        if val.is_string() {
-            let str = bstr_from_js(val, global_this)?;
-
-            if !str.is_empty() && !str.is_dead() {
-                let slice = str.to_utf8();
-                list_objects_options.start_after = Some(RawSlice::new(slice.slice()));
-                list_objects_options._start_after = Some(slice);
-            }
-        }
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"startAfter", false)? {
+        list_objects_options.start_after = Some(RawSlice::new(slice.slice()));
+        list_objects_options._start_after = Some(slice);
     }
 
     Ok(list_objects_options)

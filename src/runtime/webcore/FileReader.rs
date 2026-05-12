@@ -275,49 +275,27 @@ impl Lazy {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(FileReader for FileReader);
-impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. R-2: every mutated field on
-    // `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-backed, so materializing
-    // `&FileReader` here does not assert Unique over any byte the caller may
-    // have borrowed (SharedReadWrite root); the inherent impls re-derive any
-    // reader access through `reader()` (UnsafeCell::get).
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
-        FileReader::on_read_chunk(unsafe { &*this }, chunk, state)
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        FileReader::on_reader_done(unsafe { &*this })
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        FileReader::on_reader_error(unsafe { &*this }, err)
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // R-2: `&Self` is sound here (all writable fields are interior-mut),
-        // so the previous raw `addr_of!` projection is no longer needed.
-        // SAFETY: `this` is non-null/live per trait contract.
-        let ev = unsafe { &*this }.event_loop.get();
-        #[cfg(windows)]
-        {
-            // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
-            // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-            // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`);
-            // the trait-side alias (PipeReader.rs) already resolves to the
-            // libuv loop on Windows, so this is a nominal-only erasure.
-            ev.uv_loop().cast()
-        }
-        #[cfg(not(windows))]
-        {
-            ev.r#loop()
-        }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_read_chunk.
-        unsafe { &*this }.event_loop.get().as_event_loop_ctx()
-    }
+//
+// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
+// backed, so materializing `&FileReader` via `(&*this)` does not assert Unique
+// over any byte the caller may have borrowed (SharedReadWrite root); the
+// inherent impls re-derive any reader access through `reader()`
+// (`UnsafeCell::get`).
+bun_io::impl_buffered_reader_parent! {
+    FileReader for FileReader;
+    has_on_read_chunk = true;
+    on_read_chunk   = |this, chunk, state| (&*this).on_read_chunk(chunk, state);
+    on_reader_done  = |this| (&*this).on_reader_done();
+    on_reader_error = |this, err| (&*this).on_reader_error(err);
+    loop_ = |this| {
+        let ev = (&*this).event_loop.get();
+        // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
+        // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
+        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
+        #[cfg(windows)] { ev.uv_loop().cast() }
+        #[cfg(not(windows))] { ev.r#loop() }
+    };
+    event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
 }
 
 impl FileReader {
@@ -349,14 +327,7 @@ impl FileReader {
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
     /// `us_loop_t*` on POSIX). See `aio/{posix,windows}_event_loop.rs`.
     pub fn loop_(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            self.event_loop().uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
+        self.event_loop().native_loop()
     }
 
     // TODO(port): in-place init — `self` is the `context` field of an already-allocated

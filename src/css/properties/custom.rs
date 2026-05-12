@@ -1551,20 +1551,10 @@ pub fn try_parse_color_token(
     state: &ParserState,
     input: &mut Parser,
 ) -> Option<CssColor> {
-    // css.todo_stuff.match_ignore_ascii_case
-    if strings::eql_case_insensitive_ascii_check_length(f, b"rgb")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"rgba")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"hsl")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"hsla")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"hwb")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"lab")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"lch")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"oklab")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"oklch")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"color")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"color-mix")
-        || strings::eql_case_insensitive_ascii_check_length(f, b"light-dark")
-    {
+    if strings::eql_any_case_insensitive_ascii(f, &[
+        b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab",
+        b"lch", b"oklab", b"oklch", b"color", b"color-mix", b"light-dark",
+    ]) {
         let s = input.state();
         input.reset(state);
         if let Ok(color) = CssColor::parse(input) {

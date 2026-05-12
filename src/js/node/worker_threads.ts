@@ -213,9 +213,14 @@ function fakeParentPort() {
 
   function dispatch(type: "message" | "messageerror", event: MessageEvent) {
     if (closed) return;
-    // Copy so listeners added/removed during dispatch don't affect this round.
-    const list = listeners[type].slice();
+    // Snapshot so listeners added during dispatch don't run this round (DOM §2.9). Listeners
+    // removed mid-dispatch before being reached must be skipped, so re-check the live list
+    // before each invocation.
+    const live = listeners[type];
+    const list = live.slice();
     for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (live.indexOf(entry) === -1) continue;
       // Isolate exceptions per listener: pre-PR each listener was a separate native
       // EventTarget registration (which does this), and Node's NodeEventTarget does the same.
       // A throw from one handler must not prevent later handlers from running. Re-throw on
@@ -223,7 +228,7 @@ function fakeParentPort() {
       // (reportError() inside a worker currently terminates the worker synchronously, so it
       // can't be used here).
       try {
-        invoke(list[i], event);
+        invoke(entry, event);
       } catch (e) {
         process.nextTick(err => {
           throw err;
@@ -281,10 +286,13 @@ function fakeParentPort() {
       const wrapper = listener[kOnceWrapper];
       let idx = wrapper !== undefined ? list.lastIndexOf(wrapper) : -1;
       if (idx === -1) idx = list.lastIndexOf(listener);
-      if (idx !== -1) list.splice(idx, 1);
-      // Drop the stale wrapper reference so re-adding the same function without {once} and
-      // then removing it resolves to the right entry.
-      if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
+      if (idx !== -1) {
+        list.splice(idx, 1);
+        // Drop the stale wrapper reference so re-adding the same function without {once} and
+        // then removing it resolves to the right entry. Only clear on a successful removal so
+        // a no-op remove (e.g. wrong event type) doesn't orphan a still-live wrapper.
+        if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
+      }
     } else {
       list.length = 0;
     }

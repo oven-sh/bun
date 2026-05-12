@@ -1206,9 +1206,31 @@ impl FileSink {
         // GC-sweep stack at finalize time is uninformative). See `FREED_AT`.
         #[cfg(windows)]
         if let Ok(mut m) = FREED_AT.lock() {
+            // Probe v6: snapshot full state at deinit so the next CI hit can
+            // distinguish (a) keep-alive cleared (must_be_kept_alive=false) +
+            // wrapper finalize already ran, vs (b) keep-alive still set →
+            // process_send's ref was the only one, vs (c) `done` never set →
+            // end_from_js Wrote arm took a different path. The 3-tracer audit
+            // (w9qxc9jg1) verified the static ladder is balanced 4:4 with
+            // Zig; this captures the dynamic state.
+            let state = format!(
+                "STATE: must_be_kept_alive={} done={} started={} fd={:?} written={} \
+                 pending.state={:?} owns_fd={} writer.is_done={} writer.has_pending={} \
+                 js_sink_ref.has={}\n",
+                self_.must_be_kept_alive_until_eof.get(),
+                self_.done.get(),
+                self_.started.get(),
+                self_.fd.get(),
+                self_.written.get(),
+                self_.pending.get().state,
+                self_.writer.get().owns_fd,
+                self_.writer.get().is_done,
+                self_.writer.get().has_pending_data(),
+                self_.js_sink_ref.get().has(),
+            );
             m.insert(
                 this as usize,
-                std::backtrace::Backtrace::force_capture().to_string(),
+                state + &std::backtrace::Backtrace::force_capture().to_string(),
             );
         }
         #[cfg(windows)]

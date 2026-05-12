@@ -122,16 +122,25 @@ impl MySQLRequestQueue {
         // embedded queue without an intermediate `&mut`.
         let this: *mut Self =
             unsafe { core::ptr::addr_of_mut!((*(*connection).connection.as_ptr()).queue) };
+        // R-2: every `JSMySQLConnection` method reached below is `&self`
+        // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
+        // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
+        // The momentary `&JSMySQLConnection` from each `Deref` never overlaps a
+        // `(*this)` write under Stacked Borrows: `*this` lives inside the
+        // `JsCell` (`UnsafeCell`) field, whose interior carries SharedRW
+        // independent of the outer shared borrow.
+        let conn_ref =
+            ParentRef::from(NonNull::new(connection).expect("advance: connection non-null"));
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
-            // SAFETY: caller contract; each `(*this)` / `(*connection)` deref
-            // forms a fresh short-lived borrow — no two `&mut` overlap.
+            // SAFETY: caller contract; each `(*this)` deref forms a fresh
+            // short-lived borrow — no two `&mut` overlap.
             while unsafe { (*this).requests.readable_length() } > offset
-                && unsafe { (*connection).is_able_to_write() }
+                && conn_ref.is_able_to_write()
             {
                 let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(offset) };
                 // Queue holds a ref on every request; pointer is non-null and
@@ -172,19 +181,18 @@ impl MySQLRequestQueue {
                     continue;
                 }
 
-                // SAFETY: no `&mut *this` is live here (only the raw `this`
-                // and `req`, a disjoint heap alloc). `&mut *connection` spans
-                // the queue bytes and `run()` *does* read queue scalars
+                // No `&mut *this` is live here (only the raw `this` and `req`,
+                // a disjoint heap alloc). `run()` *does* read queue scalars
                 // (`can_execute_query`/`can_pipeline`/`can_prepare_query`),
-                // but only through this reborrow; because `this` was projected
-                // from the same `connection` raw via `addr_of_mut!`, the
-                // reborrow is a child tag that is popped when the `&mut` ends
-                // — the next `(*this)` access below remains valid.
-                if let Err(err) = req.run(unsafe { &*connection }) {
+                // but only through `conn_ref`'s shared reborrow; because
+                // `this` was projected from the same `connection` raw via
+                // `addr_of_mut!`, the reborrow is a child tag that is popped
+                // when the `&` ends — the next `(*this)` access below remains
+                // valid.
+                if let Err(err) = req.run(conn_ref.get()) {
                     debug!("run failed");
-                    // SAFETY: same as above — shared `&*connection` reborrow
-                    // (R-2: `on_error` takes `&self`).
-                    unsafe { (*connection).on_error(Some(req.get()), err) };
+                    // R-2: `on_error` takes `&self`.
+                    conn_ref.on_error(Some(req.get()), err);
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };
                         // SAFETY: queue held one ref; pointer is live until this deref.
@@ -195,20 +203,20 @@ impl MySQLRequestQueue {
                 }
                 if req.is_being_prepared() {
                     debug!("isBeingPrepared");
-                    // SAFETY: fresh `&mut *connection` reborrow (child of the
-                    // shared raw tag); touches timer state outside the queue,
-                    // and no `(*this)` access overlaps its lifetime.
-                    unsafe { (*connection).reset_connection_timeout() };
+                    // R-2: `reset_connection_timeout` takes `&self`; touches
+                    // timer state outside the queue, and no `(*this)` access
+                    // overlaps the shared borrow's lifetime.
+                    conn_ref.reset_connection_timeout();
                     unsafe {
                         (*this).is_ready_for_query = false;
                         (*this).waiting_to_prepare = true;
                     }
                     break 'advance;
                 } else if req.is_running() {
-                    // SAFETY: fresh `&mut *connection` reborrow (child of the
-                    // shared raw tag); touches timer state outside the queue,
-                    // and no `(*this)` access overlaps its lifetime.
-                    unsafe { (*connection).reset_connection_timeout() };
+                    // R-2: `reset_connection_timeout` takes `&self`; touches
+                    // timer state outside the queue, and no `(*this)` access
+                    // overlaps the shared borrow's lifetime.
+                    conn_ref.reset_connection_timeout();
                     debug!("isRunning after run");
                     unsafe { (*this).is_ready_for_query = false };
 
@@ -218,7 +226,7 @@ impl MySQLRequestQueue {
                         // both shared reborrows are children of the same raw
                         // tag (`this` was projected from `connection`), so
                         // overlapping shared reads are sound.
-                        if unsafe { (*this).can_pipeline(&*connection) } {
+                        if unsafe { (*this).can_pipeline(conn_ref.get()) } {
                             debug!("pipelined requests");
                             offset += 1;
                             continue;

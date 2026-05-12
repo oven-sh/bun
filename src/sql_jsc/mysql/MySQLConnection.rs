@@ -884,15 +884,14 @@ impl MySQLConnection {
 
         // Handle based on request type
         if let Some(statement) = request.get_statement() {
-            // PORT NOTE: reshaped for borrowck — `get_statement()` borrows
-            // `*request` mutably; downgrade to a raw pointer immediately so
-            // `request` can be re-borrowed below and `&mut self` isn't aliased.
-            let statement = std::ptr::from_mut::<MySQLStatement>(statement);
+            // Only the `status` discriminant is needed below; read it and drop
+            // the `&mut MySQLStatement` borrow immediately so `request` /
+            // `&mut self` are unconstrained inside the match arms (no raw-ptr
+            // downgrade needed for a single Copy field read).
             // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
             // Skipped here; the queue's ref on `request` keeps the statement
             // alive for the duration of this call.
-            // SAFETY: statement is a live *mut MySQLStatement owned by the request.
-            match unsafe { (*statement).status } {
+            match statement.status {
                 mysql_statement::Status::Pending => {
                     return Err(AnyMySQLError::UnexpectedPacket);
                 }
@@ -1063,17 +1062,14 @@ impl MySQLConnection {
         let _request_guard = request.ref_guard();
         // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
         let request: &JSMySQLQuery = request.get();
+        // `get_statement()` derefs the intrusive `*mut MySQLStatement` held by
+        // the request (separate heap allocation, never aliases `*self`); the
+        // returned `&mut` is rooted in the local `ThisPtr`, not `self.queue`,
+        // so `&mut self` calls below do not conflict.
         let Some(statement) = request.get_statement() else {
             debug!("Unexpected prepared statement packet missing statement");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // PORT NOTE: reshaped for borrowck — downgrade to raw pointer so `&mut
-        // self` (passed to `check_if_prepared_statement_is_done`) doesn't alias
-        // the statement borrow rooted in `self.queue`.
-        let statement = std::ptr::from_mut::<MySQLStatement>(statement);
-        // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
-        // SAFETY: statement is a live *mut MySQLStatement owned by the request.
-        let statement = unsafe { &mut *statement };
         if statement.statement_id > 0 {
             // In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), the server sends
             // intermediate EOF packets between param definitions and column definitions,
@@ -1332,16 +1328,15 @@ impl MySQLConnection {
             }
 
             packet_type => {
+                // `get_statement()` derefs the intrusive `*mut MySQLStatement`
+                // held by the request (separate heap allocation); the `&mut` is
+                // rooted in the local `ThisPtr`, not `self`, so `&mut self`
+                // calls below do not conflict. `handle_result_set_ok` /
+                // `on_result_row` reborrow it (`&mut → *mut` coercion / `&mut`).
                 let Some(statement) = request.get_statement() else {
                     debug!("Unexpected result set packet");
                     return Err(AnyMySQLError::UnexpectedPacket);
                 };
-                // PORT NOTE: reshaped for borrowck — downgrade to raw pointer so
-                // `&mut self` calls below don't alias the statement borrow.
-                let statement = std::ptr::from_mut::<MySQLStatement>(statement);
-                // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
-                // SAFETY: statement is a live *mut MySQLStatement owned by the request.
-                let statement = unsafe { &mut *statement };
                 if !statement
                     .execution_flags
                     .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED)

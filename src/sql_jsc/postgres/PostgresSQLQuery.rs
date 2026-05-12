@@ -598,11 +598,10 @@ impl PostgresSQLQuery {
                     // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
                     let stmt_ptr: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
                     this.statement.set(Some(stmt_ptr));
-                    // SAFETY: `stmt_ptr` is the live map entry; just stored in
-                    // `this.statement` (intrusive ref taken below). Single-JS-thread
-                    // gives exclusive access. One deref here replaces the five
-                    // per-field raw-pointer derefs that used to follow.
-                    let stmt = unsafe { &mut *stmt_ptr };
+                    // Route the `&mut` through the audited `statement_mut()`
+                    // accessor (just set above ⇒ `Some`); `stmt_ptr` is kept
+                    // only for the explicit `deref(stmt_ptr)` cleanup below.
+                    let stmt = this.statement_mut().expect("statement set above");
                     stmt.ref_();
                     drop(signature);
 

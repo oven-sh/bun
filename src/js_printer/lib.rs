@@ -4157,9 +4157,11 @@ where
                     if let Some(value) = self.try_to_get_imported_enum_value(dot.target, dot.name.slice()) {
                         match value {
                             js_ast::InlinedEnumValueDecoded::String(str) => {
-                                // SAFETY: arena-owned `*const EString`; cast through *mut for the
-                                // StoreRef wrapper — the printer only ever reads through it.
-                                let sref = unsafe { js_ast::StoreRef::from_raw(str.cast_mut()) };
+                                // Arena-owned `*const EString` (encoded non-null at NaN-box time);
+                                // wrap via the safe `From<NonNull>` ctor — printer only reads it.
+                                let sref = js_ast::StoreRef::from(
+                                    NonNull::new(str.cast_mut()).expect("inlined enum string non-null"),
+                                );
                                 item.key.as_mut().unwrap().data = ExprData::EString(sref);
                                 // Problematic key names must stay computed for correctness
                                 if !sref.eql_comptime(b"__proto__") && !sref.eql_comptime(b"constructor") && !sref.eql_comptime(b"prototype") {
@@ -5852,8 +5854,14 @@ where
             js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
             // TODO: extract printString
             js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
-                // SAFETY: arena-owned `*const EString`; the printer only reads through the StoreRef.
-                Expr { data: ExprData::EString(unsafe { js_ast::StoreRef::from_raw(str.cast_mut()) }), loc: bun_ast::Loc::EMPTY },
+                // Arena-owned `*const EString` (encoded non-null at NaN-box time);
+                // wrap via the safe `From<NonNull>` ctor — printer only reads it.
+                Expr {
+                    data: ExprData::EString(js_ast::StoreRef::from(
+                        NonNull::new(str.cast_mut()).expect("inlined enum string non-null"),
+                    )),
+                    loc: bun_ast::Loc::EMPTY,
+                },
                 level,
                 ExprFlagSet::empty(),
             ),

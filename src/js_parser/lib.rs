@@ -107,7 +107,11 @@ pub mod Macro {
         /// cannot name it (dep-cycle).
         fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
         fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
-        fn __bun_macro_context_call(
+        // All args are safe Rust-ABI types (refs/slices/by-value); the only
+        // raw pointer involved is `ctx.data`, which is a struct invariant
+        // maintained by `init`/`Default` — not a caller precondition. The
+        // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
+        safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -136,22 +140,16 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, bun_core::Error> {
-            // SAFETY: callee downcasts `self.data` to `&mut Macro::Data`; `data`
-            // is only ever populated by `__bun_macro_context_init` (or left null,
-            // which the callee guards), so the type-erased pointer round-trips to
-            // its original allocation. All other args are Rust-ABI references.
-            unsafe {
-                __bun_macro_context_call(
-                    self,
-                    import_record_path,
-                    source_dir,
-                    log,
-                    source,
-                    import_range,
-                    caller,
-                    function_name,
-                )
-            }
+            __bun_macro_context_call(
+                self,
+                import_record_path,
+                source_dir,
+                log,
+                source,
+                import_range,
+                caller,
+                function_name,
+            )
         }
         /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
         ///

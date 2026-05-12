@@ -64,9 +64,12 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
                 }
             }
         }
-        // SAFETY: loop always advances past `root` (root.next was Some), so
-        // `last` is a Store-owned node with stable address.
-        root.end = Some(unsafe { StoreRef::from_raw(last) });
+        // The loop always advances past `root` (root.next was Some), so `last`
+        // is a Store-owned node with a stable address — wrap via the safe
+        // `From<NonNull>` ctor (StoreRef invariant upheld by Store).
+        root.end = Some(StoreRef::from(
+            core::ptr::NonNull::new(last).expect("last non-null"),
+        ));
     }
     root
 }

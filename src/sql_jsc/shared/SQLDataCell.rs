@@ -108,8 +108,11 @@ impl Array {
         if self.ptr.is_null() {
             return &mut [];
         }
-        // SAFETY: ptr is non-null and points to at least `len` initialized cells
-        // (invariant upheld by producers in DataCell.zig).
+        // SAFETY: ptr is non-null and points to at least `len` initialized
+        // cells (invariant upheld by producers — postgres/DataCell.rs decomposes
+        // a `Vec<SQLDataCell>` into these fields). Genuine FFI: ptr/len/cap are
+        // thin C fields read directly by C++ (SQLClient.cpp), so this cannot be
+        // a `Vec` field without breaking ABI.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
@@ -191,18 +194,17 @@ impl SQLDataCell {
         match self.tag {
             Tag::String => {
                 // SAFETY: tag == String ⇒ `string` is the active union field;
-                // non-null ⇒ points to a live WTF::StringImpl.
-                let p = unsafe { self.value.string };
-                if !p.is_null() {
-                    unsafe { (*p).deref() };
+                // when non-null it points to a live WTF::StringImpl. `as_ref`
+                // folds the null-check and deref into one site.
+                if let Some(p) = unsafe { self.value.string.as_ref() } {
+                    p.deref();
                 }
             }
             Tag::Json => {
                 // SAFETY: tag == Json ⇒ `json` is the active union field;
-                // non-null ⇒ points to a live WTF::StringImpl.
-                let p = unsafe { self.value.json };
-                if !p.is_null() {
-                    unsafe { (*p).deref() };
+                // when non-null it points to a live WTF::StringImpl.
+                if let Some(p) = unsafe { self.value.json.as_ref() } {
+                    p.deref();
                 }
             }
             Tag::Bytea => {

@@ -160,6 +160,23 @@ impl NetworkTask {
         unsafe { self.unsafe_http_client.assume_init_mut() }
     }
 
+    /// BACKREF accessor — single `unsafe` deref for the set-once
+    /// `package_manager` `ParentRef` so `for_manifest`/`for_tarball` call
+    /// sites are safe. Lifetime is decoupled from `&self` (the manager is the
+    /// process singleton that owns this task and outlives it).
+    ///
+    /// # Safety (encapsulated)
+    /// `package_manager` is constructed via `ParentRef::from_raw_mut` (write
+    /// provenance) in `write_init`; the `for_*` builders run on the
+    /// single-threaded main setup path, so no overlapping `&mut
+    /// PackageManager` exists for the returned borrow.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn pm_mut<'a>(&self) -> &'a mut PackageManager {
+        // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
+        unsafe { self.package_manager.assume_mut() }
+    }
+
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
@@ -390,10 +407,7 @@ impl NetworkTask {
         is_optional: bool,
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
-        // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        // Constructed via `from_raw_mut` (write provenance); single-threaded
-        // main-thread setup path, so no overlapping `&mut PackageManager`.
-        let pm = unsafe { self.package_manager.assume_mut() };
+        let pm = self.pm_mut();
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with; Zig dereferences `this.package_manager.log`.
         let log = pm.log_mut();
@@ -677,9 +691,7 @@ impl NetworkTask {
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
-        // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        // Constructed via `from_raw_mut` (write provenance); single-threaded.
-        let pm = unsafe { self.package_manager.assume_mut() };
+        let pm = self.pm_mut();
 
         let tarball_url = tarball_.url.slice();
         self.url_buf = if tarball_url.is_empty() {

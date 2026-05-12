@@ -1321,21 +1321,36 @@ pub mod js_bundler {
         Load, LoadSuccess, LoadValue,
     };
 
+    /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
+    ///
+    /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
+    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
+    /// `…__addError`, `on_notify_defer_raw`) stay safe at the call site. `bv2`
+    /// is the back-reference set in `Resolve::init`/`Load::init`; the
+    /// `BundleV2` heap allocation outlives every plugin callback (owner-
+    /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
+    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
+    /// the caller's `&mut Resolve`/`&mut Load`.
+    #[inline]
+    fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
+        // SAFETY: see fn doc — live backref (owner-creates-child), single
+        // JS-thread, disjoint heap from the `Resolve`/`Load` callers borrow.
+        unsafe { &mut *bv2 }
+    }
+
     /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
     ///
     /// Centralises the `Option<NonNull> → &mut T` deref so the three callers
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
-    /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `bv2` is
-    /// the back-reference set in `Resolve::init`/`Load::init`; the `BundleV2`
-    /// heap allocation outlives every plugin callback (owner-creates-child,
-    /// single-JS-thread), and `plugins` is `Some` whenever the plugin chain
-    /// is dispatched (asserted by `enqueue_on_js_loop_for_plugins`). The
-    /// `Plugin` storage is heap-disjoint from `Resolve`/`Load`, so the
-    /// returned `&mut` does not alias the caller's `&mut Resolve`/`&mut Load`.
+    /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `plugins`
+    /// is `Some` whenever the plugin chain is dispatched (asserted by
+    /// `enqueue_on_js_loop_for_plugins`). The `Plugin` storage is heap-
+    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
+    /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
     fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
-        // SAFETY: see fn doc — live backref, `plugins.is_some()`, disjoint heap.
-        unsafe { &mut *(*bv2).plugins.unwrap().as_ptr() }
+        // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
+        unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
     // TODO(port): move to runtime_sys
@@ -1373,8 +1388,7 @@ pub mod js_bundler {
             });
         }
 
-        // SAFETY: bv2 backref is valid
-        unsafe { (*resolve.bv2).on_resolve_async(resolve) };
+        bv2_mut(resolve.bv2).on_resolve_async(resolve);
     }
 
     bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
@@ -1440,8 +1454,7 @@ pub mod js_bundler {
     }
 
     fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        // SAFETY: ctx is a valid backref while bundle is running.
-        unsafe { (*ctx).on_notify_defer() };
+        bv2_mut(ctx).on_notify_defer();
         Ok(())
     }
 
@@ -1514,8 +1527,7 @@ pub mod js_bundler {
             });
         }
 
-        // SAFETY: bv2 backref is valid
-        unsafe { (*this.bv2).on_load_async(this) };
+        bv2_mut(this.bv2).on_load_async(this);
     }
 
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
@@ -1746,15 +1758,13 @@ pub mod js_bundler {
                 let msg =
                     plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
-                // SAFETY: bv2 backref is valid
-                unsafe { (*resolve.bv2).on_resolve_async(resolve) };
+                bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
-                // SAFETY: bv2 backref is valid
-                unsafe { (*load.bv2).on_load_async(load) };
+                bv2_mut(load.bv2).on_load_async(load);
             }
             _ => panic!("invalid error type"),
         }

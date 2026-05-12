@@ -41,6 +41,7 @@ beforeAll(async () => {
       "/redirect": () => Response.redirect("/hello", 302),
       "/head": () => new Response("should not appear", { headers: { "x-head": "1" } }),
       "/route/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "param" } }),
+      "/headers-echo": req => Response.json(Object.fromEntries(req.headers)),
 
       // Response body driven by pull — one chunk per consumer read.
       "/pull": () => {
@@ -336,6 +337,56 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}${path}`, { ...h3, method: "POST", body: "x", headers });
     expect(res.status).toBe(200);
     expect(res.headers.get("x-recv-len")).toBe("1");
+  });
+
+  // Regression: src/uws_sys/quic/Header.zig defines `Qpack = enum(u8) { ... _ }`
+  // (non-exhaustive — any u8 is a valid value). The Rust port uses an exhaustive
+  // `#[repr(u8)] enum`, so the only safety net against discriminant drift / a UB
+  // `from_raw` is that every named index must equal its RFC 9204 Appendix A
+  // static-table entry. This pins that contract end-to-end: each header below
+  // hits `Qpack::classify` → `qpack_index` → lsqpack encode → wire → server
+  // decode. A wrong discriminant makes lsqpack emit the wrong static-table
+  // name (or garbage), so the echoed value disappears.
+  test("QPACK static-table indexed headers round-trip", async () => {
+    // Every `Class::Indexed` entry in Header.zig's classify map, minus
+    // content-length / accept-encoding (build_request rewrites those).
+    // Mixed case on a few to exercise the case-insensitive lookup.
+    const sent: Record<string, string> = {
+      "accept": "application/qpack-test",
+      "Accept-Language": "zz-ZZ",
+      "accept-ranges": "none",
+      "Authorization": "Bearer qpack-84",
+      "cache-control": "no-store",
+      "Content-Disposition": "inline",
+      "content-encoding": "identity",
+      "content-type": "text/plain",
+      "cookie": "qpack=5",
+      "date": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "ETag": '"qpack-7"',
+      "forwarded": "for=127.0.0.1",
+      "If-Modified-Since": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "if-none-match": '"qpack-9"',
+      "if-range": '"qpack-89"',
+      "last-modified": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "link": "</a>; rel=preload",
+      "location": "/qpack-12",
+      "Origin": "https://qpack.test",
+      "range": "bytes=0-0",
+      "Referer": "https://qpack.test/13",
+      "server": "qpack-92",
+      "set-cookie": "k=v",
+      "User-Agent": "qpack-ua/95",
+      "vary": "qpack-59",
+      "X-Forwarded-For": "10.0.0.96",
+      // Not in the static table — exercises the `classify() == None` lowercase path.
+      "X-Unindexed-Probe": "fallthrough",
+    };
+    const res = await fetch(`${base}/headers-echo`, { ...h3, headers: sent });
+    expect(res.status).toBe(200);
+    const got: Record<string, string> = await res.json();
+    for (const [name, value] of Object.entries(sent)) {
+      expect(got[name.toLowerCase()]).toBe(value);
+    }
   });
 
   test("response consumed as blob / bytes", async () => {

@@ -203,22 +203,28 @@ pub const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
 // `ptr` is `void*` on the C++ side; declaring it as such here (rather than
 // `*mut ParsedShellScript`) matches the ABI exactly and avoids the
 // `improper_ctypes` lint on a non-`#[repr(C)]` payload struct.
+//
+// ffi-safe-fn: `&JSGlobalObject`/`&MarkedArgumentBuffer` are `opaque_ffi!`
+// ZSTs (UnsafeCell body, zero-byte deref, no `noalias`); `ptr` is stored
+// opaquely on the JS wrapper (never dereferenced C++-side — same shape as
+// `BakeGlobalObject__attachPerThreadData`). No caller-side precondition for
+// the call itself ⇒ declare `safe fn`.
 #[cfg(all(windows, target_arch = "x86_64"))]
 unsafe extern "sysv64" {
     #[link_name = "ParsedShellScript__createWithValues"]
-    fn ParsedShellScript__createWithValues(
-        global: *mut JSGlobalObject,
+    safe fn ParsedShellScript__createWithValues(
+        global: &JSGlobalObject,
         ptr: *mut core::ffi::c_void,
-        marked_argument_buffer: *mut core::ffi::c_void,
+        marked_argument_buffer: &MarkedArgumentBuffer,
     ) -> JSValue;
 }
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 unsafe extern "C" {
     #[link_name = "ParsedShellScript__createWithValues"]
-    fn ParsedShellScript__createWithValues(
-        global: *mut JSGlobalObject,
+    safe fn ParsedShellScript__createWithValues(
+        global: &JSGlobalObject,
         ptr: *mut core::ffi::c_void,
-        marked_argument_buffer: *mut core::ffi::c_void,
+        marked_argument_buffer: &MarkedArgumentBuffer,
     ) -> JSValue;
 }
 
@@ -311,16 +317,14 @@ fn create_parsed_shell_script_impl(
     });
     parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();
     let parsed_shell_script_ptr = bun_core::heap::into_raw(parsed_shell_script);
-    // SAFETY: `parsed_shell_script_ptr` is a fresh `heap::alloc`; ownership
-    // transfers to the C++ wrapper. `marked_argument_buffer` is the live
-    // stack-allocated buffer C++ handed us via `MarkedArgumentBuffer::run`.
-    let this_jsvalue = unsafe {
-        ParsedShellScript__createWithValues(
-            global.as_mut_ptr(),
-            parsed_shell_script_ptr.cast::<core::ffi::c_void>(),
-            std::ptr::from_mut::<MarkedArgumentBuffer>(marked_argument_buffer).cast::<core::ffi::c_void>(),
-        )
-    };
+    // `parsed_shell_script_ptr` is a fresh `heap::alloc`; ownership transfers
+    // to the C++ wrapper (stored opaquely, freed via the generated finalize
+    // callback).
+    let this_jsvalue = ParsedShellScript__createWithValues(
+        global,
+        parsed_shell_script_ptr.cast::<core::ffi::c_void>(),
+        marked_argument_buffer,
+    );
     // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.
     unsafe { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
 

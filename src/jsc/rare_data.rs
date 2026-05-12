@@ -878,10 +878,10 @@ impl RareData {
 impl RareData {
     #[inline]
     fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
-        // SAFETY: link-time extern defined in `bun_runtime::webcore::blob`;
-        // all args are by-value safe types and the call allocates a fresh
-        // Store — no caller obligation to forward.
-        unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode).cast() }
+        // `__bun_stdio_blob_store_new` is declared `safe fn` in
+        // `bun_event_loop::MiniEventLoop` (all args by-value; allocates a
+        // fresh `Store` with no caller-side precondition).
+        __bun_stdio_blob_store_new(fd, is_atty, mode).cast()
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.

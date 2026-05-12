@@ -2941,20 +2941,17 @@ impl PackageManifest {
                     let indices = &mut all_indices[..len];
                     let cloned_packages = &mut all_cloned_packages[..len];
                     let cloned_versions = &mut all_cloned_versions[..len];
-                    // SAFETY: ExternalSlice points into versioned_packages / all_semver_versions
-                    // which we own mutably here. @constCast equivalent.
-                    let versioned_packages_ = unsafe {
-                        bun_core::ffi::slice_mut(
-                            versioned_packages.as_mut_ptr().add(release.values.off as usize),
-                            len,
-                        )
-                    };
-                    let semver_versions_ = unsafe {
-                        bun_core::ffi::slice_mut(
-                            all_semver_versions_ptr.add(release.keys.off as usize),
-                            len,
-                        )
-                    };
+                    // `ExternalSlice` offsets index into `versioned_packages` /
+                    // `all_semver_versions`, both fully-initialised `Box<[T]>`s
+                    // (created via `vec![Default; n].into_boxed_slice()` above) —
+                    // safe slice indexing replaces the `from_raw_parts_mut`
+                    // reconstruction Zig's `@constCast(release.values.get(..))`
+                    // forced. The two boxes are distinct allocations so the two
+                    // `&mut` borrows do not overlap.
+                    let versioned_packages_ =
+                        &mut versioned_packages[release.values.off as usize..][..len];
+                    let semver_versions_ =
+                        &mut all_semver_versions[release.keys.off as usize..][..len];
                     cloned_packages.copy_from_slice(versioned_packages_);
                     cloned_versions.copy_from_slice(semver_versions_);
 
@@ -3016,23 +3013,13 @@ impl PackageManifest {
         if extern_strings_remaining + tarball_urls_count > 0 {
             let src_len = tarball_url_strings_cursor;
             if src_len > 0 {
-                // SAFETY: both are POD ExternalString slices
-                let src = unsafe {
-                    bun_core::ffi::slice(
-                        all_tarball_url_strings.as_ptr().cast::<u8>(),
-                        src_len * core::mem::size_of::<ExternalString>(),
-                    )
-                };
-                let dst_start = extern_strings_cursor * core::mem::size_of::<ExternalString>();
-                // SAFETY: all_extern_strings owns the buffer
-                let dst = unsafe {
-                    bun_core::ffi::slice_mut(
-                        all_extern_strings.as_mut_ptr().cast::<u8>().add(dst_start),
-                        all_extern_strings.len() * core::mem::size_of::<ExternalString>() - dst_start,
-                    )
-                };
-                debug_assert!(dst.len() >= src.len());
-                dst[..src.len()].copy_from_slice(src);
+                // `ExternalString` is `Copy` POD — Zig used `@memcpy` over
+                // `sliceAsBytes` views here; an element-wise `copy_from_slice`
+                // is bit-identical and lets us drop the `from_raw_parts`
+                // byte-view reconstruction over the same boxed slices.
+                debug_assert!(all_extern_strings.len() - extern_strings_cursor >= src_len);
+                all_extern_strings[extern_strings_cursor..extern_strings_cursor + src_len]
+                    .copy_from_slice(&all_tarball_url_strings[..src_len]);
             }
 
             // all_extern_strings = all_extern_strings[0 .. len - extern_strings_remaining]

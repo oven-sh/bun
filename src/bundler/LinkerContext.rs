@@ -3041,7 +3041,7 @@ impl<'a> LinkerContext<'a> {
                 return ImportTrackerIterator {
                     value: matching_export.data,
                     status: ImportTrackerStatus::Found,
-                    import_data: std::ptr::from_ref::<[crate::ImportData]>(matching_export.potentially_ambiguous_export_star_refs.slice()),
+                    import_data: bun_ptr::BackRef::new(matching_export.potentially_ambiguous_export_star_refs.slice()),
                 };
             }
         }
@@ -3058,7 +3058,7 @@ impl<'a> LinkerContext<'a> {
                     name_loc: matching_export.data.name_loc,
                 },
                 status: ImportTrackerStatus::Found,
-                import_data: std::ptr::from_ref::<[crate::ImportData]>(matching_export.potentially_ambiguous_export_star_refs.slice()),
+                import_data: bun_ptr::BackRef::new(matching_export.potentially_ambiguous_export_star_refs.slice()),
             };
         }
 
@@ -3147,12 +3147,12 @@ impl<'a> LinkerContext<'a> {
             let advanced = self.advance_import_tracker(&tracker);
             let next_tracker = advanced.value;
             let status = advanced.status;
-            // SAFETY: `advanced.import_data` borrows
+            // `advanced.import_data` borrows
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
             // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
-                unsafe { &*advanced.import_data };
+                advanced.import_data.get();
 
             match status {
                 ImportTrackerStatus::Cjs

@@ -1582,7 +1582,11 @@ bun_core::assert_ffi_layout!(
 impl BunLogOptions {
     pub fn source_line_text(&self) -> &[u8] {
         if !self.source_line_text_ptr.is_null() && self.source_line_text_len > 0 {
-            // SAFETY: ptr/len pair set by C plugin; trusted per FFI contract.
+            // SAFETY: genuine FFI — ptr/len are populated by a third-party native
+            // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
+            // len > 0 are checked above; the plugin contract requires the buffer
+            // to remain valid for the duration of the `log` callback (the only
+            // caller of this accessor), and `append` dupes before that returns.
             return unsafe {
                 core::slice::from_raw_parts(self.source_line_text_ptr, self.source_line_text_len)
             };
@@ -1592,7 +1596,11 @@ impl BunLogOptions {
 
     pub fn path(&self) -> &[u8] {
         if !self.path_ptr.is_null() && self.path_len > 0 {
-            // SAFETY: ptr/len pair set by C plugin; trusted per FFI contract.
+            // SAFETY: genuine FFI — ptr/len are populated by a third-party native
+            // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
+            // len > 0 are checked above; the plugin contract requires the buffer
+            // to remain valid for the duration of the `log` callback, and
+            // `append` dupes the bytes into the `Log` arena before that returns.
             return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
         }
         b""
@@ -1600,7 +1608,11 @@ impl BunLogOptions {
 
     pub fn message(&self) -> &[u8] {
         if !self.message_ptr.is_null() && self.message_len > 0 {
-            // SAFETY: ptr/len pair set by C plugin; trusted per FFI contract.
+            // SAFETY: genuine FFI — ptr/len are populated by a third-party native
+            // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
+            // len > 0 are checked above; the plugin contract requires the buffer
+            // to remain valid for the duration of the `log` callback, and
+            // `append` dupes the bytes into the `Log` arena before that returns.
             return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
         }
         b""

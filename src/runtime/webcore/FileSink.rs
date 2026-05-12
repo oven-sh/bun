@@ -168,10 +168,18 @@ pub extern "C" fn FileSink__assertLive(ptr: *const c_void) {
     let magic = unsafe { (*ptr.cast::<FileSink>()).magic.get() };
     if magic != FILESINK_LIVE {
         let head: [u8; 64] = unsafe { core::ptr::read_unaligned(ptr.cast::<[u8; 64]>()) };
-        panic!(
+        // Full diagnostic to stderr first — `rust_panic_hook` formats into a
+        // 1024-byte `BoundedArray` whose `write_str` is all-or-nothing, so a
+        // long payload would emerge as an empty `panic:` line in CI. Keep the
+        // panic message itself short enough to fit.
+        eprintln!(
             "FileSink__assertLive: m_sinkPtr={:p} stored with bad magic {:#x} \
              (LIVE={:#x} DEAD={:#x}); head[0..64]={:02x?}",
             ptr, magic, FILESINK_LIVE, FILESINK_DEAD, head,
+        );
+        panic!(
+            "FileSink__assertLive: bad magic {magic:#x} at m_sinkPtr={ptr:p} — \
+             head[0..64] hexdump written to stderr above"
         );
     }
 }
@@ -948,26 +956,25 @@ impl FileSink {
                     .lock()
                     .ok()
                     .and_then(|m| m.get(&(self as *const _ as usize)).cloned())
-                    // Cap the backtrace: a full Windows `Backtrace::force_capture()`
-                    // string easily exceeds the panic-format buffer, which made
-                    // the panic message (and thus the bun.report `0…` segment)
-                    // come out empty in CI #53811 — defeating the whole probe.
-                    .map(|s| {
-                        const CAP: usize = 2000;
-                        if s.len() > CAP {
-                            let mut end = CAP;
-                            while !s.is_char_boundary(end) {
-                                end -= 1;
-                            }
-                            format!("{}\n…(+{} bytes truncated)", &s[..end], s.len() - end)
-                        } else {
-                            s
-                        }
-                    })
                     .unwrap_or_else(|| "<no deinit backtrace recorded>".into());
                 #[cfg(not(windows))]
                 let freed_bt = String::from("<no FREED_AT entry — never reached deinit; m_sinkPtr was bogus from start OR deinit not called>");
-                panic!(
+                // Full diagnostic to stderr, then a SHORT panic.
+                //
+                // `rust_panic_hook` (src/crash_handler/lib.rs) formats the panic
+                // payload into a 1024-byte `BoundedArray`, and `BoundedArray`'s
+                // `core::fmt::Write::write_str` is **all-or-nothing** — if
+                // `len + s.len() > 1024` it writes ZERO bytes. The previous
+                // single-`panic!` payload here (≈250B prose + ≈260B hexdump +
+                // decode line + multi-KB `freed_bt`) overflowed atomically, so
+                // CI #53811/#53852 printed an empty `panic:` line and the
+                // bun.report `0…` segment encoded the empty string — defeating
+                // the probe. 0ad014d3de61's 2KB cap on `freed_bt` targeted the
+                // wrong buffer (the limit is `msg_buf`'s 1024B, not the
+                // backtrace string). Fix: dump everything via `eprintln!` (no
+                // size limit) and keep the actual panic message well under 1KB
+                // so the crash handler captures it.
+                eprintln!(
                     "FileSink::finalize: bad magic {m:#x} (LIVE={:#x} DEAD={:#x}) at self={:p}; \
                      m_sinkPtr is stale (UAF). head[0..64]={:02x?} | decode: @8 fd={} @16 data={:#x} \
                      @24 req_type={} ({}) | freed at:\n{}",
@@ -980,6 +987,11 @@ impl FileSink {
                     req_type,
                     reuse,
                     freed_bt,
+                );
+                panic!(
+                    "FileSink::finalize UAF: bad magic {m:#x} at self={:p} — \
+                     full FREED_AT backtrace + slot decode written to stderr above",
+                    self as *const _,
                 );
             }
         }

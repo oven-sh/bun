@@ -15,15 +15,6 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-/// SAFETY helper: deref `self.progress` (BACKREF into `manager.progress`).
-/// Callers hold `&mut self` so no other live `&mut Progress` aliases.
-macro_rules! progress {
-    ($self:ident) => {
-        // SAFETY: `progress` is a BACKREF to `manager.progress`; the install
-        // pass is single-threaded and `&mut self` is held.
-        unsafe { &mut *$self.progress }
-    };
-}
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // PORT NOTE: `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
@@ -414,6 +405,15 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.lockfile }
     }
 
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn progress_mut(&self) -> &'a mut Progress {
+        // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
+        // `*self`; the install pass is single-threaded so no concurrent `&mut
+        // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
+        unsafe { &mut *self.progress }
+    }
+
     /// Increments the number of installed packages for a tree id and runs available scripts
     /// if the tree is finished.
     // PORT NOTE: Zig parametrised this on `comptime should_install_packages: bool`.
@@ -717,7 +717,7 @@ impl<'a> PackageInstaller<'a> {
                         // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
                         // — `Progress::log` takes a single `Arguments` so format inline.
                         if log_level.show_progress() {
-                            progress!(self).log(format_args!(
+                            self.progress_mut().log(format_args!(
                                 "{}",
                                 Output::pretty_fmt_rt(
                                     format_args!(
@@ -839,7 +839,7 @@ impl<'a> PackageInstaller<'a> {
                     // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
                     // — `Progress::log` takes a single `Arguments` so format inline.
                     if log_level.show_progress() {
-                        progress!(self).log(format_args!(
+                        self.progress_mut().log(format_args!(
                             "{}",
                             Output::pretty_fmt_rt(
                                 format_args!(
@@ -1258,7 +1258,7 @@ impl<'a> PackageInstaller<'a> {
         let node_modules_ref = bun_ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
         let mut installer = PackageInstall {
             progress: if self.manager().options.log_level.show_progress() {
-                Some(progress!(self))
+                Some(self.progress_mut())
             } else {
                 None
             },
@@ -2171,7 +2171,7 @@ impl<'a> PackageInstaller<'a> {
             Err(err) => {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
-                        progress!(self).log(format_args!(
+                        self.progress_mut().log(format_args!(
                             "{}",
                             Output::pretty_fmt_rt(
                                 format_args!(

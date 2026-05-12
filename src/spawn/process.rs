@@ -3675,17 +3675,11 @@ pub mod sync {
             // Drain the signalfd so the next poll blocks; the actual reap
             // happens at the top of the next iteration.
             if chld_fd.fd() != Fd::INVALID && buf[chld_idx].revents != 0 {
-                // SAFETY: zeroed signalfd_siginfo is valid for read target
-                let mut si: libc::signalfd_siginfo = bun_core::ffi::zeroed();
-                let si_bytes = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        (&raw mut si).cast::<u8>(),
-                        core::mem::size_of::<libc::signalfd_siginfo>(),
-                    )
-                };
-                while bun_sys::read(chld_fd.fd(), si_bytes).unwrap_or(0)
-                    == core::mem::size_of::<libc::signalfd_siginfo>()
-                {}
+                // The siginfo payload is discarded — we only need a buffer of
+                // the right size to drain the fd, so a plain byte array avoids
+                // the unsafe struct-as-bytes reinterpret entirely.
+                let mut si_bytes = [0u8; core::mem::size_of::<libc::signalfd_siginfo>()];
+                while bun_sys::read(chld_fd.fd(), &mut si_bytes).unwrap_or(0) == si_bytes.len() {}
             }
         }
         for i in 0..2 {

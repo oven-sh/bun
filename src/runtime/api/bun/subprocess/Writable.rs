@@ -31,18 +31,16 @@ pub enum Writable<'a> {
 impl<'a> Writable<'a> {
     /// Shared borrow of the `Pipe` payload's `FileSink`.
     ///
-    /// Centralises the `NonNull → &T` deref so the per-match-arm `unsafe`
-    /// blocks (`memory_cost`/`ref`/`unref`/`close`) collapse to this one site.
-    /// Sound because `Writable::Pipe` holds a +1 intrusive ref on the
-    /// `FileSink` for the variant's entire lifetime — released only by an
-    /// explicit `FileSink::deref` *after* the variant has been overwritten
-    /// (see `on_close` / `Subprocess::on_close_io`). Callers therefore hold a
-    /// `&NonNull<FileSink>` borrowed from a still-live `Writable::Pipe`.
+    /// `Writable::Pipe` holds a +1 intrusive ref on the `FileSink` for the
+    /// variant's entire lifetime — released only by an explicit
+    /// `FileSink::deref` *after* the variant has been overwritten (see
+    /// `on_close` / `Subprocess::on_close_io`). The pointee is therefore live
+    /// and pinned for any caller still holding the `Writable::Pipe` payload —
+    /// i.e. the owner-outlives-holder `BackRef` invariant holds (single JS
+    /// thread).
     #[inline]
-    pub(super) fn pipe_sink(pipe: &NonNull<FileSink>) -> &FileSink {
-        // SAFETY: `Writable::Pipe` owns a +1 intrusive ref; pointee is live and
-        // pinned for the duration of any borrow of `pipe`. Single JS thread.
-        unsafe { pipe.as_ref() }
+    pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
+        bun_ptr::BackRef::from(pipe)
     }
 
     /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).
@@ -79,7 +77,7 @@ impl<'a> Writable<'a> {
 
     pub fn memory_cost(&self) -> usize {
         match self {
-            Writable::Pipe(pipe) => Self::pipe_sink(pipe).memory_cost(),
+            Writable::Pipe(pipe) => Self::pipe_sink(*pipe).memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
             // TODO: memfd
             _ => 0,
@@ -99,7 +97,7 @@ impl<'a> Writable<'a> {
     pub fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                Self::pipe_sink(pipe).update_ref(true);
+                Self::pipe_sink(*pipe).update_ref(true);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(buffer).update_ref(true);
@@ -111,7 +109,7 @@ impl<'a> Writable<'a> {
     pub fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                Self::pipe_sink(pipe).update_ref(false);
+                Self::pipe_sink(*pipe).update_ref(false);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(buffer).update_ref(false);
@@ -496,7 +494,7 @@ impl<'a> Writable<'a> {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                let _ = Self::pipe_sink(pipe).end(None);
+                let _ = Self::pipe_sink(*pipe).end(None);
             }
             Writable::Memfd(fd) => {
                 fd.close();

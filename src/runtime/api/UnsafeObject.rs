@@ -13,9 +13,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
         ("gcAggressionLevel", __jsc_host_gc_aggression_level),
         ("arrayBufferToString", __jsc_host_array_buffer_to_string),
         ("mimallocDump", __jsc_host_dump_mimalloc),
-        ("heapStats", __jsc_host_heap_stats),
-        ("heapStatsTrace", __jsc_host_heap_stats_trace),
-        ("bmallocScavenge", __jsc_host_bmalloc_scavenge),
+        ("memoryFootprint", __jsc_host_memory_footprint),
     ];
     for &(name, func) in FIELDS {
         object.put(
@@ -78,172 +76,23 @@ pub fn array_buffer_to_string(
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn dump_zone_malloc_stats();
-    // src/jsc/bindings/c-bindings.cpp — wraps libpas's
-    // `pas_all_heaps_compute_total_non_utility_summary()` under the global
-    // pas_heap_lock. Reports zeros on non-libpas builds.
-    fn Bun__bmallocHeapStats(
-        allocated: *mut usize,
-        committed: *mut usize,
-        free: *mut usize,
-        decommitted: *mut usize,
-    );
-    // src/jsc/bindings/c-bindings.cpp — `WTF::releaseFastMallocFreeMemory()`
-    // (process-wide `bmalloc::api::scavenge()`). Forces libpas to synchronously
-    // decommit free pages so that on Darwin — where decommit is
-    // `madvise(MADV_FREE_REUSABLE)` and pages otherwise stay in RSS until kernel
-    // memory pressure — `process.memoryUsage.rss()` becomes comparable to Linux
-    // (`MADV_DONTNEED`). `Bun.gc(true)` does NOT do this; it only runs
-    // `mimalloc_cleanup` + JSC GC. NOT `JSC__VM__shrinkFootprint`, which also
-    // calls `deleteAllCode` and would perturb the code-cache state under test.
-    safe fn Bun__bmallocScavenge();
-    // src/jsc/bindings/ZigSourceProvider.cpp — atomic live-instance count of
-    // Zig::SourceProvider. Per-iter delta after `delete require.cache[k]` + GC
-    // is the proof that JSModuleRecord/ModuleProgramExecutable actually drop
-    // their RefPtr<SourceProvider> (i.e. removeEntry → GC sweeps the record →
-    // ~JSModuleRecord frees m_sourceCode/m_exportEntries). One steady-state
-    // survivor is expected: vm.codeCache() pins iteration-0's provider via the
-    // SourceCodeKey it stores. Flat per-iter ⇒ the 31KB/iter darwin RSS is
-    // libpas page retention (MADV_FREE_REUSABLE doesn't drop RSS), not a ref.
-    safe fn Bun__ZigSourceProvider_liveCount() -> usize;
+    safe fn Bun__memoryFootprint() -> usize;
 }
 
-/// `Bun.unsafe.heapStats()` — leak-instrumentation accessor for tests.
-///
-/// Returns `{ mimallocCommit, mimallocRss, mimallocPageFaults,
-/// bunStringRefBalance, liveArenaHeaps, bmallocAllocated, bmallocCommitted,
-/// bmallocFree, bmallocDecommitted }`. All numbers are process-wide
-/// snapshots; the *per-iteration delta* of each is the leak signal:
-///
-/// - `bunStringRefBalance`: net +1 refs the Rust side currently holds against
-///   `WTF::StringImpl` (every `bun_string::String` create/ref minus every
-///   deref/transfer). Linear per-iter growth = forgotten `.deref()` on the
-///   Rust side. NOTE: a few uninstrumented FFI handoff paths (out-param writes
-///   to C++) make the *absolute* value drift, but the per-iteration delta on a
-///   tight loop is exact for that loop's code path.
-/// - `mimallocCommit`/`mimallocRss`: `mi_process_info()` totals — covers
-///   `bun.default_allocator`, `MimallocArena` (AstAlloc, transpile arena),
-///   and anything else routed through mimalloc. Does **not** include
-///   `WTF::fastMalloc` (bmalloc), so a BunString leak shows up only in
-///   `bunStringRefBalance` and process RSS, not here.
-/// - `bmallocAllocated`/`bmallocCommitted`/`bmallocFree`/`bmallocDecommitted`:
-///   libpas `pas_all_heaps_compute_total_non_utility_summary()` — covers
-///   every `WTF::fastMalloc` / IsoHeap / Gigacage allocation: `StringImpl`,
-///   `AtomStringTable` entries, `SourceProvider` source buffers,
-///   `UnlinkedCodeBlock`, JSC `Structure`s, etc. Per-iter `bmallocAllocated`
-///   growth = retained-in-bmalloc bytes the GC heap and mimalloc can't see.
-///   `bmallocCommitted − bmallocAllocated − bmallocFree` ≈ metadata overhead.
-///   Reports 0 on non-libpas builds (e.g. `USE_SYSTEM_MALLOC`). Walks every
-///   heap under the global pas_heap_lock (no scavenge), so call sparingly.
-/// - `liveArenaHeaps`: debug-only count of live `MimallocArena` heaps
-///   (`mi_heap_new` − `mi_heap_destroy`). 0 in release builds.
+/// Accurate per-process memory footprint in bytes. Unlike RSS this excludes
+/// pages already returned to the OS that the kernel keeps mapped lazily
+/// (Darwin's `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+/// Backed by `task_info(TASK_VM_INFO).phys_footprint` (Darwin), `Pss:` from
+/// `/proc/self/smaps_rollup` (Linux), `PrivateUsage` (Windows). Returns
+/// `undefined` when no platform-specific accessor is available so the caller
+/// can `?? process.memoryUsage.rss()`.
 #[bun_jsc::host_fn]
-fn heap_stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let mut elapsed = 0usize;
-    let mut user = 0usize;
-    let mut system = 0usize;
-    let mut current_rss = 0usize;
-    let mut peak_rss = 0usize;
-    let mut current_commit = 0usize;
-    let mut peak_commit = 0usize;
-    let mut page_faults = 0usize;
-    // SAFETY: all out-params are valid stack `usize` slots.
-    unsafe {
-        bun_alloc::mimalloc::mi_process_info(
-            &mut elapsed,
-            &mut user,
-            &mut system,
-            &mut current_rss,
-            &mut peak_rss,
-            &mut current_commit,
-            &mut peak_commit,
-            &mut page_faults,
-        );
-    }
-
-    let mut bmalloc_allocated = 0usize;
-    let mut bmalloc_committed = 0usize;
-    let mut bmalloc_free = 0usize;
-    let mut bmalloc_decommitted = 0usize;
-    // SAFETY: all out-params are valid stack `usize` slots; the C++ shim
-    // unconditionally writes all four (zeros on non-libpas builds).
-    unsafe {
-        Bun__bmallocHeapStats(
-            &mut bmalloc_allocated,
-            &mut bmalloc_committed,
-            &mut bmalloc_free,
-            &mut bmalloc_decommitted,
-        );
-    }
-
-    let obj = JSValue::create_empty_object(global, 10);
-    obj.put(global, b"mimallocCommit", JSValue::js_number(current_commit as f64));
-    obj.put(global, b"mimallocRss", JSValue::js_number(current_rss as f64));
-    obj.put(global, b"mimallocPageFaults", JSValue::js_number(page_faults as f64));
-    obj.put(
-        global,
-        b"bunStringRefBalance",
-        JSValue::js_number(bun_string::rust_wtf_ref_balance() as f64),
-    );
-    obj.put(
-        global,
-        b"liveArenaHeaps",
-        JSValue::js_number(bun_alloc::live_arena_heaps() as f64),
-    );
-    obj.put(global, b"bmallocAllocated", JSValue::js_number(bmalloc_allocated as f64));
-    obj.put(global, b"bmallocCommitted", JSValue::js_number(bmalloc_committed as f64));
-    obj.put(global, b"bmallocFree", JSValue::js_number(bmalloc_free as f64));
-    obj.put(global, b"bmallocDecommitted", JSValue::js_number(bmalloc_decommitted as f64));
-    obj.put(
-        global,
-        b"zigSourceProviderLive",
-        JSValue::js_number(Bun__ZigSourceProvider_liveCount() as f64),
-    );
-    Ok(obj)
-}
-
-/// `Bun.unsafe.bmallocScavenge()` — force libpas to synchronously decommit free
-/// pages (process-wide `WTF::releaseFastMallocFreeMemory()`).
-///
-/// Call after `Bun.gc(true)` and before sampling `process.memoryUsage.rss()` in
-/// leak tests. On Darwin, libpas decommits via `madvise(MADV_FREE_REUSABLE)`
-/// (vendor/WebKit/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c:463), so
-/// freed pages stay in RSS until the kernel reclaims them under pressure; on
-/// Linux it uses `MADV_DONTNEED`, which drops RSS immediately. Without this
-/// call, the same correctly-freed allocation pattern reports +31 KB/iter RSS on
-/// macOS and ~0 on Linux. `Bun.gc(true)` only runs `mimalloc_cleanup` + JSC GC
-/// and never touches the libpas scavenger.
-#[bun_jsc::host_fn]
-fn bmalloc_scavenge(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Bun__bmallocScavenge();
-    Ok(JSValue::UNDEFINED)
-}
-
-/// `Bun.unsafe.heapStatsTrace(enable?)` — debug-only per-callsite ref trace.
-///
-/// `heapStatsTrace(true)` arms tracing; subsequent `heapStatsTrace()` (no
-/// arg) drains and returns `[{net, site:"file:line"}]` aggregated since the
-/// last drain. Release builds return `[]`.
-#[bun_jsc::host_fn]
-fn heap_stats_trace(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arg0 = frame.argument(0);
-    if arg0.is_boolean() {
-        bun_string::rust_wtf_ref_trace_enable(arg0.to_boolean());
+fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let bytes = Bun__memoryFootprint();
+    if bytes == 0 {
         return Ok(JSValue::UNDEFINED);
     }
-    let entries = bun_string::rust_wtf_ref_trace_drain();
-    let arr = jsc::JSArray::create_empty(global, entries.len()).map_err(|_| jsc::JsError::Thrown)?;
-    for (i, (net, site)) in entries.into_iter().enumerate() {
-        let row = JSValue::create_empty_object(global, 2);
-        row.put(global, b"net", JSValue::js_number(net as f64));
-        row.put(
-            global,
-            b"site",
-            jsc::ZigString::init_utf8(site.as_bytes()).to_js(global),
-        );
-        // SAFETY: `i < entries.len()` and `arr` was sized to `entries.len()`.
-        unsafe { arr.put_index(global, i as u32, row) };
-    }
-    Ok(arr.into())
+    Ok(JSValue::js_number(bytes as f64))
 }
 
 #[bun_jsc::host_fn]

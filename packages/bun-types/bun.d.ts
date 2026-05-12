@@ -4694,26 +4694,18 @@ declare module "bun" {
     function mimallocDump(): void;
 
     /**
-     * Process-wide heap-instrumentation snapshot for leak tests.
+     * Accurate per-process memory footprint in bytes.
      *
-     * Compare per-iteration deltas, not absolute values:
-     * - `bunStringRefBalance` — net `WTF::StringImpl` +1 refs the Rust side
-     *   currently holds. Linear per-iter growth = forgotten `.deref()` on the
-     *   Rust side. Absolute value drifts (uninstrumented FFI handoff paths);
-     *   per-iter delta on a tight loop is exact for that loop's code path.
-     * - `mimallocCommit`/`mimallocRss` — `mi_process_info()` totals: covers
-     *   `bun.default_allocator` and every `MimallocArena`. Does **not**
-     *   include `WTF::fastMalloc`/bmalloc.
-     * - `liveArenaHeaps` — debug-only count of live `MimallocArena` heaps.
-     *   Always 0 in release builds.
+     * Unlike `process.memoryUsage.rss()`, this excludes pages already
+     * returned to the OS that the kernel keeps mapped lazily (Darwin's
+     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
+     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
+     * Returns `undefined` on platforms with no accurate accessor; callers
+     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
-    function heapStats(): {
-      mimallocCommit: number;
-      mimallocRss: number;
-      mimallocPageFaults: number;
-      bunStringRefBalance: number;
-      liveArenaHeaps: number;
-    };
+    function memoryFootprint(): number | undefined;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

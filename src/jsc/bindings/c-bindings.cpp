@@ -155,82 +155,68 @@ extern "C" void dump_zone_malloc_stats()
 
 #endif
 
-// -----------------------------------------------------------------------------
-// Bun.unsafe.heapStats() bmalloc/libpas instrumentation.
+// Accurate per-process memory footprint, in bytes. Unlike RSS this excludes
+// pages already returned to the OS that the kernel keeps mapped lazily
+// (Darwin's MADV_FREE_REUSABLE), so leak tests get the same answer on every
+// platform. Returns 0 when no platform-specific accessor is available; the
+// JS caller falls back to process.memoryUsage.rss().
 //
-// WTF::FastMalloc::statistics() is useless here — it returns ru_maxrss (process
-// peak RSS), not bmalloc-internal state. To attribute the require-cache leak's
-// 31KB/iter darwin-only RSS growth to bmalloc vs JSC-GC vs system-malloc, we
-// reach down to libpas's pas_all_heaps_compute_total_non_utility_summary(),
-// which walks every fastMalloc/IsoHeap/Gigacage heap and reports allocated /
-// committed / free / decommitted bytes. WTF::StringImpl, AtomStringTable
-// entries, SourceProvider source buffers, and UnlinkedCodeBlock metadata all
-// live in these heaps, so per-iteration `allocated` growth here is the
-// ground-truth bmalloc leak signal that mimallocCommit cannot see.
-//
-// `pas_all_heaps_for_each_heap` asserts the global heap lock is held (and on
-// Darwin that's an os_unfair_lock_assert_owner crash), so we lock around the
-// summary call. Lock + walk costs O(heaps × directories) — fine for an
-// every-10-iters instrumentation snapshot, not for hot paths.
-// -----------------------------------------------------------------------------
-#if !USE(SYSTEM_MALLOC)
-#include <bmalloc/BPlatform.h>
-#endif
-
-// -----------------------------------------------------------------------------
-// Bun__bmallocScavenge: force libpas to synchronously decommit its free pages.
-//
-// `Bun.gc(true)` only runs `mimalloc_cleanup` + JSC `runGC`; neither calls
-// `WTF::releaseFastMallocFreeMemory()`, so the libpas scavenger is never forced
-// before tests sample `process.memoryUsage.rss()`. On Linux this doesn't matter
-// because libpas decommits with `madvise(MADV_DONTNEED)` (pages drop from RSS
-// immediately), but on Darwin it uses `madvise(MADV_FREE_REUSABLE)` — pages stay
-// dirty and counted in RSS until kernel memory pressure (see
-// vendor/WebKit/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c:458-470).
-// Tests that assert RSS deltas across platforms must call this first to make the
-// numbers comparable.
-//
-// This wraps `bmalloc::api::scavenge()` (process-wide, all threads' caches).
-// Do NOT use `JSC__VM__shrinkFootprint` for this — `VM::shrinkFootprintWhenIdle`
-// also does `deleteAllCode`, which would invalidate the very code-cache state
-// the leak tests are measuring.
-// -----------------------------------------------------------------------------
-extern "C" void Bun__bmallocScavenge()
+// Darwin:  task_info(TASK_VM_INFO).phys_footprint — Activity Monitor's number;
+//          counts dirty + compressed, NOT reusable.
+// Linux:   /proc/self/smaps_rollup Pss: — proportional set size, attributes
+//          shared pages by share count instead of fully to every mapper.
+// Windows: GetProcessMemoryInfo PrivateUsage — commit charge for this process.
+#if OS(DARWIN)
+#include <mach/mach.h>
+extern "C" size_t Bun__memoryFootprint()
 {
-    WTF::releaseFastMallocFreeMemory();
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
+        reinterpret_cast<task_info_t>(&info), &count);
+    if (kr != KERN_SUCCESS) return 0;
+    return static_cast<size_t>(info.phys_footprint);
 }
-
-#if defined(BUSE_LIBPAS) && BUSE_LIBPAS
-#include <bmalloc/pas_heap_lock.h>
-#include <bmalloc/pas_all_heaps.h>
-
-extern "C" void Bun__bmallocHeapStats(size_t* allocated, size_t* committed, size_t* freeBytes, size_t* decommitted)
+#elif OS(LINUX)
+extern "C" size_t Bun__memoryFootprint()
 {
-    // Pure read — no scavenge — so calling this doesn't perturb the RSS sample
-    // taken alongside it. `allocated` walks the heap directories and is
-    // accurate regardless of scavenger state; `committed` may include
-    // free-but-not-yet-decommitted pages, so interpret per-iter `committed`
-    // growth as an upper bound on RSS contribution and `allocated` growth as
-    // the true retained-bytes signal.
-    pas_heap_lock_lock();
-    pas_heap_summary summary = pas_all_heaps_compute_total_non_utility_summary();
-    pas_heap_lock_unlock();
+    // smaps_rollup (Linux ≥4.14) is one read instead of walking every VMA.
+    int fd;
+    do { fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC); }
+    while (fd == -1 && errno == EINTR);
+    if (fd == -1) return 0;
 
-    *allocated = summary.allocated;
-    *committed = summary.committed;
-    *freeBytes = summary.free;
-    *decommitted = summary.decommitted;
+    char buf[2048];
+    ssize_t n;
+    do { n = read(fd, buf, sizeof(buf) - 1); }
+    while (n == -1 && errno == EINTR);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    // Look for "\nPss: <n> kB". Anchor on the newline so "Pss_Anon:" /
+    // "Pss_File:" / "SwapPss:" don't match.
+    const char* p = strstr(buf, "\nPss:");
+    if (!p) return 0;
+    p += sizeof("\nPss:") - 1;
+    while (*p == ' ' || *p == '\t') p++;
+    size_t kb = static_cast<size_t>(strtoull(p, nullptr, 10));
+    return kb * 1024;
+}
+#elif OS(WINDOWS)
+#include <psapi.h>
+extern "C" size_t Bun__memoryFootprint()
+{
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc)))
+        return 0;
+    return static_cast<size_t>(pmc.PrivateUsage);
 }
 #else
-extern "C" void Bun__bmallocHeapStats(size_t* allocated, size_t* committed, size_t* freeBytes, size_t* decommitted)
+extern "C" size_t Bun__memoryFootprint()
 {
-    // SYSTEM_MALLOC / non-libpas build: bmalloc routes to mimalloc or system
-    // malloc, so there's no separate libpas heap to query. Report zeros so the
-    // fixture's per-iteration delta is a flat 0 rather than garbage.
-    *allocated = 0;
-    *committed = 0;
-    *freeBytes = 0;
-    *decommitted = 0;
+    return 0;
 }
 #endif
 

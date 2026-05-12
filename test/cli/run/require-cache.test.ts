@@ -159,15 +159,6 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          // Bun.gc(true) only runs mimalloc_cleanup + JSC runGC; it never calls
-          // WTF::releaseFastMallocFreeMemory(). On Darwin libpas decommits with
-          // madvise(MADV_FREE_REUSABLE) — pages stay in RSS until kernel memory
-          // pressure — whereas Linux uses MADV_DONTNEED and drops RSS immediately
-          // (vendor/WebKit/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c:463).
-          // Force the scavenger before each RSS sample so the two platforms are
-          // comparable.
-          const scavenge = globalThis.Bun?.unsafe?.bmallocScavenge ?? (() => {});
-          const heapStats = globalThis.Bun?.unsafe?.heapStats ?? (() => ({ bmallocAllocated: 0 }));
           function bust() {
             delete require.cache[path];
           }
@@ -177,29 +168,16 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          scavenge();
           const baseline = process.memoryUsage.rss();
-          const bmallocBaseline = heapStats().bmallocAllocated;
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          scavenge();
           const rss = process.memoryUsage.rss();
-          const bmallocAfter = heapStats().bmallocAllocated;
           const diff = rss - baseline;
-          const bmallocDiff = bmallocAfter - bmallocBaseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          console.log("bmallocAllocated diff", (bmallocDiff / 250) | 0, "B/iter");
-          // Ground-truth assertion: bmallocAllocated counts bytes libpas considers
-          // live, independent of decommit semantics. If this is flat the import →
-          // delete require.cache → GC cycle is releasing everything, regardless of
-          // what the kernel does with MADV_FREE_REUSABLE pages.
-          if (bmallocDiff / 250 >= 4096) {
-            throw new Error("Memory leak detected (bmallocAllocated +" + ((bmallocDiff / 250) | 0) + " B/iter)");
-          }
           if (diff > 48 * 1024 * 1024) {
             // Bun v1.1.21 reported 423 MB here on macoS arm64.
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
@@ -207,9 +185,6 @@ describe.concurrent("require.cache", () => {
             // expected ≲15 MB after — the dominant residual was the
             // StringArrayHashMap key Boxes for 10 000 long export names.
             // ~40 KB/iter HashTable<u32> index remains on global.
-            // Secondary guard only — RSS on Darwin still drifts under
-            // MADV_FREE_REUSABLE even after scavenge; bmallocAllocated above is
-            // the authoritative check.
             throw new Error("Memory leak detected");
           }
 

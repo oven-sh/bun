@@ -40,13 +40,6 @@ unsafe extern "C" {
 // ── bun.String methods ──────────────────────────────────────────────────────
 #[track_caller]
 pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-    // The +1 ref leaves Rust's books here (C++ consumes and zeroes `*this`);
-    // no `deref()` runs on the Rust side, so account for it explicitly so
-    // [`bun_string::RUST_WTF_REF_BALANCE`] stays meaningful per-iteration.
-    if this.tag() == Tag::WTFStringImpl {
-        bun_string::RUST_WTF_REF_BALANCE
-            .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-    }
     // SAFETY: `this` is a live `&mut String`; the cppbind wrapper opens its own
     // validation scope and converts `.zero` to `Err(JsError::Thrown)`.
     unsafe { crate::cpp::BunString__transferToJS(this, global_this) }
@@ -92,7 +85,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
         debug_assert!(has_exception);
     }
 
-    if ok { Ok(out.track_create()) } else { Err(JsError::Thrown) }
+    if ok { Ok(out) } else { Err(JsError::Thrown) }
 }
 
 #[track_caller]

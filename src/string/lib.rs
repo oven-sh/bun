@@ -41,92 +41,6 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
 pub use bun_alloc::{StringImpl, Tag};
 
-// ── Debug-only Rust-side WTF ref balance ───────────────────────────────────
-//
-// Tracks the *net* +1s the Rust side holds against `WTF::StringImpl`
-// refcounts: every Rust-visible creation (`BunString__from*` returns a +1)
-// and every explicit `.ref_()` increments; every `.deref()` decrements. If
-// Rust correctly pairs every create/ref with a deref (or hands ownership to
-// C++ via FFI without further touching the value), this stays bounded.
-// Linear growth per iteration of a leak test = forgotten `.deref()` on the
-// Rust side (the BunString-RAII hypothesis). C++-side leaks do NOT show up
-// here; use macOS `leaks` for that.
-//
-// Always compiled; one relaxed atomic add per ref op is below noise. Read
-// via `bun_string::rust_wtf_ref_balance()` → exposed as
-// `Bun.unsafe.heapStats().bunStringRefBalance`.
-pub static RUST_WTF_REF_BALANCE: core::sync::atomic::AtomicIsize =
-    core::sync::atomic::AtomicIsize::new(0);
-
-#[inline]
-pub fn rust_wtf_ref_balance() -> isize {
-    RUST_WTF_REF_BALANCE.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-// ── Debug-only per-callsite ref trace ──────────────────────────────────────
-//
-// When `BUN_DEBUG_WTF_REF_TRACE=1`, every balance bump records its
-// `#[track_caller]` Location. `rust_wtf_ref_trace_drain()` aggregates by
-// (file:line, sign) and returns a sorted `Vec<(net, "file:line")>` so the
-// instrument harness can diff which callsites contribute to the per-iter +6.
-// One Mutex<Vec> push per ref op; only paid when the env var is set.
-#[cfg(debug_assertions)]
-static RUST_WTF_REF_TRACE_ENABLED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-#[cfg(debug_assertions)]
-static RUST_WTF_REF_TRACE: std::sync::Mutex<Vec<(i8, &'static core::panic::Location<'static>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-#[cfg(debug_assertions)]
-#[inline]
-pub fn rust_wtf_ref_trace_enable(on: bool) {
-    RUST_WTF_REF_TRACE_ENABLED.store(on, core::sync::atomic::Ordering::Relaxed);
-}
-
-#[cfg(debug_assertions)]
-#[cold]
-fn rust_wtf_ref_trace_push(sign: i8, loc: &'static core::panic::Location<'static>) {
-    if let Ok(mut v) = RUST_WTF_REF_TRACE.lock() {
-        v.push((sign, loc));
-    }
-}
-
-#[cfg(debug_assertions)]
-#[inline(always)]
-fn trace_ref(sign: i8, loc: &'static core::panic::Location<'static>) {
-    if RUST_WTF_REF_TRACE_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
-        rust_wtf_ref_trace_push(sign, loc);
-    }
-}
-#[cfg(not(debug_assertions))]
-#[inline(always)]
-fn trace_ref(_sign: i8, _loc: &'static core::panic::Location<'static>) {}
-
-/// Drain and aggregate the trace: returns `[(net_count, "file:line"), ...]`
-/// sorted by |net| descending. Clears the buffer.
-#[cfg(debug_assertions)]
-pub fn rust_wtf_ref_trace_drain() -> Vec<(isize, std::string::String)> {
-    use std::collections::BTreeMap;
-    let entries = core::mem::take(&mut *RUST_WTF_REF_TRACE.lock().unwrap());
-    let mut by_site: BTreeMap<(&str, u32), isize> = BTreeMap::new();
-    for (sign, loc) in entries {
-        *by_site.entry((loc.file(), loc.line())).or_default() += sign as isize;
-    }
-    let mut out: Vec<_> = by_site
-        .into_iter()
-        .map(|((f, l), n)| (n, format!("{f}:{l}")))
-        .collect();
-    out.sort_by_key(|(n, _)| core::cmp::Reverse(n.abs()));
-    out
-}
-#[cfg(not(debug_assertions))]
-pub fn rust_wtf_ref_trace_drain() -> Vec<(isize, std::string::String)> {
-    Vec::new()
-}
-#[cfg(not(debug_assertions))]
-#[inline]
-pub fn rust_wtf_ref_trace_enable(_on: bool) {}
-
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct String(pub bun_alloc::String);
@@ -290,17 +204,15 @@ impl String {
 
     /// `bun.String.cloneUTF8` — copies `s` into a fresh WTF::StringImpl
     /// (refcount = 1). Caller must `deref()` or transfer ownership.
-    #[track_caller]
     pub fn clone_utf8(s: &[u8]) -> Self {
         if s.is_empty() { return Self::EMPTY; }
         // BunString__fromBytes auto-detects all-ASCII → Latin1, else UTF-8.
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
-        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }.track_create()
+        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }
     }
-    #[track_caller]
     pub fn clone_latin1(s: &[u8]) -> Self {
         if s.is_empty() { return Self::EMPTY; }
-        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }.track_create()
+        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII (string.zig:207).
     pub fn clone_utf16(s: &[u16]) -> Self {
@@ -313,17 +225,16 @@ impl String {
                 BunString__fromUTF16(s.as_ptr(), s.len())
             }
         }
-        .track_create()
     }
     pub fn create_atom(s: &[u8]) -> Self {
-        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }.track_create()
+        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
     /// to atomize (string.zig:270).
     pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
         // SAFETY: bytes describes a valid slice.
         let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
-        if atom.0.tag == Tag::Dead { None } else { Some(atom.track_create()) }
+        if atom.0.tag == Tag::Dead { None } else { Some(atom) }
     }
     /// `bun.String.createAtomIfPossible` — atomized strings are interned in a
     /// thread-local table; falls back to a regular WTF copy if atomization
@@ -393,7 +304,7 @@ impl String {
             BunString__createExternal(bytes.as_ptr(), bytes.len(), is_latin1, ctx_erased, cb_erased)
         };
         debug_assert!(s.0.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
-        s.track_create()
+        s
     }
 
     /// Max `WTF::StringImpl` length (in characters, not bytes).
@@ -412,7 +323,6 @@ impl String {
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
-            .track_create()
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string. Port collapses Zig's
@@ -432,7 +342,7 @@ impl String {
     /// `(dead, null)` if WTF allocation failed (string.zig:128 checks
     /// `tag == .Dead` before using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
-        let s = BunString__fromLatin1Unitialized(len).track_create();
+        let s = BunString__fromLatin1Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -448,7 +358,7 @@ impl String {
         (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
-        let s = BunString__fromUTF16Unitialized(len).track_create();
+        let s = BunString__fromUTF16Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -476,7 +386,6 @@ impl String {
         // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
         // via mimalloc (the global allocator).
         unsafe { BunString__createExternalGloballyAllocatedLatin1(bytes.as_mut_ptr(), bytes.len()) }
-            .track_create()
     }
 
     /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
@@ -490,7 +399,6 @@ impl String {
         let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
         // SAFETY: see `create_external_globally_allocated_latin1`.
         unsafe { BunString__createExternalGloballyAllocatedUTF16(bytes.as_mut_ptr(), bytes.len()) }
-            .track_create()
     }
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
@@ -569,65 +477,22 @@ impl String {
         if v > i32::MAX as i64 { None } else { Some(v as i32) }
     }
 
-    /// Funnel for newly-created WTF strings returned +1 from C++. Bumps
-    /// [`RUST_WTF_REF_BALANCE`] so leak tests can see how many +1 refs the
-    /// Rust side currently holds. Idempotent for non-WTF tags.
-    ///
-    /// `pub` so out-of-crate FFI ctors (e.g. `bun_jsc::bun_string_jsc::from_js`)
-    /// can funnel through it. **Do not** call on a `String` that wasn't just
-    /// returned +1 from C++ — that would double-count.
-    #[inline(always)]
-    #[track_caller]
-    pub fn track_create(self) -> Self {
-        if self.0.tag == Tag::WTFStringImpl {
-            RUST_WTF_REF_BALANCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            trace_ref(1, core::panic::Location::caller());
-        }
-        self
-    }
-
-    /// Account for a +1 leaving Rust's books via FFI without a Rust-side
-    /// `.deref()`. **Does not touch the refcount** — call this only when C++
-    /// adopts ownership (i.e. will `BunString::deref()` it). Mirrors
-    /// [`track_create`] in reverse so [`RUST_WTF_REF_BALANCE`] stays
-    /// meaningful per-iteration. Idempotent for non-WTF tags.
-    ///
-    /// Use at every site that writes a +1 `String` into an out-param C++
-    /// owns (e.g. `*ret = ErrorableString::ok(s.track_ffi_transfer())`) or
-    /// that hands a `ResolvedSource` to C++ (`OwnedResolvedSource::into_ffi`).
-    #[inline(always)]
-    #[track_caller]
-    pub fn track_ffi_transfer(self) -> Self {
-        if self.0.tag == Tag::WTFStringImpl {
-            RUST_WTF_REF_BALANCE.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            trace_ref(-1, core::panic::Location::caller());
-        }
-        self
-    }
-
     /// `String.ref()` — increment WTF refcount; no-op for other tags.
     #[inline]
-    #[track_caller]
     pub fn ref_(&self) {
         if self.0.tag == Tag::WTFStringImpl {
-            RUST_WTF_REF_BALANCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            trace_ref(1, core::panic::Location::caller());
             self.as_wtf().r#ref()
         }
     }
     /// `String.deref()` — decrement WTF refcount; no-op for other tags.
     #[inline]
-    #[track_caller]
     pub fn deref(&self) {
         if self.0.tag == Tag::WTFStringImpl {
-            RUST_WTF_REF_BALANCE.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            trace_ref(-1, core::panic::Location::caller());
             self.as_wtf().deref()
         }
     }
     /// `String.dupeRef()` — copy + ref.
     #[inline]
-    #[track_caller]
     pub fn dupe_ref(&self) -> Self {
         self.ref_();
         *self

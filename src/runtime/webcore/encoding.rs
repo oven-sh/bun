@@ -774,18 +774,11 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
         }
         // string is already encoded, just need to copy the data
         Encoding::Ucs2 | Encoding::Utf16le => {
-            // Allocate as u16 to get correct alignment, then reinterpret as bytes.
-            let to_u16: Vec<u16> = vec![0u16; len];
-            // SAFETY: see note in construct_from_u8 Ucs2 arm.
-            // TODO(port): Vec<u16> -> Vec<u8> reinterpretation — verify allocator layout invariants.
-            let mut to = unsafe {
-                let mut v = core::mem::ManuallyDrop::new(to_u16);
-                Vec::from_raw_parts(v.as_mut_ptr().cast::<u8>(), len * 2, v.capacity() * 2)
-            };
-            // SAFETY: input is &[u16]; reinterpret as &[u8] of len*2.
-            let bytes = unsafe { bun_core::ffi::slice(input.cast::<u8>(), len * 2) };
-            to[..bytes.len()].copy_from_slice(bytes);
-            to
+            // `input_slice: &[u16]` is the source bytes verbatim — copy them out.
+            // The Zig original allocated u16-aligned then reinterpreted the Vec
+            // header to u8, which is allocator-layout-dependent in Rust; a fresh
+            // u8 Vec sidesteps that and matches the returned `Vec<u8>` layout.
+            bytemuck::cast_slice::<u16, u8>(input_slice).to_vec()
         }
 
         Encoding::Hex => {

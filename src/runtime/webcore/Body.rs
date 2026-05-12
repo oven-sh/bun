@@ -25,6 +25,24 @@ use bun_str::{self as strings, MutableString, String as BunString, ZigString};
 use bun_str::{WTFStringImpl, WTFStringImplExt as _};
 use bun_jsc::ZigStringJsc as _;
 
+/// Mutable view of a [`Blob`]'s backing `Store` through its
+/// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
+/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
+/// invariant `StoreRef::data_mut` already documents: Zig-semantics
+/// shared-mutable interior, single-threaded JS event-loop, no concurrent
+/// `&Store` outstanding for the borrow's duration.
+#[inline]
+#[allow(clippy::mut_from_ref)]
+fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
+    blob.store
+        .get()
+        .as_ref()
+        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
+        // any `StoreRef` exists; single-threaded JS event-loop discipline
+        // guarantees no other `&`/`&mut Store` is live for this borrow.
+        .map(|s| unsafe { &mut *s.as_ptr() })
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -1180,14 +1198,11 @@ impl Value {
                                 // we give the Store the owning Cow and let `blob.content_type` alias it
                                 // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
                                 // no store, transfer the buffer into `blob.content_type` directly.
-                                if let Some(store_ptr) = blob.store.get().as_ref().map(|s| s.as_ptr()) {
-                                    // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
-                                    unsafe {
-                                        (*store_ptr).mime_type = mime_type;
-                                        blob.content_type.set(
-                                            std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()),
-                                        );
-                                    }
+                                if let Some(store) = blob_store_mut(blob) {
+                                    store.mime_type = mime_type;
+                                    blob.content_type.set(
+                                        std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()),
+                                    );
                                     blob.content_type_allocated.set(false);
                                 } else {
                                     blob.content_type.set(match mime_type.value {
@@ -1203,8 +1218,8 @@ impl Value {
                             blob.content_type.set(std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref()));
                             blob.content_type_allocated.set(false);
                             blob.content_type_was_set.set(true);
-                            // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
-                            unsafe { (*blob.store.get().as_ref().unwrap().as_ptr()).mime_type = bun_http_types::MimeType::TEXT };
+                            blob_store_mut(blob).expect("infallible: checked above").mime_type =
+                                bun_http_types::MimeType::TEXT;
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -2058,14 +2073,11 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
                     // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
                     // takes the buffer directly via `content_type_allocated`.
-                    if let Some(store_ptr) = blob.store.get().as_ref().map(|s| s.as_ptr()) {
-                        // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
-                        unsafe {
-                            (*store_ptr).mime_type = mime_type;
-                            blob.content_type.set(
-                                std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()),
-                            );
-                        }
+                    if let Some(store) = blob_store_mut(blob) {
+                        store.mime_type = mime_type;
+                        blob.content_type.set(
+                            std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()),
+                        );
                         blob.content_type_allocated.set(false);
                     } else {
                         blob.content_type.set(match mime_type.value {
@@ -2081,11 +2093,8 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 blob.content_type.set(std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref()));
                 blob.content_type_allocated.set(false);
                 blob.content_type_was_set.set(true);
-                // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
-                unsafe {
-                    (*blob.store.get().as_ref().unwrap().as_ptr()).mime_type =
-                        bun_http_types::MimeType::TEXT
-                };
+                blob_store_mut(blob).expect("infallible: checked above").mime_type =
+                    bun_http_types::MimeType::TEXT;
             }
         }
         Ok(JSPromise::resolved_promise_value(

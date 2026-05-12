@@ -170,16 +170,37 @@ struct RopeStringEncoder<'a> {
 }
 
 impl<'a> RopeStringEncoder<'a> {
-    // The four rope-iteration callbacks discharge their raw-pointer
-    // preconditions locally; safe fn items coerce to the `JSStringIterator`
-    // callback-pointer field types at `iter()` below.
+    /// Recover `(&mut JSStringIterator, &mut Self)` from the rope-iteration
+    /// callback's `*mut JSStringIterator`. Centralises the per-callback raw
+    /// derefs so the four `extern "C"` thunks below are safe callers (one
+    /// accessor, N safe call sites).
+    ///
+    /// # Safety (encapsulated)
+    /// Only ever invoked from the four callbacks registered in [`Self::iter`],
+    /// which JSC calls with the live stack-allocated `JSStringIterator` whose
+    /// `.data` field was set to `&mut Self` by `iter()`. The iterator and the
+    /// encoder live in disjoint stack allocations (the iterator is a local in
+    /// `TextEncoder__encodeRopeString`; the encoder is its sibling local), so
+    /// the two `&mut` borrows do not alias. JSC rope iteration is
+    /// single-threaded and re-entrancy-free, so each is the sole live `&mut`
+    /// for the callback's duration.
+    #[inline(always)]
+    fn resolve<'r>(it: *mut JSStringIterator) -> (&'r mut JSStringIterator, &'r mut Self) {
+        debug_assert!(!it.is_null());
+        // SAFETY: see fn doc — `it` is the live iterator JSC passed; `it.data`
+        // is the `&mut RopeStringEncoder` stashed in `iter()`. Disjoint
+        // allocations, single-threaded, exclusively accessed for `'r`.
+        unsafe {
+            let it = &mut *it;
+            let this = &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>();
+            (it, this)
+        }
+    }
+
+    // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
+    // the `JSStringIterator` callback-pointer field types at `iter()` below.
     pub extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
-        // SAFETY: `it` is non-null and exclusively accessed for the duration of
-        // the callback (provided by JSC rope iteration).
-        let it = unsafe { &mut *it };
-        // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
-        // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
+        let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result =
@@ -193,23 +214,13 @@ impl<'a> RopeStringEncoder<'a> {
     }
 
     pub extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
-        // SAFETY: `it` is non-null and exclusively accessed for the duration of
-        // the callback (provided by JSC rope iteration).
-        let it = unsafe { &mut *it };
-        // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
-        // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
+        let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
     pub extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
-        // SAFETY: `it` is non-null and exclusively accessed for the duration of
-        // the callback (provided by JSC rope iteration).
-        let it = unsafe { &mut *it };
-        // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
-        // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
+        let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
@@ -223,12 +234,7 @@ impl<'a> RopeStringEncoder<'a> {
     }
 
     pub extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
-        // SAFETY: `it` is non-null and exclusively accessed for the duration of
-        // the callback (provided by JSC rope iteration).
-        let it = unsafe { &mut *it };
-        // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
-        // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
+        let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }

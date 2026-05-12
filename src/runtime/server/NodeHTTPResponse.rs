@@ -1762,16 +1762,16 @@ impl NodeHTTPResponse {
         // `noalias`, so re-entrant writes through other `&self` views are
         // sound. The `black_box` launder is KEPT as defense-in-depth until
         // Phase 1 (codegen `sharedThis`) lands and the outer thunk stops
-        // emitting `&mut NodeHTTPResponse`.
-        let this: *const Self = core::hint::black_box(ptr::from_ref(self));
-        // SAFETY: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
+        // emitting `&mut NodeHTTPResponse`. `BackRef` is `repr(transparent)`
+        // over `NonNull<Self>` so the laundered pointer escapes identically.
+        let this = bun_ptr::BackRef::from(core::hint::black_box(ptr::NonNull::from(self)));
+        // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
-        unsafe { (*this).ref_() };
+        this.ref_();
         // defer this.deref(); — moved to tail.
 
         // Snapshot before re-entry; `raw_response` is `Copy`.
-        // SAFETY: `this` is live (just ref'd).
-        let raw_response = unsafe { (*this).raw_response.get() };
+        let raw_response = this.raw_response.get();
         if let Some(raw_response) = raw_response {
             raw_response.corked(|| {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
@@ -1795,9 +1795,10 @@ impl NodeHTTPResponse {
             Ok(result)
         };
 
-        // SAFETY: `this` held alive by the `ref_()` above; this is the
-        // balancing release.
-        unsafe { (*this).deref() };
+        // BACKREF: `this` held alive by the `ref_()` above; this is the
+        // balancing release. Explicit `.get()` so the inherent refcount
+        // `NodeHTTPResponse::deref(&self)` is selected, not `<BackRef as Deref>::deref`.
+        this.get().deref();
         ret
     }
 

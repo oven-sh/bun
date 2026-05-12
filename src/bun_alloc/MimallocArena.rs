@@ -286,35 +286,31 @@ impl MimallocArena {
             self.owns,
             "MimallocArena::reset_retain_with_limit() on a borrowing_default() arena"
         );
-        // `bytes_since_reset` only sees allocations that flow through this
-        // struct's `Allocator` impl / `std_allocator()` vtable thunks. The
-        // `AstAlloc` ZST (`ast_alloc.rs`) reads `AST_HEAP` (a raw
-        // `*mut mi_heap_t`) and calls `mi_heap_malloc[_aligned]` directly, so
-        // every `Vec<_, AstAlloc>` / `Box<_, AstAlloc>` buffer — i.e. the bulk
-        // of a parsed module on the import() path — bypasses `track_alloc`
-        // entirely. The counter therefore stays under `limit` indefinitely and
-        // the heap is never destroyed: ~299 MB retained on
-        // require-cache.test.ts "via import() doesn't leak file paths".
-        //
-        // Query the heap's actual committed footprint instead. This is
-        // accurate regardless of which alloc path was used. Keep the cheap
-        // counter as a fast-positive: if even the *tracked* bytes already
-        // exceed `limit`, skip the page walk.
-        if self.bytes_since_reset.get() > limit || self.heap_committed_exceeds(limit) {
+        // O(1) counter check only — Zig's `transpiler.zig:358 resetStore` is
+        // two block-store cursor resets, with no per-module page walk or
+        // collect. The previous port revision walked `mi_heap_visit_blocks`
+        // here (O(pages)) because `AstAlloc` bypassed [`Self::track_alloc`];
+        // `AstAlloc` now bumps this same `Cell` via the `AST_ARENA`
+        // thread-local (see `ast_alloc.rs`), so the counter is accurate for
+        // every alloc path that targets this heap and the page walk is gone.
+        if self.bytes_since_reset.get() > limit {
             self.reset();
             true
         } else {
-            // Under limit: retain pages, but DO process deferred/cross-thread
-            // frees so the next iteration's allocations can reuse this
-            // iteration's now-dead blocks (this is what Zig's
-            // `arena.reset(.{.retain_with_limit=..})` cursor-bump achieves).
-            // Without this, darwin-aarch64's free path leaves blocks on the
-            // thread-delayed list — committed grows ~330 KB/iter and the
-            // limit may never trip (mi_heap_visit_blocks walks live arenas
-            // only; OS-backed pages on darwin sit elsewhere) → 83 MB on
-            // require-cache "via require() with a lot of long export names".
+            // Under limit: retain pages. On macOS, additionally drain the
+            // thread-delayed free list so the next iteration can reuse this
+            // iteration's now-dead blocks — without this, darwin-aarch64's
+            // free path leaves blocks on the deferred list and committed grows
+            // ~330 KB/iter (83 MB on require-cache "via require() with a lot
+            // of long export names"). On Linux/Windows the deferred path does
+            // not apply and `mi_heap_collect` here is pure overhead
+            // (`mi_theap_collect_ex` → `_mi_stats_merge_into` ≈100 atomic
+            // adds, once per `require()`/`import()`), so it is gated out.
+            #[cfg(target_os = "macos")]
             // SAFETY: heap_ptr() valid (owns asserted above).
-            unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
+            unsafe {
+                mimalloc::mi_heap_collect(self.heap_ptr(), false)
+            };
             // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
             // that was *under* the limit can still allocate on the new thread.
             #[cfg(debug_assertions)]
@@ -323,58 +319,17 @@ impl MimallocArena {
         }
     }
 
-    /// Returns whether the heap's committed memory exceeds `limit`, by walking
-    /// `mi_heap_area_t`s (one per mimalloc page) and summing `committed`. The
-    /// walk early-exits once the sum crosses `limit`, so the cost is bounded
-    /// by `limit / 64 KiB` callbacks (≈128 for the 8 MiB module-arena limit) —
-    /// negligible per-module compared to parse cost. Under-limit heaps walk
-    /// every page they own (≪128 for small modules).
-    ///
-    /// Unlike [`Self::bytes_since_reset`], this sees all allocations made on
-    /// `self.heap` regardless of which Rust-side wrapper issued them.
-    fn heap_committed_exceeds(&self, limit: usize) -> bool {
-        #[repr(C)]
-        struct State {
-            sum: usize,
-            limit: usize,
-        }
-        extern "C" fn visit(
-            _heap: *const mimalloc::Heap,
-            area: *const mimalloc::mi_heap_area_t,
-            _block: *mut c_void,
-            _block_size: usize,
-            arg: *mut c_void,
-        ) -> bool {
-            // SAFETY: mimalloc passes a valid `mi_heap_area_t*` per page when
-            // `visit_blocks=false`, and `arg` is the `&mut State` we supplied.
-            let st = unsafe { &mut *arg.cast::<State>() };
-            let committed = unsafe { (*area).committed };
-            st.sum = st.sum.saturating_add(committed);
-            // `false` stops the walk early.
-            st.sum <= st.limit
-        }
-        let mut st = State { sum: 0, limit };
-        // SAFETY: `self.heap` is a live heap; `visit` matches the
-        // `mi_block_visit_fun` signature; `&mut st` is valid for the call.
-        unsafe {
-            mimalloc::mi_heap_visit_blocks(
-                self.heap_ptr(),
-                false,
-                Some(visit),
-                (&raw mut st).cast(),
-            );
-        }
-        st.sum > limit
-    }
-
+    /// Bump the soft retain-limit counter by `len` bytes. Called from every
+    /// allocation path that targets `self.heap` — both this struct's own
+    /// `Allocator` impl / `std_allocator()` thunks and the `AstAlloc` ZST
+    /// (which reaches it via the `ast_alloc::AST_ARENA` thread-local). Public
+    /// only so `ast_alloc` can call it; not part of the user-facing API.
     #[inline(always)]
-    fn track_alloc(&self, len: usize) {
+    pub fn track_alloc(&self, len: usize) {
         // Non-atomic: alloc paths already require the owning thread (asserted
         // by `assert_owning_thread`), and `Cell` is `!Sync` so the only other
         // reader is `reset_retain_with_limit` which takes `&mut self`.
         // Saturating because this is a soft-limit hint, not accounting.
-        // Kept as a fast-positive for `reset_retain_with_limit`; the
-        // authoritative check is `heap_committed_exceeds`.
         self.bytes_since_reset
             .set(self.bytes_since_reset.get().saturating_add(len));
     }

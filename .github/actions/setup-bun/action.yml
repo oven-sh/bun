@@ -4,7 +4,7 @@ description: An internal version of the 'oven-sh/setup-bun' action.
 inputs:
   bun-version:
     type: string
-    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
+    description: "The version of bun to install: 'latest', 'canary', '1.2.0', etc."
     default: latest
     required: false
   baseline:
@@ -67,8 +67,13 @@ runs:
             base="https://github.com/oven-sh/bun/releases/download/${release}"
           fi
           curl --fail --retry 5 -LO "${base}/${target}.zip"
-          curl --fail --retry 5 -LO "${base}/SHASUMS256.txt"
-          grep " ${target}.zip\$" SHASUMS256.txt | sha256sum -c -
+          # canary zips are clobbered on every main push but SHASUMS256.txt
+          # only regenerates on the daily release cron, so they routinely
+          # disagree. Tagged + latest releases are stable, check those.
+          if [ "$release" != "canary" ]; then
+            curl --fail --retry 5 -LO "${base}/SHASUMS256.txt"
+            grep " ${target}.zip\$" SHASUMS256.txt | sha256sum -c -
+          fi
         fi
 
         unzip "${target}.zip"

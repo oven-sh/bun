@@ -92,9 +92,9 @@ impl JSBundleCompletionTask {
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
-            // SAFETY: `plugin` is the live FFI handle stashed at construction;
+            // `plugin` is the live FFI handle stashed at construction;
             // last-ref drop is the only place that releases it (Zig: `plugin.deinit()`).
-            unsafe { Plugin::destroy(plugin.as_ptr()) };
+            Plugin::destroy(plugin.as_ptr());
         }
         // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
     }

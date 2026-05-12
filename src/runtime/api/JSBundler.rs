@@ -420,8 +420,7 @@ pub mod js_bundler {
             // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
             let mut plugins = scopeguard::guard(plugins, |p| {
                 if let Some(pl) = p.take() {
-                    // SAFETY: pl was created via Plugin::create in this fn and not yet consumed
-                    unsafe { Plugin::destroy(pl) };
+                    Plugin::destroy(pl);
                 }
             });
 
@@ -1526,16 +1525,15 @@ pub mod js_bundler {
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
-    // validity proof lives in the type. `tombstone` keeps raw `*mut` because
-    // its caller (`destroy`) holds only a raw pointer; `runSetupFunction` and
-    // `globalObject` take `&Plugin` so `add_plugin` can hold a shared reborrow
-    // alongside the returned `&JSGlobalObject` without an `unsafe` escape hatch.
+    // validity proof lives in the type. `runSetupFunction` and `globalObject`
+    // take `&Plugin` so `add_plugin` can hold a shared reborrow alongside the
+    // returned `&JSGlobalObject` without an `unsafe` escape hatch.
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
-        fn JSBundlerPlugin__tombstone(plugin: *mut Plugin);
+        safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: &mut Plugin,
             build_promise: JSValue,
@@ -1575,8 +1573,9 @@ pub mod js_bundler {
             build_result: JSValue,
             rejection: JsResult<JSValue>,
         ) -> JsResult<JSValue>;
-        /// SAFETY: `this` must be a live handle previously returned by `Plugin::create`.
-        unsafe fn destroy(this: *mut Plugin);
+        /// `this` must be a live handle previously returned by `Plugin::create`;
+        /// non-null is checked via `Plugin::opaque_ref` (panics on null).
+        fn destroy(this: *mut Plugin);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
@@ -1637,10 +1636,9 @@ pub mod js_bundler {
             Ok(value)
         }
 
-        unsafe fn destroy(this: *mut Plugin) {
+        fn destroy(this: *mut Plugin) {
             jsc::mark_binding();
-            // SAFETY: caller contract — `this` is a live JSBundlerPlugin handle.
-            unsafe { JSBundlerPlugin__tombstone(this) };
+            JSBundlerPlugin__tombstone(Plugin::opaque_ref(this));
             JSValue::from_cell(this).unprotect();
         }
 

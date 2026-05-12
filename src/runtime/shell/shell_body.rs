@@ -219,6 +219,10 @@ pub enum ShellError {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // PRECONDITION: `name`/`value` must be valid NUL-terminated C strings for
+    // the call duration; `setenv` is not thread-safe wrt concurrent
+    // `getenv`/`setenv` (POSIX) — caller must hold the env lock or be on the
+    // single JS thread. Cannot be `safe fn`.
     fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 

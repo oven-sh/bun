@@ -75,13 +75,17 @@ macro_rules! extern_crypto_job {
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
             bun_opaque::opaque_ffi! { pub struct Ctx; }
 
+            // `Ctx` is an `opaque_ffi!` ZST handle, so `&Ctx` is ABI-identical
+            // to a non-null pointer and discharges the validity proof at the
+            // type level. `global` in `runTask` is forwarded raw (the trait
+            // hands us `*mut`; C++ never reads through it off-thread).
             unsafe extern "C" {
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
-                fn ctx_run_task(ctx: *mut Ctx, global: *mut JSGlobalObject);
+                safe fn ctx_run_task(ctx: &Ctx, global: *mut JSGlobalObject);
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                fn ctx_run_from_js(ctx: *mut Ctx, global: *mut JSGlobalObject, callback: JSValue);
+                safe fn ctx_run_from_js(ctx: &Ctx, global: &JSGlobalObject, callback: JSValue);
                 #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
-                fn ctx_deinit(ctx: *mut Ctx);
+                safe fn ctx_deinit(ctx: &Ctx);
             }
 
             pub struct ExternCtx {
@@ -91,16 +95,13 @@ macro_rules! extern_crypto_job {
 
             impl AnyTaskJobCtx for ExternCtx {
                 fn run(&mut self, global: *mut JSGlobalObject) {
-                    // SAFETY: `ctx` is the FFI-owned opaque handle; `global` is the
-                    // creating VM's `*mut JSGlobalObject` (mut provenance).
-                    unsafe { ctx_run_task(self.ctx, global) };
+                    ctx_run_task(Ctx::opaque_ref(self.ctx), global);
                 }
                 fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
                     let Some(callback) = self.callback.try_swap() else { return Ok(()) };
-                    let ctx = self.ctx;
+                    let ctx = Ctx::opaque_ref(self.ctx);
                     if let Err(err) = jsc::from_js_host_call_generic(global, || {
-                        // SAFETY: `ctx` is live until Drop; `global` is the VM's global.
-                        unsafe { ctx_run_from_js(ctx, global as *const _ as *mut _, callback) };
+                        ctx_run_from_js(ctx, global, callback);
                     }) {
                         global.report_active_exception_as_unhandled(err);
                     }
@@ -110,8 +111,7 @@ macro_rules! extern_crypto_job {
 
             impl Drop for ExternCtx {
                 fn drop(&mut self) {
-                    // SAFETY: `ctx` is the FFI-owned opaque handle; C++ owns its destructor.
-                    unsafe { ctx_deinit(self.ctx) };
+                    ctx_deinit(Ctx::opaque_ref(self.ctx));
                     self.callback.deinit();
                 }
             }

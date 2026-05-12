@@ -1240,11 +1240,15 @@ fn bake_get_on_module_namespace(
     property: &[u8],
 ) -> Option<JSValue> {
     unsafe extern "C" {
+        // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
+        // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
+        // carries a caller-side validity precondition.
         #[link_name = "BakeGetOnModuleNamespace"]
         fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize) -> JSValue;
     }
-    // SAFETY: FFI call; `global` is a live &JSGlobalObject, `module` is a stack-held
-    // JSValue, and `property` ptr+len are valid for the call duration.
+    // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
+    // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
+    // `&[u8]` for the call duration — discharges the ptr+len precondition above.
     let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
     debug_assert!(!result.is_empty());
     Some(result)

@@ -5486,6 +5486,11 @@ mod c {
         source_map_json_len: usize,
     ) -> JsResult<JSValue> {
         unsafe extern "C" {
+            // PRECONDITION: `ptr` must be readable for `len` bytes and point to
+            // a heap allocation whose ownership transfers to the C++
+            // `DevServerSourceProvider` (caller wraps the backing `Vec<u8>` in
+            // `ManuallyDrop`). Cannot be `safe fn` — raw ptr+len pair carries a
+            // caller-side validity + ownership precondition.
             fn BakeLoadServerHmrPatchWithSourceMap(
                 global: *const JSGlobalObject,
                 code: BunString,
@@ -5493,7 +5498,9 @@ mod c {
                 len: usize,
             ) -> JSValue;
         }
-        // SAFETY: extern "C" FFI; global valid, ptr/len describe a valid byte slice
+        // SAFETY: `global` is live; `source_map_json_ptr`/`len` are forwarded from
+        // the sole caller's `ManuallyDrop<Vec<u8>>` (valid for `len`, ownership
+        // ceded to C++) — discharges the ptr+len precondition above.
         jsc::from_js_host_call(global, || unsafe {
             BakeLoadServerHmrPatchWithSourceMap(global, code, source_map_json_ptr, source_map_json_len)
         })

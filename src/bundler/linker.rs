@@ -164,11 +164,11 @@ fn without_leading_slash(s: &[u8]) -> &[u8] {
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
-    // (process-lifetime singleton). `append` copies `src` into its owned
-    // backing buffer and returns a slice borrowing that storage; deref of the
-    // raw `*mut` yields an unbounded `&mut self`, so the returned borrow is
-    // `'static`-valid by construction.
-    unsafe { (*relative_paths_list_ptr()).append(src).expect("OOM") }
+    // (process-lifetime singleton). `append` takes `*mut Self`, serializes on
+    // the inner mutex, copies `src` into its owned backing buffer and returns
+    // a slice borrowing that storage; the returned borrow is `'static`-valid
+    // by construction.
+    unsafe { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
 }
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {

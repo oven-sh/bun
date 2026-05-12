@@ -2130,32 +2130,55 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         unsafe { core::slice::from_raw_parts_mut(ptr, len) }
     }
 
-    pub fn append_mutable<A: BSSAppendable>(
-        &mut self,
+    /// Append `value` and return a mutable slice over the freshly-reserved bytes.
+    ///
+    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
+    /// `bss_string_list!` singleton pointer directly without first
+    /// materializing a `&mut Self` — which would be aliased UB if two threads
+    /// did so concurrently *before* reaching the inner `self.mutex.lock()`.
+    /// Matches Zig's `*Self` receiver: the inner mutex is the sole
+    /// serialization point, so no caller-side outer lock is needed.
+    ///
+    /// SAFETY: `this` must point to a live, initialized `BSSStringList`
+    /// (typically the `bss_string_list!` singleton). Concurrent callers are
+    /// allowed.
+    pub unsafe fn append_mutable<'a, A: BSSAppendable>(
+        this: *mut Self,
         value: A,
-    ) -> core::result::Result<&mut [u8], AllocError> {
-        let _guard = self.mutex.lock();
-        let (ptr, len) = self.do_append(value)?;
+    ) -> core::result::Result<&'a mut [u8], AllocError> {
+        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
+        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
+        // `&mut *this` formed below does not alias a live guard borrow.
+        let _guard = unsafe { (*this).mutex.lock() };
+        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+        let (ptr, len) = unsafe { (*this).do_append(value)? };
         // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
-        // and points into storage owned by `*self` (backing_buf or a process-lifetime
-        // mimalloc region); we hold `&mut self` so no other live borrow of that region
-        // exists.
+        // and points into storage owned by `*this` (backing_buf or a process-lifetime
+        // mimalloc region); the slot was freshly reserved under the mutex so no other
+        // live borrow of that region exists.
         Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
 
-    pub fn get_mutable(&mut self, len: usize) -> core::result::Result<&mut [u8], AllocError> {
-        self.append_mutable(EmptyType { len })
+    /// SAFETY: see [`append_mutable`].
+    pub unsafe fn get_mutable<'a>(
+        this: *mut Self,
+        len: usize,
+    ) -> core::result::Result<&'a mut [u8], AllocError> {
+        // SAFETY: forwarded — see `append_mutable`.
+        unsafe { Self::append_mutable(this, EmptyType { len }) }
     }
 
-    pub fn print_with_type(
-        &mut self,
+    /// SAFETY: see [`append_mutable`].
+    pub unsafe fn print_with_type<'a>(
+        this: *mut Self,
         args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&[u8], AllocError> {
+    ) -> core::result::Result<&'a [u8], AllocError> {
         // ── std.fmt.count: drive a discarding `fmt::Write` that only sums byte lengths.
         let len = crate::fmt_count(args);
 
         // var buf = try self.appendMutable(EmptyType, .{ .len = count + 1 });
-        let buf = self.append_mutable(EmptyType { len: len + 1 })?;
+        // SAFETY: forwarded — see `append_mutable`.
+        let buf = unsafe { Self::append_mutable(this, EmptyType { len: len + 1 })? };
         let buf_len = buf.len();
         // buf[buf.len - 1] = 0;
         buf[buf_len - 1] = 0;
@@ -2188,48 +2211,91 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         Ok(&buf[..written])
     }
 
-    pub fn print(
-        &mut self,
+    /// SAFETY: see [`append_mutable`].
+    pub unsafe fn print<'a>(
+        this: *mut Self,
         args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&[u8], AllocError> {
-        self.print_with_type(args)
+    ) -> core::result::Result<&'a [u8], AllocError> {
+        // SAFETY: forwarded — see `append_mutable`.
+        unsafe { Self::print_with_type(this, args) }
     }
 
-    pub fn append<A: BSSAppendable>(
-        &mut self,
+    /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.
+    ///
+    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
+    /// `bss_string_list!` singleton pointer directly without first
+    /// materializing a `&mut Self` — see [`append_mutable`] for the full
+    /// rationale. The inner mutex is the sole serialization point.
+    ///
+    /// SAFETY: `this` must point to a live, initialized `BSSStringList`
+    /// (typically the `bss_string_list!` singleton). Concurrent callers are
+    /// allowed.
+    #[inline]
+    pub unsafe fn append<'a, A: BSSAppendable>(
+        this: *mut Self,
         value: A,
-    ) -> core::result::Result<&[u8], AllocError> {
-        let _guard = self.mutex.lock();
-        let (ptr, len) = self.do_append(value)?;
-        // SAFETY: `ptr` points into storage owned by `*self` (backing_buf or a
-        // process-lifetime mimalloc region); we hold `&mut self` so it's exclusive,
-        // and reborrowing as shared is always sound.
+    ) -> core::result::Result<&'a [u8], AllocError> {
+        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
+        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
+        // `&mut *this` formed below does not alias a live guard borrow.
+        let _guard = unsafe { (*this).mutex.lock() };
+        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+        let (ptr, len) = unsafe { (*this).do_append(value)? };
+        // SAFETY: `ptr` points into storage owned by `*this` (backing_buf or a
+        // process-lifetime mimalloc region); the slot was freshly reserved under
+        // the mutex so no other writer aliases it, and reborrowing as shared is
+        // always sound.
         Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
 
-    pub fn append_lower_case(
-        &mut self,
+    /// Append `value` lowercased ASCII-wise.
+    ///
+    /// The previous port routed the lowercase scratch through a
+    /// `thread_local! { RefCell<Box<[u8; 4096]>> }`, which (a) heap-allocs 4 KiB
+    /// on first use per thread and (b) pays a `RefCell` flag check per call.
+    /// Filenames are overwhelmingly <256 bytes, so a stack scratch suffices for
+    /// the hot path; longer inputs (rare — full paths) fall through to a
+    /// one-shot heap temp. No TLS, no Box-on-first-use, no `RefCell`.
+    ///
+    /// SAFETY: see [`append`].
+    pub unsafe fn append_lower_case<'a>(
+        this: *mut Self,
         value: &[u8],
-    ) -> core::result::Result<&[u8], AllocError> {
-        let _guard = self.mutex.lock();
+    ) -> core::result::Result<&'a [u8], AllocError> {
+        // SAFETY: see `append`.
+        let _guard = unsafe { (*this).mutex.lock() };
+        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+        let this_ref = unsafe { &mut *this };
 
-        // Zig: `bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer })` — heap-backed
-        // so only a Box pointer lives in TLS (see test/js/bun/binary/tls-segment-size).
-        thread_local! {
-            static LOWERCASE_BUF: core::cell::RefCell<Box<[u8; 4096]>> =
-                core::cell::RefCell::new(Box::new([0u8; 4096]));
-        }
-        let (ptr, len) = LOWERCASE_BUF.with_borrow_mut(|buf| {
+        // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
+        // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
+        // pointing at that owned storage, not at `slice` — so the scratch
+        // buffer's borrow does not escape.
+        let (ptr, len) = if value.len() <= 256 {
+            let mut scratch = [0u8; 256];
             for (i, &c) in value.iter().enumerate() {
-                buf[i] = c.to_ascii_lowercase();
+                scratch[i] = c.to_ascii_lowercase();
             }
-            // `do_append` only reads `slice` via `BSSAppendable::copy_into`
-            // (copies into `self.backing_buf` / a fresh heap alloc) and returns
-            // raw parts pointing at that owned storage, not at `slice` — so the
-            // thread-local borrow does not escape the closure.
-            let slice: &[u8] = &buf[..value.len()];
-            self.do_append(slice)
-        })?;
+            let slice: &[u8] = &scratch[..value.len()];
+            this_ref.do_append(slice)?
+        } else {
+            // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
+            // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
+            let p = mimalloc::mi_malloc(value.len()).cast::<u8>();
+            if p.is_null() {
+                return Err(AllocError);
+            }
+            // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
+            let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
+            for (i, &c) in value.iter().enumerate() {
+                tmp[i] = c.to_ascii_lowercase();
+            }
+            let slice: &[u8] = &tmp[..];
+            let r = this_ref.do_append(slice);
+            // SAFETY: `p` was allocated by `mi_malloc` above.
+            unsafe { mimalloc::mi_free(p.cast()) };
+            r?
+        };
         // SAFETY: see `append`.
         Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }

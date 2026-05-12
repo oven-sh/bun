@@ -60,8 +60,10 @@ export default [
       toBase64: { fn: "doToBase64", length: 0, async: true },
       // toBase64() with the `data:{mime};base64,` prefix.
       dataurl: { fn: "doDataUrl", length: 0, async: true },
-      // ThumbHash-rendered ≤32px PNG data: URL — ~400-700B, ready for
-      // <img src> / blurDataURL.
+      // ThumbHash-based placeholder. Default "dataurl" returns a ≤32px
+      // lossy-WebP `data:` URL (a few hundred bytes, ready for <img src>
+      // / blurDataURL); "hash" returns the raw 5-25 byte ThumbHash as a
+      // Uint8Array for clients that ship the ~800B decoder.
       placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
 

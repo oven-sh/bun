@@ -148,6 +148,7 @@ pub fn doPatchCommit(
             const cache_result = manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 null,
             );
@@ -171,6 +172,7 @@ pub fn doPatchCommit(
             const cache_result = manager.computeCacheDirAndSubpath(
                 pkg.name.slice(lockfile.buffers.string_bytes.items),
                 &pkg.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 null,
             );
@@ -645,6 +647,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const cache_result = manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 existing_patchfile_hash,
             );
@@ -683,6 +686,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const cache_result = manager.computeCacheDirAndSubpath(
                 pkg_name,
                 &pkg.resolution,
+                strbuf,
                 &folder_path_buf,
                 existing_patchfile_hash,
             );

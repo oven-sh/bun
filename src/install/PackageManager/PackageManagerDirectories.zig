@@ -466,15 +466,21 @@ pub fn pathForResolution(
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
+///
+/// `string_buf` must be the string buffer that `resolution`'s strings are
+/// stored in. This is not always `manager.lockfile` — `doPatchCommit` loads
+/// its own lockfile from disk and passes resolutions from *that* lockfile,
+/// so slicing against `manager.lockfile` would read garbage (issue #17945).
 pub fn computeCacheDirAndSubpath(
     manager: *PackageManager,
     pkg_name: string,
     resolution: *const Resolution,
+    string_buf: []const u8,
     folder_path_buf: *bun.PathBuffer,
     patch_hash: ?u64,
 ) struct { cache_dir: std.fs.Dir, cache_dir_subpath: stringZ } {
     const name = pkg_name;
-    const buf = manager.lockfile.buffers.string_bytes.items;
+    const buf = string_buf;
     var cache_dir = std.fs.cwd();
     var cache_dir_subpath: stringZ = "";
 
@@ -484,14 +490,19 @@ pub fn computeCacheDirAndSubpath(
             cache_dir = manager.getCacheDirectory();
         },
         .git => {
-            cache_dir_subpath = manager.cachedGitFolderName(
-                &resolution.value.git,
+            cache_dir_subpath = cachedGitFolderNamePrint(
+                PackageManager.cached_package_folder_name_buf(),
+                resolution.value.git.resolved.slice(buf),
                 patch_hash,
             );
             cache_dir = manager.getCacheDirectory();
         },
         .github => {
-            cache_dir_subpath = manager.cachedGitHubFolderName(&resolution.value.github, patch_hash);
+            cache_dir_subpath = cachedGitHubFolderNamePrint(
+                PackageManager.cached_package_folder_name_buf(),
+                resolution.value.github.resolved.slice(buf),
+                patch_hash,
+            );
             cache_dir = manager.getCacheDirectory();
         },
         .folder => {
@@ -509,11 +520,19 @@ pub fn computeCacheDirAndSubpath(
             cache_dir = std.fs.cwd();
         },
         .local_tarball => {
-            cache_dir_subpath = manager.cachedTarballFolderName(resolution.value.local_tarball, patch_hash);
+            cache_dir_subpath = cachedTarballFolderNamePrint(
+                PackageManager.cached_package_folder_name_buf(),
+                resolution.value.local_tarball.slice(buf),
+                patch_hash,
+            );
             cache_dir = manager.getCacheDirectory();
         },
         .remote_tarball => {
-            cache_dir_subpath = manager.cachedTarballFolderName(resolution.value.remote_tarball, patch_hash);
+            cache_dir_subpath = cachedTarballFolderNamePrint(
+                PackageManager.cached_package_folder_name_buf(),
+                resolution.value.remote_tarball.slice(buf),
+                patch_hash,
+            );
             cache_dir = manager.getCacheDirectory();
         },
         .workspace => {

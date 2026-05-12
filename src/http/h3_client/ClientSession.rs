@@ -370,12 +370,11 @@ impl ClientSession {
 /// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
 /// fresh `&mut` here after each `detach()` (which writes `client.h3 = None`
 /// through this same raw backref) rather than holding one across it.
-/// Centralises the `unsafe { .as_mut() }` upgrade repeated at every callback
+/// Routes through the crate-wide [`HTTPClient::from_erased_backref`] accessor
 /// (also used by `encode.rs` / `PendingConnect.rs` for the same backref).
 #[inline]
 pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
-    // SAFETY: see fn doc.
-    unsafe { &mut *p.as_ptr() }
+    HTTPClient::from_erased_backref(p)
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from

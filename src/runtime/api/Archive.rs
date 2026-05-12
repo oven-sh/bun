@@ -712,6 +712,20 @@ impl<C: TaskContext> AsyncTask<C> {
         WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
+    /// Read the pending promise's `JSValue` from a freshly-`create`d task.
+    ///
+    /// Centralises the `*mut Self → field` deref so the four
+    /// `start_*_task` callers stay safe. Sound because every caller passes the
+    /// pointer returned by [`create`](Self::create) (heap-allocated, sole owner
+    /// on the JS thread) and reads the promise *before* [`schedule`] hands the
+    /// allocation to the thread pool — i.e. `this` is live and unaliased.
+    #[inline]
+    fn promise_value(this: *mut Self) -> JSValue {
+        // SAFETY: see fn doc — `this` is the live, unscheduled `heap::into_raw`
+        // allocation from `create()`.
+        unsafe { (*this).promise.value() }
+    }
+
     unsafe fn run_callback(work_task: *mut WorkPoolTask) {
         // SAFETY: work_task points to the `task` field of an AsyncTask<C> allocated by `create`.
         let this: *mut Self = unsafe {
@@ -851,8 +865,7 @@ fn start_extract_task(
         },
     )?;
 
-    // SAFETY: task is alive until run_from_js drops it.
-    let promise_js = unsafe { (*task).promise.value() };
+    let promise_js = ExtractTask::promise_value(task);
     ExtractTask::schedule(task);
     Ok(promise_js)
 }
@@ -962,8 +975,7 @@ fn start_blob_task(
         },
     )?;
 
-    // SAFETY: task is alive until run_from_js drops it.
-    let promise_js = unsafe { (*task).promise.value() };
+    let promise_js = BlobTask::promise_value(task);
     BlobTask::schedule(task);
     Ok(promise_js)
 }
@@ -1075,8 +1087,7 @@ fn start_write_task(
         },
     )?;
 
-    // SAFETY: task is alive until run_from_js drops it.
-    let promise_js = unsafe { (*task).promise.value() };
+    let promise_js = WriteTask::promise_value(task);
     WriteTask::schedule(task);
     Ok(promise_js)
 }
@@ -1258,8 +1269,7 @@ fn start_files_task(
         },
     )?;
 
-    // SAFETY: task is alive until run_from_js drops it.
-    let promise_js = unsafe { (*task).promise.value() };
+    let promise_js = FilesTask::promise_value(task);
     FilesTask::schedule(task);
     Ok(promise_js)
 }

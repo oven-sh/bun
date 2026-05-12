@@ -278,12 +278,13 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `parse` only reads `*log` / `*mgr` between writes
                     // to `lockfile`/`maybe_root`; no field of `*mgr` aliases
-                    // the local `lockfile`.
-                    let log = unsafe { (*mgr).log };
+                    // the local `lockfile`. `log_mut()` returns the disjoint
+                    // CLI `Log` allocation (lifetime decoupled from `&self`).
+                    let log = unsafe { (*mgr).log_mut() };
                     maybe_root.parse(
                         &mut lockfile,
                         unsafe { &mut *mgr },
-                        unsafe { &mut *log },
+                        log,
                         &source_copy,
                         &mut resolver,
                         Features::main(),
@@ -301,7 +302,8 @@ pub fn install_with_manager(
                     // from here on; `Diff::generate` reborrows disjoint fields
                     // (`log`, `lockfile`, `update_requests`) through it. No
                     // other live `&mut` to `*mgr` exists across the call.
-                    let log = unsafe { (*mgr).log };
+                    // `log_mut()` returns the disjoint CLI `Log` allocation.
+                    let log = unsafe { (*mgr).log_mut() };
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
                     let update_requests = if unsafe { (*mgr).to_update } {
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
@@ -310,7 +312,7 @@ pub fn install_with_manager(
                     };
                     Diff::generate(
                         unsafe { &mut *mgr },
-                        unsafe { &mut *log },
+                        log,
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,
@@ -662,12 +664,13 @@ pub fn install_with_manager(
             let mgr: *mut PackageManager = manager;
             // SAFETY: `mgr` is the sole provenance root; `parse` reborrows
             // disjoint fields (`lockfile`, `log`) through it. No other live
-            // `&mut` to `*mgr` exists across the call.
-            let log = unsafe { (*mgr).log };
+            // `&mut` to `*mgr` exists across the call. `log_mut()` returns
+            // the disjoint CLI `Log` allocation (lifetime decoupled).
+            let log = unsafe { (*mgr).log_mut() };
             root.parse(
                 unsafe { &mut (*mgr).lockfile },
                 unsafe { &mut *mgr },
-                unsafe { &mut *log },
+                log,
                 &source_copy,
                 &mut resolver,
                 Features::main(),

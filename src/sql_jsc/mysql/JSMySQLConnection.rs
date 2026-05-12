@@ -984,13 +984,15 @@ impl JSMySQLConnection {
         // PORT NOTE: `MySQLStatement::structure(&mut self) -> &CachedStructure`
         // would keep `*statement` exclusively borrowed for the lifetime of the
         // returned ref, blocking the `&statement.columns` / `fields_flags` reads
-        // below. Stash a raw ptr (Zig holds it by value) and re-borrow at the
-        // `to_js` call site.
-        let cached_structure_ptr: Option<*const CachedStructure> = match result_mode {
+        // below. Stash a `ParentRef` (lifetime-erased `&T`; Zig holds it by
+        // value) and `as_deref` at the `to_js` call site — `*statement`
+        // outlives this fn (held via `request`'s intrusive ref), satisfying
+        // the `ParentRef` liveness invariant.
+        let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => self.js_value.get().try_get().map(|value| {
                 let cs = statement.structure(value, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                std::ptr::from_ref::<CachedStructure>(cs)
+                ParentRef::new(cs)
             }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,
@@ -1015,9 +1017,9 @@ impl JSMySQLConnection {
             return Ok(());
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
-        // SAFETY: points into `*statement.cached_structure`; `statement` is live
+        // `ParentRef::Deref` recovers `&CachedStructure`; `*statement` is live
         // and not mutably borrowed for the duration of this `to_js` call.
-        let cached_structure = cached_structure_ptr.map(|p| unsafe { &*p });
+        let cached_structure = cached_structure.as_deref();
         // Process row data
         let row_value = row
             .to_js(

@@ -2138,8 +2138,9 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 
 pub struct NetworkSink {
     // TODO(port): SHARED Option<Arc<MultiPartUpload>> per LIFETIMES.tsv — but Zig calls task.deref()
-    // (intrusive refcount). Using IntrusiveArc-style raw ptr; Phase B: confirm Arc vs IntrusiveArc.
-    pub task: Option<NonNull<bun_s3::MultiPartUpload>>,
+    // (intrusive refcount). Stored as `BackRef` (set-once, counted ref keeps the
+    // pointee alive while `Some`; released in `detach_writable`). Phase B: confirm Arc vs IntrusiveArc.
+    pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
     pub signal: Signal,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -2187,8 +2188,8 @@ impl NetworkSink {
     /// so the pointee is live for at least `'_`.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
-        // SAFETY: see doc comment — counted ref keeps pointee alive.
-        self.task.map(|p| unsafe { p.as_ref() })
+        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
+        self.task.as_ref().map(BackRef::get)
     }
 
     /// Exclusive borrow of the upload task, if attached.
@@ -2199,7 +2200,7 @@ impl NetworkSink {
     #[inline]
     fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
         // SAFETY: see doc comment — exclusive while `&mut self` held.
-        self.task.map(|mut p| unsafe { p.as_mut() })
+        self.task.as_mut().map(|p| unsafe { p.get_mut() })
     }
 
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {

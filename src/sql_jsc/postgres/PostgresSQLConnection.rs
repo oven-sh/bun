@@ -2247,10 +2247,12 @@ impl PostgresSQLConnection {
                 let statement = request.statement_mut().ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
                 // PORT NOTE: reshaped for borrowck — `statement.structure()` borrows
-                // `&mut *statement` and returns `&CachedStructure`; capture it as a raw
-                // pointer so `&statement.fields` below does not conflict, and re-derive
-                // `Option<&_>` for `to_js` at the call site.
-                let mut cached_structure_ptr: *const PostgresCachedStructure = core::ptr::null();
+                // `&mut *statement` and returns `&CachedStructure`; capture it as a
+                // `ParentRef` (lifetime-erased `&T`) so `&statement.fields` below
+                // does not conflict, and `as_deref` for `to_js` at the call site.
+                // `*statement` outlives this arm (held via `request.statement`'s
+                // intrusive ref), satisfying the `ParentRef` liveness invariant.
+                let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
                 let request_flags = request.flags.get();
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
@@ -2258,7 +2260,7 @@ impl PostgresSQLConnection {
                         let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                        cached_structure_ptr = std::ptr::from_ref::<PostgresCachedStructure>(cs);
+                        cached_structure = Some(ParentRef::new(cs));
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure
@@ -2334,9 +2336,9 @@ impl PostgresSQLConnection {
                     structure,
                     statement.fields_flags,
                     request_flags.result_mode,
-                    // SAFETY: points into `statement.cached_structure`; statement
+                    // `ParentRef::Deref` recovers `&CachedStructure`; statement
                     // outlives this call (held via `request.statement` ref).
-                    unsafe { cached_structure_ptr.as_ref() },
+                    cached_structure.as_deref(),
                 )?;
 
                 if pending_value.is_empty() {

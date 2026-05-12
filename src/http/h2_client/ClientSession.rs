@@ -143,13 +143,15 @@ pub(super) fn stream_ref<'a>(ptr: *const Stream) -> &'a Stream {
 /// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.
 ///
 /// INVARIANT: `pending_attach` entries are back-refs registered via
-/// `enqueue`/`adopt`; each points at a live `HTTPClient` embedded in its
-/// `AsyncHTTP`, alive until its terminal callback (which removes it from the
-/// queue first). Disjoint allocation from `ClientSession`. HTTP-thread-only.
+/// `enqueue`/`adopt` (each is `client.as_erased_ptr().as_ptr()`, hence
+/// non-null); each points at a live `HTTPClient` embedded in its `AsyncHTTP`,
+/// alive until its terminal callback (which removes it from the queue first).
+/// Disjoint allocation from `ClientSession`. HTTP-thread-only.
 #[inline(always)]
 fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'static> {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *ptr }
+    // Route through the crate-wide [`HTTPClient::from_erased_backref`] accessor;
+    // `pending_attach` entries originate from `as_erased_ptr()`, never null.
+    HTTPClient::from_erased_backref(NonNull::new(ptr).expect("pending_attach entries are non-null"))
 }
 
 /// Upgrade a `NonNull<HTTPClient>` taken from `Stream.client` to `&mut`.
@@ -159,9 +161,10 @@ fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'
 /// callback. Disjoint allocation from both `Stream` and `ClientSession`, so
 /// the returned `&mut` does not alias either. HTTP-thread-only.
 #[inline(always)]
-pub(super) fn stream_client_mut<'a>(mut c: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
-    // SAFETY: see INVARIANT above.
-    unsafe { c.as_mut() }
+pub(super) fn stream_client_mut<'a>(c: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+    // Route through the crate-wide [`HTTPClient::from_erased_backref`] accessor;
+    // see INVARIANT above.
+    HTTPClient::from_erased_backref(c)
 }
 
 /// Reclaim and drop a `Stream` previously `heap::alloc`-boxed in `attach()`.

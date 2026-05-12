@@ -5765,7 +5765,10 @@ impl Any {
     pub fn memory_cost(&self) -> usize {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
-            Any::WTFStringImpl(str) => if unsafe { (**str).ref_count() } == 1 { unsafe { (**str).memory_cost() } } else { 0 },
+            Any::WTFStringImpl(str) => {
+                let s = super::body::wtf_impl(str);
+                if s.ref_count() == 1 { s.memory_cost() } else { 0 }
+            }
             Any::InternalBlob(ib) => ib.memory_cost(),
         }
     }
@@ -5788,7 +5791,7 @@ impl Any {
     pub fn fast_size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => (unsafe { (**s).byte_length() }) as SizeType,
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
     }
@@ -5797,7 +5800,7 @@ impl Any {
     pub fn size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => (unsafe { (**s).utf8_byte_length() }) as SizeType,
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }
     }
@@ -6025,7 +6028,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => (unsafe { (**s).length() }) == 0,
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
         }
     }
 }
@@ -6060,7 +6063,7 @@ impl Any {
     pub fn slice(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.shared_view(),
-            Any::WTFStringImpl(s) => unsafe { (**s).utf8_slice() },
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }
     }
@@ -6091,8 +6094,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
             }
             Any::WTFStringImpl(s) => {
-                // SAFETY: Any owns one ref on the WTFStringImpl pointee.
-                unsafe { (**s).deref() };
+                // `Any` owns one ref on the WTFStringImpl pointee.
+                super::body::wtf_impl(s).deref();
                 *self = Any::Blob(Blob::default());
             }
         }

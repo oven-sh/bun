@@ -255,6 +255,12 @@ pub trait PathUnit: Copy + Eq + 'static {
     fn id_u16(_: &[Self]) -> &[u16] { unreachable!("PathUnit::id_u16 on non-u16") }
     #[inline(always)]
     fn id_u16_mut(_: &mut [Self]) -> &mut [u16] { unreachable!("PathUnit::id_u16_mut on non-u16") }
+    // Inverse direction (concrete → Self). Same trait-dispatch trick: the
+    // matching impl overrides with the identity, the other hits `unreachable!`.
+    #[inline(always)]
+    fn id_from_u8(_: &[u8]) -> &[Self] { unreachable!("PathUnit::id_from_u8 on non-u8") }
+    #[inline(always)]
+    fn id_from_u16(_: &[u16]) -> &[Self] { unreachable!("PathUnit::id_from_u16 on non-u16") }
 
     /// `convert_into_buffer` — write `src` (the *other* width) into `dest`
     /// transcoding UTF-8↔UTF-16. Returns units written.
@@ -304,6 +310,8 @@ impl PathUnit for u8 {
     fn id_u8_mut(s: &mut [u8]) -> &mut [u8] { s }
     #[inline(always)]
     fn id_u8_slices<'a, 'b>(s: &'a [&'b [u8]]) -> &'a [&'b [u8]] { s }
+    #[inline(always)]
+    fn id_from_u8(s: &[u8]) -> &[u8] { s }
     #[inline]
     fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
         strings::convert_utf16_to_utf8_in_buffer(dest, src)
@@ -353,6 +361,8 @@ impl PathUnit for u16 {
     fn id_u16(s: &[u16]) -> &[u16] { s }
     #[inline(always)]
     fn id_u16_mut(s: &mut [u16]) -> &mut [u16] { s }
+    #[inline(always)]
+    fn id_from_u16(s: &[u16]) -> &[u16] { s }
     #[inline]
     fn convert_from_other(dest: &mut [u16], src: &[u8]) -> usize {
         strings::convert_utf8_to_utf16_in_buffer(dest, src).len()
@@ -1362,21 +1372,24 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// element type matches `U`. Stands in for Zig's `anytype` + `inputChildType`.
     fn _buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
         use core::any::TypeId;
-        if TypeId::of::<C>() == TypeId::of::<U>() {
-            // SAFETY: C and U are the same 'static type per TypeId check.
-            let characters: &[U] = unsafe {
-                core::slice::from_raw_parts(characters.as_ptr().cast::<U>(), characters.len())
-            };
-            self._buf.append(characters, add_separator);
+        // Route via concrete `u8`/`u16` using the safe trait-dispatched
+        // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal
+        // identity in its monomorphized impl and `unreachable!()` otherwise,
+        // so no `from_raw_parts` is needed for the generic→generic reslice.
+        if TypeId::of::<C>() == TypeId::of::<u8>() {
+            let bytes = C::id_u8(characters);
+            if TypeId::of::<U>() == TypeId::of::<u8>() {
+                self._buf.append(U::id_from_u8(bytes), add_separator);
+            } else {
+                self._buf.append_other(<U::Other>::id_from_u8(bytes), add_separator);
+            }
         } else {
-            // SAFETY: C is exactly U::Other (PathUnit has only two impls: u8/u16).
-            let characters: &[U::Other] = unsafe {
-                core::slice::from_raw_parts(
-                    characters.as_ptr().cast::<U::Other>(),
-                    characters.len(),
-                )
-            };
-            self._buf.append_other(characters, add_separator);
+            let words = C::id_u16(characters);
+            if TypeId::of::<U>() == TypeId::of::<u16>() {
+                self._buf.append(U::id_from_u16(words), add_separator);
+            } else {
+                self._buf.append_other(<U::Other>::id_from_u16(words), add_separator);
+            }
         }
     }
 }

@@ -130,21 +130,31 @@ pub trait ActiveSocketExt<const SSL: bool>: Copy {
     fn pooled_mut<'a>(self) -> Option<&'a mut PooledSocket<SSL>>;
 }
 
+/// The single `&mut *p` upgrade for [`ActiveSocketExt`] — generic so
+/// `client_mut`/`session_mut`/`pooled_mut` share one SAFETY argument instead of
+/// three open-coded ones. INVARIANT: see [`ActiveSocketExt`] trait doc.
+#[inline(always)]
+fn active_socket_get_mut<'a, const SSL: bool, T>(tagged: ActiveSocket<SSL>) -> Option<&'a mut T>
+where
+    T: bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>,
+{
+    // SAFETY: see [`ActiveSocketExt`] trait-level INVARIANT — the tagged pointer
+    // identifies an object live for the dispatched callback, HTTP-thread-only.
+    tagged.get::<T>().map(|p| unsafe { &mut *p })
+}
+
 impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
     #[inline]
     fn client_mut<'a>(self) -> Option<&'a mut HTTPClient<'static>> {
-        // SAFETY: see trait-level INVARIANT.
-        self.get::<HTTPClient>().map(|p| unsafe { &mut *p })
+        active_socket_get_mut(self)
     }
     #[inline]
     fn session_mut<'a>(self) -> Option<&'a mut h2::ClientSession> {
-        // SAFETY: see trait-level INVARIANT.
-        self.get::<h2::ClientSession>().map(|p| unsafe { &mut *p })
+        active_socket_get_mut(self)
     }
     #[inline]
     fn pooled_mut<'a>(self) -> Option<&'a mut PooledSocket<SSL>> {
-        // SAFETY: see trait-level INVARIANT.
-        self.get::<PooledSocket<SSL>>().map(|p| unsafe { &mut *p })
+        active_socket_get_mut(self)
     }
 }
 

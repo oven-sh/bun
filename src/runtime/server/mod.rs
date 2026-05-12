@@ -260,12 +260,12 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub flags: ServerFlags,
 
-    /// Intrusively-refcounted plugin state. Stored as a raw pointer (not
-    /// `Rc`) because (a) the same `*mut ServePlugins` is smuggled through
+    /// Intrusively-refcounted plugin state. Stored as a `BackRef` (not `Rc`)
+    /// because (a) the same `*mut ServePlugins` is smuggled through
     /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
     /// through any owner (Zig spec uses `*ServePlugins` everywhere). The
     /// counted ref held here is released in `Drop for NewServer`.
-    pub plugins: Option<core::ptr::NonNull<ServePlugins>>,
+    pub plugins: Option<bun_ptr::BackRef<ServePlugins>>,
 
     pub dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
@@ -432,8 +432,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// no `&mut ServePlugins` is live across a `&self` borrow.
     #[inline(always)]
     pub fn plugins_ref(&self) -> Option<&ServePlugins> {
-        // SAFETY: see fn doc — counted ref keeps pointee live for `&self`.
-        self.plugins.map(|p| unsafe { &*p.as_ptr() })
+        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
+        self.plugins.as_ref().map(bun_ptr::BackRef::get)
     }
 
     /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
@@ -2078,8 +2078,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 jsc::VirtualMachine::get().transpiler.options.serve_plugins.as_ref()
             {
                 if !serve_plugins_config.is_empty() {
-                    self.plugins =
-                        core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config.clone()));
+                    self.plugins = core::ptr::NonNull::new(
+                        ServePlugins::init(serve_plugins_config.clone()),
+                    )
+                    .map(bun_ptr::BackRef::from);
                 }
             }
         }

@@ -1987,10 +1987,12 @@ impl ReaddirSubtask {
             let z = basename.slice_assume_z();
             let len_with_nul = z.len() + 1;
             let ptr = z.as_bytes().as_ptr().cast_mut();
-            // SAFETY: paired with the `heap::into_raw(owned.into_boxed_slice())`
-            // in `AsyncReaddirRecursiveTask::enqueue`.
+            // SAFETY: paired with the `Box::leak(owned.into_boxed_slice())` in
+            // `AsyncReaddirRecursiveTask::enqueue`; same (ptr, len) layout,
+            // reconstructed exactly once. Build the `*mut [u8]` fat pointer
+            // safely — no need to materialize an intermediate `&mut` reference.
             unsafe {
-                drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
+                drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len_with_nul)));
             }
         });
         let mut buf = PathBuffer::uninit();
@@ -2026,8 +2028,9 @@ impl AsyncReaddirRecursiveTask {
         if bytes.is_empty() { return; }
         // SAFETY: `bytes.as_ptr()` is the start of a `Box<[u8]>` allocation of
         // `bytes.len() + 1` (NUL) made in `create()`; reconstructed exactly once.
+        // Build the `*mut [u8]` fat pointer safely — no intermediate `&mut` ref.
         unsafe {
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+            drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
                 bytes.as_ptr().cast_mut(),
                 bytes.len() + 1,
             )));

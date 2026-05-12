@@ -1371,8 +1371,7 @@ impl JSGlobalObject {
     }
 
     pub fn create_for_test_isolation(old_global: &JSGlobalObject, console: *mut c_void) -> *mut JSGlobalObject {
-        // SAFETY: C++ returns a non-null freshly-created global.
-        unsafe { Zig__GlobalObject__createForTestIsolation(old_global, console) }
+        Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
     pub fn get_module_registry_map(global: &JSGlobalObject) -> *mut c_void {
@@ -1657,8 +1656,11 @@ unsafe extern "C" {
         worker_ptr: *mut c_void,
     ) -> *mut JSGlobalObject;
 
-    fn Zig__GlobalObject__createForTestIsolation(
-        old_global: *const JSGlobalObject,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
+    // stores into the new global (never dereferenced as Rust data here).
+    safe fn Zig__GlobalObject__createForTestIsolation(
+        old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
 

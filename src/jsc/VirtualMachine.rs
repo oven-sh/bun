@@ -1190,12 +1190,9 @@ impl VirtualMachine {
             f: ManuallyDrop::new(f),
             result: MaybeUninit::uninit(),
         };
-        // SAFETY: `self.jsc_vm` is the live JSC VM for this thread; `t` lives
-        // on this stack frame for the duration of the FFI call, which invokes
-        // `call` exactly once before returning.
-        unsafe {
-            JSC__VM__holdAPILock(&*self.jsc_vm, (&raw mut t).cast(), call::<F, R>);
-        }
+        // `t` lives on this stack frame for the duration of the FFI call, which
+        // invokes `call` exactly once before returning.
+        JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
     }
@@ -1878,7 +1875,9 @@ unsafe extern "C" {
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
-    fn JSC__VM__holdAPILock(vm: &VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
+    // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
+    // (never dereferenced as Rust data).
+    safe fn JSC__VM__holdAPILock(vm: &VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
     safe fn NodeModuleModule__callOverriddenRunMain(global: &JSGlobalObject, argv1: JSValue) -> JSValue;
     safe fn JSC__JSInternalPromise__resolvedPromise(global: &JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
 }

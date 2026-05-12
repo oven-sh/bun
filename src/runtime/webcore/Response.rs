@@ -1054,11 +1054,12 @@ impl Response {
                 // bitwise field read.
                 let wtf = str.leak_wtf_impl();
                 debug_assert!(!wtf.is_null());
-                // SAFETY: `json_stringify_fast` populated a WTF-backed string;
-                // `wtf` is a live impl pointer until we deref it below.
-                if let Some(bytes) = unsafe { (*wtf).to_utf8_if_needed() } {
+                // `json_stringify_fast` populated a WTF-backed string; `wtf` is a
+                // live +1 impl pointer until we deref/transfer it below.
+                let wtf_ref = super::body::wtf_impl(&wtf);
+                if let Some(bytes) = wtf_ref.to_utf8_if_needed() {
                     // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
-                    unsafe { (*wtf).deref() };
+                    wtf_ref.deref();
                     response.body.get().value.set(BodyValue::InternalBlob(InternalBlob {
                         // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
                         // transfers here as Vec<u8>.

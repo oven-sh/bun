@@ -2357,28 +2357,19 @@ impl Package<u64> {
         // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
         // Mirroring that here matters: `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
-        // may swallow it and re-enter for the next package. If we eagerly `set_len(total_len)`
-        // and then bail, `dependencies.len() != resolutions.len()` on the next call and the
-        // debug_assert above trips. Slots are only read after being written below.
+        // may swallow it and re-enter for the next package. If we eagerly grow
+        // `dependencies` and then bail, `dependencies.len() != resolutions.len()` on the
+        // next call and the debug_assert above trips.
         //
-        // SAFETY: this is `spare_capacity_mut()[..total_dependencies_count]` viewed as
-        // `&mut [Dependency]` instead of `&mut [MaybeUninit<Dependency>]`:
-        // - `off == dependencies.len()` (asserted) and `reserve(total_dependencies_count)`
-        //   above guarantees `[off..total_len]` lies within the allocation; no realloc
-        //   occurs until both lengths are committed at the end of this function.
-        // - `Dependency: Copy` so writing `package_dependencies[i] = dep` does not drop
-        //   an uninitialized prior value.
-        // - Every slot is written before it is read (`parse_dependency`/the loop below
-        //   index by a monotone `dependencies_count`, then sort over `[..count]` only).
-        // The fully-safe alternative — threading `&mut [MaybeUninit<Dependency>]` through
-        // `parse_dependency` and the iteration/sort below — is net-neutral on `unsafe`
-        // (it just trades this `from_raw_parts_mut` for `slice_assume_init_mut`).
-        let package_dependencies = unsafe {
-            core::slice::from_raw_parts_mut(
-                lockfile.buffers.dependencies.as_mut_ptr().add(off),
-                total_len - off,
-            )
-        };
+        // Rather than `from_raw_parts_mut` over spare capacity (which yields a `&mut [T]`
+        // to uninitialized memory — UB, and `Dependency` is not `Copy` so indexed
+        // assignment would drop garbage), build into a local `Vec` and `append` into the
+        // lockfile buffer once all `?`-points are past. On early error the local vec is
+        // dropped and `lockfile.buffers.dependencies.len()` is left untouched, preserving
+        // the `== resolutions.len()` invariant exactly as the Zig spare-capacity write
+        // did. Capacity for the final `append` was reserved above so it does not realloc.
+        let mut package_dependencies: Vec<Dependency> =
+            Vec::with_capacity(total_len - off);
 
         'name: {
             if R::IS_GIT_RESOLVER {
@@ -2740,7 +2731,7 @@ impl Package<u64> {
                         group,
                         &mut string_builder,
                         FEATURES,
-                        package_dependencies,
+                        package_dependencies.as_mut_slice(),
                         total_dependencies_count,
                         Some(dependency::version::Tag::Workspace),
                         workspace_version,
@@ -2759,7 +2750,7 @@ impl Package<u64> {
                         // `parse_dependency` was called with `Tag::Workspace`,
                         // so the workspace accessor's tag-check holds.
                         let ws_path = *dep.version.workspace();
-                        package_dependencies[total_dependencies_count as usize] = dep;
+                        package_dependencies.push(dep);
                         total_dependencies_count += 1;
 
                         lockfile.workspace_paths.put(external_name.hash, ws_path)?;
@@ -2791,7 +2782,7 @@ impl Package<u64> {
                                     group,
                                     &mut string_builder,
                                     FEATURES,
-                                    package_dependencies,
+                                    package_dependencies.as_mut_slice(),
                                     total_dependencies_count,
                                     None,
                                     None,
@@ -2821,8 +2812,7 @@ impl Package<u64> {
                                         dep.behavior.insert(Behavior::BUNDLED);
                                     }
 
-                                    package_dependencies
-                                        [total_dependencies_count as usize] = dep;
+                                    package_dependencies.push(dep);
                                     total_dependencies_count += 1;
                                 }
                             }
@@ -2852,7 +2842,7 @@ impl Package<u64> {
                 &DependencyGroup::PEER,
                 &mut string_builder,
                 FEATURES,
-                package_dependencies,
+                package_dependencies.as_mut_slice(),
                 total_dependencies_count,
                 None,
                 None,
@@ -2863,18 +2853,18 @@ impl Package<u64> {
             )? {
                 let mut dep = dep_;
                 dep.behavior.insert(Behavior::OPTIONAL);
-                package_dependencies[total_dependencies_count as usize] = dep;
+                package_dependencies.push(dep);
                 total_dependencies_count += 1;
             }
         }
 
+        debug_assert_eq!(package_dependencies.len(), total_dependencies_count as usize);
         {
             let buf = string_builder.string_bytes.as_slice();
             // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by`
             // requires a total order (and panics since 1.81 when violated), so
             // derive `Ordering::Equal` from the predicate symmetrically.
-            package_dependencies[0..total_dependencies_count as usize]
-                .sort_by(|a, b| {
+            package_dependencies.sort_by(|a, b| {
                     if Dependency::is_less_than(buf, a, b) {
                         core::cmp::Ordering::Less
                     } else if Dependency::is_less_than(buf, b, a) {
@@ -2900,9 +2890,13 @@ impl Package<u64> {
             .resize(total_len, invalid_package_id);
 
         let new_len = off + total_dependencies_count as usize;
-        // SAFETY: capacity reserved above; `package_dependencies[..new_len-off]`
-        // was fully initialized via the spare-capacity slice writes earlier.
-        unsafe { lockfile.buffers.dependencies.set_len(new_len) };
+        // Capacity for `[off..total_len]` was reserved above; `append` is a
+        // single memcpy into it (no realloc). All `?`-points are past, so the
+        // `dependencies.len() == resolutions.len()` invariant is committed
+        // together with the `resolutions` resize/truncate that brackets this.
+        debug_assert_eq!(lockfile.buffers.dependencies.len(), off);
+        lockfile.buffers.dependencies.append(&mut package_dependencies);
+        debug_assert_eq!(lockfile.buffers.dependencies.len(), new_len);
         lockfile.buffers.resolutions.truncate(new_len);
 
         // This function depends on package.dependencies being set, so it is done at the very end.

@@ -878,9 +878,12 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            if let Some(loop_) = self.vm_ref().event_loop_handle {
-                // SAFETY: `event_loop_handle` is a live loop for the VM lifetime.
-                unsafe { (*loop_).wakeup() };
+            // Route through the single audited `platform_loop_opt()` accessor
+            // (set-once `Option<*mut>` deref) instead of open-coding the raw
+            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
+            // either way (autoref), so no soundness change vs the prior code.
+            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
+                loop_.wakeup();
             }
         }
     }

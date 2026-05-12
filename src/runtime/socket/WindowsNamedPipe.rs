@@ -731,11 +731,12 @@ impl WindowsNamedPipe {
                     });
                 }
             };
-            // ref because we are accepting will unref when wrapper deinit
-            // SAFETY: tls is a valid SSL_CTX*
-            unsafe {
-                let _ = boringssl::SSL_CTX_up_ref(tls);
-            }
+            // ref because we are accepting will unref when wrapper deinit.
+            // ffi-safe-fn: opaque-ZST `&SSL_CTX` redecl; `tls_nn` proven
+            // non-null above (`NonNull::new(tls).expect(..)`).
+            let _ = super::tls_socket_functions::ffi::SSL_CTX_up_ref(
+                boringssl::SSL_CTX::opaque_ref(tls_nn.as_ptr()),
+            );
         }
         #[cfg(windows)]
         {

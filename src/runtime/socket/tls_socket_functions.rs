@@ -34,7 +34,7 @@ fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JS
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
-    use super::boringssl::{SSL, X509, struct_stack_st_X509, X509_STORE_CTX};
+    use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509, X509_STORE_CTX};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -191,6 +191,31 @@ pub mod ffi {
         pub safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
         pub safe fn SSL_set_renegotiate_mode(ssl: &SSL, mode: super::boringssl::ssl_renegotiate_mode_t);
         pub safe fn SSL_set_verify(ssl: &SSL, mode: c_int, callback: super::boringssl::SSL_verify_cb);
+        // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
+        // it verbatim, never derefs) ⇒ no caller-side precondition.
+        pub safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
+        // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
+        pub safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
+        // Atomic refcount bump on a live `SSL_CTX*`; opaque-ZST ref ⇒ no
+        // caller-side precondition (route via `SSL_CTX::opaque_ref`).
+        pub safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
+        // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
+        // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
+        // opaque `*mut c_void` ⇒ no caller-side precondition.
+        pub safe fn SSL_CTX_set_alpn_select_cb(
+            ctx: &SSL_CTX,
+            cb: Option<
+                unsafe extern "C" fn(
+                    ssl: *mut SSL,
+                    out: *mut *const u8,
+                    out_len: *mut u8,
+                    in_: *const u8,
+                    in_len: c_uint,
+                    arg: *mut c_void,
+                ) -> c_int,
+            >,
+            arg: *mut c_void,
+        );
     }
 }
 use crate::node::StringOrBuffer;

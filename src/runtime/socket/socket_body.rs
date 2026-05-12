@@ -1145,21 +1145,26 @@ impl<const SSL: bool> NewSocket<SSL> {
                         if this.is_server() {
                             // Per-connection: callback reads `this` from the SSL,
                             // not the CTX-level arg (shared across the listener).
-                            // SAFETY: BoringSSL FFI; `*this` outlives the SSL handshake.
-                            unsafe {
-                                boringssl_sys::SSL_set_ex_data(
-                                    ssl_ptr,
-                                    0,
-                                    this_ptr.cast::<c_void>(),
-                                );
-                                boringssl_sys::SSL_CTX_set_alpn_select_cb(
-                                    boringssl_sys::SSL_get_SSL_CTX(ssl_ptr),
-                                    Some(select_alpn_callback),
-                                    ptr::null_mut(),
-                                );
-                            }
+                            // ffi-safe-fn: opaque-ZST `&SSL`/`&SSL_CTX` redecls;
+                            // `ssl_ptr` non-null in this branch and
+                            // `SSL_get_SSL_CTX` never returns null for a live SSL.
+                            let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
+                            tls_socket_functions::ffi::SSL_set_ex_data(
+                                ssl_ref,
+                                0,
+                                this_ptr.cast::<c_void>(),
+                            );
+                            tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
+                                SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(ssl_ref)),
+                                Some(select_alpn_callback),
+                                ptr::null_mut(),
+                            );
                         } else {
-                            // SAFETY: BoringSSL FFI.
+                            // SAFETY: `ssl_ptr` non-null in this branch;
+                            // `protos.as_ptr()` is readable for `protos.len()`
+                            // bytes (borrowed `&[u8]` from `this.protos`) and
+                            // BoringSSL copies the buffer internally — raw
+                            // ptr+len pair is the genuine FFI precondition here.
                             unsafe {
                                 boringssl_sys::SSL_set_alpn_protos(
                                     ssl_ptr,

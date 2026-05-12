@@ -277,10 +277,7 @@ describe.concurrent(() => {
     const cwd = tmpdirSync();
     const execPath = join(cwd, basename(bunExe()));
     await copyFile(bunExe(), execPath);
-    await writeFile(
-      join(cwd, "bunfig.toml"),
-      `[install]\nminimumReleaseAge = 600 # 10 minutes\n`,
-    );
+    await writeFile(join(cwd, "bunfig.toml"), `[install]\nminimumReleaseAge = 600 # 10 minutes\n`);
 
     const { stdout, stderr, exited } = Bun.spawn({
       cmd: [execPath, "upgrade", "--stable"],
@@ -405,10 +402,7 @@ describe.concurrent(() => {
     const cwd = tmpdirSync();
     const execPath = join(cwd, basename(bunExe()));
     await copyFile(bunExe(), execPath);
-    await writeFile(
-      join(cwd, "bunfig.toml"),
-      `[install]\nminimumReleaseAge = 600 # 10 min\n`,
-    );
+    await writeFile(join(cwd, "bunfig.toml"), `[install]\nminimumReleaseAge = 600 # 10 min\n`);
 
     const { stderr, exited } = Bun.spawn({
       cmd: [execPath, "upgrade", "--stable"],

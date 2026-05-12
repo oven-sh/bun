@@ -353,14 +353,23 @@ impl WindowsWatcher {
                     continue;
                 }
                 if nbytes == 0 {
-                    // shutdown notification
-                    // TODO close handles?
-                    bun_core::scoped_log!(watcher, "shutdown notification in WindowsWatcher.next");
-                    return Err(bun_sys::Error {
-                        errno: bun_sys::SystemErrno::ESHUTDOWN as _,
-                        syscall: bun_sys::Tag::TODO,
-                        ..Default::default()
-                    });
+                    // ReadDirectoryChangesW internal change-buffer overflow — too many
+                    // events arrived between drain and re-arm. This is NOT a shutdown
+                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
+                    // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
+                    // MSDN, the function returns zero bytes when its internal buffer
+                    // overflows. Drop the lost events, re-arm, and keep watching so
+                    // --hot picks up the next change. Returning ESHUTDOWN here kills
+                    // the watcher thread and the --hot child silently exits
+                    // (hot.test.ts "should work with sourcemap generation" flake).
+                    bun_core::scoped_log!(
+                        watcher,
+                        "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
+                    );
+                    if let Err(err) = self.watcher.prepare() {
+                        return Err(err);
+                    }
+                    continue;
                 }
                 return Ok(Some(EventIterator {
                     watcher: BackRef::new(&self.watcher),

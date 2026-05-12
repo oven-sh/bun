@@ -530,11 +530,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
-    // SAFETY: resolver backref; raw deref (not `c.resolver()`) because
-    // `root_path` is passed alongside `&mut *c` to `write_output_files_to_disk`
-    // below (split borrow — `output_dir` lives in the resolver, disjoint from
-    // anything `c` mutates).
-    let root_path: &[u8] = &unsafe { &*c.resolver }.opts.output_dir;
+    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
+    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
+    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
+    // disjoint from anything `c` mutates.
+    let resolver = c.resolver.expect("resolver set in load()");
+    let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_to_standalone_html;
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0

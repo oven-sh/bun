@@ -2588,9 +2588,9 @@ impl<'a> BundleV2<'a> {
             this.transpiler.resolver.opts.tree_shaking = true;
         }
 
-        // BACKREF: `LinkerContext<'a>.resolver` is `*mut Resolver<'a>`; the
-        // resolver lives in `transpiler` which outlives `self` (same `'a`).
-        this.linker.resolver = &raw mut this.transpiler.resolver;
+        // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
+        // the resolver lives in `transpiler` which outlives `self` (same `'a`).
+        this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
         this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
         this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;

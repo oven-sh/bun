@@ -191,7 +191,12 @@ pub struct LinkerContext<'a> {
     /// split-borrow patterns that hold other `self` borrows across the access.
     pub log: *mut Log,
 
-    pub resolver: *mut Resolver<'a>,
+    /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
+    /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
+    /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
+    /// instead of open-coding a raw deref. `Option` because `Default` precedes
+    /// [`Self::load`]. Read-only — never `assume_mut`.
+    pub resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub cycle_detector: Vec<ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
@@ -246,7 +251,7 @@ impl<'a> Default for LinkerContext<'a> {
             parse_graph: core::ptr::null_mut(),
             graph: Default::default(),
             log: core::ptr::null_mut(),
-            resolver: core::ptr::null_mut(),
+            resolver: None,
             cycle_detector: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
@@ -318,9 +323,10 @@ impl<'a> LinkerContext<'a> {
     /// the link step; never mutated through this pointer.
     #[inline]
     pub fn resolver(&self) -> &Resolver<'a> {
-        debug_assert!(!self.resolver.is_null(), "LinkerContext.resolver accessed before load()");
-        // SAFETY: non-null backref valid for the link step; read-only access.
-        unsafe { &*self.resolver }
+        self.resolver
+            .as_ref()
+            .expect("LinkerContext.resolver accessed before load()")
+            .get()
     }
 
     /// Shared-read accessor for the bundler log.
@@ -468,11 +474,16 @@ impl<'a> LinkerContext<'a> {
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log;
 
-        // PORT NOTE: lifetime — `self.resolver` is `*mut Resolver<'static>` but
-        // `transpiler.resolver` is `Resolver<'_>`; raw `*mut T` is invariant in
-        // `T`, so erase the lifetime via a pointer cast (LIFETIMES.tsv:
-        // GRAPHBACKED — resolver outlives the link step).
-        self.resolver = core::ptr::from_mut(&mut transpiler.resolver).cast();
+        // PORT NOTE: lifetime — `self.resolver` is `ParentRef<Resolver<'a>>`
+        // but `transpiler.resolver` is `Resolver<'_>` (anonymous `bundle`
+        // lifetime); erase via a pointer cast (LIFETIMES.tsv: GRAPHBACKED —
+        // resolver outlives the link step). Read-only — `from_raw` provenance
+        // is sufficient.
+        // SAFETY: `transpiler.resolver` is a stable field of the
+        // bundle-lifetime `Transpiler`, valid for the entire link step.
+        self.resolver = Some(unsafe {
+            bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
+        });
         self.cycle_detector = Vec::new();
 
         // PORT NOTE: `reachable_files` is `Vec<Index>`; clone the

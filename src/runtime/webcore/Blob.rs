@@ -331,10 +331,17 @@ pub trait BlobExt {
 
 /// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
 /// can read blob bytes. Mirrors Zig `Blob.sharedView`'s `(ptr,len)` shape.
+///
+/// # Safety
+/// `this` must be a live `*const Blob` (the codegen `m_ctx` payload obtained
+/// via `Blob__fromJS`), valid for shared read for the duration of the call.
+/// `len` must be a writable `usize` out-param (caller stack slot). Kept as a
+/// raw-pointer ABI (not `&Blob`/`&mut usize`) because the sole Rust caller is
+/// the type-erased `SqlRuntimeHooks` vtable in `hw_exports.rs`, which forwards
+/// `*const c_void` without materialising a reference.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8 {
-    // SAFETY: caller passes a live `*const Blob` obtained from `Blob__fromJS`;
-    // `len` is a stack out-param.
+    // SAFETY: preconditions documented on the fn item above.
     let view = unsafe { (*this).shared_view() };
     unsafe { *len = view.len() };
     view.as_ptr()
@@ -819,7 +826,11 @@ impl BlobExt for Blob {
             safe fn DOMFormData__forEach(
                 this: *mut jsc::DOMFormData,
                 ctx: *mut c_void,
-                cb: unsafe extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+                // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
+                // body localises every raw deref individually), so the callback
+                // type carries no caller-side precondition. ABI-identical to
+                // `bun_jsc`'s `ForEachFunction` alias.
+                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
             );
         }
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`

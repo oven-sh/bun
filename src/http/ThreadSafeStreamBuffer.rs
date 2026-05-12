@@ -60,6 +60,21 @@ impl ThreadSafeStreamBuffer {
         bun_core::heap::into_raw(Box::new(init))
     }
 
+    /// Upgrade an attached intrusive-ref handle to `&mut Self`.
+    ///
+    /// INVARIANT: while `p` is held, the HTTP side owns one intrusive ref on
+    /// the buffer (taken at attach, released in `Stream::detach`); the buffer
+    /// is a separate heap allocation that outlives the returned borrow and is
+    /// disjoint from any `&mut HTTPClient`/`&mut Stream`. HTTP-thread-only at
+    /// every caller, so the `&mut` is the sole live borrow on this side of the
+    /// internal lock. Centralises the SAFETY argument shared by
+    /// `http_request_body::Stream::buffer_mut` and `HTTPClient::write_to_stream`.
+    #[inline]
+    pub(crate) fn from_attached<'a>(mut p: core::ptr::NonNull<Self>) -> &'a mut Self {
+        // SAFETY: see INVARIANT above.
+        unsafe { p.as_mut() }
+    }
+
     pub fn ref_(this: *mut Self) {
         // TODO(port): delegate to bun_ptr::IntrusiveArc::ref over `ref_count`
         // SAFETY: `this` is a live heap allocation produced by `new`.

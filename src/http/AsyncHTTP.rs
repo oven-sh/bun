@@ -912,9 +912,13 @@ impl<'a> AsyncHTTP<'a> {
         // when capacity was 0. MutableString in Rust uses the global allocator
         // unconditionally; nothing to do.
 
-        // SAFETY: `response_buffer` was set in `init()` to a caller-owned
-        // MutableString that outlives this request.
-        let response_buffer = unsafe { &mut *self.response_buffer };
+        // `response_buffer` was set in `init()` to a caller-owned MutableString
+        // that outlives this request — the very buffer `start()` records as
+        // `state.body_out_str`. Route through the shared `body_out` accessor
+        // (one centralised unsafe).
+        let response_buffer = crate::body_out::as_mut(
+            NonNull::new(self.response_buffer).expect("response_buffer set in init"),
+        );
 
         // PORT NOTE: `HTTPRequestBody` is not `Clone` (the `Stream` arm holds an
         // intrusive refcount). Zig passed it by value (shallow copy). Move owned

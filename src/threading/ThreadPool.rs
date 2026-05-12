@@ -596,7 +596,9 @@ impl ThreadPool {
             }
             // Make sure thread is part of this thread pool, not a different one.
             // SAFETY: current is a live thread-local Thread for this OS thread.
-            if unsafe { (*current).thread_pool } == std::ptr::from_ref::<ThreadPool>(self) {
+            if unsafe { (*current).thread_pool }.as_ptr().cast_const()
+                == std::ptr::from_ref::<ThreadPool>(self)
+            {
                 current
             } else {
                 ptr::null_mut()
@@ -705,13 +707,6 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
-/// Wrapper to send a raw pointer across `std::thread::spawn`.
-#[repr(transparent)]
-struct SendPtr<T>(*const T);
-// SAFETY: ThreadPool is designed for concurrent access from worker threads;
-// the pointer is kept alive by `join()` which waits for all workers to exit.
-unsafe impl<T> Send for SendPtr<T> {}
-
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
@@ -733,14 +728,13 @@ impl ThreadPool {
                 continue;
             }
             let stack_size = self.stack_size as usize;
-            let pool = SendPtr(std::ptr::from_ref::<ThreadPool>(self));
+            // `BackRef<ThreadPool>: Send` (ThreadPool is `Sync`); pool's `join()`
+            // waits for every worker, so the back-reference invariant holds.
+            let pool = bun_ptr::BackRef::new(self);
             match std::thread::Builder::new()
                 .stack_size(stack_size)
-                .spawn(move || {
-                    let pool = pool;
-                    // SAFETY: pool outlives all worker threads (join() waits).
-                    unsafe { Thread::run(pool.0) }
-                }) {
+                .spawn(move || Thread::run(pool))
+            {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
@@ -795,14 +789,12 @@ impl ThreadPool {
                     // We signaled to spawn a new thread
                     if can_wake && (sync.spawned() as u32) < self.max_threads {
                         let stack_size = self.stack_size as usize;
-                        let pool = SendPtr(std::ptr::from_ref::<ThreadPool>(self));
+                        // `BackRef<ThreadPool>: Send`; see `warm()`.
+                        let pool = bun_ptr::BackRef::new(self);
                         match std::thread::Builder::new()
                             .stack_size(stack_size)
-                            .spawn(move || {
-                                let pool = pool;
-                                // SAFETY: pool outlives all worker threads (join() waits).
-                                unsafe { Thread::run(pool.0) }
-                            }) {
+                            .spawn(move || Thread::run(pool))
+                        {
                             Ok(_handle) => {
                                 // detach by dropping
                             }
@@ -1022,7 +1014,7 @@ pub struct Thread {
     run_queue: node::Queue,
     idle_queue: node::Queue,
     run_buffer: node::Buffer,
-    thread_pool: *const ThreadPool,
+    thread_pool: bun_ptr::BackRef<ThreadPool>,
 }
 
 thread_local! {
@@ -1096,7 +1088,7 @@ impl Thread {
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
-    unsafe fn run(thread_pool: *const ThreadPool) {
+    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
         // SAFETY: FFI call with no preconditions; marks this OS thread as a
         // mimalloc threadpool worker so deferred frees are processed eagerly.
         unsafe { bun_alloc::mimalloc::mi_thread_set_in_threadpool() };
@@ -1138,10 +1130,9 @@ impl Thread {
             thread_pool,
         };
         let self_ptr: *mut Thread = &raw mut self_;
-        // SAFETY: thread_pool outlives this worker (join() waits). Hoist a
-        // single shared ref so the hot loop, the registration guard, and the
-        // `BUN_THREADPOOL_STATS` instrumentation need no per-use `unsafe`.
-        let pool: &ThreadPool = unsafe { &*thread_pool };
+        // `BackRef` invariant: pool's `join()` waits for every worker, so the
+        // pointee outlives this fn. Hoist a single shared ref for the hot loop.
+        let pool: &ThreadPool = thread_pool.get();
         // SAFETY: self_ptr is our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
 

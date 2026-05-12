@@ -134,7 +134,10 @@ pub mod ffi {
         pub fn EC_GROUP_get_curve_name(group: *const EC_GROUP) -> c_int;
 
         // ── OBJ ──────────────────────────────────────────────────────────
-        pub fn OBJ_nid2sn(nid: c_int) -> *const c_char;
+        // Pure NID→short-name lookup; takes a by-value int and returns a
+        // pointer into BoringSSL's static OID table (or null). No pointer
+        // precondition, so declare `safe fn`.
+        pub safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
     }
 }
 use crate::node::StringOrBuffer;
@@ -445,8 +448,7 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
                 sig_with_md = b"gost2012_512";
             }
             _ => {
-                // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let sn_str = unsafe { ffi::OBJ_nid2sn(sign_nid) };
+                let sn_str = ffi::OBJ_nid2sn(sign_nid);
                 if !sn_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     sig_with_md = unsafe { bun_core::ffi::cstr(sn_str) }.to_bytes();
@@ -456,8 +458,7 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
             }
         }
 
-        // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-        let hash_str = unsafe { ffi::OBJ_nid2sn(hash_nid) };
+        let hash_str = ffi::OBJ_nid2sn(hash_nid);
         if !hash_str.is_null() {
             // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
             let hash_slice = unsafe { bun_core::ffi::cstr(hash_str) }.to_bytes();
@@ -671,8 +672,7 @@ pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &Cal
                 let ec = unsafe { ffi::EVP_PKEY_get1_EC_KEY(raw_key) };
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
                 let nid = unsafe { ffi::EC_GROUP_get_curve_name(ffi::EC_KEY_get0_group(ec)) };
-                // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let nid_str = unsafe { ffi::OBJ_nid2sn(nid) };
+                let nid_str = ffi::OBJ_nid2sn(nid);
                 if !nid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     curve_name = unsafe { bun_core::ffi::cstr(nid_str) }.to_bytes();
@@ -680,8 +680,7 @@ pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &Cal
                     curve_name = b"";
                 }
             } else {
-                // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let kid_str = unsafe { ffi::OBJ_nid2sn(kid) };
+                let kid_str = ffi::OBJ_nid2sn(kid);
                 if !kid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     curve_name = unsafe { bun_core::ffi::cstr(kid_str) }.to_bytes();

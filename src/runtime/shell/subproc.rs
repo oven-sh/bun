@@ -2522,7 +2522,9 @@ pub fn assert_stdio_result(result: &StdioResult) {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
+    // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
+    // initialized, never null. Reading the pointer value has no precondition.
+    pub safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
 // IntoStaticStr for PipeReaderState (used in logs as @tagName).

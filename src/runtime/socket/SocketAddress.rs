@@ -693,8 +693,11 @@ impl SocketAddress {
 // bindings though.
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    static IPv4: bun_str::WTFStringImpl;
-    static IPv6: bun_str::WTFStringImpl;
+    // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
+    // immutable, immortal refcount. Reading the pointer value has no
+    // precondition, so declare them `safe static`.
+    safe static IPv4: bun_str::WTFStringImpl;
+    safe static IPv6: bun_str::WTFStringImpl;
 }
 // TODO(port): const bun.String construction from extern static — needs runtime init or const-fn wrapper
 // const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };

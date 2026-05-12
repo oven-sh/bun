@@ -187,6 +187,48 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+// ---------------------------------------------------------------------------
+// User-overridden default CA certificates (tls.setDefaultCACertificates)
+//
+// Node.js lets JS replace the default trust root set at runtime. Once set,
+// *every* consumer of the "default" store — us_get_default_ca_store() and
+// us_get_shared_default_ca_store() — must ignore the bundled/system/extra
+// sources and build the store purely from this user-supplied set. The
+// override is process-global here (Node.js uses thread_local so Workers are
+// isolated; we accept the simpler process-wide semantics for now) and guarded
+// by shared_store_mutex because the shared store can be read from socket
+// I/O paths on other threads while JS swaps it.
+// ---------------------------------------------------------------------------
+static std::mutex shared_store_mutex;
+static X509_STORE *shared_store = nullptr;
+static STACK_OF(X509) *user_root_certs = nullptr;
+static bool has_user_root_certs = false;
+
+extern "C" void us_set_user_root_certs(STACK_OF(X509) *certs) {
+  std::lock_guard<std::mutex> lock(shared_store_mutex);
+  if (user_root_certs) {
+    sk_X509_pop_free(user_root_certs, X509_free);
+  }
+  user_root_certs = certs; // may be nullptr for an explicit empty set
+  has_user_root_certs = true;
+
+  // Drop the cached shared store so the next consumer rebuilds from the
+  // override. Existing SSL*s already hold their own X509_STORE reference via
+  // SSL_set0_verify_cert_store, so this only affects new connections.
+  if (shared_store) {
+    X509_STORE_free(shared_store);
+    shared_store = nullptr;
+  }
+}
+
+STACK_OF(X509) *us_get_user_root_certs() {
+  // Returns the currently installed user CA set (or nullptr for the empty
+  // set). Callers must treat this as read-only and only call it from the
+  // thread that set it — in practice that's the JS thread during
+  // getCACertificates('default').
+  return user_root_certs;
+}
+
 // Single source of truth for the OS trust store. Loaded on first demand,
 // independent of --use-system-ca / NODE_USE_SYSTEM_CA, so that
 // tls.getCACertificates('system') matches Node.js (which always reads the
@@ -207,10 +249,23 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
   return system_certs;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+static X509_STORE *us_build_default_ca_store_locked() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
+  }
+
+  // If JS overrode the defaults via tls.setDefaultCACertificates(), honour
+  // that exclusively — Node.js does not merge bundled/system/extra back in.
+  if (has_user_root_certs) {
+    if (user_root_certs) {
+      for (int i = 0; i < (int)sk_X509_num(user_root_certs); i++) {
+        X509 *cert = sk_X509_value(user_root_certs, i);
+        X509_up_ref(cert);
+        X509_STORE_add_cert(store, cert);
+      }
+    }
+    return store;
   }
 
   if (!X509_STORE_set_default_paths(store)) {
@@ -253,18 +308,30 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return store;
 }
 
-// Process-wide immutable default store. Safe to share across SSL_CTXs that
-// don't add per-config CAs (the user-`ca` path in build_raw still calls
-// us_get_default_ca_store() to get a fresh, mutable copy). This makes the
-// ~150-root build a once-per-process cost instead of once-per-SSL_CTX, which
-// is what kept Bun.connect({tls:true}) under the node-tls-server.test.ts
-// 100ms cold-path budget in debug+ASAN.
+extern "C" X509_STORE *us_get_default_ca_store() {
+  // Serialise with us_set_user_root_certs() so a Worker swapping the
+  // override can't race another Worker building a per-config store.
+  std::lock_guard<std::mutex> lock(shared_store_mutex);
+  return us_build_default_ca_store_locked();
+}
+
+// Process-wide default store cached behind a mutex. Safe to share across
+// SSL_CTXs that don't add per-config CAs (the user-`ca` path in build_raw
+// still calls us_get_default_ca_store() to get a fresh, mutable copy). This
+// makes the ~150-root build a once-per-process cost instead of
+// once-per-SSL_CTX, which is what kept Bun.connect({tls:true}) under the
+// node-tls-server.test.ts 100ms cold-path budget in debug+ASAN.
+//
+// Not std::call_once: tls.setDefaultCACertificates() must be able to
+// invalidate the cached store so subsequent connections see the override.
+// us_set_user_root_certs() takes the same mutex and nulls shared_store.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
-  static X509_STORE *shared = nullptr;
-  static std::once_flag once;
-  std::call_once(once, []() { shared = us_get_default_ca_store(); });
-  if (shared) X509_STORE_up_ref(shared);
-  return shared;
+  std::lock_guard<std::mutex> lock(shared_store_mutex);
+  if (shared_store == nullptr) {
+    shared_store = us_build_default_ca_store_locked();
+  }
+  if (shared_store) X509_STORE_up_ref(shared_store);
+  return shared_store;
 }
 
 extern "C" const char *us_get_default_ciphers() {

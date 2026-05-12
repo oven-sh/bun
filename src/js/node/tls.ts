@@ -12,6 +12,8 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
+const resetRootCertStore = $newCppFunction("NodeTLS.cpp", "resetRootCertStore", 1);
+const getUserRootCertificates = $newCppFunction("NodeTLS.cpp", "getUserRootCertificates", 0);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
@@ -954,8 +956,17 @@ function cacheBundledRootCertificates(): string[] {
 const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
+let hasResetDefaultCACertificates = false;
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
+
+  // Once setDefaultCACertificates() has been called the native user-supplied
+  // set is the sole source of truth — don't re-merge bundled/system/extra.
+  if (hasResetDefaultCACertificates) {
+    defaultCACertificates = getUserRootCertificates() as string[];
+    return defaultCACertificates;
+  }
+
   defaultCACertificates = [];
 
   const bundled = cacheBundledRootCertificates();
@@ -1011,6 +1022,21 @@ function getCACertificates(type = "default") {
   }
 }
 
+function setDefaultCACertificates(certs) {
+  if (!$isJSArray(certs)) {
+    throw $ERR_INVALID_ARG_TYPE("certs", "Array", certs);
+  }
+  for (let i = 0; i < certs.length; i++) {
+    if (typeof certs[i] !== "string" && !isArrayBufferView(certs[i])) {
+      throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, ["string", "ArrayBufferView"], certs[i]);
+    }
+  }
+
+  resetRootCertStore(certs);
+  defaultCACertificates = undefined;
+  hasResetDefaultCACertificates = true;
+}
+
 function tlsCipherFilter(a: string) {
   return !a.startsWith("TLS_");
 }
@@ -1053,4 +1079,5 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
+  setDefaultCACertificates,
 } as any as typeof import("node:tls");

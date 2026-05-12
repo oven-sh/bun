@@ -52,6 +52,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+          const mem = () => globalThis.Bun?.unsafe?.memoryFootprint?.() ?? process.memoryUsage.rss();
           const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
           function bust() {
             const mod = require.cache[path];
@@ -67,13 +68,13 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baseline = mem();
           for (let i = 0; i < 500; i++) {
             require(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
+          const rss = mem();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
@@ -110,6 +111,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+          const mem = () => globalThis.Bun?.unsafe?.memoryFootprint?.() ?? process.memoryUsage.rss();
           function bust() {
             delete require.cache[path];
           }
@@ -119,13 +121,13 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baseline = mem();
           for (let i = 0; i < 400; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
+          const rss = mem();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
@@ -159,6 +161,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+          const mem = () => globalThis.Bun?.unsafe?.memoryFootprint?.() ?? process.memoryUsage.rss();
           function bust() {
             delete require.cache[path];
           }
@@ -168,23 +171,19 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baseline = mem();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
+          const rss = mem();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
           if (diff > 48 * 1024 * 1024) {
-            // Bun v1.1.21 reported 423 MB here on macoS arm64.
-            // Bun v1.1.22 reported 4 MB here on macoS arm64.
-            // Rust port: ~65 MB before d9331b7 (NamedExports→AstAlloc),
-            // expected ≲15 MB after — the dominant residual was the
-            // StringArrayHashMap key Boxes for 10 000 long export names.
-            // ~40 KB/iter HashTable<u32> index remains on global.
+            // Bun v1.1.21 reported 423 MB here on macOS arm64.
+            // Bun v1.1.22 reported 4 MB here on macOS arm64.
             throw new Error("Memory leak detected");
           }
 
@@ -221,6 +220,7 @@ describe.concurrent("require.cache", () => {
           "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+          const mem = () => globalThis.Bun?.unsafe?.memoryFootprint?.() ?? process.memoryUsage.rss();
           function bust() {
             const mod = require.cache[path];
             if (mod) {
@@ -235,13 +235,13 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baseline = mem();
           for (let i = 0; i < 400; i++) {
             require(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
+          const rss = mem();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");

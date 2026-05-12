@@ -1847,10 +1847,10 @@ registry = "${mockRegistryUrl}"`,
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("regular-package");
       expect(stderr).toContain("3.0.0");
       expect(stderr.toLowerCase()).toContain("minimum release age");
+      expect(exitCode).toBe(1);
     });
 
     test("bun install (non-frozen) also rejects locked version that violates minimum-release-age", async () => {
@@ -1884,9 +1884,9 @@ registry = "${mockRegistryUrl}"`,
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("regular-package");
       expect(stderr).toContain("3.0.0");
+      expect(exitCode).toBe(1);
     });
 
     test("excludes list lets a lockfile-pinned violator through", async () => {
@@ -2024,10 +2024,10 @@ registry = "${mockRegistryUrl}"`,
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("regular-package");
       expect(stderr).toContain("99.99.99");
       expect(stderr.toLowerCase()).toContain("minimum release age");
+      expect(exitCode).toBe(1);
     });
   });
 

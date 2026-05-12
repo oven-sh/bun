@@ -797,11 +797,21 @@ pub fn installWithManager(
     // published inside the cooldown window would be installed silently —
     // exactly the scenario the setting is meant to prevent.
     if (manager.options.minimum_release_age_ms != null) {
+        const errors_before = manager.log.errors;
         try manager.enforceLockfileAgeFilter();
+        // Distinguish cooldown violations (added by enforceLockfileAgeFilter)
+        // from unrelated errors that populateManifestCache may have funneled
+        // into `manager.log` (e.g. a transient registry 5xx). The remediation
+        // note is only meaningful for the former.
+        const violations = manager.log.errors -| errors_before;
         if (manager.log.hasErrors()) {
-            try manager.log.print(Output.errorWriter());
+            if (log_level != .silent) {
+                try manager.log.print(Output.errorWriter());
+                if (violations > 0) {
+                    Output.note("remove the offending version from bun.lock, raise the bound, or add it to <d>install.minimumReleaseAgeExcludes<r>", .{});
+                }
+            }
             manager.log.reset();
-            Output.note("remove the offending version from bun.lock, raise the bound, or add it to <d>install.minimumReleaseAgeExcludes<r>", .{});
             Global.crash();
         }
     }

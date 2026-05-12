@@ -1807,17 +1807,16 @@ pub fn spawn_process_windows(
     // at the `.uv_loop` field offset. Catch that with a clear panic instead
     // of an opaque exit-code-3. Release-build assert: this is the contract
     // boundary, not a debug aid.
-    let uws_loop = options.windows.loop_.platform_event_loop();
     assert!(
-        !uws_loop.is_null(),
+        !options.windows.loop_.platform_event_loop().is_null(),
         "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
          (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
     );
-    // SAFETY: non-null verified above; `uws::WindowsLoop` is the live
-    // singleton backing this `EventLoopHandle`, valid for the spawn's duration.
-    let loop_ = unsafe { (*uws_loop).uv_loop };
+    // Non-null verified above; `EventLoopHandle::uv_loop` is the centralized
+    // accessor for the set-once `.uv_loop` field of the `uws::WindowsLoop`.
+    let loop_ = options.windows.loop_.uv_loop();
 
     let mut cwd_buf = bun_core::PathBuffer::uninit();
     cwd_buf[..options.cwd.len()].copy_from_slice(&options.cwd);

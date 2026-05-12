@@ -124,9 +124,8 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
     unsafe fn loop_(this: *mut Self) -> *mut bun_sys::windows::libuv::Loop {
         // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
-        // `platform_event_loop()` returns the live `uws::WindowsLoop*`; its
-        // embedded `uv_loop` is what `bun_io` expects.
-        unsafe { (*(*this).event_loop.platform_event_loop()).uv_loop }
+        // `EventLoopHandle::uv_loop` is the centralized `.uv_loop` accessor.
+        unsafe { (*this).event_loop.uv_loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump.
@@ -338,9 +337,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // `platform_event_loop()` returns the uws `WindowsLoop` wrapper;
             // `AsyncLoop` (= `bun_io::Loop`) is the inner `uv_loop_t` on
             // Windows (Zig: `vm.event_loop_handle.?` is `*uv.Loop`).
-            // SAFETY: the wrapper is live for the VM lifetime; `.uv_loop` is
-            // set by `us_create_loop` and stable thereafter.
-            unsafe { (*self.event_loop.platform_event_loop()).uv_loop }
+            // `EventLoopHandle::uv_loop` centralizes that field projection.
+            self.event_loop.uv_loop()
         }
     }
 

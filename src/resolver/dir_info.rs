@@ -170,6 +170,21 @@ impl Default for DirInfo {
     }
 }
 
+/// Dereference an arena-interned `NonNull<T>` to `&'static T`.
+///
+/// Single deref site for the three `Option<NonNull<_>>` read accessors on
+/// [`DirInfo`] (`package_json` / `package_json_for_dependencies` /
+/// `tsconfig_json`). The pointee is interned in the resolver's process-lifetime
+/// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
+/// merge loop); never freed until `reset()` at shutdown, after which no reader
+/// exists.
+#[inline]
+fn arena_ref<T>(p: NonNull<T>) -> &'static T {
+    // SAFETY: ARENA — see fn doc; pointee is process-lifetime, never freed
+    // while a `DirInfo` reader is live.
+    unsafe { &*p.as_ptr() }
+}
+
 impl DirInfo {
     /// Is there a "node_modules" subdirectory?
     #[inline]
@@ -193,10 +208,7 @@ impl DirInfo {
     /// mut-provenance for `reset()`; callers that only read go through here.
     #[inline]
     pub fn package_json(&self) -> Option<&'static PackageJSON> {
-        // SAFETY: ARENA — pointee is interned in the resolver's process-lifetime
-        // PackageJSON arena (see `intern_package_json`); never freed until
-        // `reset()` at shutdown, after which no reader exists.
-        self.package_json.map(|p| unsafe { &*p.as_ptr() })
+        self.package_json.map(arena_ref)
     }
 
     /// Read-only view of `package_json_for_dependencies`. The field stores
@@ -204,18 +216,13 @@ impl DirInfo {
     /// callers that only read go through here.
     #[inline]
     pub fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
-        // SAFETY: ARENA — pointee is interned in the resolver's process-lifetime
-        // PackageJSON arena (see `intern_package_json`); never freed until
-        // `reset()` at shutdown, after which no reader exists.
-        self.package_json_for_dependencies.map(|p| unsafe { &*p.as_ptr() })
+        self.package_json_for_dependencies.map(arena_ref)
     }
 
     /// Read-only view of `tsconfig_json`. See `package_json()`.
     #[inline]
     pub fn tsconfig_json(&self) -> Option<&'static TSConfigJSON> {
-        // SAFETY: ARENA — pointee is a leaked `Box<TSConfigJSON>` interned into
-        // DirInfo (resolver.rs merge loop); outlives every reader until `reset()`.
-        self.tsconfig_json.map(|p| unsafe { &*p.as_ptr() })
+        self.tsconfig_json.map(arena_ref)
     }
 
     pub fn has_parent_package(&self) -> bool {

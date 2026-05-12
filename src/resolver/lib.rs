@@ -57,10 +57,10 @@ pub use bun_options_types::global_cache::GlobalCache;
 /// `&'static [u8]` directly, this helper becomes a no-op forwarder.
 #[inline(always)]
 pub(crate) fn path_string_static(ps: &bun_string::PathString) -> &'static [u8] {
-    let s = ps.slice();
     // SAFETY: see fn doc — `PathString` always points into a process-lifetime
-    // BSS append-only store; the bytes outlive the program.
-    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+    // BSS append-only store (`FilenameStore`/`DirnameStore`); the bytes outlive
+    // the program. `Interned` is the canonical proof type for this widen.
+    unsafe { bun_ptr::Interned::assume(ps.slice()) }.as_bytes()
 }
 
 // Re-export the un-gated Phase-A body. `Resolver`, `Result`, `MatchResult`,
@@ -133,8 +133,9 @@ pub mod fs {
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
                     let s = unsafe { &mut *$backing() }.print(args)?;
-                    // SAFETY: see `append_slice`.
-                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                    // SAFETY: storage owned by the process-lifetime `BSSStringList`
+                    // singleton (never freed); `Interned` is the canonical proof type.
+                    Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
@@ -2907,17 +2908,13 @@ pub mod cache {
                 // sources) fits in 16K, so we avoid the `fstat` + `pread(0)`
                 // round-trip of `read_to_end()` and allocate exactly once.
                 const STACK_BUF_LEN: usize = 16 * 1024;
-                let mut initial_buf = [core::mem::MaybeUninit::<u8>::uninit(); STACK_BUF_LEN];
-                // SAFETY: `u8` has no invalid bit-patterns; `read_all` only
-                // writes (never reads) the slice and we only expose `[..n]`
-                // afterwards. Same pattern as the `set_len(capacity())` arm
-                // above.
-                let initial_slice: &mut [u8] = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        initial_buf.as_mut_ptr().cast::<u8>(),
-                        STACK_BUF_LEN,
-                    )
-                };
+                // PORT NOTE: zero-init (vs Zig's `undefined`) — the 16K memset
+                // is sub-µs and dominated by the `read()` syscall it precedes;
+                // matches the precedent in `io/ParentDeathWatchdog.rs`. Avoids
+                // the `&mut [u8]`-to-uninit forge that `from_raw_parts_mut`
+                // required.
+                let mut initial_buf = [0u8; STACK_BUF_LEN];
+                let initial_slice: &mut [u8] = &mut initial_buf[..];
                 let n = file.read_all(initial_slice).map_err(bun_core::Error::from)?;
 
                 let mut bytes: Vec<u8> = if n + 1 < STACK_BUF_LEN {
@@ -9323,9 +9320,10 @@ impl<'b> BrowserMapPath<'b> {
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
             // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
-            // PackageJSON (allocated in `parse_package_json`); the `'b` borrow on `map`
-            // artificially shortens what is process-lifetime storage.
-            self.remapped = unsafe { core::slice::from_raw_parts(result.as_ptr(), result.len()) };
+            // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
+            // cache is process-global); the `'b` borrow on `map` artificially shortens
+            // what is process-lifetime storage. `Interned` is the canonical proof type.
+            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
             // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
             self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
             return true;
@@ -9349,7 +9347,7 @@ impl<'b> BrowserMapPath<'b> {
                 // }
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
+                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
                     self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     // SAFETY: same as above.
@@ -9369,7 +9367,7 @@ impl<'b> BrowserMapPath<'b> {
 
         if let Some(_remapped) = map.get(index_path) {
             // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
+            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
             // SAFETY: TODO(port): lifetime — `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
             self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
             return true;
@@ -9390,7 +9388,7 @@ impl<'b> BrowserMapPath<'b> {
                 // }
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
+                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
                     self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     // SAFETY: same as above.

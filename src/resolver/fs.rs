@@ -228,8 +228,9 @@ macro_rules! string_store_impl {
                 let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` held — sole live `&mut` to the process-lifetime singleton.
                 let s = unsafe { (*Self::backing()).print(args)? };
-                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
-                Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                // SAFETY: storage owned by the process-lifetime `BSSStringList`
+                // singleton (never freed); `Interned` is the canonical proof type.
+                Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
@@ -287,15 +288,16 @@ impl strings::Appender for FilenameStoreAppender {
         // `string_store_impl!` takes; while held, this is the sole live `&mut`
         // to the process-lifetime singleton.
         let r = unsafe { (*self.backing).append(s)? };
-        // SAFETY: storage owned by the process-lifetime singleton; re-erase to `'static`.
-        Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+        // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
+        // (never freed); `Interned` is the canonical proof type for this widen.
+        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
     fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
         let _guard = self.mutex.lock_guard();
         // SAFETY: see `append`.
         let r = unsafe { (*self.backing).append_lower_case(s)? };
         // SAFETY: see `append`.
-        Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
 }
 

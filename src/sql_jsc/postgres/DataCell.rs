@@ -1072,8 +1072,7 @@ pub fn from_bytes(
 
                     // Use C++ helper for formatting
                     let mut buffer = [0u8; 32];
-                    // SAFETY: buffer is valid for buffer.len() bytes
-                    let len = unsafe { Postgres__formatTime(microseconds, buffer.as_mut_ptr(), buffer.len()) };
+                    let len = Postgres__formatTime(microseconds, &mut buffer, 32);
 
                     Ok(SQLDataCell {
                         tag: Tag::String,
@@ -1090,10 +1089,7 @@ pub fn from_bytes(
 
                     // Use C++ helper for formatting with timezone
                     let mut buffer = [0u8; 48];
-                    // SAFETY: buffer is valid for buffer.len() bytes
-                    let len = unsafe {
-                        Postgres__formatTimeTz(microseconds, tz_offset_seconds, buffer.as_mut_ptr(), buffer.len())
-                    };
+                    let len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &mut buffer, 48);
 
                     Ok(SQLDataCell {
                         tag: Tag::String,
@@ -1585,8 +1581,13 @@ fn parse_int_u32(s: &[u8]) -> Option<u32> {
 // External C++ formatting functions
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn Postgres__formatTime(microseconds: i64, buffer: *mut u8, buffer_size: usize) -> usize;
-    fn Postgres__formatTimeTz(microseconds: i64, tz_offset_seconds: i32, buffer: *mut u8, buffer_size: usize) -> usize;
+    // `&mut [u8; N]` is ABI-identical to `*mut u8` (thin pointer to a `Sized`
+    // array == pointer to its first element); the reference type discharges the
+    // "valid for `buffer_size` bytes" precondition, so → `safe fn`. The C++
+    // side never writes past `buffer_size`, and the only two callers pass
+    // exactly these fixed-size stack arrays.
+    safe fn Postgres__formatTime(microseconds: i64, buffer: &mut [u8; 32], buffer_size: usize) -> usize;
+    safe fn Postgres__formatTimeTz(microseconds: i64, tz_offset_seconds: i32, buffer: &mut [u8; 48], buffer_size: usize) -> usize;
 }
 
 // ported from: src/sql_jsc/postgres/DataCell.zig

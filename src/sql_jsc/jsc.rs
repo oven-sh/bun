@@ -453,9 +453,11 @@ impl AutoFlusher {
         this: *mut T,
         vm: &VirtualMachine,
     ) {
-        unsafe extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
-            // SAFETY: ctx is the *mut T registered below; the queue feeds it
-            // back unchanged.
+        // Body is fully safe — `cast()` is safe and `on_auto_flush` takes a
+        // raw pointer by value. `ctx` is the `*mut T` registered below; the
+        // queue feeds it back unchanged. A safe `extern "C" fn` coerces to the
+        // `DeferredRepeatingTask` fn-pointer type.
+        extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
             T::on_auto_flush(ctx.cast::<T>())
         }
         // SAFETY: vm.event_loop() is the live VM-owned loop; deferred_tasks
@@ -854,12 +856,14 @@ impl IntoJSHostFn<HostFnRaw> for JSHostFn {
 // `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
 // thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
 // The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
+// Thunk bodies scope their raw-ptr derefs locally, so the fn itself has no
+// caller preconditions; a safe `extern fn` coerces to the `JSHostFn` type.
 macro_rules! sql_jsc_host_thunk {
     ($name:ident<$F:ident>($($args:tt)*) -> $ret:ty where [$($bound:tt)+] $body:block) => {
         #[cfg(all(windows, target_arch = "x86_64"))]
-        unsafe extern "sysv64" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+        extern "sysv64" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
         #[cfg(not(all(windows, target_arch = "x86_64")))]
-        unsafe extern "C" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+        extern "C" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
     };
 }
 

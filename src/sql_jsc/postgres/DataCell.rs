@@ -477,11 +477,7 @@ fn parse_array(
                         }
                         b'I' | b'i' => {
                             // infinity
-                            if slice.len() < 8 {
-                                return Err(AnyPostgresError::UnsupportedArrayFormat);
-                            }
-
-                            if bun_core::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
+                            if bun_core::strings::starts_with_case_insensitive_ascii(slice, b"Infinity") {
                                 if matches!(
                                     array_type,
                                     types::Tag::date_array | types::Tag::timestamp_array | types::Tag::timestamptz_array
@@ -575,10 +571,7 @@ fn parse_array(
                                         // infinity
                                         is_infinity = true;
                                         let element = if is_negative { &slice[1..] } else { slice };
-                                        if element.len() < 8 {
-                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
-                                        }
-                                        if bun_core::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
+                                        if bun_core::strings::starts_with_case_insensitive_ascii(element, b"Infinity") {
                                             let val = if is_negative { -f64::INFINITY } else { f64::INFINITY };
                                             if matches!(
                                                 array_type,

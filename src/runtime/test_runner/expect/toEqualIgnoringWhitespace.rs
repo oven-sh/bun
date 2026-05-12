@@ -16,13 +16,9 @@ pub fn to_equal_ignoring_whitespace(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — scopeguard owns the &mut Self for the scope.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
-    let this: &Expect = *this;
+    let (this, value, not) =
+        this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
-    let this_value = frame.this();
-    // TODO(port): arguments_old(1) returned a struct with ptr/len; assume &[JSValue] here.
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -31,11 +27,7 @@ pub fn to_equal_ignoring_whitespace(
         )));
     }
 
-    this.increment_expect_call_counter();
-
     let expected = arguments[0];
-    let value: JSValue =
-        this.get_value(global, this_value, "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
     if !expected.is_string() {
         return Err(global.throw(format_args!(
@@ -43,7 +35,6 @@ pub fn to_equal_ignoring_whitespace(
         )));
     }
 
-    let not = this.flags.get().not();
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {

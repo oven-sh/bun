@@ -454,11 +454,7 @@ pub enum AddressError {
     #[error("InvalidLength")]
     InvalidLength,
 }
-impl From<AddressError> for bun_core::Error {
-    fn from(e: AddressError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(AddressError);
 
 impl SocketAddress {
     /// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6
@@ -839,10 +835,10 @@ impl AF {
 
             if fam_str.is_8bit() {
                 let slice = fam_str.latin1();
-                if slice[..4].eq_ignore_ascii_case(b"ipv4") {
+                if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv4") {
                     return Ok(AF::INET);
                 }
-                if slice[..4].eq_ignore_ascii_case(b"ipv6") {
+                if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv6") {
                     return Ok(AF::INET6);
                 }
                 Err(global.throw_invalid_argument_property_value(

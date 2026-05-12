@@ -68,10 +68,7 @@ pub fn to_have_been_nth_called_with(
     let mut formatter = super::make_formatter(global);
 
     let expected_args_slice = &arguments[1..];
-    let expected_args_js_array = JSValue::create_empty_array(global, expected_args_slice.len())?;
-    for (i, arg) in expected_args_slice.iter().enumerate() {
-        expected_args_js_array.put_index(global, u32::try_from(i).unwrap(), *arg)?;
-    }
+    let expected_args_js_array = JSValue::create_array_from_slice(global, expected_args_slice)?;
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {

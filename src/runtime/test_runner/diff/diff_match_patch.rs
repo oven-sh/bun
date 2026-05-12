@@ -1534,10 +1534,7 @@ fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> 
 
 // ───────────────────────── helpers ─────────────────────────
 
-#[inline]
-fn dupe<T: Copy>(s: &[T]) -> Box<[T]> {
-    Box::<[T]>::from(s)
-}
+use bun_ptr::owned::alloc_dupe_slice as dupe;
 
 use bun_core::concat_boxed as concat;
 

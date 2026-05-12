@@ -278,6 +278,12 @@ impl Result {
     }
 }
 
+// Recover the parent `BunTest` from `&mut self`. Returns `NonNull` (not
+// `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
+// `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
+// must dereference at point-of-use into disjoint fields only.
+bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
+
 impl Execution {
     pub fn init() -> Execution {
         Execution {
@@ -299,21 +305,6 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
         // TODO(port): narrow error set — Zig `try toOwnedSlice()` was OOM-only; Rust Vec→Box is infallible.
         Ok(())
-    }
-
-    /// Recover the parent `BunTest` from `&mut self`.
-    ///
-    /// Returns `NonNull` instead of `&mut BunTest` because `self` *is* `BunTest.execution`, so
-    /// materializing a `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB.
-    /// Callers must dereference at point-of-use into disjoint fields only, never holding the
-    /// resulting `&mut BunTest` across any access through `self`.
-    fn bun_test(&mut self) -> NonNull<BunTest> {
-        // SAFETY: self points to BunTest.execution (Execution is only ever constructed embedded in BunTest)
-        unsafe {
-            NonNull::new_unchecked(
-                bun_core::from_field_ptr!(BunTest, execution, std::ptr::from_mut::<Execution>(self)),
-            )
-        }
     }
 
     pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {

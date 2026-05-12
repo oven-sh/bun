@@ -15,12 +15,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard so
-        // post_match runs on every exit path; `this` is then accessed via the guard's DerefMut
-        // so the &mut borrow is held in one place instead of captured by a closure.
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        let (this, value, not) =
+            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
 
-        let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
@@ -28,13 +25,8 @@ impl Expect {
             return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
         }
 
-        this.increment_expect_call_counter();
-
         let expected = arguments[0];
         expected.ensure_still_alive();
-        let value: JSValue = this.get_value(global, this_value, "toContain", "<green>expected<r>")?;
-
-        let not = this.flags.get().not();
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig

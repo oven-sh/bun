@@ -415,22 +415,6 @@ impl RespLike for uws_sys::h3::Response {
     }
 }
 
-// Local shim: `SystemError` lives upstream and lacks `Default`; this builds the
-// Zig field-default shape (`errno=0`, `fd=c_int::MIN`, strings empty).
-#[inline]
-fn system_error_default() -> SystemError {
-    SystemError {
-        errno: 0,
-        code: BunString::empty(),
-        message: BunString::empty(),
-        path: BunString::empty(),
-        syscall: BunString::empty(),
-        hostname: BunString::empty(),
-        fd: c_int::MIN,
-        dest: BunString::empty(),
-    }
-}
-
 // Module-level type aliases replacing the unstable inherent associated types
 // (`pub type App = …` inside `impl NewServer`).
 pub type ServerApp<const SSL: bool> = uws::NewApp<SSL>;
@@ -1613,12 +1597,6 @@ where
         Ok(JSValue::js_number(f64::from(
             self.app_mut().num_subscribers(topic.slice()),
         )))
-    }
-
-    // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
-    // this directly via `host_fn_construct_result` — no `#[host_fn]` attribute.
-    pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw2("Server() is not a constructor", ()))
     }
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────

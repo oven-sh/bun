@@ -11,10 +11,13 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // defer this.postMatch(globalThis);
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        let (this, value, not) = self.matcher_prelude(
+            global,
+            frame.this(),
+            "toBeWithin",
+            "<green>start<r><d>, <r><green>end<r>",
+        )?;
 
-        let this_value = frame.this();
         let _arguments = frame.arguments_old::<2>();
         let arguments = _arguments.slice();
 
@@ -23,13 +26,6 @@ impl Expect {
                 "toBeWithin() requires 2 arguments"
             )));
         }
-
-        let value: JSValue = this.get_value(
-            global,
-            this_value,
-            "toBeWithin",
-            "<green>start<r><d>, <r><green>end<r>",
-        )?;
 
         let start_value = arguments[0];
         start_value.ensure_still_alive();
@@ -49,15 +45,12 @@ impl Expect {
             )));
         }
 
-        this.increment_expect_call_counter();
-
         let mut pass = value.is_number();
         if pass {
             let num = value.as_number();
             pass = num >= start_value.as_number() && num < end_value.as_number();
         }
 
-        let not = this.flags.get().not();
         if not {
             pass = !pass;
         }

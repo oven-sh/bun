@@ -7,7 +7,7 @@ use crate::jsc::{
     VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_jsc::JsCell;
-use bun_ptr::{BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -23,9 +23,7 @@ use crate::postgres::command_tag_jsc::CommandTagJsc as _;
 use super::my_sql_query::MySQLQuery;
 use super::my_sql_statement::MySQLStatement;
 
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
-}
+bun_core::define_scoped_log!(debug, MySQLQuery);
 
 // TODO(b2-blocked): #[bun_jsc::JsClass] — proc-macro emits shims typed against
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
@@ -53,15 +51,6 @@ pub struct JSMySQLQuery {
 // struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
-    /// `self`'s address as `*mut Self` for queue storage / `ScopedRef` ctx
-    /// slots. Consumers deref it as `&*const` (shared) — every method body is
-    /// `&self` — so no write provenance is required; the `*mut` spelling is
-    /// purely to match the existing `*mut JSMySQLQuery` queue/FFI signatures.
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
-
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
     /// `ScopedRef::new` here replaces N per-site
     /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live

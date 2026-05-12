@@ -36,11 +36,9 @@ pub fn to_be_one_of(
     global_this: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard so post_match runs on every
-    // exit path; `this` remains usable below via DerefMut on the guard (matches toContainEqual/toBeDefined).
-    let this = scopeguard::guard(this, |t| t.post_match(global_this));
+    let (this, expected, not) =
+        this.matcher_prelude(global_this, call_frame.this(), "toBeOneOf", "<green>expected<r>")?;
 
-    let this_value = call_frame.this();
     let arguments_ = call_frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
@@ -48,12 +46,7 @@ pub fn to_be_one_of(
         return Err(global_this.throw_invalid_arguments(format_args!("toBeOneOf() takes 1 argument")));
     }
 
-    this.increment_expect_call_counter();
-
-    let expected = this.get_value(global_this, this_value, "toBeOneOf", "<green>expected<r>")?;
     let list_value: JSValue = arguments[0];
-
-    let not = this.flags.get().not();
     let mut pass = false;
 
     if list_value.js_type().is_array_like() {

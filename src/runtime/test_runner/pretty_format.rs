@@ -45,35 +45,6 @@ impl core::fmt::Display for PrettyStr {
 
 use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
 
-/// Port of Zig `JSLexer.isLatin1Identifier([]const u16, …)` — the generic in
-/// `js_lexer.rs` only covers the `[u8]` case today. Kept local to avoid
-/// touching a sibling crate this round.
-#[inline]
-fn is_latin1_identifier_utf16(name: &[u16]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let c0 = name[0];
-    if !((c0 >= b'a' as u16 && c0 <= b'z' as u16)
-        || (c0 >= b'A' as u16 && c0 <= b'Z' as u16)
-        || c0 == b'$' as u16
-        || c0 == b'_' as u16)
-    {
-        return false;
-    }
-    for &c in &name[1..] {
-        if !((c >= b'0' as u16 && c <= b'9' as u16)
-            || (c >= b'a' as u16 && c <= b'z' as u16)
-            || (c >= b'A' as u16 && c <= b'Z' as u16)
-            || c == b'$' as u16
-            || c == b'_' as u16)
-        {
-            return false;
-        }
-    }
-    true
-}
-
 /// `Expect*.js.*GetCached` accessors (Zig: `ExpectAny.js.constructorValueGetCached` etc.)
 /// — generate-classes.ts emits these per-type for `cache: true` props
 /// (jest.classes.ts). The Rust port has no inherent associated modules, so each
@@ -1149,7 +1120,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             } else if key.is_16_bit()
-                && is_latin1_identifier_utf16(key.utf16_slice_aligned())
+                && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice_aligned())
             {
                 this.add_for_new_line(key.len + 2);
 
@@ -1428,21 +1399,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Integer => {
                     let int = value.to_int64();
-                    if int < u32::MAX as i64 {
-                        let mut i = int;
-                        let is_negative = i < 0;
-                        if is_negative {
-                            i = -i;
-                        }
-                        let digits = if i != 0 {
-                            bun_fmt::fast_digit_count(i as u64) as usize + is_negative as usize
-                        } else {
-                            1usize
-                        };
-                        self.add_for_new_line(digits);
-                    } else {
-                        self.add_for_new_line(bun_fmt::count_int(int));
-                    }
+                    self.add_for_new_line(bun_fmt::digit_count(int));
                     writer.print(format_args!(
                         "{}{}{}",
                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
@@ -1827,16 +1784,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::fast_digit_count(
-                                    u64::try_from(timer.internals.id.max(0)).unwrap(),
-                                ) as usize,
+                                + bun_fmt::digit_count(timer.internals.id.max(0)),
                         );
                         if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::fast_digit_count(
-                                        u64::try_from(timer.internals.id.max(0)).unwrap(),
-                                    ) as usize,
+                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1869,9 +1822,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::fast_digit_count(
-                                    u64::try_from(immediate.internals.id.max(0)).unwrap(),
-                                ) as usize,
+                                + bun_fmt::digit_count(immediate.internals.id.max(0)),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",

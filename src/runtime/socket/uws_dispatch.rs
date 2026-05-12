@@ -126,121 +126,49 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_open(
-    s: *mut us_socket_t,
-    is_client: c_int,
-    ip: *mut u8,
-    ip_len: c_int,
-) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_open {
-        unsafe { f(s, is_client, ip, ip_len) }
-    } else {
-        s
-    }
+/// Stamps `#[no_mangle] extern "C"` shims that look up an `Option<fn>` in a
+/// vtable and tail-call it (or return a fallback). The callback arg list is
+/// spelled separately from the fn param list so a row can append extras the C
+/// ABI doesn't pass us (e.g. handshake's trailing null userdata).
+macro_rules! us_dispatch_shims {
+    ($(
+        fn $name:ident($recv:ident: *mut $Recv:ty $(, $a:ident: $t:ty)* $(,)?) -> $ret:ty
+            = $lookup:ident.$field:ident($($call:expr),* $(,)?) or $default:expr;
+    )*) => {$(
+        #[unsafe(no_mangle)]
+        #[allow(clippy::unused_unit)]
+        pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+            match $lookup($recv).$field {
+                Some(f) => unsafe { f($($call),*) },
+                None => $default,
+            }
+        }
+    )*};
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_data(
-    s: *mut us_socket_t,
-    data: *mut u8,
-    len: c_int,
-) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_data {
-        unsafe { f(s, data, len) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_fd {
-        unsafe { f(s, fd) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_writable(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_writable {
-        unsafe { f(s) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_close(
-    s: *mut us_socket_t,
-    code: c_int,
-    reason: *mut c_void,
-) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_close {
-        unsafe { f(s, code, reason) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_timeout {
-        unsafe { f(s) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_long_timeout {
-        unsafe { f(s) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_end {
-        unsafe { f(s) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_connect_error {
-        unsafe { f(s, code) }
-    } else {
-        s
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_connecting_error(
-    c: *mut ConnectingSocket,
-    code: c_int,
-) -> *mut ConnectingSocket {
-    if let Some(f) = vtc(c).on_connecting_error {
-        unsafe { f(c, code) }
-    } else {
-        c
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_handshake(
-    s: *mut us_socket_t,
-    ok: c_int,
-    err: us_bun_verify_error_t,
-) {
-    if let Some(f) = vt(s).on_handshake {
-        unsafe { f(s, ok, err, core::ptr::null_mut()) };
-    }
+us_dispatch_shims! {
+    fn us_dispatch_open(s: *mut us_socket_t, is_client: c_int, ip: *mut u8, ip_len: c_int) -> *mut us_socket_t
+        = vt.on_open(s, is_client, ip, ip_len) or s;
+    fn us_dispatch_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t
+        = vt.on_data(s, data, len) or s;
+    fn us_dispatch_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t
+        = vt.on_fd(s, fd) or s;
+    fn us_dispatch_writable(s: *mut us_socket_t) -> *mut us_socket_t
+        = vt.on_writable(s) or s;
+    fn us_dispatch_close(s: *mut us_socket_t, code: c_int, reason: *mut c_void) -> *mut us_socket_t
+        = vt.on_close(s, code, reason) or s;
+    fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t
+        = vt.on_timeout(s) or s;
+    fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t
+        = vt.on_long_timeout(s) or s;
+    fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t
+        = vt.on_end(s) or s;
+    fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t
+        = vt.on_connect_error(s, code) or s;
+    fn us_dispatch_connecting_error(c: *mut ConnectingSocket, code: c_int) -> *mut ConnectingSocket
+        = vtc.on_connecting_error(c, code) or c;
+    fn us_dispatch_handshake(s: *mut us_socket_t, ok: c_int, err: us_bun_verify_error_t) -> ()
+        = vt.on_handshake(s, ok, err, core::ptr::null_mut()) or ();
 }
 
 /// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of

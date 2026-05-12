@@ -16,7 +16,7 @@ use bun_core::String as BunString;
 use bun_core::strings;
 use bun_core::{self, Output};
 use bun_io::KeepAlive;
-use bun_ptr::{BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
@@ -50,10 +50,7 @@ pub use bun_sql::postgres::TLSStatus as TlsStatus;
 
 type Socket = uws::AnySocket;
 
-bun_core::declare_scope!(Postgres, visible);
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(Postgres, $($arg)*) };
-}
+bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
@@ -195,15 +192,6 @@ impl PostgresSQLConnection {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
-    }
-
-    /// `self`'s address as `*mut Self` for uSockets ext / deferred-task ctx
-    /// slots. Callbacks deref it as shared (`&*const`) — all mutation routes
-    /// through `Cell`/`JsCell` — so no write provenance is required; the
-    /// `*mut` spelling is purely to match the C signature.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1391,13 +1379,23 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
+    /// VM-shutdown guard shared by the 6 socket-event shims below. Mirrors the
+    /// open-coded `if (this.vm.isShuttingDown()) { @branchHint(.unlikely); this.close(); return; }`
+    /// blocks in `PostgresSQLConnection.zig:SocketHandler` (onOpen / onHandshake_ /
+    /// onConnectError / onTimeout / onData / onWritable). `on_close` and `on_end`
+    /// intentionally do NOT route through this — they forward unconditionally.
+    #[inline]
+    fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
         if this.vm().is_shutting_down() {
             bun_core::hint::cold();
             this.close();
             return;
         }
-        this.on_open(Self::_socket(socket));
+        f(this)
+    }
+
+    pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
+        Self::guarded(this, |t| t.on_open(Self::_socket(socket)));
     }
 
     fn on_handshake_(
@@ -1406,12 +1404,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        this.on_handshake(success, ssl_error);
+        Self::guarded(this, |t| t.on_handshake(success, ssl_error));
     }
 
     // pub const onHandshake = if (ssl) onHandshake_ else null;
@@ -1434,39 +1427,19 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        this.on_close();
+        Self::guarded(this, |t| t.on_close());
     }
 
     pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        this.on_timeout();
+        Self::guarded(this, |t| t.on_timeout());
     }
 
     pub fn on_data(this: &PostgresSQLConnection, _socket: SocketType<SSL>, data: &[u8]) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        this.on_data(data);
+        Self::guarded(this, |t| t.on_data(data));
     }
 
     pub fn on_writable(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        this.on_drain();
+        Self::guarded(this, |t| t.on_drain());
     }
 }
 

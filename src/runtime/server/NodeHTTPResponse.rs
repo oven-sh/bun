@@ -10,6 +10,7 @@ use bun_core::scoped_log;
 use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
+use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -299,15 +300,6 @@ impl NodeHTTPResponse {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
-    }
-
-    /// `self`'s address as `*mut Self` for uSockets / deferred-task ctx slots.
-    /// The callbacks deref it as `&*const` (shared) — see `*_shim` above — so
-    /// no write provenance is required; the `*mut` spelling is purely to match
-    /// the C signature.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1174,8 +1166,6 @@ impl NodeHTTPResponse {
                     .buffered_request_body_data_during_pause
                     .replace(Vec::new());
                 let paused_len = paused.len();
-                // PORT NOTE: `JSValue::create_buffer_from_length` is gated upstream;
-                // build the contiguous buffer locally then `ArrayBuffer::create_buffer`.
                 let mut combined: Vec<u8> = Vec::with_capacity(paused_len + chunk.len());
                 combined.extend_from_slice(&paused);
                 combined.extend_from_slice(chunk);

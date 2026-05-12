@@ -11,7 +11,7 @@ use crate::shared::CachedStructure;
 use bun_boringssl_sys as boringssl;
 use bun_core::strings;
 use bun_core::{TimespecMockMode, err, fmt as bun_fmt, timespec};
-use bun_ptr::{BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -185,16 +185,6 @@ impl JSMySQLConnection {
         // `MySQLConnection::get_js_connection()` forms a shared
         // `&JSMySQLConnection` only.
         unsafe { self.connection.get_mut() }
-    }
-
-    /// `self`'s address as `*mut Self` for deferred-task / scopeguard ctx
-    /// slots and `ref_guard`. The closures/trampolines deref it as shared
-    /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
-    /// provenance is required; the `*mut` spelling is purely to match the
-    /// existing `DerefOnDrop` / `HasAutoFlush` ABI.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     // ────────────────────────────────────────────────────────────────────────

@@ -32,10 +32,7 @@ pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 // Using JsResult<T> (Thrown | OutOfMemory | Terminated) in Phase A.
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
-bun_output::declare_scope!(Redis, visible);
-macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(Redis, $($args)*) };
-}
+bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
@@ -383,25 +380,6 @@ impl DeferredFailure {
     }
 }
 
-// ─── local shims for upstream types missing dispatch surface ────────────────
-
-/// `bun_uws::AnySocket` lacks `write`/`close`; dispatch on the variant here.
-#[inline]
-fn any_socket_write(socket: &AnySocket, data: &[u8]) -> i32 {
-    match socket {
-        AnySocket::SocketTcp(s) => s.write(data),
-        AnySocket::SocketTls(s) => s.write(data),
-    }
-}
-
-#[inline]
-fn any_socket_close(socket: &AnySocket) {
-    match socket {
-        AnySocket::SocketTcp(s) => s.close(uws::CloseKind::Normal),
-        AnySocket::SocketTls(s) => s.close(uws::CloseKind::Normal),
-    }
-}
-
 /// Read the parser's current byte offset. Mirrors direct `reader.pos` field
 /// access in the Zig implementation (Zig struct fields are public).
 #[inline]
@@ -615,7 +593,7 @@ impl ValkeyClient {
         if chunk.is_empty() {
             return false;
         }
-        let wrote = any_socket_write(&self.socket, chunk);
+        let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
                 .consume(u32::try_from(wrote).expect("int cast"));
@@ -686,7 +664,7 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        any_socket_close(&socket);
+        socket.close(uws::CloseCode::Normal);
     }
 
     /// Handle connection closed event
@@ -1346,7 +1324,7 @@ impl ValkeyClient {
             // Optimization: avoid cloning the data an extra time.
             // PORT NOTE: `defer allocator.free(data)` — `data: Box<[u8]>` drops at scope end.
 
-            let wrote = any_socket_write(&self.socket, &data);
+            let wrote = self.socket.write(&data);
             let unwritten = &data[usize::try_from(wrote.max(0)).expect("int cast")..];
 
             if !unwritten.is_empty() {

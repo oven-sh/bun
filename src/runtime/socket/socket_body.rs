@@ -34,20 +34,15 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_uws as uws;
 
-// `uws::NewSocketHandler::from_duplex` (uws_sys/socket.zig:308) not yet
-// surfaced in `bun_uws` — wrap the pointer in the `UpgradedDuplex` variant.
-trait SocketHandlerFromDuplex {
-    fn from_duplex(duplex: &mut UpgradedDuplex) -> Self;
-}
-impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
-    #[inline]
-    fn from_duplex(duplex: &mut UpgradedDuplex) -> Self {
-        Self {
-            socket: uws::InternalSocket::UpgradedDuplex(
-                std::ptr::from_mut::<UpgradedDuplex>(duplex).cast(),
-            ),
-        }
-    }
+// `uws::NewSocketHandler::from_duplex` is now inherent on the canonical
+// `bun_uws_sys::socket` impl; thin local wrapper that erases the concrete
+// `runtime::socket::UpgradedDuplex` to the opaque `bun_uws_sys::UpgradedDuplex`
+// handle (same allocation, different-crate newtype — see uws_sys/lib.rs §shim).
+#[inline]
+fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHandler<SSL> {
+    uws::NewSocketHandler::<SSL>::from_duplex(
+        std::ptr::from_mut::<UpgradedDuplex>(duplex).cast(),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3934,9 +3929,7 @@ pub fn js_upgrade_duplex_to_tls(
     let _ = ssl_opts;
     tls_ref.ref_();
 
-    tls_ref
-        .socket
-        .set(SocketHandler::<true>::from_duplex(&mut dc.upgrade));
+    tls_ref.socket.set(from_duplex::<true>(&mut dc.upgrade));
     tls_ref.mark_active();
     tls_ref.poll_ref.with_mut(|p| {
         p.ref_(bun_io::posix_event_loop::get_vm_ctx(

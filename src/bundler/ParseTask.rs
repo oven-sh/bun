@@ -2841,12 +2841,24 @@ pub mod parse_worker {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig)
-        // — fires after the pending_items diff defer. The &mut borrow above has
-        // ended; reclaim the heap allocation made in `run` (heap::into_raw).
-        // SAFETY: `result` came from `bun_core::heap::into_raw` above and is
-        // uniquely owned by this callback; not used after this point.
-        drop(unsafe { bun_core::heap::take(result) });
+        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
+        // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this
+        // to `drop(heap::take(result))`, but that runs full Drop glue:
+        // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
+        // graph's placeholder and moves `result.ast` out, so post-swap
+        // `result.value` holds the *placeholder* `Source` whose
+        // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
+        // graph's swapped-in Source still references (asan use-after-poison at
+        // process_files_to_copy:4241 in bundler_loader/_plugin tests). Match Zig:
+        // dealloc the box without running Drop.
+        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
+        // above; uniquely owned. Dealloc with the same layout, no field Drop.
+        unsafe {
+            std::alloc::dealloc(
+                result.cast::<u8>(),
+                std::alloc::Layout::new::<Result>(),
+            )
+        };
     }
 
     pub fn on_complete(result: *mut Result) {
@@ -2858,12 +2870,15 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
-        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig)
-        // — fires after the pending_items diff defer. `r`'s borrow has ended;
-        // reclaim the heap allocation made in `run` (heap::into_raw).
-        // SAFETY: `result` came from `bun_core::heap::into_raw` above and is
-        // uniquely owned by this callback; not used after this point.
-        drop(unsafe { bun_core::heap::take(result) });
+        // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
+        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
+        // above; uniquely owned. Dealloc with the same layout, no field Drop.
+        unsafe {
+            std::alloc::dealloc(
+                result.cast::<u8>(),
+                std::alloc::Layout::new::<Result>(),
+            )
+        };
     }
 } // end mod parse_worker
 

@@ -1029,6 +1029,10 @@ lexer_impl_header! {
         Ok(())
     }
 
+    // PERF: each `QUOTE` instantiation has exactly one caller
+    // (`parse_string_literal::<QUOTE>`); hint cross-CGU so LLVM's
+    // single-caller merge fires and the byte loop lands inside `next()`.
+    #[inline]
     fn parse_string_literal_inner<const QUOTE: i32>(
         &mut self,
     ) -> Result<InnerStringLiteral, Error> {
@@ -1159,6 +1163,8 @@ lexer_impl_header! {
         Ok(InnerStringLiteral::new(suffix_len, needs_decode))
     }
 
+    // PERF: each `QUOTE` instantiation is single-caller from `next()`.
+    #[inline]
     pub fn parse_string_literal<const QUOTE: i32>(&mut self) -> Result<(), Error> {
         if QUOTE != 0x60 {
             self.token = T::TStringLiteral;
@@ -1614,6 +1620,19 @@ lexer_impl_header! {
         Ok(())
     }
 
+    /// PERF: `next()` is the *only* dispatch boundary between the parser and
+    /// the lexer's inner scanners. It is called from hundreds of parser sites
+    /// (directly and via `expect()`), so we explicitly forbid inlining it
+    /// outward — one symbol per `JSONOptions` monomorphization, exactly like
+    /// Zig's `pub fn next(noalias lexer: *LexerType)`. Conversely, every hot
+    /// scanner it dispatches to (`latin1_identifier_continue_length`,
+    /// `parse_numeric_literal_or_dot`, `parse_string_literal::<QUOTE>`) is
+    /// single-caller per instantiation and marked `#[inline]`/`#[inline(always)]`
+    /// so LLVM merges them *into* this body the way Zig's comptime
+    /// monomorphisation does. Without this anchor, LLVM's partial-inliner was
+    /// observed splitting `next()` and leaving the identifier scanner as a
+    /// separate ~1.8% symbol in `build/create-next` profiles.
+    #[inline(never)]
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
@@ -2408,6 +2427,7 @@ lexer_impl_header! {
         )
     }
 
+    #[inline(always)]
     pub fn raw(&self) -> &'a [u8] {
         // `self.contents: &'a [u8]` — slice carries `'a` directly.
         &self.contents[self.start..self.end]
@@ -3561,6 +3581,12 @@ lexer_impl_header! {
         // PERF(port): Zig used MutableString.toOwnedSliceLength — extra copy here.
     }
 
+    // PERF: single caller (`next()`'s `0x2E | 0x30..=0x39` arm) per
+    // monomorphization. `#[inline]` makes the body available cross-CGU so
+    // LLVM's single-caller heuristic merges it into `next()` like Zig does;
+    // the hot `T::TDot` early-return then sits inside `next()`'s jump table
+    // with no call overhead.
+    #[inline]
     fn parse_numeric_literal_or_dot(&mut self) -> Result<(), Error> {
         // Number or dot;
         let first = self.code_point;
@@ -4090,11 +4116,16 @@ fn float64(num: i32) -> f64 {
 }
 
 
+// PERF: force-inline — sole call site is the identifier arm of `next()`, the
+// hottest token by frequency. Without `always`, LLVM kept this as a separate
+// symbol (call + ret per identifier) once `next()` was `#[inline(never)]`.
+#[inline(always)]
 fn latin1_identifier_continue_length(name: &[u8]) -> usize {
     // We don't use SIMD for this because the input will be very short.
     latin1_identifier_continue_length_scalar(name)
 }
 
+#[inline(always)]
 pub fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     for (i, &c) in name.iter().enumerate() {
         match c {

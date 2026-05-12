@@ -704,6 +704,7 @@ pub const Runner = struct {
 const string = []const u8;
 
 const DotEnv = @import("../dotenv/env_loader.zig");
+const expr_jsc = @import("./expr_jsc.zig");
 const std = @import("std");
 
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
@@ -737,5 +738,3 @@ const ToJSError = js_ast.ToJSError;
 const JavaScript = bun.jsc;
 const jsc = bun.jsc;
 const js = bun.jsc.C;
-
-const expr_jsc = @import("./expr_jsc.zig");

@@ -31,13 +31,9 @@ test("bun build: macro called as tagged template literal", async () => {
 
   expect(stderr).toBe("");
   expect(stdout).toContain('console.log("/svg/spritesheet.svg#hello")');
-  expect(stdout).toContain(
-    'console.log(\'{"cooked":["a","b","c"],"raw":["a","b","c"],"values":[1,true]}\')',
-  );
+  expect(stdout).toContain('console.log(\'{"cooked":["a","b","c"],"raw":["a","b","c"],"values":[1,true]}\')');
   // cooked has a real newline (\n in JSON); raw has backslash-n (\\n in JSON)
-  expect(stdout).toContain(
-    'console.log(\'{"cooked":["line1\\\\nline2"],"raw":["line1\\\\\\\\nline2"],"values":[]}\')',
-  );
+  expect(stdout).toContain('console.log(\'{"cooked":["line1\\\\nline2"],"raw":["line1\\\\\\\\nline2"],"values":[]}\')');
   expect(exitCode).toBe(0);
 });
 

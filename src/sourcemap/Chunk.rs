@@ -374,8 +374,17 @@ pub type SourceMapper<T> = SourceMapFormat<T>;
 // were re-emitted in `bun_js_printer`, `bun_bundler`, and `bun_runtime` CGUs
 // (≈7.3 MB of duplicated text, each copy far from
 // `internal_source_map::Builder::flush_window` which lives here). Making them
-// concrete + `#[inline(never)]` pins exactly one copy in the `bun_sourcemap`
-// CGU, adjacent to `flush_window`, and downstream crates emit a plain `call`.
+// concrete pins exactly one copy in the `bun_sourcemap` CGU, adjacent to
+// `flush_window`, and downstream crates emit a plain `call`.
+//
+// `#[inline(never)]` is kept on the cross-crate entry points only
+// (`generate_chunk` matches Zig's `noinline`; `add_source_mapping` is the
+// per-token call site from the printer). `update_generated_line_and_column` is
+// *not* marked never-inline — Zig's `updateGeneratedLineAndColumn` isn't
+// `noinline` either — so LLVM may fold it into `add_source_mapping` and skip
+// the extra call+ret per emitted token. The concrete (non-generic) impl is
+// what prevents the cross-CGU duplication; the inline barrier is not needed
+// for that on the intra-crate callee.
 impl NewBuilder<VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
@@ -407,7 +416,6 @@ impl NewBuilder<VLQSourceMap> {
 
     // Scan over the printed text since the last source mapping and update the
     // generated line and column numbers
-    #[inline(never)]
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
         let mut needs_mapping =

@@ -1189,10 +1189,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // compile-error at the later `bun_ctx.environment` access, so it never reaches here;
         // Rust's trait abstraction defeats that comptime guard, hence the explicit mode check.
         bun_core::output::source::stdio::restore();
-        // SAFETY: FFI; sets `HANDLE_FLAG_INHERIT` on the three standard
-        // handles. No preconditions beyond those handles being valid (they are
-        // process-lifetime).
-        unsafe { bun_sys::windows::windows_enable_stdio_inheritance() };
+        // Declared locally as `safe fn` (the `bun_sys::windows` re-export
+        // forwards `bun_windows_sys::externs::windows_enable_stdio_inheritance`,
+        // which is not yet `safe`-qualified): zero args, zero memory-safety
+        // preconditions — the C++ shim only flips `HANDLE_FLAG_INHERIT` on the
+        // three process-lifetime standard handles. Matches the local `safe fn`
+        // redecl already used in `bun_sys::windows::become_watcher_manager`.
+        unsafe extern "C" {
+            safe fn windows_enable_stdio_inheritance();
+        }
+        windows_enable_stdio_inheritance();
     }
 
     // I attempted to use lower level methods for this, but it really seems

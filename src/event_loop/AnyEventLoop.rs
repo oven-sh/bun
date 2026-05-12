@@ -394,12 +394,16 @@ impl EventLoopHandle {
     ///
     /// `(tag, ptr)` must have been produced by [`into_tag_ptr`] on a still-live
     /// event loop (i.e. read from `internal_loop_data` while the loop is alive).
-    /// Safe-fn by symmetry with [`EventLoopHandle::init`] / [`AnyEventLoop::js`],
-    /// which wrap the identical `JsEventLoop::new` boundary as a safe
-    /// constructor — handle construction stores an opaque pointer; the
-    /// `link_interface!` owner invariant is enforced at dispatch time.
+    ///
+    /// # Safety
+    /// `(tag, ptr)` must have been produced by [`into_tag_ptr`] on a still-live
+    /// event loop. The constructor itself only stores the opaque pointer, but
+    /// dispatch through the resulting handle dereferences it — this fn is the
+    /// last place the precondition can be discharged. (NOT eligible for
+    /// `unsafe-fn-narrow`: the invariant is caller-provided, not internally
+    /// guarded.)
     #[inline]
-    pub fn from_tag_ptr(tag: core::ffi::c_char, ptr: *mut core::ffi::c_void) -> EventLoopHandle {
+    pub unsafe fn from_tag_ptr(tag: core::ffi::c_char, ptr: *mut core::ffi::c_void) -> EventLoopHandle {
         match tag {
             1 => EventLoopHandle::Js {
                 // SAFETY: `(tag, ptr)` was produced by `into_tag_ptr` on a

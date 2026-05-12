@@ -224,6 +224,21 @@ struct ExistingSocket<const SSL: bool> {
     h2_session: Option<NonNull<h2::ClientSession>>,
 }
 
+impl<const SSL: bool> ExistingSocket<SSL> {
+    /// Mutable access to the transferred HTTP/2 session.
+    ///
+    /// INVARIANT: `h2_session` carries one strong ref moved out of the pool by
+    /// `existing_socket`; the pointee is a distinct heap allocation that
+    /// outlives `self`. HTTP-thread-only. Each call re-derives a fresh `&mut`
+    /// from the raw `NonNull`, so callers may interleave calls with raw
+    /// `as_ptr()` reads (e.g. `register_h2`) without a spanning Unique tag.
+    #[inline]
+    fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
+        // SAFETY: see INVARIANT above.
+        self.h2_session.map(|mut s| unsafe { s.as_mut() })
+    }
+}
+
 /// `dispatch.zig` reaches `Handler` via this name. The ext stores
 /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
 /// it as `**anyopaque` and `Handler` decodes the tag.
@@ -853,7 +868,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             };
             let proxy_auth_hash: u64 = if want_tunnel { client.proxy_auth_hash() } else { 0 };
 
-            if let Some(found) = self.existing_socket(
+            if let Some(mut found) = self.existing_socket(
                 client.flags.reject_unauthorized,
                 hostname,
                 port,
@@ -872,21 +887,18 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ),
                 );
                 client.allow_retry = true;
-                if let Some(mut session) = found.h2_session {
+                if let Some(session) = found.h2_session {
                     if SSL {
                         // PORT NOTE: `session.socket = sock` — direct field
                         // write; ClientSession.socket is `HTTPSocket<true>`.
-                        // SAFETY: session strong ref transferred from pool.
-                        // Re-derive `&mut` from the raw pointer at each step
-                        // rather than holding one `&mut` across `register_h2`
-                        // — that fn forms a fresh `&*session`, which under
-                        // Stacked Borrows would invalidate a spanning Unique.
-                        unsafe { session.as_mut() }.socket = sock.assume_ssl();
+                        // Re-derive `&mut` at each step (via the accessor)
+                        // rather than holding one across `register_h2` — that
+                        // fn forms a fresh `&*session`, which under Stacked
+                        // Borrows would invalidate a spanning Unique.
+                        found.h2_session_mut().unwrap().socket = sock.assume_ssl();
                         Self::tag_as_h2(sock, session.as_ptr());
                         self.register_h2(session.as_ptr());
-                        // SAFETY: session still live; fresh `&mut` after
-                        // register_h2's shared borrow has ended.
-                        unsafe { session.as_mut() }.adopt(client);
+                        found.h2_session_mut().unwrap().adopt(client);
                     } else {
                         unreachable!();
                     }

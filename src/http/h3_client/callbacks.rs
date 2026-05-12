@@ -14,7 +14,7 @@ use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{stream_ref, ClientSession};
+use super::client_session::{stream_mut, stream_ref, ClientSession};
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
@@ -157,14 +157,12 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
         s.close();
         return;
     };
-    // SAFETY: stream is a live element of session.pending.
-    unsafe {
-        (*stream).qstream = Some(NonNull::from(&mut *s));
-        *s.ext::<Stream>() = NonNull::new(stream);
-    }
+    // `stream` is a live element of `session.pending` — `stream_mut`
+    // centralises that upgrade invariant.
+    stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
+    *s.ext::<Stream>() = NonNull::new(stream);
     bun_core::scoped_log!(h3_client, "stream_open");
-    // SAFETY: stream is live (in session.pending).
-    if let Err(e) = encode::write_request(session, unsafe { &mut *stream }, s) {
+    if let Err(e) = encode::write_request(session, stream_mut(stream), s) {
         session.fail(stream, e);
     }
 }
@@ -173,10 +171,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
-    let mut sess = stream.session;
-    // SAFETY: BackRef invariant — session owns `stream` (in `session.pending`)
-    // and outlives it; HTTP-thread only, sole live `&mut ClientSession`.
-    let session = unsafe { sess.get_mut() };
+    let session = stream.session_mut();
     let n = s.header_count();
 
     stream.decoded_headers.clear();
@@ -225,12 +220,10 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
-    let mut sess = stream.session;
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
-    // SAFETY: BackRef invariant — session owns `stream`; HTTP-thread only, sole live `&mut`.
-    unsafe { sess.get_mut() }.deliver(stream, fin != 0);
+    stream.session_mut().deliver(stream, fin != 0);
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
@@ -244,7 +237,6 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
-    let mut sess = stream.session;
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     bun_core::scoped_log!(
@@ -253,8 +245,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    // SAFETY: BackRef invariant — session owns `stream`; HTTP-thread only, sole live `&mut`.
-    unsafe { sess.get_mut() }.deliver(stream, true);
+    stream.session_mut().deliver(stream, true);
 }
 
 // ported from: src/http/h3_client/callbacks.zig

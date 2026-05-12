@@ -3,7 +3,7 @@
 //! lifecycle and delivery; everything that interprets bytes off the wire lives
 //! here.
 
-use super::client_session::ClientSession;
+use super::client_session::{stream_mut, ClientSession};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
@@ -12,18 +12,10 @@ use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
-/// Upgrade a `*mut Stream` from `session.streams` to `&mut Stream`.
-///
-/// INVARIANT: stream pointers in the session map are `heap::alloc`-boxed
-/// allocations valid for the session's lifetime (freed only via
-/// `ClientSession::drop_stream`/`on_close`, never while a frame for that id is
-/// being dispatched). They are independent heap allocations, so `&mut Stream`
-/// is disjoint from any `&mut ClientSession` borrow. HTTP-thread-only.
-#[inline(always)]
-fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *ptr }
-}
+// `stream_mut` is the shared `*mut Stream` → `&mut Stream` upgrade centralised
+// in `client_session` (same INVARIANT: heap-allocated entries owned by
+// `session.streams`, freed only via `drop_stream`/`on_close`, disjoint from
+// `&mut ClientSession`). Re-used here so the raw deref lives in one place.
 
 /// Dispatch every complete frame in `buf` and return the number of bytes
 /// consumed. The caller spills the unconsumed tail (a partial frame) into

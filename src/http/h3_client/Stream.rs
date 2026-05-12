@@ -73,6 +73,20 @@ impl Stream {
         self.qstream.map(|qs| unsafe { &mut *qs.as_ptr() })
     }
 
+    /// Mutable access to the owning `ClientSession`.
+    ///
+    /// INVARIANT: `session` is a set-once `BackRef` recorded in
+    /// `Stream::new`; the session owns this `Stream` (in `pending`) and
+    /// strictly outlives it. The session is a distinct heap allocation from
+    /// `self`, so the returned `&mut` does not alias any borrow of `self`.
+    /// HTTP-thread-only — sole live `&mut ClientSession`. Centralises the
+    /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
+    #[inline]
+    pub fn session_mut<'s>(&self) -> &'s mut ClientSession {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.session.as_ptr() }
+    }
+
     pub fn abort(&mut self) {
         if let Some(qs) = self.qstream_mut() {
             qs.close();

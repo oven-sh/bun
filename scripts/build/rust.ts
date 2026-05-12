@@ -754,10 +754,15 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   // (sibling of rust-lld in `${sysroot}/lib/rustlib/<host>/bin/`); fall back
   // to clang's sibling-of-ar otherwise. The script itself further falls back
   // to PATH `nm` if neither path exists.
-  // rust-lld and llvm-nm are siblings in `${sysroot}/lib/rustlib/<host>/bin/`,
-  // so one dirname (not two — that was the bug at #53609).
-  const rustNm = cfg.rustLld ? join(dirname(cfg.rustLld), "llvm-nm") : undefined;
-  const nm = rustNm && existsSync(rustNm) ? rustNm : join(dirname(cfg.ar), "llvm-nm");
+  // `cfg.rustLld` is `…/bin/rust-lld(.exe)` on Windows but
+  // `…/bin/gcc-ld/ld.lld` on Linux/macOS (see findRustLld()), so try the
+  // direct sibling first, then the parent-dir sibling — `llvm-nm` lives in
+  // `…/bin/` on every platform when the `llvm-tools` component is installed.
+  const rustNmCandidates = cfg.rustLld
+    ? [join(dirname(cfg.rustLld), "llvm-nm"), join(dirname(dirname(cfg.rustLld)), "llvm-nm")]
+    : [];
+  const rustNm = rustNmCandidates.find(p => existsSync(p));
+  const nm = rustNm ?? join(dirname(cfg.ar), "llvm-nm");
   // The `.llvm.<N>` ThinLTO local-promotion suffix and the post-ICF C++
   // ctor/dtor representative are only observable *after* the link, so the
   // resolver also reads the *previous* link's `-Wl,-Map=` output. Both are

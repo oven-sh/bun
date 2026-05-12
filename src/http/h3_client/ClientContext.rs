@@ -57,6 +57,19 @@ impl ClientContext {
         INSTANCE.load()
     }
 
+    /// Upgrade the [`get`]/[`get_or_create`] handle to `&mut Self`.
+    ///
+    /// INVARIANT: `this` is the leaked-`Box` process-lifetime singleton stored
+    /// in `INSTANCE`; all access is HTTP-thread-only, so the returned `&mut`
+    /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
+    /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
+    #[inline]
+    pub fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
+        // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
+        // HTTP-thread-confined singleton.
+        unsafe { &mut *this.as_ptr() }
+    }
+
     pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);

@@ -374,11 +374,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .iter()
                 .position(|w| bun_ptr::BackRef::from(*w).async_http_id == async_http_id);
             if let Some(i) = pos {
-                let mut waiter = pc.waiters.swap_remove(i);
-                // SAFETY: same liveness as above; exclusive access — the
-                // waiter was just removed from the only container that aliased
-                // it, and the HTTP thread is single-threaded here.
-                unsafe { waiter.as_mut() }.fail_from_h2(bun_core::err!("Aborted"));
+                let waiter = pc.waiters.swap_remove(i);
+                // Same liveness as above; exclusive access — the waiter was
+                // just removed from the only container that aliased it, and
+                // the HTTP thread is single-threaded here.
+                h2::PendingConnect::waiter_mut(waiter).fail_from_h2(bun_core::err!("Aborted"));
                 return true;
             }
         }

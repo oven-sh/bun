@@ -631,8 +631,11 @@ pub const ShellSubprocess = struct {
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
     /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
-    /// rather than risk closing an uninitialized handle.
+    /// rather than risk closing an uninitialized handle — but still clear the exit
+    /// handler first so libuv's deferred exit callback becomes a no-op instead of
+    /// dereferencing a Cmd whose `.exec` was already set to `.none` by the caller.
     fn abortAfterFailedStart(this: *@This()) void {
+        this.process.exit_handler = .{};
         if (Environment.isWindows) return;
         inline for (.{ .stdout, .stderr }) |tag| {
             const r: *Readable = &@field(this, @tagName(tag));
@@ -640,7 +643,6 @@ pub const ShellSubprocess = struct {
                 r.pipe.state = .{ .err = null };
             }
         }
-        this.process.exit_handler = .{};
         this.deinit();
     }
 
@@ -1032,7 +1034,13 @@ pub const ShellSubprocess = struct {
             this.stdin.pipe.onAttachedProcessExit(&status);
             // Unlike StaticPipeWriter, a FileSink has no callback into the Cmd when it's
             // done; explicitly mark buffered stdin as closed so Cmd.hasFinished can proceed.
-            this.cmd_parent.bufferedInputClose();
+            // Guard on `.subproc` because on Windows a leaked Subprocess (see
+            // abortAfterFailedStart) may still receive this callback after Cmd.exec was
+            // reset to `.none`; the exit_handler clear should normally prevent that, but
+            // this keeps the access safe regardless.
+            if (this.cmd_parent.exec == .subproc) {
+                this.cmd_parent.bufferedInputClose();
+            }
         }
 
         const exit_code: ?u8 = brk: {

@@ -338,7 +338,9 @@ impl Default for Task {
     /// failure mode as Zig's `.callback = undefined`.
     #[inline]
     fn default() -> Self {
-        unsafe fn unreachable_cb(_: *mut Task) {
+        // Body has no unsafe op; a safe fn item coerces to the `callback`
+        // field's unsafe-fn-pointer type, so the keyword adds nothing here.
+        fn unreachable_cb(_: *mut Task) {
             unreachable!("ThreadPool.Task scheduled with default() callback");
         }
         Task { node: Node::default(), callback: unreachable_cb }

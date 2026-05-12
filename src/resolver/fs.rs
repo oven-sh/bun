@@ -710,15 +710,12 @@ impl<'a> EntryLookup<'a> {
         unsafe { &*self.entry }
     }
 
-    /// # Safety
-    /// `entry` is an EntryStore-owned slot; caller holds `RealFS.entries_mutex`
-    /// and must not let the returned `&mut Entry` overlap any other live
-    /// reference to this slot.
-    #[inline(always)]
-    pub unsafe fn entry_mut(&self) -> &'a mut Entry {
-        // SAFETY: upheld by caller — see fn doc. `self.entry` is an EntryStore slot.
-        unsafe { &mut *self.entry }
-    }
+    // PORT NOTE: former `entry_mut() -> &'a mut Entry` accessor removed
+    // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
+    // so all mutation goes through `entry().set_cache*()` on a shared borrow;
+    // no `&mut Entry` escape hatch is needed. Write sites that bypass the
+    // accessor go through the raw `self.entry` field directly under
+    // `entries_mutex` (see struct doc above).
 }
 
 /// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `EntryStore`, `Err`).

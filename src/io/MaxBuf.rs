@@ -58,12 +58,17 @@ impl MaxBuf {
         !self.owned_by_subprocess.get() && !self.owned_by_reader.get()
     }
 
-    /// # Safety
-    /// `this` must have been allocated by `create_for_subprocess` (i.e. via `heap::alloc`)
-    /// and must be fully disowned.
-    unsafe fn destroy(this: NonNull<MaxBuf>) {
+    /// Module-private teardown. Safe `fn` because the precondition is the
+    /// module-level type invariant already documented on [`live`]: every
+    /// `NonNull<MaxBuf>` reachable here was allocated by
+    /// `create_for_subprocess`, and both call sites have just established
+    /// `disowned()` (asserted below). The single `unsafe` op — reclaiming the
+    /// `Box` — is wrapped at its use.
+    fn destroy(this: NonNull<MaxBuf>) {
         debug_assert!(Self::live(&this).disowned());
-        // SAFETY: paired with heap::alloc in `create_for_subprocess`.
+        // SAFETY: type invariant — `this` was produced by
+        // `bun_core::heap::into_raw_nn` in `create_for_subprocess` and is
+        // freed exactly once (both owner flags now `false`).
         drop(unsafe { bun_core::heap::take(this.as_ptr()) });
     }
 
@@ -74,8 +79,7 @@ impl MaxBuf {
         this.owned_by_subprocess.set(false);
         *ptr = None;
         if this.disowned() {
-            // SAFETY: both owners cleared ⇒ disowned(); paired with heap::alloc.
-            unsafe { MaxBuf::destroy(this_nn) };
+            MaxBuf::destroy(this_nn);
         }
     }
 
@@ -95,8 +99,7 @@ impl MaxBuf {
         this.owned_by_reader.set(false);
         *ptr = None;
         if this.disowned() {
-            // SAFETY: just established `disowned()`; allocation originated from heap::alloc.
-            unsafe { MaxBuf::destroy(this_nn) };
+            MaxBuf::destroy(this_nn);
         }
     }
 

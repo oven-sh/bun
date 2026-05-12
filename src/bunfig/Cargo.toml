@@ -12,7 +12,6 @@ path = "lib.rs"
 # transitive deps of `bun_install`; no new cycles introduced.
 [dependencies]
 bun_io.workspace = true
-parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
 bstr.workspace = true

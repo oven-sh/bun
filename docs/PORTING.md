@@ -405,12 +405,15 @@ Most Zig locks were defensive or init-once; they disappear.
 | `lock: Lock` around a refcount                                                                    | `Arc<T>`                                                                                                                 | Arc's count is atomic                                                                                    |
 | `lock: Lock` + single-producer→consumer queue                                                     | `crossbeam::channel::{bounded,unbounded}` or `crossbeam::queue::SegQueue`                                                | lock-free                                                                                                |
 | `lock: Lock` protecting data that only the JS thread touches                                      | **delete the lock**; type is `!Sync` (contains `JSValue`/`*mut JSGlobalObject` which are `!Sync`), sharing won't compile | compiler proves it                                                                                       |
-| `lock: Lock` + genuinely cross-thread mutable state (HTTP↔main, watcher↔main, worker-pool tables) | `parking_lot::Mutex<T>` (owns T) or `RwLock<T>`                                                                          | the ~20% that stay                                                                                       |
-| `Futex`/`Condition` wait                                                                          | `parking_lot::Condvar` + `Mutex`                                                                                         |                                                                                                          |
+| `lock: Lock` + genuinely cross-thread mutable state (HTTP↔main, watcher↔main, worker-pool tables) | `bun_threading::Guarded<T>` (owns T) or `bun_threading::RwLock<T>`                                                       | the ~20% that stay                                                                                       |
+| `Futex`/`Condition` wait                                                                          | `bun_threading::Condvar` + `Guarded`                                                                                     |                                                                                                          |
 | `std.atomic.Value(T)`                                                                             | `core::sync::atomic::Atomic*`                                                                                            | same orderings (`.monotonic`→`Relaxed`, `.acquire`→`Acquire`, `.release`→`Release`, `.seq_cst`→`SeqCst`) |
 | `bun.threading.Once`                                                                              | `std::sync::Once`                                                                                                        |                                                                                                          |
 
-**Never** `std::sync::Mutex` (poisoning is noise here); always `parking_lot`.
+**Never** raw `std::sync::Mutex` (poisoning is noise here); use
+`bun_threading::Guarded`. Crates layered *below* `bun_threading` (`bun_alloc`,
+`bun_core`, `bun_ptr`, …) use `bun_core::Mutex` / `bun_core::RwLock` instead —
+poison-free `std::sync` newtypes with the same API.
 **Never** put a lock _next to_ the data — `Mutex<T>` _owns_ T. If the Zig had
 `lock: Lock, table: HashMap` → Rust is `table: Mutex<HashMap>`.
 

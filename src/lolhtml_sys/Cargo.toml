@@ -16,7 +16,6 @@ bun_opaque.workspace = true
 # `[profile]` and dev-deps are ignored. Source is fetched by
 # `scripts/build/deps/lolhtml.ts` before the workspace cargo build runs.
 lolhtml = { package = "lol_html_c_api", path = "../../vendor/lolhtml/c-api" }
-parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
 bstr.workspace = true

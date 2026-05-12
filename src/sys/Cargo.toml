@@ -13,7 +13,6 @@ ci_assert = []
 [dependencies]
 bytemuck = "1"
 bun_opaque.workspace = true
-parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
 bstr.workspace = true

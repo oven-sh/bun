@@ -997,12 +997,13 @@ impl ThreadPool {
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
         // So just follow our .next link.
-        let next_thread = thread.next;
-        if next_thread.is_null() {
+        let Some(next_thread) = NonNull::new(thread.next) else {
             return;
-        }
-        // SAFETY: next_thread is a registered Thread still blocked in join_event.wait().
-        unsafe { (*next_thread).join_event.notify() };
+        };
+        // `next_thread` is a registered worker still blocked in
+        // `join_event.wait()`; the BackRef invariant (pointee outlives holder)
+        // holds for the duration of this `notify()` call.
+        bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 
     fn join(&self) {
@@ -1021,12 +1022,13 @@ impl ThreadPool {
         // Use swap (not load) so join() is idempotent: a second call (e.g., from
         // wait_and_deinit() followed by Drop) sees null and returns instead of
         // touching freed worker stack memory.
-        let thread = self.threads.swap(ptr::null_mut(), Ordering::Acquire);
-        if thread.is_null() {
+        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire)) else {
             return;
-        }
-        // SAFETY: thread is a registered Thread blocked in join_event.wait().
-        unsafe { (*thread).join_event.notify() };
+        };
+        // `thread` is a registered worker blocked in `join_event.wait()`;
+        // BackRef invariant (pointee outlives holder) holds for this
+        // `notify()` call.
+        bun_ptr::BackRef::from(thread).join_event.notify();
     }
 }
 

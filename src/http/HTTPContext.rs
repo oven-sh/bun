@@ -679,14 +679,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if let Some(t) = tunnel {
             // `detach_and_deref` consumes the strong ref the caller transferred;
             // `leak()` first so the `RefPtr`'s debug-tracking entry is retired
-            // without a second decrement.
-            let raw = t.leak();
-            // SAFETY: `raw` is a live intrusive-refcounted ProxyTunnel; we hold
-            // the strong ref `detach_and_deref` is about to release.
-            unsafe {
-                (*raw).shutdown();
-                (*raw).detach_and_deref();
-            }
+            // without a second decrement. Route through the centralised
+            // `raw_as_mut` accessor — `raw` is a live intrusive-refcounted
+            // ProxyTunnel; we hold the strong ref `detach_and_deref` releases.
+            let t = crate::proxy_tunnel::raw_as_mut(t.leak());
+            t.shutdown();
+            t.detach_and_deref();
         }
         if let Some(s) = h2_session {
             // SAFETY: live intrusive-refcounted ClientSession; deref releases

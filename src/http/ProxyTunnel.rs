@@ -185,6 +185,21 @@ impl ProxyTunnel {
         // SAFETY: see [`Self::socket_of`].
         unsafe { &*addr_of!((*this.as_ptr()).ref_count) }
     }
+
+    /// Bump the intrusive refcount and return a guard that releases it on Drop.
+    ///
+    /// INVARIANT (module): `this` is a live intrusive-refcounted tunnel held by
+    /// an `HTTPClient.proxy_tunnel` strong ref (callbacks) or derived from a
+    /// live `&mut self` (`on_writable`/`receive`). `ScopedRef::new` bumps via
+    /// raw `CellRefCounted::ref_count_raw` field projection — touching only
+    /// `ref_count`, never the whole tunnel — so it does not alias the caller's
+    /// `&mut SSLWrapper` (see ALIASING NOTE). HTTP-thread-only. Centralises the
+    /// `unsafe { ScopedRef::new(nn.as_ptr()) }` open-coded at five call sites.
+    #[inline]
+    fn ref_scope(this: NonNull<Self>) -> bun_ptr::ScopedRef<Self> {
+        // SAFETY: see INVARIANT above.
+        unsafe { bun_ptr::ScopedRef::new(this.as_ptr()) }
+    }
 }
 
 /// Recover `&mut HTTPClient` from the SSLWrapper-handlers `ctx` pointer.
@@ -223,11 +238,8 @@ fn on_open(ctx: *mut HTTPClient) {
     this.state.request_stage = HTTPStage::ProxyHandshake;
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
-    // `&mut ProxyTunnel` — see ALIASING NOTE. ScopedRef bumps via raw field
-    // projection (`CellRefCounted::ref_count_raw`), so the borrow covers only
-    // `ref_count`, never the whole tunnel.
-    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`).
-    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
+    // `&mut ProxyTunnel` — see ALIASING NOTE.
+    let _guard = ProxyTunnel::ref_scope(proxy_nn);
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
         let _hostname = this.hostname.unwrap_or(this.url.hostname);
 
@@ -271,8 +283,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // `&mut *ctx` (close → on_close, progress_update).
     let this = client_from_ctx(ctx);
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
-    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`); see ALIASING NOTE.
-    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
+    let _guard = ProxyTunnel::ref_scope(proxy_nn);
     match this.state.response_stage {
         HTTPStage::Body => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");
@@ -345,8 +356,7 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
-    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`).
-    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
+    let _guard = ProxyTunnel::ref_scope(proxy_nn);
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
@@ -370,7 +380,12 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
             // `.?` asserts wrapper-is-Some; `orelse return` silently bails if
             // ssl is None. Mirror that split: assert the wrapper, then return
             // (no debug_assert) on the ssl-None sub-case.
-            // SAFETY: `proxy_nn` is live (ref-guarded above); read-only field check.
+            // SAFETY: `proxy_nn` is live (ref-guarded above). Transient shared
+            // read of the `wrapper` discriminant only — same caveat as
+            // [`wrapper_ssl`]: the caller's `&mut SSLWrapper` overlaps this
+            // field, so we MUST NOT form `&mut Option<_>` here (rules out
+            // `wrapper_mut`); a debug-only `is_some()` autoref read mirrors the
+            // pre-refactor inline `proxy.wrapper.?` and is never retained.
             debug_assert!(unsafe { (*proxy_nn.as_ptr()).wrapper.is_some() });
             let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
                 return;
@@ -430,18 +445,15 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
 }
 
 pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
-    // SAFETY: forms a transient shared `&(*ctx).proxy_tunnel` (via `as_ref()`)
-    // only to copy out the tunnel's `data` `NonNull`. write_encrypted is fired
-    // from inside SSLWrapper::flush/handle_traffic; the call chains that reach
-    // here (e.g. on_handshake → on_writable → flush, on_open → flush) each
-    // NLL-end their `client_from_ctx`/`*ctx` borrow before reentering, so there
-    // is NO live `&mut HTTPClient` anywhere up the stack — the shared borrow
-    // formed here cannot alias one. (This was already required even by the
-    // older `Copy` read of `(*ctx).proxy_tunnel`, which `*ctx`-derefs all the
-    // same; `RefPtr` has no read-without-ref primitive — if it grows one, use
-    // it here instead of `.as_ref().map(...)`.) The pointee is alive: this
-    // client holds a strong ref to the tunnel for the duration of tunneling.
-    let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel.as_ref().map(|p| p.data) }) else { return };
+    // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
+    // the call chains that reach here (e.g. on_handshake → on_writable → flush,
+    // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
+    // before reentering, so there is NO live `&mut HTTPClient` anywhere up the
+    // stack — re-deriving via the centralised `client_from_ctx` accessor here
+    // is the sole live borrow, dropped immediately after copying out the
+    // tunnel's `data` `NonNull`. The pointee is alive: this client holds a
+    // strong ref to the tunnel for the duration of tunneling.
+    let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel.as_ref().map(|p| p.data) else { return };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because
     // the caller (flush/handle_traffic) holds `&mut SSLWrapper` which IS
@@ -567,8 +579,8 @@ impl ProxyTunnel {
     ) {
         let proxy_tunnel = bun_core::heap::into_raw(Box::new(ProxyTunnel::default()));
         let proxy_nn = NonNull::new(proxy_tunnel).expect("heap::into_raw is non-null");
-        // SAFETY: just allocated, sole owner.
-        let proxy_tunnel_ref = unsafe { &mut *proxy_tunnel };
+        // Just allocated, sole owner — route through the module accessor.
+        let proxy_tunnel_ref = raw_as_mut(proxy_tunnel);
 
         // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
         let custom_options = ssl_options.as_usockets_for_client_verification();
@@ -664,8 +676,7 @@ impl ProxyTunnel {
         // line.
         let self_nn = NonNull::from(&mut *self);
         let self_ptr = self_nn.as_ptr();
-        // SAFETY: `self_nn` derived from a live `&mut self`.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self_ptr) };
+        let _guard = Self::ref_scope(self_nn);
         // PORT NOTE: Zig `defer wrapper.flush()` runs AFTER the body but BEFORE
         // `defer deref()` (LIFO). We mirror that order explicitly at the single
         // exit. flush() → handle_traffic → write_encrypted reenters and touches
@@ -697,8 +708,7 @@ impl ProxyTunnel {
     pub fn receive(&mut self, buf: &[u8]) {
         // Capture raw pointer first; never touch `self` again (see on_writable).
         let self_nn = NonNull::from(&mut *self);
-        // SAFETY: `self_nn` derived from a live `&mut self`.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self_nn.as_ptr()) };
+        let _guard = Self::ref_scope(self_nn);
         // receive_data() fires on_data/on_handshake/write_encrypted/on_close
         // synchronously; each accesses only tunnel fields disjoint from
         // `wrapper` via the accessors above (see ALIASING NOTE), so the

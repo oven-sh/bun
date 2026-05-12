@@ -1,6 +1,5 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
-use std::sync::OnceLock;
 
 /// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
 /// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
@@ -105,12 +104,23 @@ impl ArgIter<'static> for OsIterator {
 /// Process argv as a `&'static` slice of `&'static [u8]`.
 ///
 /// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
-/// `BUN_OPTIONS` injection. The single `OsIterator::init()` caller in
-/// `clap::parse` runs before any `set_argv()` swap, so caching the byte-slice
-/// projection in a `OnceLock` is safe.
+/// `BUN_OPTIONS` injection.
+///
+/// This used to project `&ZStr → &[u8]` through a `OnceLock<Vec<&[u8]>>`,
+/// which (a) allocated a Vec on the `--version` startup path and (b) emitted a
+/// distinct `OnceLock<Vec<&[u8]>>::initialize` / `Once::call_once_force`
+/// monomorphisation that perf showed faulting in its own 4 KB `.text` page.
+/// `bun_core::ZStr` is `#[repr(transparent)]` over `[u8]`, so `&ZStr` and
+/// `&[u8]` are layout-identical fat pointers — reinterpret the process-static
+/// `[&ZStr]` view in place: zero alloc, zero lazy-init shim, zero extra
+/// `.text`.
+#[inline]
 fn os_argv() -> &'static [&'static [u8]] {
-    static ARGV: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
-    ARGV.get_or_init(|| bun_core::argv().into_iter().collect()).as_slice()
+    let z: &'static [&'static bun_core::ZStr] = bun_core::argv().as_slice();
+    // SAFETY: `#[repr(transparent)] struct ZStr([u8])` (bun_core/util.rs) ⇒
+    // `&ZStr` and `&[u8]` have identical (ptr, len) layout, hence so do
+    // `[&ZStr]` and `[&[u8]]`. The slice is process-static.
+    unsafe { core::slice::from_raw_parts(z.as_ptr().cast::<&'static [u8]>(), z.len()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]

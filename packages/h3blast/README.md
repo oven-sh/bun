@@ -1,7 +1,7 @@
 # h3blast
 
 A small, very fast HTTP/3 load generator built directly on **lsquic**. It exists
-to stress `Bun.serve({ h3: true })` without going through curl or a Node QUIC
+to stress `Bun.serve({ http3: true })` without going through curl or a Node QUIC
 shim — same lsquic, same BoringSSL, same packet path as the server side.
 
 ```

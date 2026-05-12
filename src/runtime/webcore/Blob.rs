@@ -67,7 +67,11 @@ use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 /// Mirrors Zig `jsc.array_buffer.BlobArrayBuffer_deallocator`; defined here
 /// (rather than in `bun_jsc`) because `Store` is a `bun_runtime` type and the
 /// `bun_jsc` copy is a forward-dep placeholder.
-pub unsafe extern "C" fn blob_store_array_buffer_deallocator(
+///
+/// Body wraps its only privileged op (`Store::deref`) locally; a safe
+/// `extern "C" fn` coerces to the `JSTypedArrayBytesDeallocator` pointer
+/// expected by `to_js_with_context`.
+pub extern "C" fn blob_store_array_buffer_deallocator(
     _bytes: *mut c_void,
     ctx: *mut c_void,
 ) {
@@ -783,8 +787,9 @@ impl BlobExt for Blob {
         // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
         // as the runtime `&mut Blob` here. Driving the FFI directly (rather
         // than going through `for_each`'s immutable wrapper) avoids a
-        // `&T → &mut T` cast.
-        unsafe extern "C" fn for_each_thunk(
+        // `&T → &mut T` cast. Every raw deref is wrapped locally; the safe fn
+        // item coerces to the callback-pointer type at `DOMFormData__forEach`.
+        extern "C" fn for_each_thunk(
             ctx_ptr: *mut c_void,
             name_: *mut ZigString,
             value_ptr: *mut c_void,

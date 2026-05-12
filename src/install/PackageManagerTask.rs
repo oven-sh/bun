@@ -262,20 +262,21 @@ impl<'a> Task<'a> {
         let this: *mut Task<'a> = unsafe {
             bun_core::from_field_ptr!(Task, threadpool_task, task)
         };
-        // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
-        // owns. Kept as a raw `*mut` for the whole function: this callback runs
-        // on ThreadPool workers concurrently (and concurrently with the main
-        // thread), so binding a long-lived `&mut PackageManager` here would be
-        // aliased-`&mut` UB. Subfields touched cross-thread (`resolve_tasks`,
-        // `wake`) are reached through raw-ptr/shared accessors below; the few
-        // callees whose signatures still take `&mut PackageManager`
-        // (`get_cache_directory`, `get_package_metadata`) are dereferenced
-        // inline at the call boundary only — same race as the Zig spec's
-        // freely-aliased `*PackageManager`.
-        let manager: *mut PackageManager =
-            unsafe { (*this).package_manager.expect("Task.package_manager unset").as_mut_ptr() };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
+        // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
+        // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
+        // shared-read sites below; `manager` is kept as a raw `*mut` for the
+        // whole function because this callback runs on ThreadPool workers
+        // concurrently (and concurrently with the main thread), so binding a
+        // long-lived `&mut PackageManager` here would be aliased-`&mut` UB.
+        // Subfields touched cross-thread (`resolve_tasks`, `wake`) are reached
+        // through raw-ptr/shared accessors below; the few callees whose
+        // signatures still take `&mut PackageManager` (`get_cache_directory`,
+        // `get_package_metadata`) are dereferenced inline at the call boundary
+        // only — same race as the Zig spec's freely-aliased `*PackageManager`.
+        let manager_ref = this.package_manager.expect("Task.package_manager unset");
+        let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
         // Body of the switch; every Zig `return;` becomes `break 'body;` so the
         // trailing `defer` block (patch + push + wake) and `Output.flush()` run
@@ -335,11 +336,12 @@ impl<'a> Task<'a> {
                     let loaded_manifest = loaded_manifest.clone();
                     let is_extended_manifest = *is_extended_manifest;
 
-                    // SAFETY: shared read of `manager.options` (never mutated by
-                    // worker threads). Wrap as `BackRef` so the `&PackageManager`
-                    // autoref does not stay live across the `&mut *manager` below.
+                    // Shared read of `manager.options` (never mutated by worker
+                    // threads) via the `ParentRef` safe `Deref`. Wrap as
+                    // `BackRef` so the `&PackageManager` autoref does not stay
+                    // live across the `&mut *manager` below.
                     let scope = bun_ptr::BackRef::new(
-                        unsafe { (*manager).scope_for_package_name(manifest.name.slice()) },
+                        manager_ref.scope_for_package_name(manifest.name.slice()),
                     );
                     let package_manifest = match npm::Registry::get_package_metadata(
                         // scope is borrowed from manager.options which is not

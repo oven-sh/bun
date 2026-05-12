@@ -142,12 +142,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // request only.
     let url = URL::parse(&print_buf);
 
-    // SAFETY: `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
-    // allocation; `headers` outlives `req`.
-    let header_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
-        None => b"",
-    };
+    // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
+    // allocation; `headers` outlives `req`. `written_slice()` is the safe
+    // nonnull-asref accessor over the set-once `Option<NonNull<u8>>` (returns
+    // `&[]` when unallocated, matching the previous `None => b""` arm).
+    let header_buf: &[u8] = headers.content.written_slice();
 
     let mut req = AsyncHTTP::init_sync(
         http::Method::GET,

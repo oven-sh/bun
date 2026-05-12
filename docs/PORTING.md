@@ -411,7 +411,7 @@ Most Zig locks were defensive or init-once; they disappear.
 | `bun.threading.Once`                                                                              | `std::sync::Once`                                                                                                        |                                                                                                          |
 
 **Never** raw `std::sync::Mutex` (poisoning is noise here); use
-`bun_threading::Guarded`. Crates layered *below* `bun_threading` (`bun_alloc`,
+`bun_threading::Guarded`. Crates layered _below_ `bun_threading` (`bun_alloc`,
 `bun_core`, `bun_ptr`, …) use `bun_core::Mutex` / `bun_core::RwLock` instead —
 poison-free `std::sync` newtypes with the same API.
 **Never** put a lock _next to_ the data — `Mutex<T>` _owns_ T. If the Zig had

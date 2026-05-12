@@ -1150,7 +1150,8 @@ pub fn build_with_vm(
         route_style_references.put_index(global, u32::try_from(nav_index).expect("int cast"), styles).map_err(js_err)?;
     }
 
-    // SAFETY: FFI; all JSValue args are stack-held; global is live.
+    // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
+    // `JSPromise` is an opaque `UnsafeCell`-backed handle so `&mut *` is sound.
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
@@ -1255,9 +1256,12 @@ fn bake_get_on_module_namespace(
 
 /// Renders all routes for static site generation by calling the JavaScript implementation.
 // TODO(port): move to bake_sys
+// All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
+// (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
+// No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
-    fn BakeRenderRoutesForProdStatic(
-        global: *const JSGlobalObject,
+    safe fn BakeRenderRoutesForProdStatic(
+        global: &JSGlobalObject,
         // Output directory path (e.g., "./dist")
         out_base: BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
@@ -1466,9 +1470,12 @@ pub struct PerThread {
 // TODO(port): move to bake_sys
 // C++ treats `PerThread` as an opaque pointer (Bake::ProductionPerThread*); the Rust
 // layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
+// C++ stores `pt` opaquely on the global (never dereferenced C++-side; null
+// detaches), so the call has no precondition beyond a live `&JSGlobalObject`
+// — declare `safe fn`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn BakeGlobalObject__attachPerThreadData(global: *const JSGlobalObject, pt: *mut PerThread);
+    safe fn BakeGlobalObject__attachPerThreadData(global: &JSGlobalObject, pt: *mut PerThread);
 }
 
 impl PerThread {
@@ -1535,11 +1542,12 @@ impl PerThread {
     }
 
     pub fn attach(&mut self) {
-        // SAFETY: self.vm is the live per-thread VM (raw ptr from init_bake);
-        // PerThread outlives the attached lifetime; detached in Drop.
-        unsafe {
-            BakeGlobalObject__attachPerThreadData((*self.vm).global, std::ptr::from_mut::<PerThread>(self));
-        }
+        // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
+        // VM lifetime); C++ stores `pt` opaquely and hands it back via
+        // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
+        // detached in Drop.
+        let global = self.global();
+        BakeGlobalObject__attachPerThreadData(global, std::ptr::from_mut::<PerThread>(self));
         self.attached = true;
     }
 
@@ -1592,11 +1600,9 @@ impl PerThread {
 impl Drop for PerThread {
     fn drop(&mut self) {
         if self.attached {
-            // SAFETY: FFI call; `self.vm` is the live per-thread VM (VM outlives
-            // PerThread), and passing null detaches the previously-attached pointer.
-            unsafe {
-                BakeGlobalObject__attachPerThreadData((*self.vm).global, core::ptr::null_mut());
-            }
+            // Passing null detaches the previously-attached pointer; `global()`
+            // goes through the safe `vm()` accessor (VM outlives PerThread).
+            BakeGlobalObject__attachPerThreadData(self.global(), core::ptr::null_mut());
         }
         // `all_server_files: Strong` is dropped automatically, releasing the GC root.
     }

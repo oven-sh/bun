@@ -3288,21 +3288,18 @@ impl DevServer {
         }
 
         // PORT NOTE: `take_js_bundle` mutably borrows `client_graph` while
-        // `initial_entry` aliases `client_graph.bundled_files.keys()[idx]`.
-        // `take_js_bundle` does not reallocate the keys storage, so erase the
-        // key borrow to a raw slice (Zig held the same overlapping slice).
-        let initial_entry: &[u8] = if let Some(idx) = client_file {
-            let key = &self.client_graph.bundled_files.keys()[idx.get() as usize];
-            // SAFETY: `bundled_files` keys storage is stable across
-            // `take_js_bundle` (it only drains scratch buffers).
-            unsafe { ::core::slice::from_raw_parts(key.as_ptr(), key.len()) }
+        // `initial_entry` would alias `client_graph.bundled_files.keys()[idx]`.
+        // Clone the key (a short path string) so the borrow ends before the
+        // `&mut client_graph` call; cold path (per-route bundle finalize).
+        let initial_entry: Vec<u8> = if let Some(idx) = client_file {
+            self.client_graph.bundled_files.keys()[idx.get() as usize].to_vec()
         } else {
-            b""
+            Vec::new()
         };
         let client_bundle = self.client_graph.take_js_bundle(
             &incremental_graph::TakeJSBundleOptionsClient {
                 kind: crate::bake::dev_server::ChunkKind::InitialResponse,
-                initial_response_entry_point: initial_entry,
+                initial_response_entry_point: &initial_entry,
                 react_refresh_entry_point: react_fast_refresh_id,
                 script_id,
                 console_log: self.should_receive_console_log_from_browser(),

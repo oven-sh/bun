@@ -1,4 +1,3 @@
-use core::ffi::c_int;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
@@ -462,21 +461,10 @@ fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
         .map_err(Into::into)
 }
 
-// macOS clonefileat(2) — declared raw because the Zig source matches on the
-// numeric return + thread-local errno (the bun_sys wrapper collapses both into
-// Maybe<()>). Linked from libSystem.
-// SAFETY: kept `unsafe fn` (not `safe fn`) — `src`/`dst` must be valid
-// NUL-terminated C strings for the duration of the call.
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    fn clonefileat(
-        src_dirfd: c_int,
-        src: *const core::ffi::c_char,
-        dst_dirfd: c_int,
-        dst: *const core::ffi::c_char,
-        flags: u32,
-    ) -> c_int;
-}
+// macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
+// (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The Zig source matched on the raw
+// `int` return + thread-local errno; the wrapper preserves the errno via
+// `Error::get_errno()`, so the per-errno branching below is unchanged.
 
 // ───────────────────────────── NewTaskQueue ─────────────────────────────
 
@@ -1125,27 +1113,17 @@ impl<'a> PackageInstall<'a> {
                         let path_ = ZStr::from_buf(&stackpath, path_len);
                         let basename =
                             ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
-                        // SAFETY: FFI — basename/path_ are valid NUL-terminated ZStr buffers
-                        // built into stackpath above; fds are open for the loop iteration.
-                        match unsafe {
-                            clonefileat(
-                                entry.dir.native(),
-                                basename.as_ptr(),
-                                destination_dir_.fd().native(),
-                                path_.as_ptr(),
-                                0,
-                            )
-                        } {
-                            0 => {}
-                            // `init` bounds-checks (None for out-of-range errno) — avoids
+                        match sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_) {
+                            Ok(()) => {}
+                            // `get_errno` bounds-checks (SUCCESS for out-of-range errno) — avoids
                             // `from_raw`'s release-mode transmute on an unexpected value.
-                            _ => match sys::Errno::init(sys::last_errno() as i64) {
-                                Some(sys::Errno::EXDEV) => return Err(bun_core::err!("NotSupported")), // not same file system
-                                Some(sys::Errno::EOPNOTSUPP) => return Err(bun_core::err!("NotSupported")),
-                                Some(sys::Errno::ENOENT) => return Err(bun_core::err!("FileNotFound")),
+                            Err(e) => match e.get_errno() {
+                                sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
+                                sys::Errno::EOPNOTSUPP => return Err(bun_core::err!("NotSupported")),
+                                sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
-                                Some(sys::Errno::EEXIST) => {}
-                                Some(sys::Errno::EACCES) => return Err(bun_core::err!("AccessDenied")),
+                                sys::Errno::EEXIST => {}
+                                sys::Errno::EACCES => return Err(bun_core::err!("AccessDenied")),
                                 _ => return Err(bun_core::err!("Unexpected")),
                             },
                         }
@@ -1190,19 +1168,14 @@ impl<'a> PackageInstall<'a> {
             }
         }
 
-        // SAFETY: FFI — cache_dir_subpath/destination_dir_subpath are NUL-terminated ZStr
-        // slices into long-lived path buffers; fds are open.
-        match unsafe {
-            clonefileat(
-                self.cache_dir.fd().native(),
-                self.cache_dir_subpath.as_ptr(),
-                destination_dir.fd().native(),
-                self.destination_dir_subpath.as_ptr(),
-                0,
-            )
-        } {
-            0 => Ok(InstallResult::Success),
-            _ => match sys::Errno::from_raw(sys::last_errno() as u16) {
+        match sys::clonefileat(
+            self.cache_dir.fd(),
+            self.cache_dir_subpath,
+            destination_dir.fd(),
+            self.destination_dir_subpath,
+        ) {
+            Ok(()) => Ok(InstallResult::Success),
+            Err(e) => match e.get_errno() {
                 sys::Errno::EXDEV => Err(bun_core::err!("NotSupported")), // not same file system
                 sys::Errno::EOPNOTSUPP => Err(bun_core::err!("NotSupported")),
                 sys::Errno::ENOENT => Err(bun_core::err!("FileNotFound")),

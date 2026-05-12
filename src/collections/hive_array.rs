@@ -170,6 +170,31 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         }
     }
 
+    /// Placement-new constructor: write the empty state directly into `*out`
+    /// without materializing `Self` on the stack.
+    ///
+    /// `Self` embeds `[MaybeUninit<T>; CAPACITY]` inline, which for the
+    /// install pools (`NetworkTask` × 128, `Task` × 64) is hundreds of KB.
+    /// Rust has no result-location semantics, so `out.write(Self::init())`
+    /// first builds the value in the caller's frame and `memcpy`s it — LLVM
+    /// does **not** elide that temporary. This entry point only writes the
+    /// 256 B `used` bitset; `buffer` is `MaybeUninit` and needs no
+    /// initialization (uninitialized bytes are a valid bit-pattern for it).
+    ///
+    /// # Safety
+    /// `out` must be non-null, properly aligned, and valid for writes of
+    /// `size_of::<Self>()` bytes. The previous contents are not dropped.
+    #[inline]
+    pub unsafe fn init_in_place(out: *mut Self) {
+        // SAFETY: caller contract — `out` is aligned and writable. We form a
+        // place expression on `*out` only to project to `used`; no `&mut Self`
+        // is created over the (uninitialized) whole struct.
+        unsafe {
+            core::ptr::addr_of_mut!((*out).used).write(HiveBitSet::init_empty());
+        }
+        // `buffer: [MaybeUninit<T>; CAPACITY]` intentionally untouched.
+    }
+
     /// Claim a slot and return a raw pointer to its **uninitialized** storage.
     ///
     /// Prefer [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
@@ -445,6 +470,47 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         Self {
             hive: HiveArray::init(),
         }
+    }
+
+    /// Placement-new constructor — see [`HiveArray::init_in_place`]. Only
+    /// writes the 256 B occupancy bitset; the `[MaybeUninit<T>; CAPACITY]`
+    /// buffer is left untouched.
+    ///
+    /// # Safety
+    /// `out` must be non-null, properly aligned, and valid for writes of
+    /// `size_of::<Self>()` bytes. The previous contents are not dropped.
+    #[inline]
+    pub unsafe fn init_in_place(out: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe { HiveArray::<T, CAPACITY>::init_in_place(core::ptr::addr_of_mut!((*out).hive)) };
+    }
+
+    /// Heap-allocate an empty `Fallback` without materializing it on the
+    /// stack first.
+    ///
+    /// `Box::new(Self::init())` is the obvious spelling, but Rust has no
+    /// guaranteed result-location semantics: for the 2048-slot
+    /// `RequestContext` pool (`sizeof ≈ 816 KB`) LLVM emits the bitset
+    /// zeros into a stack temporary and then `memcpy`s the **full** 816 KB
+    /// into the heap allocation, committing both ~812 KB of stack pages and
+    /// ~812 KB of heap pages that are never read. This entry point allocates
+    /// raw heap storage and writes only the 256-byte `used` bitset via
+    /// [`init_in_place`](Self::init_in_place); the `[MaybeUninit<T>; CAPACITY]`
+    /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
+    /// for `MaybeUninit`).
+    ///
+    /// The returned allocation is leaked — callers stash it in a per-thread
+    /// static for the process lifetime (Zig: `threadlocal var pool`).
+    #[inline]
+    pub fn new_boxed() -> NonNull<Self> {
+        let mut boxed = Box::<Self>::new_uninit();
+        // SAFETY: `boxed` is a fresh heap allocation — non-null, aligned for
+        // `Self`, and valid for writes of `size_of::<Self>()` bytes.
+        unsafe { Self::init_in_place(boxed.as_mut_ptr()) };
+        // SAFETY: `init_in_place` fully initialized `hive.used`; `hive.buffer`
+        // is `[MaybeUninit<T>; CAPACITY]`, for which uninitialized bytes are a
+        // valid representation. Every field of `Self` is therefore valid.
+        NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
     }
 
     /// See [`HiveArray::get`] — same UB hazards, plus the heap path leaks a

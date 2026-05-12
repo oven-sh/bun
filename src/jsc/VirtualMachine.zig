@@ -862,6 +862,24 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
     loop.run();
 }
 
+extern fn Bun__findStalledTopLevelAwait(*JSGlobalObject) bun.String;
+
+/// Print a warning naming the module(s) whose body is suspended on its own
+/// top-level await. Walks the JSC module registry to find EvaluatingAsync
+/// records with `hasTLA` and no pending async dependencies; falls back to
+/// the entry path if nothing is found (e.g. eval mode).
+pub fn reportUnsettledTopLevelAwait(this: *VirtualMachine) void {
+    var stalled = Bun__findStalledTopLevelAwait(this.global);
+    defer stalled.deref();
+    const stalled_utf8 = stalled.toUTF8(bun.default_allocator);
+    defer stalled_utf8.deinit();
+    Output.prettyErrorln(
+        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{s}<r>",
+        .{if (stalled_utf8.len > 0) stalled_utf8.slice() else this.main},
+    );
+    Output.flush();
+}
+
 pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;

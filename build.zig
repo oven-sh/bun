@@ -455,6 +455,26 @@ pub fn build(b: *Build) !void {
             .{ .os = .linux, .arch = .aarch64 },
         }, &.{.Debug});
     }
+    // check-android needs the NDK sysroot for translate-c (zig doesn't
+    // bundle bionic headers). Skip step creation entirely when none was
+    // passed, so plain `zig build check` doesn't try to construct a
+    // translate-c step that would panic.
+    if (android_ndk_sysroot != null) {
+        {
+            const step = b.step("check-android", "Check for semantic analysis errors on Android");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .linux, .arch = .x86_64, .android = true },
+                .{ .os = .linux, .arch = .aarch64, .android = true },
+            }, &.{ .Debug, .ReleaseFast });
+        }
+        {
+            const step = b.step("check-android-debug", "Check for semantic analysis errors on Android");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .linux, .arch = .x86_64, .android = true },
+                .{ .os = .linux, .arch = .aarch64, .android = true },
+            }, &.{.Debug});
+        }
+    }
     // check-freebsd needs the sysroot for translate-c (zig doesn't bundle
     // FreeBSD libc headers). Skip step creation entirely when none was
     // passed, so plain `zig build check` doesn't try to construct a

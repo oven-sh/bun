@@ -172,6 +172,10 @@ pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!
                 break :getter;
             }
 
+            if (!per_message_deflate.isObject()) {
+                return globalObject.throwInvalidArguments("websocket expects perMessageDeflate to be a boolean or an object", .{});
+            }
+
             if (try per_message_deflate.getTruthy(globalObject, "compress")) |compression| {
                 if (compression.isBoolean()) {
                     server.compression |= if (compression.toBoolean()) uws.SHARED_COMPRESSOR else 0;

@@ -268,6 +268,14 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   1,
 );
 
+export const sigactionLayout: () =>
+  | undefined
+  | {
+      installed: { handler: number; flags: number };
+      readback: { handler: number; flags: number };
+      sizeof: number;
+    } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
+
 export const stringsInternals = {
   /**
    * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and

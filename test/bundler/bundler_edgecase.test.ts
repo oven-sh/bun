@@ -2478,6 +2478,70 @@ describe("bundler", () => {
       `);
     },
   });
+  // https://github.com/oven-sh/bun/issues/14450
+  // When two entry points import each other (a cycle), both files are reachable
+  // from both entry points, so their entry_bits are identical. Without splitting,
+  // the bundler was keying entry-point chunks by the full entry_bits and the two
+  // entry points collapsed into a single chunk — one of the requested output
+  // files was silently dropped (and older versions panicked with an index OOB).
+  itBundled("edgecase/CircularEntryPointsNoSplitting#14450", {
+    files: {
+      "/a.ts": /* ts */ `
+        import { B } from "./b";
+        export const A = "a";
+        console.log("a.ts", A, B);
+      `,
+      "/b.ts": /* ts */ `
+        import { A } from "./a";
+        export const B = "b";
+        console.log("b.ts", A, B);
+      `,
+    },
+    entryPoints: ["./a.ts", "./b.ts"],
+    outdir: "/out",
+    splitting: false,
+    run: [
+      { file: "/out/a.js", stdout: "a.ts a undefined\nb.ts a b" },
+      { file: "/out/b.js", stdout: "a.ts a undefined\nb.ts a b" },
+    ],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a.js");
+      api.assertFileExists("/out/b.js");
+      api.expectFile("/out/a.js").toContain("export {\n  A\n}");
+      api.expectFile("/out/b.js").toContain("export {\n  B\n}");
+    },
+  });
+  // Three-way cycle to ensure the fix isn't pair-specific.
+  itBundled("edgecase/CircularEntryPointsThreeWayNoSplitting#14450", {
+    files: {
+      "/a.ts": /* ts */ `
+        import { C } from "./c";
+        export const A = "a";
+        console.log("from a:", A, C);
+      `,
+      "/b.ts": /* ts */ `
+        import { A } from "./a";
+        export const B = "b";
+        console.log("from b:", A, B);
+      `,
+      "/c.ts": /* ts */ `
+        import { B } from "./b";
+        export const C = "c";
+        console.log("from c:", B, C);
+      `,
+    },
+    entryPoints: ["./a.ts", "./b.ts", "./c.ts"],
+    outdir: "/out",
+    splitting: false,
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a.js");
+      api.assertFileExists("/out/b.js");
+      api.assertFileExists("/out/c.js");
+      api.expectFile("/out/a.js").toContain("export {\n  A\n}");
+      api.expectFile("/out/b.js").toContain("export {\n  B\n}");
+      api.expectFile("/out/c.js").toContain("export {\n  C\n}");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

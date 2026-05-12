@@ -44,10 +44,11 @@ pub noinline fn computeChunks(
 
         const has_html_chunk = loaders[source_index] == .html;
 
-        // For code splitting, entry point chunks should be keyed by ONLY the entry point's
-        // own bit, not the full entry_bits. This ensures that if an entry point file is
-        // reachable from other entry points (e.g., via re-exports), its content goes into
-        // a shared chunk rather than staying in the entry point's chunk.
+        // Entry point chunks should be keyed by ONLY the entry point's own bit,
+        // not the full entry_bits. Using the full entry_bits would cause two
+        // entry points that are mutually reachable (e.g. circular imports, or
+        // re-exports) to collapse into a single chunk, silently dropping one of
+        // the user's requested output files.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
         var entry_point_chunk_bits = try AutoBitSet.initEmpty(this.allocator(), this.graph.entry_points.len);
         entry_point_chunk_bits.set(entry_bit);
@@ -59,7 +60,7 @@ pub noinline fn computeChunks(
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
                     .has_html = has_html_chunk,
-                    .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
+                    .entry_bits = entry_point_chunk_bits.bytes(this.graph.entry_points.len),
                 }});
             }
         };
@@ -87,7 +88,7 @@ pub noinline fn computeChunks(
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             const hash_to_use = if (!this.options.css_chunking)
-                bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
+                bun.hash(entry_point_chunk_bits.bytes(this.graph.entry_points.len))
             else brk: {
                 var hasher = std.hash.Wyhash.init(5);
                 bun.writeAnyToHasher(&hasher, order.len);

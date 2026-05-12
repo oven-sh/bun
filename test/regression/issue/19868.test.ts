@@ -56,7 +56,11 @@ function fixture(tlsConfig: string, routeKind: "static" | "function") {
 describe("server.reload() with TLS serverName / SNI routers", () => {
   const tlsConfigs = [
     ["tls.serverName", `{ cert: ${cert}, key: ${key}, serverName: "localhost" }`],
-    ["tls SNI array", `[{ cert: ${cert}, key: ${key}, serverName: "localhost" }]`],
+    // First array element becomes ssl_config; only second-and-later elements
+    // populate config.sni. Keep the SNI hostname as the second entry so the
+    // request that sends SNI=localhost routes through the config.sni branch
+    // of setRoutesForServerNames().
+    ["tls SNI array", `[{ cert: ${cert}, key: ${key} }, { cert: ${cert}, key: ${key}, serverName: "localhost" }]`],
   ] as const;
 
   test.concurrent.each(tlsConfigs)(

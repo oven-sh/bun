@@ -133,11 +133,14 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
 
     /// `WorkPoolTask` callback — runs OFF the JS thread.
     ///
-    /// # Safety
-    /// `task` must point to the `task` field of a live `AnyTaskJob<C>`
-    /// scheduled via [`Self::schedule`].
-    unsafe fn run_task(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `Self.task`; the job is live until
+    /// Reachable only via the `WorkPoolTask::callback` fn-ptr slot (safe fn
+    /// coerces into it) for the `task` field initialised in [`Self::create`]; the
+    /// WorkPool calls back with exactly that field, so `from_task_ptr`
+    /// recovers the live heap `Self` parent (owned until `run_from_js`
+    /// reclaims it). Mirrors [`crate::WorkTask::run_from_thread_pool`].
+    fn run_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reachable via the `WorkPoolTask::callback` slot wired
+        // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;

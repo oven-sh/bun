@@ -3844,17 +3844,19 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
 pub fn exit_thread() -> ! {
     #[cfg(unix)]
-    // SAFETY: `pthread_exit` is always safe to call on the current thread; it
-    // never returns.
-    unsafe {
-        libc::pthread_exit(core::ptr::null_mut());
+    {
+        // `retval` is stored opaquely for `pthread_join` and never
+        // dereferenced by libc itself; thread termination leaks but cannot
+        // violate memory safety (same rationale as `std::process::exit`
+        // being safe), so `safe fn` discharges the link-time proof.
+        unsafe extern "C" {
+            safe fn pthread_exit(retval: *mut core::ffi::c_void) -> !;
+        }
+        pthread_exit(core::ptr::null_mut());
     }
     #[cfg(windows)]
-    // SAFETY: `ExitThread` is the documented Windows API for terminating the
-    // calling thread; it never returns.
-    unsafe {
-        crate::windows_sys::kernel32::ExitThread(0);
-    }
+    // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
+    crate::windows_sys::kernel32::ExitThread(0);
     #[allow(unreachable_code)]
     loop {
         core::hint::spin_loop();
@@ -3893,16 +3895,26 @@ pub fn maybe_handle_panic_during_process_reload() {
         #[cfg(debug_assertions)]
         crate::output::debug_warn("panic() called during process reload, ignoring\n");
         // Zig: `bun.exitThread()`. POSIX `pthread_exit`; Windows `ExitThread`.
-        #[cfg(unix)]
-        unsafe { libc::pthread_exit(core::ptr::null_mut()); }
-        #[cfg(windows)]
-        unsafe { crate::windows_sys::kernel32::ExitThread(0); }
+        exit_thread();
     }
     // Spin if pthread_exit was a no-op (pathological).
     while is_process_reload_in_progress_on_another_thread() {
         core::hint::spin_loop();
         #[cfg(unix)]
-        unsafe { libc::nanosleep(&libc::timespec { tv_sec: 1, tv_nsec: 0 }, core::ptr::null_mut()); }
+        {
+            // `&libc::timespec` / `Option<&mut libc::timespec>` are
+            // ABI-identical to libc's `const struct timespec *` / nullable
+            // `struct timespec *`; the types encode the only pointer-validity
+            // preconditions, so `safe fn` discharges the link-time proof.
+            unsafe extern "C" {
+                #[link_name = "nanosleep"]
+                safe fn libc_nanosleep(
+                    req: &libc::timespec,
+                    rem: Option<&mut libc::timespec>,
+                ) -> core::ffi::c_int;
+            }
+            let _ = libc_nanosleep(&libc::timespec { tv_sec: 1, tv_nsec: 0 }, None);
+        }
     }
 }
 

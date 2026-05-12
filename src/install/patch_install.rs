@@ -164,8 +164,16 @@ impl PatchTask {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
-        // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
+    // Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
+    // with the `*mut ThreadPoolTask` we registered in `new_calc_patch_hash` /
+    // `new_apply_patch_hash`. The thread-pool contract — not the Rust caller —
+    // guarantees `task` is live and points at `PatchTask.task`, so the
+    // precondition is discharged locally. Safe `fn` coerces to the
+    // `unsafe fn(*mut Task)` field type.
+    pub fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+        // SAFETY: thread-pool callback contract — `task` points to the `task`
+        // field of a live `PatchTask` (set at construction); the pool runs
+        // each task at most once with exclusive access for the call.
         let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
         patch_task.run_from_thread_pool_impl();
     }

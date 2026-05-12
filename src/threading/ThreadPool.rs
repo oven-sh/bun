@@ -1096,9 +1096,11 @@ impl Thread {
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
-        // SAFETY: FFI call with no preconditions; marks this OS thread as a
-        // mimalloc threadpool worker so deferred frees are processed eagerly.
-        unsafe { bun_alloc::mimalloc::mi_thread_set_in_threadpool() };
+        // No args, no preconditions; marks this OS thread as a mimalloc
+        // threadpool worker so deferred frees are processed eagerly. `safe fn`
+        // (Rust 2024) discharges the link-time proof so no `unsafe` block.
+        unsafe extern "C" { safe fn mi_thread_set_in_threadpool(); }
+        mi_thread_set_in_threadpool();
 
         {
             let mut counter_buf = [0u8; 100];

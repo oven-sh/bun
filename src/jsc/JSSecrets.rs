@@ -4,11 +4,17 @@ use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
 
 // TODO(port): move to <area>_sys
+//
+// safe fn: `SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
+// handles (`!Freeze` via `UnsafeCell`); `&mut`/`&` are ABI-identical to
+// non-null `*mut`/`*const` and C++ mutating job state through them is interior
+// to the cell. `deinit` consumes/frees the C++ allocation and so stays
+// `unsafe fn` (double-free precondition).
 unsafe extern "C" {
-    fn Bun__SecretsJobOptions__runTask(ctx: *mut SecretsJobOptions, global: *mut JSGlobalObject);
-    fn Bun__SecretsJobOptions__runFromJS(
-        ctx: *mut SecretsJobOptions,
-        global: *mut JSGlobalObject,
+    safe fn Bun__SecretsJobOptions__runTask(ctx: &mut SecretsJobOptions, global: &JSGlobalObject);
+    safe fn Bun__SecretsJobOptions__runFromJS(
+        ctx: &mut SecretsJobOptions,
+        global: &JSGlobalObject,
         promise: JSValue,
     );
     fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
@@ -21,9 +27,14 @@ struct SecretsCtx {
 
 impl AnyTaskJobCtx for SecretsCtx {
     fn run(&mut self, global: *mut JSGlobalObject) {
-        // SAFETY: `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
-        // `global` is the creating VM's global pointer (mut provenance).
-        unsafe { Bun__SecretsJobOptions__runTask(self.ctx, global) };
+        // `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
+        // `global` is the creating VM's global pointer. Both are `opaque_ffi!`
+        // ZST handles, so `opaque_mut`/`opaque_ref` are the centralised
+        // zero-byte deref proofs (panic on null).
+        Bun__SecretsJobOptions__runTask(
+            SecretsJobOptions::opaque_mut(self.ctx),
+            JSGlobalObject::opaque_ref(global),
+        );
     }
 
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
@@ -37,14 +48,11 @@ impl AnyTaskJobCtx for SecretsCtx {
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        // SAFETY: `ctx` is a valid C++ SecretsJobOptions* held alive until Drop.
-        unsafe {
-            Bun__SecretsJobOptions__runFromJS(
-                self.ctx,
-                global as *const _ as *mut JSGlobalObject,
-                promise,
-            )
-        };
+        Bun__SecretsJobOptions__runFromJS(
+            SecretsJobOptions::opaque_mut(self.ctx),
+            global,
+            promise,
+        );
         scope.assert_no_exception_except_termination()
     }
 }

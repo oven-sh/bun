@@ -1127,9 +1127,15 @@ impl Drop for TarballStream {
     }
 }
 
-unsafe fn drain_callback(task: *mut thread_pool::Task) {
-    // SAFETY: `task` points to `TarballStream.drain_task`; recover the parent
-    // via offset_of).
+// Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
+// with the `*mut Task` we registered in `init()` (`drain_task.callback =
+// drain_callback`). The thread-pool contract — not the Rust caller —
+// guarantees `task` is live and points at `TarballStream.drain_task`, so the
+// preconditions of both unsafe ops below are discharged locally. Safe `fn`
+// coerces to the `unsafe fn(*mut Task)` field type.
+fn drain_callback(task: *mut thread_pool::Task) {
+    // SAFETY: thread-pool callback contract — `task` points to
+    // `TarballStream.drain_task`; recover the parent via offset_of.
     let this: *mut TarballStream = unsafe {
         bun_core::from_field_ptr!(TarballStream, drain_task, task)
     };

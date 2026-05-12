@@ -593,9 +593,14 @@ static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 pub fn page_size() -> usize {
     *PAGE_SIZE.get_or_init(|| {
         #[cfg(unix)]
-        // SAFETY: `sysconf(_SC_PAGESIZE)` is POSIX-mandated, infallible and side-effect-free.
-        unsafe {
-            libc::sysconf(libc::_SC_PAGESIZE) as usize
+        {
+            // By-value `c_int` in / `c_long` out; POSIX `sysconf` has no
+            // memory-safety preconditions (unknown `name` returns -1/EINVAL),
+            // so `safe fn` discharges the link-time proof.
+            unsafe extern "C" {
+                safe fn sysconf(name: core::ffi::c_int) -> core::ffi::c_long;
+            }
+            sysconf(libc::_SC_PAGESIZE) as usize
         }
         #[cfg(windows)]
         {

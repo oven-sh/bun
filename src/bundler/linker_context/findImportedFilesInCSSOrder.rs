@@ -35,18 +35,18 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 /// wip_order.clearRetainingCapacity();` — bitwise move of arena-backed entries
 /// from `wip` back into `order`'s buffer (which always has `cap >= wip.len`).
 #[inline]
-unsafe fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
+fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
     debug_assert!(order.capacity() >= wip.len());
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            wip.as_mut_ptr().cast_const(),
-            order.as_mut_ptr(),
-            wip.len() as usize,
-        );
-    }
-    unsafe { order.set_len((wip.len()) as usize) };
-    // PORT NOTE: do not Drop the moved-from entries — they were bitwise-moved.
-    unsafe { wip.set_len((0) as usize) };
+    // PORT NOTE: do not Drop `order`'s prior entries — they were already
+    // bitwise-copied into `wip` (see `bitwise_copy` callers above), so dropping
+    // here would double-free their `conditions` buffers.
+    // SAFETY: `set_len(0)` is unconditionally sound (0 ≤ capacity; shrinking
+    // exposes no uninitialized range).
+    unsafe { order.set_len(0) };
+    // `Vec::append` = reserve (no-op given the debug_assert) +
+    // `copy_nonoverlapping` into `order[0..]` + `wip.set_len(0)` — exactly the
+    // original `@memcpy` + `clearRetainingCapacity` sequence.
+    order.append(wip);
 }
 
 /// CSS files are traversed in depth-first postorder just like JavaScript. But
@@ -359,7 +359,7 @@ pub fn find_imported_files_in_css_order<'a>(
             }
         }
 
-        unsafe { memcpy_and_reset(&mut order, &mut wip_order) };
+        memcpy_and_reset(&mut order, &mut wip_order);
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterHoisting);
 
@@ -651,7 +651,7 @@ pub fn find_imported_files_in_css_order<'a>(
             CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
         );
 
-        unsafe { memcpy_and_reset(&mut order, &mut wip_order) };
+        memcpy_and_reset(&mut order, &mut wip_order);
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterOptimizingRedundantLayerRules);
 

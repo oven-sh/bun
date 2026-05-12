@@ -167,6 +167,13 @@ unsafe extern "C" {
     safe fn Bun__noOrphans_killTracked();
 }
 
+#[cfg(unix)]
+unsafe extern "C" {
+    // safe: no args; read process IDs — no preconditions, never fail.
+    safe fn getpid() -> libc::pid_t;
+    safe fn getppid() -> libc::pid_t;
+}
+
 // `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
 // should_default()` (lowest tier that reads it). The thread-scoping rationale
 // — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
@@ -279,8 +286,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 
         // Race: parent may have died between install() and now (before the event
         // loop existed). We've been reparented; kqueue would ESRCH — exit now.
-        // SAFETY: FFI call.
-        if unsafe { libc::getppid() } != original_ppid {
+        if getppid() != original_ppid {
             bun_core::exit(EXIT_CODE as u32);
         }
 
@@ -411,8 +417,7 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: FFI call.
-        let self_pid = unsafe { libc::getpid() };
+        let self_pid = getpid();
         let n = list_child_pids(self_pid, out).unwrap_or(0);
         &out[..n]
     }

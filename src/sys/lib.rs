@@ -1257,6 +1257,33 @@ pub const MAX_COUNT: usize = i32::MAX as usize;
 #[cfg(windows)]
 pub const MAX_COUNT: usize = u32::MAX as usize;
 
+// ── libc shims with no preconditions ────────────────────────────────────────
+// Every fn here takes only by-value scalars (`c_int` fd, `mode_t`, `uid_t`,
+// `gid_t`, `off_t`). The kernel validates the fd and reports failure via the
+// return value / `errno` — passing a bad fd is `EBADF`, never UB. Declaring
+// them locally as `safe fn` (instead of routing through the `libc` crate's
+// `unsafe extern fn` items) drops the per-call-site `unsafe { }` block.
+#[cfg(unix)]
+pub(crate) mod safe_libc {
+    use core::ffi::c_int;
+    unsafe extern "C" {
+        pub(crate) safe fn close(fd: c_int) -> c_int;
+        pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
+        pub(crate) safe fn isatty(fd: c_int) -> c_int;
+        pub(crate) safe fn fsync(fd: c_int) -> c_int;
+        // macOS has had fdatasync(2) since 10.7; the `libc` crate omits the
+        // Apple binding, so a local decl is needed there anyway.
+        pub(crate) safe fn fdatasync(fd: c_int) -> c_int;
+        pub(crate) safe fn fchdir(fd: c_int) -> c_int;
+        pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
+        pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
+        pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
+        pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
+        pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
+        pub(crate) safe fn fallocate(fd: c_int, mode: c_int, off: libc::off_t, len: libc::off_t) -> c_int;
+    }
+}
+
 // ── Darwin `$NOCANCEL` syscall variants (sys.zig:1708,1853,2077,2139,2253,2297)
 // — the plain libc symbols are pthread cancellation points; a cancelled thread
 // torn down mid-syscall leaks fds / corrupts state. Bun always uses the
@@ -1304,8 +1331,9 @@ mod nocancel {
         pub(crate) fn ppoll(fds: *mut libc::pollfd, nfds: libc::nfds_t, ts: *const libc::timespec, sigmask: *const libc::sigset_t) -> c_int;
         // darwin.zig:12-17 + fd.zig:273 — remaining `$NOCANCEL` variants Bun
         // links against (close via Zig's std.c on Darwin).
+        // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
-        pub(crate) fn close(fd: c_int) -> c_int;
+        pub(crate) safe fn close(fd: c_int) -> c_int;
         #[link_name = "fcntl$NOCANCEL"]
         pub(crate) fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
         #[link_name = "connect$NOCANCEL"]
@@ -1453,11 +1481,10 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            // SAFETY: fd is a valid open descriptor owned by caller.
             #[cfg(target_os = "macos")]
-            let rc = unsafe { super::nocancel::close(fd.native()) };
+            let rc = super::nocancel::close(fd.native());
             #[cfg(not(target_os = "macos"))]
-            let rc = unsafe { libc::close(fd.native()) };
+            let rc = safe_libc::close(fd.native());
             if rc < 0 && last_errno() == libc::EBADF {
                 return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
             }
@@ -1947,13 +1974,13 @@ mod posix_impl {
         }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
-        check!(unsafe { libc::fchmod(fd.native(), mode as libc::mode_t) }, Tag::fchmod); Ok(())
+        check!(safe_libc::fchmod(fd.native(), mode as libc::mode_t), Tag::fchmod); Ok(())
     }
     pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()> {
-        check!(unsafe { libc::fchown(fd.native(), uid, gid) }, Tag::fchown); Ok(())
+        check!(safe_libc::fchown(fd.native(), uid, gid), Tag::fchown); Ok(())
     }
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
-        check!(unsafe { libc::ftruncate(fd.native(), len) }, Tag::ftruncate); Ok(())
+        check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate); Ok(())
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         let p = unsafe { libc::getcwd(buf.as_mut_ptr().cast(), buf.len()) };
@@ -2173,7 +2200,7 @@ mod posix_impl {
         }
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
-        let rc = check!(unsafe { libc::dup2(old.native(), new.native()) }, Tag::dup2);
+        let rc = check!(safe_libc::dup2(old.native(), new.native()), Tag::dup2);
         Ok(Fd::from_native(rc))
     }
     /// sys.zig:3839 — plain `pipe(&fds)`, NO CLOEXEC. Callers that want CLOEXEC
@@ -2184,35 +2211,31 @@ mod posix_impl {
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {
-        unsafe { libc::isatty(fd.native()) == 1 }
+        safe_libc::isatty(fd.native()) == 1
     }
     pub fn fsync(fd: Fd) -> Maybe<()> {
-        check!(unsafe { libc::fsync(fd.native()) }, Tag::fsync); Ok(())
+        check!(safe_libc::fsync(fd.native()), Tag::fsync); Ok(())
     }
     pub fn fdatasync(fd: Fd) -> Maybe<()> {
         // node_fs.zig:3921 — calls `system.fdatasync` directly on all Unix
         // (macOS has had fdatasync(2) since 10.7). The libc crate omits the
-        // Apple binding, so declare it locally.
-        #[cfg(target_os = "macos")]
-        unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
-        #[cfg(not(target_os = "macos"))]
-        use libc::fdatasync;
-        check!(unsafe { fdatasync(fd.native()) }, Tag::fdatasync); Ok(())
+        // Apple binding; `safe_libc::fdatasync` declares it locally.
+        check!(safe_libc::fdatasync(fd.native()), Tag::fdatasync); Ok(())
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
-        let rc = check!(unsafe { libc::lseek(fd.native(), offset, whence) }, Tag::lseek);
+        let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path); Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
-        check!(unsafe { libc::fchdir(fd.native()) }, Tag::fchdir); Ok(())
+        check!(safe_libc::fchdir(fd.native()), Tag::fchdir); Ok(())
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
         // Darwin/FreeBSD and u32 on Linux — cast at the boundary.
-        unsafe { libc::umask(mode as libc::mode_t) as Mode }
+        safe_libc::umask(mode as libc::mode_t) as Mode
     }
 
     // ── B-2 round 9: socket primitives (recv/send/socketpair) ──
@@ -2294,7 +2317,7 @@ mod posix_impl {
         {
             check!(unsafe { libc::socketpair(domain, ty, proto, fds.as_mut_ptr()) }, Tag::socketpair);
             let close_both = |e: Error| {
-                unsafe { libc::close(fds[0]); libc::close(fds[1]); }
+                safe_libc::close(fds[0]); safe_libc::close(fds[1]);
                 Err::<[Fd; 2], _>(e)
             };
             // CLOEXEC first (sys.zig:3173).
@@ -6314,8 +6337,8 @@ pub fn move_file_z_with_handle(
                 O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644,
             ).map_err(bun_core::Error::from)?;
             #[cfg(target_os = "linux")] {
-                // SAFETY: dst is a valid open fd; preallocation is best-effort.
-                let _ = unsafe { libc::fallocate(dst.native(), 0, 0, st.st_size) };
+                // Preallocation is best-effort.
+                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
             }
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
@@ -6324,9 +6347,8 @@ pub fn move_file_z_with_handle(
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
             if r.is_ok() {
-                // SAFETY: dst is a valid open fd.
-                let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
-                let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
+                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
             }
             let _ = close(dst);
             r.map_err(bun_core::Error::from)?;
@@ -7772,8 +7794,8 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
     let _ = unlinkat(to_dir, destination);
     let dst = openat(to_dir, destination, O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644)?;
     #[cfg(target_os = "linux")] {
-        // SAFETY: dst is a valid open fd; preallocation is best-effort.
-        let _ = unsafe { libc::fallocate(dst.native(), 0, 0, st.st_size) };
+        // Preallocation is best-effort.
+        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
@@ -7781,9 +7803,8 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
-        // SAFETY: dst is a valid open fd.
-        let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
-        let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+        let _ = safe_libc::fchmod(dst.native(), st.st_mode);
+        let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
     }
     let _ = close(dst);
     r

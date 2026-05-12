@@ -125,8 +125,7 @@ impl FdExt for Fd {
             #[cfg(target_os = "freebsd")]
             {
                 debug_assert!(self.native() >= 0);
-                // SAFETY: native() returns a valid posix fd; close(2) is safe to call.
-                match sys::get_errno(unsafe { libc::close(self.native()) }) {
+                match sys::get_errno(sys::safe_libc::close(self.native())) {
                     sys::E::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,

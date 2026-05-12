@@ -40,7 +40,14 @@ async function driveErrorReloadCycle(
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.includes("error:")) continue;
+      if (!line.includes("error:")) {
+        // Don't silently swallow a watcher-thread death-rattle — surface it so the
+        // post-loop "Expected 50, Received N" becomes an actionable failure.
+        if (/Watcher crashed|panic:|oh no:/.test(line)) {
+          throw new Error("child --hot died: " + line);
+        }
+        continue;
+      }
 
       if (reloadCounter >= targetCount) {
         runner.kill();
@@ -499,6 +506,25 @@ it(
 
 const comment_line = "//" + Buffer.alloc(2000, "B").toString() + "\n";
 const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toString();
+
+// writeFileSync of a ~2MB file is non-atomic (truncate + N×write); each write
+// emits a watcher event so --hot can re-read mid-write (Linux: EBADF /
+// "Unexpected ..." / :1:12 mis-remap; Windows: ReadDirectoryChangesW
+// internal-buffer overflow → nbytes==0 → WindowsWatcher.next() ESHUTDOWN →
+// watcher thread dies → child exits → reloadCounter<50). Atomic write+rename
+// so the watched path only ever flips between complete versions.
+function writeHotFileAtomicSync(path: string, content: string) {
+  const tmp = path + ".next";
+  writeFileSync(tmp, content);
+  // rmSync first on Windows so renameSync doesn't EPERM on the existing target
+  if (process.platform === "win32") {
+    try {
+      rmSync(path);
+    } catch {}
+  }
+  renameSync(tmp, path);
+}
+
 it(
   "should work with sourcemap generation",
   async () => {
@@ -519,7 +545,7 @@ throw new Error('0');`,
     const reloadCounter = await driveErrorReloadCycle(runner, {
       targetCount: 50,
       onReload: counter => {
-        writeFileSync(
+        writeHotFileAtomicSync(
           hotRunnerRoot,
           `// source content
 ${comment_spam}
@@ -556,7 +582,7 @@ it.skipIf(isCI && isASAN)(
     // comment-only stub immediately before throwing, guaranteeing a fresh
     // watcher event lands between reject and report.
     const writeFull = (counter: number) =>
-      writeFileSync(
+      writeHotFileAtomicSync(
         hotRunnerRoot,
         `// source content
 ${comment_spam}require("fs").writeFileSync(__filename, "// stub ${counter}\\n");
@@ -707,7 +733,7 @@ throw new Error('0');`,
       driveErrorReloadCycle(runner, {
         targetCount: 50,
         onReload: counter => {
-          writeFileSync(
+          writeHotFileAtomicSync(
             bundleIn,
             `// ${long_comment}
 console.error("RSS: %s", process.memoryUsage().rss);

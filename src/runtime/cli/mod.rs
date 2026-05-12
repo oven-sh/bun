@@ -487,8 +487,14 @@ thread_local! {
 
 /// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
 /// can ask "which subcommand are we in". Set once during single-threaded
-/// startup; read freely thereafter (S015: write-once → `OnceLock`).
-pub static CMD: std::sync::OnceLock<command::Tag> = std::sync::OnceLock::new();
+/// startup; read freely thereafter.
+///
+/// `RacyCell`, not `OnceLock`: `OnceLock::set` routes through stdlib's
+/// `#[cold] fn initialize`, which fat-LTO places ~36 MB away from the
+/// startup.order cluster and faults a fresh page on every `bun` invocation.
+/// Zig used a plain `var cmd: ?Tag` here; the write happens before any
+/// thread is spawned, so a bare cell is the correct shape.
+pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -1074,9 +1080,9 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> Result<&'static mut ContextData, bun_core::Error> {
-        // Single-threaded CLI startup; `CMD` is read by crash-reporter and
-        // debug logging only. Write-once — ignore the (impossible) second-set Err.
-        let _ = CMD.set(cmd);
+        // SAFETY: single-threaded CLI startup — no other thread exists yet.
+        // `CMD` is read by crash-reporter / debug logging only.
+        unsafe { CMD.write(Some(cmd)) };
 
         let ctx = write_context_no_parse(log);
 
@@ -2192,16 +2198,19 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
 }
 pub use command as Command;
 
-#[cold]
+// NOT `#[cold]` — `bun --version` is the most-benchmarked startup path, and
+// `#[cold]` relocates the body to `.text.unlikely` ~40 MB past the
+// startup.order cluster. The symbol is listed in src/startup.order instead.
 pub fn print_version_and_exit() -> ! {
     // The version string is plain ASCII (no `<tag>` markup), so bypass
     // `Output::pretty(format_args!(..))` — that path renders the `Arguments`
     // into a heap `String`, then runs the runtime `<tag>` rewriter into a
     // second `Vec<u8>`, all to print a ~10-byte constant. Write the bytes
-    // straight to the buffered stdout writer instead.
+    // straight to the buffered stdout writer instead. One `write_all` (the
+    // `\n` is baked into the constant) → one syscall, matching Zig's
+    // `writeAll(version ++ "\n")`.
     let w = Output::writer();
-    let _ = w.write_all(Global::package_json_version.as_bytes());
-    let _ = w.write_all(b"\n");
+    let _ = w.write_all(Global::package_json_version_nl.as_bytes());
     Output::flush();
     Global::exit(0);
 }

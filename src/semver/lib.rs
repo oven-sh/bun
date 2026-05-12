@@ -516,6 +516,7 @@ pub mod semver_string {
             })
         }
 
+        #[inline]
         pub fn eql(self, that: String, this_buf: &[u8], that_buf: &[u8]) -> bool {
             if self.is_inline() && that.is_inline() {
                 u64::from_ne_bytes(self.bytes) == u64::from_ne_bytes(that.bytes)
@@ -524,9 +525,16 @@ pub mod semver_string {
             } else {
                 let a = self.ptr();
                 let b = that.ptr();
+                let (a_off, a_len) = (a.off as usize, a.len as usize);
+                let (b_off, b_len) = (b.off as usize, b.len as usize);
+                debug_assert!(a_off + a_len <= this_buf.len());
+                debug_assert!(b_off + b_len <= that_buf.len());
+                // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
+                // sub-slice of `buf` and is only ever projected back into the same buffer
+                // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
                 strings::eql(
-                    &this_buf[a.off as usize..][..a.len as usize],
-                    &that_buf[b.off as usize..][..b.len as usize],
+                    unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
+                    unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
                 )
             }
         }
@@ -536,6 +544,7 @@ pub mod semver_string {
             u64::from_ne_bytes(self.bytes) == 0u64
         }
 
+        #[inline]
         pub fn len(self) -> usize {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
                 0 => {
@@ -573,6 +582,7 @@ pub mod semver_string {
         // PORT NOTE: `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
 
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
+        #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
                 0 => {
@@ -594,7 +604,13 @@ pub mod semver_string {
                 }
                 _ => {
                     let ptr_ = self.ptr();
-                    &buf[ptr_.off as usize..][..ptr_.len as usize]
+                    let (off, len) = (ptr_.off as usize, ptr_.len as usize);
+                    debug_assert!(off + len <= buf.len());
+                    // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
+                    // sub-slice of `buf` and is only ever projected back into the same buffer
+                    // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast). The two
+                    // checked slice ops here were the dominant cost in install hot loops.
+                    unsafe { buf.get_unchecked(off..off + len) }
                 }
             }
         }

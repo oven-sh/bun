@@ -252,7 +252,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub config: ServerConfig,
     pub pending_requests: usize,
     pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
-    // TODO(port): conditional field
+    /// Zig: `if (has_h3) *H3RequestContext.RequestContextStackAllocator else void`.
+    /// Null until the H3 listen path runs (`HAS_H3 && config.h3`); never
+    /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
+    /// conditional field so the struct stays uniform across monomorphizations.
     pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
@@ -468,8 +471,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.request_pool
     }
 
-    /// Raw pointer to the process-static H3 request pool. See
-    /// `request_pool_ptr` for why this is `*mut`, not `&mut`.
+    /// Raw pointer to the process-static H3 request pool, or **null** if this
+    /// server never opened an H3 listener. See `request_pool_ptr` for why this
+    /// is `*mut`, not `&mut`.
     #[inline]
     pub fn h3_request_pool_ptr(
         &self,
@@ -1376,6 +1380,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
+    #[inline]
     pub fn on_request_complete(&mut self) {
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); `.event_loop()` returns the VM-owned
@@ -1516,6 +1521,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
+    #[inline]
     pub fn deinit_if_we_can(&mut self) {
         httplog!(
             "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
@@ -1804,7 +1810,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
-            h3_request_pool: <Self as ServerPools<SSL, DEBUG>>::h3_request_pool(),
+            // Zig gates this on `comptime has_h3` (server.zig:1827) so plain
+            // HTTP servers never allocate the ~816 KB H3 pool. We go one step
+            // further and defer to the H3-listen path (`listen()` below) so
+            // HTTPS servers that don't enable `config.h3` don't pay either.
+            h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
                 ctx: None,
@@ -2325,7 +2335,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// is `deinit()`ed synchronously and `.zero` is returned with an exception
     /// pending on `global_this`.
     // TODO(port): make this return JsResult<JSValue> and let the caller errdefer-deinit.
-    pub fn listen(this: *mut Self) -> JSValue {
+    pub fn listen(this: *mut Self) -> JSValue
+    where
+        Self: ServerPools<SSL, DEBUG>,
+    {
         httplog!("listen");
         // PORT NOTE: reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
@@ -2388,7 +2401,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return JSValue::ZERO;
                     }
                 };
-                unsafe { (*this).h3_app = h3 };
+                // SAFETY: `this` is the live boxed server; uniquely owned here.
+                unsafe {
+                    (*this).h3_app = h3;
+                    // Lazily materialize the ~816 KB H3 request pool now that
+                    // we know an H3 listener will actually exist (Zig:
+                    // server.zig:1827-1836, gated on `comptime has_h3`).
+                    (*this).h3_request_pool =
+                        <Self as ServerPools<SSL, DEBUG>>::h3_request_pool();
+                }
             }
 
             route_list_value = unsafe { &mut *this }.set_routes();
@@ -2878,7 +2899,10 @@ macro_rules! impl_server_pools {
                 POOL.with(|cell| {
                     let mut p = cell.get();
                     if p.is_null() {
-                        p = bun_core::heap::into_raw(Box::new(Pool::init()));
+                        // `Box::new(Pool::init())` builds the ~816 KB pool on
+                        // the stack and `memcpy`s it into the heap (no NRVO);
+                        // `new_boxed` writes only the 256 B bitset in place.
+                        p = Pool::new_boxed().as_ptr();
                         cell.set(p);
                     }
                     p
@@ -2893,7 +2917,7 @@ macro_rules! impl_server_pools {
                 POOL.with(|cell| {
                     let mut p = cell.get();
                     if p.is_null() {
-                        p = bun_core::heap::into_raw(Box::new(Pool::init()));
+                        p = Pool::new_boxed().as_ptr();
                         cell.set(p);
                     }
                     p

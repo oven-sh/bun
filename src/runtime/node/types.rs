@@ -271,10 +271,11 @@ impl Drop for StringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
-                // `SliceWithUnderlyingString` has no `Drop` (its `underlying:
-                // bun_core::String` is `Copy`); take ownership and consume via
-                // `deinit()` so the WTF refcount is released.
-                core::mem::take(str).deinit();
+                // `SliceWithUnderlyingString` has no `Drop` of its own; release
+                // the WTF refcount in place. `str.utf8: ZigStringSlice` is then
+                // dropped by the enum's field drop glue — no need to
+                // `mem::take()` and write a ~56B default back.
+                str.underlying.deref();
             }
             Self::EncodedSlice(_encoded) => {
                 // ZigStringSlice has Drop; cleanup is implicit.
@@ -390,37 +391,56 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_maybe_async(
+    /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
+    /// directly into `*out` (Zig result-location semantics) and returns
+    /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
+    /// type. `*out` is left untouched on `Ok(false)` / `Err`.
+    ///
+    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
+    /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
+    /// to ~128B of `vmovups` stack-to-stack copies per call which the
+    /// `Option<>`-returning wrappers below cannot always NRVO away.
+    #[inline]
+    pub fn from_js_maybe_async_into(
+        out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
         is_async: bool,
         allow_string_object: bool,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<bool> {
         use jsc::JSType;
         match value.js_type() {
             str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
                 if !allow_string_object && str_type != JSType::String {
-                    return Ok(None);
+                    return Ok(false);
                 }
-                // PORT NOTE: reshaped for borrowck — `scopeguard::defer!` would borrow
-                // `str` immutably for the whole scope, blocking `to_slice(&mut self)`.
-                let mut str =
-                    scopeguard::guard(bun_core::String::from_js(value, global)?, |s| s.deref());
+                let mut str = bun_core::String::from_js(value, global)?;
                 if is_async {
-                    let mut possible_clone = *str;
+                    let mut possible_clone = str;
                     let mut sliced = possible_clone.to_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
+                    // Release the ref `from_js` took. On the WTF paths above
+                    // `to_thread_safe_slice` left `str` intact (and took its
+                    // own refs as needed); on the non-WTF fall-through it
+                    // moved the value into `sliced.underlying`, so this is a
+                    // no-op. Previously a `scopeguard` did this at scope exit.
+                    str.deref();
 
                     if sliced.underlying.is_empty() {
                         // PORT NOTE: partial-move out of `SliceWithUnderlyingString` —
                         // take `utf8` and leave the rest defaulted (no Drop on the type).
-                        return Ok(Some(Self::EncodedSlice(core::mem::take(&mut sliced.utf8))));
+                        *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
+                        return Ok(true);
                     }
 
-                    return Ok(Some(Self::ThreadsafeString(sliced)));
+                    *out = Self::ThreadsafeString(sliced);
                 } else {
-                    return Ok(Some(Self::String(str.to_slice())));
+                    // `to_slice()` moves the ref into `.underlying` and leaves
+                    // `str` EMPTY, so no trailing `deref()` is needed here —
+                    // the old scopeguard's closure was always a no-op on this arm.
+                    *out = Self::String(str.to_slice());
                 }
+                Ok(true)
             }
 
             JSType::ArrayBuffer
@@ -443,16 +463,34 @@ impl StringOrBuffer {
                     buffer.buffer.value.protect();
                 }
 
-                Ok(Some(Self::Buffer(buffer)))
+                *out = Self::Buffer(buffer);
+                Ok(true)
             }
-            _ => Ok(None),
+            _ => Ok(false),
         }
     }
 
+    #[inline]
+    pub fn from_js_maybe_async(
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_async: bool,
+        allow_string_object: bool,
+    ) -> JsResult<Option<StringOrBuffer>> {
+        let mut out = Self::EMPTY;
+        if Self::from_js_maybe_async_into(&mut out, global, value, is_async, allow_string_object)? {
+            Ok(Some(out))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
         Self::from_js_maybe_async(global, value, false, true)
     }
 
+    #[inline]
     pub fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
@@ -461,6 +499,66 @@ impl StringOrBuffer {
         Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
     }
 
+    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
+    #[inline]
+    pub fn from_js_with_encoding_into(
+        out: &mut StringOrBuffer,
+        global: &JSGlobalObject,
+        value: JSValue,
+        encoding: Encoding,
+    ) -> JsResult<bool> {
+        Self::from_js_with_encoding_maybe_async_into(out, global, value, encoding, false, true)
+    }
+
+    /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
+    /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
+    /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
+    #[inline]
+    pub fn from_js_with_encoding_maybe_async_into(
+        out: &mut StringOrBuffer,
+        global: &JSGlobalObject,
+        value: JSValue,
+        encoding: Encoding,
+        is_async: bool,
+        allow_string_object: bool,
+    ) -> JsResult<bool> {
+        if value.is_cell() && value.js_type().is_array_buffer_like() {
+            let buffer = Buffer::from_array_buffer(global, value);
+            if is_async {
+                buffer.buffer.value.protect();
+            }
+            *out = Self::Buffer(buffer);
+            return Ok(true);
+        }
+
+        if encoding == Encoding::Utf8 {
+            return Self::from_js_maybe_async_into(out, global, value, is_async, allow_string_object);
+        }
+
+        if value.is_string() {
+            let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
+            if str.is_empty() {
+                return Self::from_js_maybe_async_into(
+                    out,
+                    global,
+                    value,
+                    is_async,
+                    allow_string_object,
+                );
+            }
+
+            use crate::webcore::encoding::BunStringEncode as _;
+            let encoded = str.get().encode(encoding);
+            global.vm().report_extra_memory(encoded.len());
+
+            *out = Self::EncodedSlice(ZigStringSlice::init_owned(encoded));
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    #[inline]
     pub fn from_js_with_encoding_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
@@ -468,32 +566,19 @@ impl StringOrBuffer {
         is_async: bool,
         allow_string_object: bool,
     ) -> JsResult<Option<StringOrBuffer>> {
-        if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = Buffer::from_array_buffer(global, value);
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            return Ok(Some(Self::Buffer(buffer)));
+        let mut out = Self::EMPTY;
+        if Self::from_js_with_encoding_maybe_async_into(
+            &mut out,
+            global,
+            value,
+            encoding,
+            is_async,
+            allow_string_object,
+        )? {
+            Ok(Some(out))
+        } else {
+            Ok(None)
         }
-
-        if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
-        }
-
-        if value.is_string() {
-            let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
-            if str.is_empty() {
-                return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
-            }
-
-            use crate::webcore::encoding::BunStringEncode as _;
-            let out = str.get().encode(encoding);
-            global.vm().report_extra_memory(out.len());
-
-            return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
-        }
-
-        Ok(None)
     }
 
     pub fn from_js_with_encoding_value(

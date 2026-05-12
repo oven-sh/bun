@@ -94,6 +94,15 @@ pub struct HttpThread {
     pub uws_loop: *mut uws::Loop,
     pub http_context: NewHttpContext<false>,
     pub https_context: NewHttpContext<true>,
+    /// Stashed `InitOpts` for the default HTTPS context. `on_start` defers
+    /// `https_context.init_with_thread_opts` (which calls
+    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`, ~0.7 ms CPU +
+    /// ~400 KB heap to parse the bundled root certs) until the first SSL
+    /// connect actually arrives via [`HttpThread::connect`]`::<true>`. A
+    /// fully-cached `bun install` never makes one, so the cost is skipped
+    /// entirely. HTTP-thread-only after `on_start`; `Option::take` is the
+    /// once-guard (no atomics needed — `connect` is never reentrant).
+    lazy_https_init: Option<InitOpts>,
 
     pub queued_tasks: Queue,
     /// Tasks popped from `queued_tasks` that couldn't start because
@@ -150,6 +159,7 @@ impl HttpThread {
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
             },
+            lazy_https_init: None,
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
@@ -428,12 +438,38 @@ impl HttpThread {
         }
     }
 
+    /// One-shot lazy init of the default HTTPS context. See
+    /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
+    /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
+    /// is the once-guard. On failure, `on_init_error` diverges (matching the
+    /// eager-init crash semantics from Zig `onStart`).
+    #[inline]
+    fn ensure_https_context_init(&mut self) {
+        if let Some(opts) = self.lazy_https_init.take() {
+            self.init_https_context_cold(opts);
+        }
+    }
+
+    #[cold]
+    fn init_https_context_cold(&mut self, opts: InitOpts) {
+        if let Err(err) = self.https_context.init_with_thread_opts(&opts) {
+            (opts.on_init_error)(err, &opts);
+        }
+    }
+
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
     ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
 // TODO(port): narrow error set
     {
+        if IS_SSL {
+            // First SSL connect: materialize the default HTTPS `SSL_CTX` +
+            // socket group now (deferred from `on_start`). Runs once; every
+            // SSL request — including unix-socket and proxy paths below —
+            // funnels through here before touching `https_context.{group,secure}`.
+            self.ensure_https_context_init();
+        }
         // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
         // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
@@ -1124,9 +1160,16 @@ mod _event_loop_draft {
         thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
         thread.http_context.init();
-        if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
-            (opts.on_init_error)(err, &opts);
-        }
+        // Defer `https_context.init_with_thread_opts` — it eagerly builds the
+        // BoringSSL `SSL_CTX` and parses the bundled root-CA store
+        // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
+        // and ~400 KB heap whether or not an HTTPS request ever happens. Stash
+        // `opts` and let the first `connect::<true>` call run it (see
+        // `HttpThread::lazy_https_init`). Behavior-preserving: a bad CA file
+        // still crashes via `on_init_error`, just at first SSL use instead of
+        // thread start — and a fully-cached `bun install` (which makes zero
+        // network requests) skips the cost entirely.
+        thread.lazy_https_init = Some(opts);
         // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
         // readers (which Acquire-load `has_awoken`).
         thread.has_awoken.store(true, Ordering::Release);

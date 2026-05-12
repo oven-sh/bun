@@ -2459,16 +2459,15 @@ pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError>
 
 /// Lexicographic byte-slice ordering (memcmp fast path).
 /// Semantically identical to `<[u8] as Ord>::cmp` / Zig `std.mem.order(u8, a, b)`.
+///
+/// Delegates to `<[u8] as Ord>::cmp` rather than an extern `libc::memcmp` call:
+/// the std specialisation lowers to the `memcmp` LLVM builtin, so LLVM can
+/// inline the short-string fast path and skip the PLT trampoline — matching
+/// what Zig gets for `bun.c.memcmp` after LTO. `#[inline(always)]` because this
+/// sits inside `sort_unstable_by` comparators on the install hot path.
+#[inline(always)]
 pub fn order(a: &[u8], b: &[u8]) -> Ordering {
-    let len = a.len().min(b.len());
-    // SAFETY: both pointers valid for `len` bytes.
-    let cmp = unsafe { libc::memcmp(a.as_ptr().cast(), b.as_ptr().cast(), len) };
-    match cmp.signum() {
-        0 => a.len().cmp(&b.len()),
-        1 => Ordering::Greater,
-        -1 => Ordering::Less,
-        _ => unreachable!(),
-    }
+    a.cmp(b)
 }
 
 /// Generic lexicographic slice ordering — Zig `std.mem.order(T, a, b)`.

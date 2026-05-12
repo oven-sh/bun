@@ -912,14 +912,11 @@ impl Request {
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: self.flags.https,
-                        host,
-                        port: None,
-                    };
-                    return self.get_protocol().len()
-                        + req_url.len()
-                        + bun_fmt::count(format_args!("{}", fmt));
+                    // With `port: None`, HostFormatter always emits exactly `host`, so the
+                    // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
+                    // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
+                    // runs once per request via JSC extra-memory accounting.
+                    return self.get_protocol().len() + host.len() + req_url.len();
                 }
             }
             return req_url.len();
@@ -947,17 +944,12 @@ impl Request {
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: self.flags.https,
-                        host,
-                        port: None,
-                    };
-                    let url_bytelength = bun_fmt::count(format_args!(
-                        "{}{}{}",
-                        bstr::BStr::new(self.get_protocol()),
-                        fmt,
-                        bstr::BStr::new(req_url),
-                    ));
+                    // With `port: None`, HostFormatter always emits exactly `host`. Compute the
+                    // length and assemble the URL with straight slice copies instead of going
+                    // through `core::fmt::write` (which is not monomorphized and shows up in
+                    // per-request profiles).
+                    let protocol = self.get_protocol();
+                    let url_bytelength = protocol.len() + host.len() + req_url.len();
 
                     #[cfg(debug_assertions)]
                     debug_assert!(self.size_of_url() == url_bytelength);
@@ -965,18 +957,14 @@ impl Request {
                     if url_bytelength < 128 {
                         let mut buffer = [0u8; 128];
                         let url = {
-                            use std::io::Write;
-                            let mut cursor = &mut buffer[..];
-                            write!(
-                                cursor,
-                                "{}{}{}",
-                                bstr::BStr::new(self.get_protocol()),
-                                fmt,
-                                bstr::BStr::new(req_url),
-                            )
-                            .expect("Unexpected error while printing URL");
-                            let written = 128 - cursor.len();
-                            &buffer[..written]
+                            let mut at = 0;
+                            buffer[at..at + protocol.len()].copy_from_slice(protocol);
+                            at += protocol.len();
+                            buffer[at..at + host.len()].copy_from_slice(host);
+                            at += host.len();
+                            buffer[at..at + req_url.len()].copy_from_slice(req_url);
+                            at += req_url.len();
+                            &buffer[..at]
                         };
 
                         #[cfg(debug_assertions)]
@@ -1002,33 +990,18 @@ impl Request {
                         let (new_url, bytes) =
                             BunString::create_uninitialized_latin1(url_bytelength);
                         self.url.set(new_url);
-                        {
-                            use std::io::Write;
-                            let mut cursor = &mut bytes[..];
-                            // exact space should have been counted
-                            write!(
-                                cursor,
-                                "{}{}{}",
-                                bstr::BStr::new(self.get_protocol()),
-                                fmt,
-                                bstr::BStr::new(req_url),
-                            )
-                            .expect("unreachable");
-                        }
+                        // exact space was counted above
+                        let (a, rest) = bytes.split_at_mut(protocol.len());
+                        let (b, c) = rest.split_at_mut(host.len());
+                        a.copy_from_slice(protocol);
+                        b.copy_from_slice(host);
+                        c.copy_from_slice(req_url);
                     } else {
                         // slow path
-                        let mut temp_url: Vec<u8> = Vec::new();
-                        {
-                            use std::io::Write;
-                            write!(
-                                &mut temp_url,
-                                "{}{}{}",
-                                bstr::BStr::new(self.get_protocol()),
-                                fmt,
-                                bstr::BStr::new(req_url),
-                            )
-                            .map_err(|_| AllocError)?;
-                        }
+                        let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
+                        temp_url.extend_from_slice(protocol);
+                        temp_url.extend_from_slice(host);
+                        temp_url.extend_from_slice(req_url);
                         // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }

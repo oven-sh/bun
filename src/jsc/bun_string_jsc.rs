@@ -66,6 +66,7 @@ pub fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) ->
     result
 }
 
+#[inline]
 #[track_caller]
 pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
     crate::validation_scope!(scope, global_object);

@@ -1961,113 +1961,150 @@ pub fn init(
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
     // SAFETY: manager_ptr points to uninitialized memory from allocate_package_manager();
-    // we fully initialize it here via ptr::write.
+    // we fully initialize it here field-by-field via `addr_of_mut!((*p).field).write(..)`.
+    //
+    // PERF NOTE — do NOT build `PackageManager` by value and `ptr::write` it.
+    // Rust has no result-location semantics, so a struct literal first
+    // materializes on the stack, and `PackageManager` embeds two
+    // `HiveArrayFallback` pools inline (`NetworkTask` × 128 ≈ 395 KB,
+    // `Task` × 64 ≈ 39 KB). The by-value form was measured at a 911 KB stack
+    // frame (objdump: `subq $0xde000,%r11` probe loop, ≈220 page faults) plus
+    // a ≈443 KB memcpy into the singleton. Zig's `manager.* = .{...}` writes
+    // fields directly to the heap (RLS); per-field placement mirrors that and
+    // keeps the frame under 16 KB.
     unsafe {
-        core::ptr::write(
-            manager_ptr,
-            PackageManager {
-                cache_directory_: None,
-                cache_directory_path: ZBox::from_bytes(b""), // TODO(port): default ""
-                preallocated_network_tasks: PreallocatedNetworkTasks::init(),
-                preallocated_resolve_tasks: PreallocatedTaskStore::init(),
-                options,
-                active_lifecycle_scripts: crate::lifecycle_script_runner::List {
-                    root: core::ptr::null_mut(),
-                    // `lifecycle_script_runner::List`'s heap comparator never
-                    // dereferences its Zig `*PackageManager` context arg, so the
-                    // Rust port models it as a ZST (`StartedAtCtx`) instead of
-                    // threading a back-pointer.
-                    context: crate::lifecycle_script_runner::StartedAtCtx,
-                },
-                network_task_fifo: NetworkQueue::init(),
-                patch_task_fifo: PatchTaskFifo::init(),
-                log: ctx.log,
-                root_dir: entries_option,
-                ast_arena: bun_alloc::Arena::new(),
-                // PORT NOTE: reborrow `&mut *env` so the local stays usable for
-                // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-                // reads (Zig PackageManager.zig:910 keeps using `env` after
-                // storing it in the struct). `BackRef` stores a raw pointer —
-                // ending the reborrow here does not alias the later uses.
-                env: Some(bun_ptr::BackRef::new_mut(&mut *env)),
-                cpu_count,
-                thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count,
-                    ..Default::default()
-                }),
-                resolve_tasks: ResolveTaskQueue::default(),
-                // Zig: `.lockfile = undefined` (uninit `*Lockfile`), then
-                // `manager.lockfile = try allocator.create(Lockfile)` immediately after the
-                // struct literal. `Lockfile` contains `HashMap`/`Vec`/`NonNull` fields, so a
-                // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
-                // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
-                lockfile: Box::new(Lockfile::default()),
-                root_package_json_file,
-                // .progress
-                event_loop: AnyEventLoop::init(),
-                original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path_buf),
-                // TODO(port): owned [:0]const u8 conversion
-                workspace_package_json_cache,
-                workspace_name_hash,
-                subcommand,
-                root_package_json_name_at_time_of_init,
+        let p = manager_ptr;
+        macro_rules! wr {
+            ($field:ident, $val:expr) => {
+                core::ptr::addr_of_mut!((*p).$field).write($val)
+            };
+        }
+        // The two large pools: in-place init that only zeros the 256 B
+        // occupancy bitset and leaves `[MaybeUninit<T>; N]` untouched — no
+        // stack temporary, no memcpy.
+        PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
+            (*p).preallocated_network_tasks
+        ));
+        PreallocatedTaskStore::init_in_place(core::ptr::addr_of_mut!(
+            (*p).preallocated_resolve_tasks
+        ));
 
-                // remaining defaults:
-                timestamp_for_manifest_cache_control: 0,
-                extracted_count: 0,
-                default_features: Features::default(),
-                summary: Default::default(),
-                progress: Progress::default(),
-                downloads_node: None,
-                scripts_node: None,
-                progress_name_buf: [0; 768],
-                progress_name_buf_dynamic: Vec::new(),
-                track_installed_bin: TrackInstalledBin::None,
-                root_progress_node: core::ptr::null_mut(),
-                to_update: false,
-                update_requests: Box::default(),
-                root_package_id: RootPackageId::default(),
-                task_batch: thread_pool::Batch::default(),
-                task_queue: TaskDependencyQueue::default(),
-                manifests: PackageManifestMap::default(),
-                folders: Default::default(),
-                git_repositories: RepositoryMap::default(),
-                network_dedupe_map: Default::default(),
-                async_network_task_queue: AsyncNetworkTaskQueue::default(),
-                network_tarball_batch: thread_pool::Batch::default(),
-                network_resolve_batch: thread_pool::Batch::default(),
-                patch_apply_batch: thread_pool::Batch::default(),
-                patch_calc_hash_batch: thread_pool::Batch::default(),
-                patch_task_queue: PatchTaskQueue::default(),
-                pending_pre_calc_hashes: AtomicU32::new(0),
-                pending_tasks: AtomicU32::new(0),
-                total_tasks: 0,
-                lifecycle_script_time_log: LifecycleScriptTimeLog::default(),
-                pending_lifecycle_script_tasks: AtomicU32::new(0),
-                finished_installing: AtomicBool::new(false),
-                total_scripts: 0,
-                root_lifecycle_scripts: None,
-                node_gyp_tempdir_name: Box::default(),
-                env_configure: None,
-                preinstall_state: Vec::new(),
-                postinstall_optimizer: Default::default(),
-                global_link_dir: None,
-                global_dir: None,
-                global_link_dir_path: Box::default(),
-                on_wake: WakeHandler::default(),
-                ci_mode: LazyBool::new(PackageManager::compute_is_continuous_integration),
-                peer_dependencies: LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init(),
-                known_npm_aliases: NpmAliasMap::default(),
-                trusted_deps_to_add_to_package_json: Vec::new(),
-                any_failed_to_install: false,
-                updating_packages: StringArrayHashMap::default(),
-                patched_dependencies_to_remove: ArrayHashMap::default(),
-                last_reported_slow_lifecycle_script_at: 0,
-                cached_tick_for_slow_lifecycle_script_logging: 0,
-            },
+        wr!(cache_directory_, None);
+        wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default ""
+        wr!(options, options);
+        wr!(
+            active_lifecycle_scripts,
+            crate::lifecycle_script_runner::List {
+                root: core::ptr::null_mut(),
+                // `lifecycle_script_runner::List`'s heap comparator never
+                // dereferences its Zig `*PackageManager` context arg, so the
+                // Rust port models it as a ZST (`StartedAtCtx`) instead of
+                // threading a back-pointer.
+                context: crate::lifecycle_script_runner::StartedAtCtx,
+            }
         );
+        wr!(network_task_fifo, NetworkQueue::init());
+        wr!(patch_task_fifo, PatchTaskFifo::init());
+        wr!(log, ctx.log);
+        wr!(root_dir, entries_option);
+        wr!(ast_arena, bun_alloc::Arena::new());
+        // PORT NOTE: reborrow `&mut *env` so the local stays usable for
+        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
+        // reads (Zig PackageManager.zig:910 keeps using `env` after
+        // storing it in the struct). `BackRef` stores a raw pointer —
+        // ending the reborrow here does not alias the later uses.
+        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(cpu_count, cpu_count);
+        wr!(
+            thread_pool,
+            ThreadPool::init(thread_pool::Config {
+                max_threads: cpu_count,
+                ..Default::default()
+            })
+        );
+        wr!(resolve_tasks, ResolveTaskQueue::default());
+        // Zig: `.lockfile = undefined` (uninit `*Lockfile`), then
+        // `manager.lockfile = try allocator.create(Lockfile)` immediately after the
+        // struct literal. `Lockfile` contains `HashMap`/`Vec`/`NonNull` fields, so a
+        // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
+        // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
+        wr!(lockfile, Box::new(Lockfile::default()));
+        wr!(root_package_json_file, root_package_json_file);
+        // .progress
+        wr!(event_loop, AnyEventLoop::init());
+        wr!(
+            original_package_json_path,
+            ZBox::from_vec_with_nul(original_package_json_path_buf)
+        );
+        // TODO(port): owned [:0]const u8 conversion
+        wr!(workspace_package_json_cache, workspace_package_json_cache);
+        wr!(workspace_name_hash, workspace_name_hash);
+        wr!(subcommand, subcommand);
+        wr!(
+            root_package_json_name_at_time_of_init,
+            root_package_json_name_at_time_of_init
+        );
+
+        // remaining defaults:
+        wr!(timestamp_for_manifest_cache_control, 0);
+        wr!(extracted_count, 0);
+        wr!(default_features, Features::default());
+        wr!(summary, Default::default());
+        wr!(progress, Progress::default());
+        wr!(downloads_node, None);
+        wr!(scripts_node, None);
+        wr!(progress_name_buf, [0; 768]);
+        wr!(progress_name_buf_dynamic, Vec::new());
+        wr!(track_installed_bin, TrackInstalledBin::None);
+        wr!(root_progress_node, core::ptr::null_mut());
+        wr!(to_update, false);
+        wr!(update_requests, Box::default());
+        wr!(root_package_id, RootPackageId::default());
+        wr!(task_batch, thread_pool::Batch::default());
+        wr!(task_queue, TaskDependencyQueue::default());
+        wr!(manifests, PackageManifestMap::default());
+        wr!(folders, Default::default());
+        wr!(git_repositories, RepositoryMap::default());
+        wr!(network_dedupe_map, Default::default());
+        wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
+        wr!(network_tarball_batch, thread_pool::Batch::default());
+        wr!(network_resolve_batch, thread_pool::Batch::default());
+        wr!(patch_apply_batch, thread_pool::Batch::default());
+        wr!(patch_calc_hash_batch, thread_pool::Batch::default());
+        wr!(patch_task_queue, PatchTaskQueue::default());
+        wr!(pending_pre_calc_hashes, AtomicU32::new(0));
+        wr!(pending_tasks, AtomicU32::new(0));
+        wr!(total_tasks, 0);
+        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
+        wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
+        wr!(finished_installing, AtomicBool::new(false));
+        wr!(total_scripts, 0);
+        wr!(root_lifecycle_scripts, None);
+        wr!(node_gyp_tempdir_name, Box::default());
+        wr!(env_configure, None);
+        wr!(preinstall_state, Vec::new());
+        wr!(postinstall_optimizer, Default::default());
+        wr!(global_link_dir, None);
+        wr!(global_dir, None);
+        wr!(global_link_dir_path, Box::default());
+        wr!(on_wake, WakeHandler::default());
+        wr!(
+            ci_mode,
+            LazyBool::new(PackageManager::compute_is_continuous_integration)
+        );
+        wr!(
+            peer_dependencies,
+            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
+        );
+        wr!(known_npm_aliases, NpmAliasMap::default());
+        wr!(trusted_deps_to_add_to_package_json, Vec::new());
+        wr!(any_failed_to_install, false);
+        wr!(updating_packages, StringArrayHashMap::default());
+        wr!(patched_dependencies_to_remove, ArrayHashMap::default());
+        wr!(last_reported_slow_lifecycle_script_at, 0);
+        wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
-    // `ptr::write` above fully initialized the singleton in place; the
+    // The per-field placement above fully initialized the singleton; the
     // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
     // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
     // below spawns workers that deref `get()` concurrently, which would alias such a
@@ -2380,115 +2417,149 @@ pub fn init_with_runtime_once(
         .copy_from_slice(b"/package.json");
     // last byte already 0 (sentinel)
 
-    // SAFETY: manager_ptr points to uninitialized memory; fully initialize via ptr::write
+    // SAFETY: manager_ptr points to uninitialized memory; fully initialize
+    // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF
+    // NOTE in `init()` above — building `PackageManager` by value and
+    // `ptr::write`ing it materialized a ≈911 KB stack frame because of the
+    // two inline `HiveArrayFallback` pools; per-field placement mirrors Zig's
+    // result-location semantics and writes directly to the heap singleton.
     unsafe {
-        core::ptr::write(
-            manager_ptr,
-            PackageManager {
-                cache_directory_: None,
-                cache_directory_path: ZBox::from_bytes(b""), // TODO(port): default
-                preallocated_network_tasks: PreallocatedNetworkTasks::init(),
-                preallocated_resolve_tasks: PreallocatedTaskStore::init(),
-                options: Options {
-                    max_concurrent_lifecycle_scripts: cli
-                        .concurrent_scripts
-                        .unwrap_or((cpu_count * 2) as usize),
-                    ..Default::default()
-                },
-                active_lifecycle_scripts: crate::lifecycle_script_runner::List {
-                    root: core::ptr::null_mut(),
-                    context: crate::lifecycle_script_runner::StartedAtCtx,
-                },
-                network_task_fifo: NetworkQueue::init(),
-                log: std::ptr::from_mut(log),
-                root_dir,
-                ast_arena: bun_alloc::Arena::new(),
-                // PORT NOTE: reborrow `&mut *env` so the local stays usable for
-                // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-                // reads (Zig PackageManager.zig:1072 keeps using `env` after
-                // storing it in the struct). `BackRef` stores a raw pointer —
-                // ending the reborrow here does not alias the later uses.
-                env: Some(bun_ptr::BackRef::new_mut(&mut *env)),
-                cpu_count,
-                thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count,
-                    ..Default::default()
-                }),
-                // Zig: `.lockfile = undefined` then `manager.lockfile = try allocator.create(Lockfile)`
-                // immediately after. `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
-                // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
-                lockfile: Box::new(Lockfile::default()),
-                // Zig leaves `.root_package_json_file = undefined` (never read in the runtime
-                // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
-                // on posix `Fd(0)` is stdin, not the invalid marker.
-                root_package_json_file: bun_sys::File::from_fd(Fd::invalid()),
-                // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-                // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
-                event_loop: AnyEventLoop::js_current(),
-                original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path),
-                subcommand: Subcommand::Install,
+        let p = manager_ptr;
+        macro_rules! wr {
+            ($field:ident, $val:expr) => {
+                core::ptr::addr_of_mut!((*p).$field).write($val)
+            };
+        }
+        // The two large pools: in-place init that only zeros the 256 B
+        // occupancy bitset and leaves `[MaybeUninit<T>; N]` untouched.
+        PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
+            (*p).preallocated_network_tasks
+        ));
+        PreallocatedTaskStore::init_in_place(core::ptr::addr_of_mut!(
+            (*p).preallocated_resolve_tasks
+        ));
 
-                // remaining defaults:
-                resolve_tasks: ResolveTaskQueue::default(),
-                timestamp_for_manifest_cache_control: 0,
-                extracted_count: 0,
-                default_features: Features::default(),
-                summary: Default::default(),
-                progress: Progress::default(),
-                downloads_node: None,
-                scripts_node: None,
-                progress_name_buf: [0; 768],
-                progress_name_buf_dynamic: Vec::new(),
-                track_installed_bin: TrackInstalledBin::None,
-                root_progress_node: core::ptr::null_mut(),
-                to_update: false,
-                update_requests: Box::default(),
-                root_package_json_name_at_time_of_init: Box::default(),
-                root_package_id: RootPackageId::default(),
-                task_batch: thread_pool::Batch::default(),
-                task_queue: TaskDependencyQueue::default(),
-                manifests: PackageManifestMap::default(),
-                folders: Default::default(),
-                git_repositories: RepositoryMap::default(),
-                network_dedupe_map: Default::default(),
-                async_network_task_queue: AsyncNetworkTaskQueue::default(),
-                network_tarball_batch: thread_pool::Batch::default(),
-                network_resolve_batch: thread_pool::Batch::default(),
-                patch_apply_batch: thread_pool::Batch::default(),
-                patch_calc_hash_batch: thread_pool::Batch::default(),
-                patch_task_fifo: PatchTaskFifo::init(),
-                patch_task_queue: PatchTaskQueue::default(),
-                pending_pre_calc_hashes: AtomicU32::new(0),
-                pending_tasks: AtomicU32::new(0),
-                total_tasks: 0,
-                lifecycle_script_time_log: LifecycleScriptTimeLog::default(),
-                pending_lifecycle_script_tasks: AtomicU32::new(0),
-                finished_installing: AtomicBool::new(false),
-                total_scripts: 0,
-                root_lifecycle_scripts: None,
-                node_gyp_tempdir_name: Box::default(),
-                env_configure: None,
-                preinstall_state: Vec::new(),
-                postinstall_optimizer: Default::default(),
-                global_link_dir: None,
-                global_dir: None,
-                global_link_dir_path: Box::default(),
-                on_wake: WakeHandler::default(),
-                ci_mode: LazyBool::new(PackageManager::compute_is_continuous_integration),
-                peer_dependencies: LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init(),
-                known_npm_aliases: NpmAliasMap::default(),
-                trusted_deps_to_add_to_package_json: Vec::new(),
-                any_failed_to_install: false,
-                workspace_name_hash: None,
-                workspace_package_json_cache: WorkspacePackageJSONCache::default(),
-                updating_packages: StringArrayHashMap::default(),
-                patched_dependencies_to_remove: ArrayHashMap::default(),
-                last_reported_slow_lifecycle_script_at: 0,
-                cached_tick_for_slow_lifecycle_script_logging: 0,
-            },
+        wr!(cache_directory_, None);
+        wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default
+        wr!(
+            options,
+            Options {
+                max_concurrent_lifecycle_scripts: cli
+                    .concurrent_scripts
+                    .unwrap_or((cpu_count * 2) as usize),
+                ..Default::default()
+            }
         );
+        wr!(
+            active_lifecycle_scripts,
+            crate::lifecycle_script_runner::List {
+                root: core::ptr::null_mut(),
+                context: crate::lifecycle_script_runner::StartedAtCtx,
+            }
+        );
+        wr!(network_task_fifo, NetworkQueue::init());
+        wr!(log, std::ptr::from_mut(log));
+        wr!(root_dir, root_dir);
+        wr!(ast_arena, bun_alloc::Arena::new());
+        // PORT NOTE: reborrow `&mut *env` so the local stays usable for
+        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
+        // reads (Zig PackageManager.zig:1072 keeps using `env` after
+        // storing it in the struct). `BackRef` stores a raw pointer —
+        // ending the reborrow here does not alias the later uses.
+        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(cpu_count, cpu_count);
+        wr!(
+            thread_pool,
+            ThreadPool::init(thread_pool::Config {
+                max_threads: cpu_count,
+                ..Default::default()
+            })
+        );
+        // Zig: `.lockfile = undefined` then `manager.lockfile = try allocator.create(Lockfile)`
+        // immediately after. `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
+        // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
+        wr!(lockfile, Box::new(Lockfile::default()));
+        // Zig leaves `.root_package_json_file = undefined` (never read in the runtime
+        // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
+        // on posix `Fd(0)` is stdin, not the invalid marker.
+        wr!(root_package_json_file, bun_sys::File::from_fd(Fd::invalid()));
+        // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
+        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
+        wr!(event_loop, AnyEventLoop::js_current());
+        wr!(
+            original_package_json_path,
+            ZBox::from_vec_with_nul(original_package_json_path)
+        );
+        wr!(subcommand, Subcommand::Install);
+
+        // remaining defaults:
+        wr!(resolve_tasks, ResolveTaskQueue::default());
+        wr!(timestamp_for_manifest_cache_control, 0);
+        wr!(extracted_count, 0);
+        wr!(default_features, Features::default());
+        wr!(summary, Default::default());
+        wr!(progress, Progress::default());
+        wr!(downloads_node, None);
+        wr!(scripts_node, None);
+        wr!(progress_name_buf, [0; 768]);
+        wr!(progress_name_buf_dynamic, Vec::new());
+        wr!(track_installed_bin, TrackInstalledBin::None);
+        wr!(root_progress_node, core::ptr::null_mut());
+        wr!(to_update, false);
+        wr!(update_requests, Box::default());
+        wr!(root_package_json_name_at_time_of_init, Box::default());
+        wr!(root_package_id, RootPackageId::default());
+        wr!(task_batch, thread_pool::Batch::default());
+        wr!(task_queue, TaskDependencyQueue::default());
+        wr!(manifests, PackageManifestMap::default());
+        wr!(folders, Default::default());
+        wr!(git_repositories, RepositoryMap::default());
+        wr!(network_dedupe_map, Default::default());
+        wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
+        wr!(network_tarball_batch, thread_pool::Batch::default());
+        wr!(network_resolve_batch, thread_pool::Batch::default());
+        wr!(patch_apply_batch, thread_pool::Batch::default());
+        wr!(patch_calc_hash_batch, thread_pool::Batch::default());
+        wr!(patch_task_fifo, PatchTaskFifo::init());
+        wr!(patch_task_queue, PatchTaskQueue::default());
+        wr!(pending_pre_calc_hashes, AtomicU32::new(0));
+        wr!(pending_tasks, AtomicU32::new(0));
+        wr!(total_tasks, 0);
+        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
+        wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
+        wr!(finished_installing, AtomicBool::new(false));
+        wr!(total_scripts, 0);
+        wr!(root_lifecycle_scripts, None);
+        wr!(node_gyp_tempdir_name, Box::default());
+        wr!(env_configure, None);
+        wr!(preinstall_state, Vec::new());
+        wr!(postinstall_optimizer, Default::default());
+        wr!(global_link_dir, None);
+        wr!(global_dir, None);
+        wr!(global_link_dir_path, Box::default());
+        wr!(on_wake, WakeHandler::default());
+        wr!(
+            ci_mode,
+            LazyBool::new(PackageManager::compute_is_continuous_integration)
+        );
+        wr!(
+            peer_dependencies,
+            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
+        );
+        wr!(known_npm_aliases, NpmAliasMap::default());
+        wr!(trusted_deps_to_add_to_package_json, Vec::new());
+        wr!(any_failed_to_install, false);
+        wr!(workspace_name_hash, None);
+        wr!(
+            workspace_package_json_cache,
+            WorkspacePackageJSONCache::default()
+        );
+        wr!(updating_packages, StringArrayHashMap::default());
+        wr!(patched_dependencies_to_remove, ArrayHashMap::default());
+        wr!(last_reported_slow_lifecycle_script_at, 0);
+        wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
-    // SAFETY: `ptr::write` above fully initialized the PackageManager in place;
+    // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body (Zig PackageManager.zig:1031 onward).
     let manager = unsafe { &mut *manager_ptr };

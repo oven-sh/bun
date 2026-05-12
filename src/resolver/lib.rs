@@ -1708,7 +1708,8 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_with_handle_impl,
+        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        read_file_with_handle_impl,
     };
 
     /// Re-export `StatHash` from the full `fs.rs` port so `bun_runtime::server::FileRoute`
@@ -2130,6 +2131,18 @@ pub mod cache {
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
         /// sit in spare capacity past `len`, matching fs.zig:1671.
         Owned(Vec<u8>),
+        /// Bytes live in a caller-supplied `bun_alloc::Arena` (the per-call
+        /// `MimallocArena` from `ParseOptions.arena`). NOT freed on `deinit` —
+        /// bulk-reclaimed by `mi_heap_destroy` when the arena drops. This is
+        /// the `allocator != bun.default_allocator` arm of
+        /// `Fs.readFileWithAllocator` (cache.zig:146 → fs.zig:1617): the
+        /// concurrent-transpiler path passed `this_parse.allocator` so the
+        /// 1.6 MB vite chunk source landed in the per-job arena, not the
+        /// worker thread's default mimalloc heap (which is never destroyed).
+        Arena {
+            ptr: core::ptr::NonNull<u8>,
+            len: usize,
+        },
         /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
         /// storage). Caller guarantees the pointee outlives all reads through
         /// this `Entry`. NOT freed on `deinit`.
@@ -2162,6 +2175,13 @@ pub mod cache {
                 Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
                     core::slice::from_raw_parts(*ptr, *len)
                 },
+                // SAFETY: ARENA — `ptr[..len]` lives in the caller-supplied
+                // `MimallocArena`, which the caller guarantees outlives every
+                // read through this `Entry` (the arena is dropped only after
+                // the `ParseResult` carrying this `Contents` is recycled).
+                Contents::Arena { ptr, len } => unsafe {
+                    core::slice::from_raw_parts(ptr.as_ptr(), *len)
+                },
             }
         }
 
@@ -2170,7 +2190,9 @@ pub mod cache {
             match self {
                 Contents::Empty => true,
                 Contents::Owned(v) => v.is_empty(),
-                Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len == 0,
+                Contents::Arena { len, .. }
+                | Contents::SharedBuffer { len, .. }
+                | Contents::External { len, .. } => *len == 0,
             }
         }
 
@@ -2179,7 +2201,9 @@ pub mod cache {
             match self {
                 Contents::Empty => 0,
                 Contents::Owned(v) => v.len(),
-                Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len,
+                Contents::Arena { len, .. }
+                | Contents::SharedBuffer { len, .. }
+                | Contents::External { len, .. } => *len,
             }
         }
 
@@ -2277,9 +2301,10 @@ pub mod cache {
                 unsafe { func(self.external_free_function.ctx) };
             }
             // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
-            // `allocator.free(entry.contents)`); `SharedBuffer`/`External`/
-            // `Empty` have trivial drops, so the shared-buffer path is a
-            // correct no-op instead of the UB `heap::take` it used to be.
+            // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
+            // `External`/`Empty` have trivial drops, so the shared-buffer and
+            // arena paths are correct no-ops instead of the UB `heap::take`
+            // they used to be.
             self.contents = Contents::Empty;
         }
 
@@ -2401,7 +2426,14 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
         ) -> Result<Entry, bun_core::Error> {
-            self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle)
+            self.read_file_with_allocator(
+                _fs,
+                path,
+                dirname_fd,
+                use_shared_buffer,
+                _file_handle,
+                None,
+            )
         }
 
         /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
@@ -2412,11 +2444,15 @@ pub mod cache {
         /// resolver's earlier forward-decl already pinned this shape.
         /// PERF(port): re-monomorphize once both callers stabilize.
         ///
-        /// PORT NOTE: `allocator` is dropped — Zig forwarded it to
-        /// `readFileWithHandleAndAllocator`; the only effect was choosing which
-        /// heap owns the non-shared-buffer read. The Rust path always allocates
-        /// from the global heap (via `Box::leak`); arena callers can route through
-        /// a bump in a follow-up.
+        /// `arena` restores the Zig `allocator` param: when
+        /// `!use_shared_buffer && arena.is_some()` the file body is read
+        /// directly into `arena` (`Contents::Arena`), so the bytes are
+        /// bulk-freed by `mi_heap_destroy` when the per-call `MimallocArena`
+        /// drops instead of landing in the worker thread's default mimalloc
+        /// heap (which is never destroyed). `None` keeps the global-heap
+        /// `Contents::Owned(Vec<u8>)` path. Zig: `transpiler.zig:838-839`
+        /// passed `if (use_shared_buffer) bun.default_allocator else
+        /// this_parse.allocator`.
         pub fn read_file_with_allocator(
             &mut self,
             _fs: &mut fs_mod::FileSystem,
@@ -2424,6 +2460,7 @@ pub mod cache {
             dirname_fd: Fd,
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
+            arena: Option<&bun_alloc::Arena>,
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
@@ -2480,27 +2517,51 @@ pub mod cache {
             // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
             // the shared buffer.
             let stream = self.stream;
-            let shared = self.shared_buffer();
 
-            let contents = match fs_mod::read_file_contents(
-                &file_handle,
-                path,
-                use_shared_buffer,
-                shared,
-                stream,
-            )
-            .map(Contents::from)
-            {
-                Ok(c) => c,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(&format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path),
-                            bstr::BStr::new(err.name()),
-                        ));
+            let contents = match (use_shared_buffer, arena) {
+                // Zig: `readFileWithHandleAndAllocator(this_parse.allocator, …)`
+                // — read straight into the per-call arena so the source bytes
+                // are reclaimed by `mi_heap_destroy` instead of pinning a
+                // segment in the worker thread's default heap.
+                (false, Some(arena)) => {
+                    match fs_mod::read_file_contents_in_arena(&file_handle, path, arena) {
+                        Ok((_, 0)) => Contents::Empty,
+                        Ok((ptr, len)) => Contents::Arena { ptr, len },
+                        Err(err) => {
+                            if cfg!(debug_assertions) {
+                                Output::print_error(&format_args!(
+                                    "{}: readFile error -- {}",
+                                    bstr::BStr::new(path),
+                                    bstr::BStr::new(err.name()),
+                                ));
+                            }
+                            return Err(err);
+                        }
                     }
-                    return Err(err);
+                }
+                _ => {
+                    let shared = self.shared_buffer();
+                    match fs_mod::read_file_contents(
+                        &file_handle,
+                        path,
+                        use_shared_buffer,
+                        shared,
+                        stream,
+                    )
+                    .map(Contents::from)
+                    {
+                        Ok(c) => c,
+                        Err(err) => {
+                            if cfg!(debug_assertions) {
+                                Output::print_error(&format_args!(
+                                    "{}: readFile error -- {}",
+                                    bstr::BStr::new(path),
+                                    bstr::BStr::new(err.name()),
+                                ));
+                            }
+                            return Err(err);
+                        }
+                    }
                 }
             };
 
@@ -7394,6 +7455,7 @@ pub mod __phase_a_body {
                 file,
                 dirname_fd,
                 false,
+                None,
                 None,
             )?;
             // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving

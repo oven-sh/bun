@@ -3139,6 +3139,10 @@ where
         // garbage.
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
+                debug_assert!(
+                    !self.h3_request_pool.is_null(),
+                    "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
+                );
                 let slot = (*self.h3_request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),

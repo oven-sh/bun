@@ -591,6 +591,7 @@ pub mod zig_base64 {
         /// dest.len must be what you get from ::calc_size.
         /// invalid characters result in Error::InvalidCharacter.
         /// invalid padding results in Error::InvalidPadding.
+        #[inline]
         pub fn decode(&self, dest: &mut [u8], source: &[u8]) -> Result<(), Error> {
             if self.pad_char.is_some() && source.len() % 4 != 0 {
                 return Err(Error::InvalidPadding);
@@ -601,7 +602,8 @@ pub mod zig_base64 {
             let mut dest_idx: usize = 0;
             let mut leftover_idx: Option<usize> = None;
             for (src_idx, &c) in source.iter().enumerate() {
-                let d = self.char_to_index[c as usize];
+                // SAFETY: `c: u8` so `c as usize` is in 0..=255, and `char_to_index` is `[u8; 256]`.
+                let d = unsafe { *self.char_to_index.get_unchecked(c as usize) };
                 if d == Self::INVALID_CHAR {
                     if self.pad_char.is_none() || c != self.pad_char.unwrap() {
                         return Err(Error::InvalidCharacter);
@@ -613,7 +615,11 @@ pub mod zig_base64 {
                 acc_len += 6;
                 if acc_len >= 8 {
                     acc_len -= 8;
-                    dest[dest_idx] = (acc >> acc_len) as u8;
+                    // SAFETY: callers size `dest` via `calc_size_for_slice(source)` (see doc comment),
+                    // which yields exactly the number of output bytes this loop produces; `dest_idx`
+                    // therefore stays in-bounds for any input that reaches this branch.
+                    debug_assert!(dest_idx < dest.len());
+                    unsafe { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
                     dest_idx += 1;
                 }
             }

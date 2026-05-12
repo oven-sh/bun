@@ -418,10 +418,16 @@ impl String {
         if bytes.len() >= Self::max_length() {
             return Self::DEAD;
         }
-        let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
+        // Do NOT call `into_boxed_slice()` — when `len < capacity` it issues a
+        // shrink_to_fit realloc. mimalloc's `mi_free` only needs the original
+        // base pointer (capacity is recovered from the heap), so leaking the
+        // spare capacity to the ExternalStringImpl finalizer is correct and
+        // matches Zig's `allocator.alloc(u8, n)` → `to[0..wrote]` pattern.
+        let mut bytes = core::mem::ManuallyDrop::new(bytes);
+        let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
         // via mimalloc (the global allocator).
-        unsafe { BunString__createExternalGloballyAllocatedLatin1(bytes.as_mut_ptr(), bytes.len()) }
+        unsafe { BunString__createExternalGloballyAllocatedLatin1(ptr, len) }
     }
 
     /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
@@ -432,9 +438,12 @@ impl String {
         if bytes.len() >= Self::max_length() {
             return Self::DEAD;
         }
-        let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
+        // See `create_external_globally_allocated_latin1` — avoid the
+        // `into_boxed_slice()` shrink-realloc when `len < capacity`.
+        let mut bytes = core::mem::ManuallyDrop::new(bytes);
+        let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: see `create_external_globally_allocated_latin1`.
-        unsafe { BunString__createExternalGloballyAllocatedUTF16(bytes.as_mut_ptr(), bytes.len()) }
+        unsafe { BunString__createExternalGloballyAllocatedUTF16(ptr, len) }
     }
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
@@ -690,6 +699,7 @@ impl String {
     /// - `WTFStringImpl`: refs the impl (Latin-1, all-ASCII) or transcodes (Latin-1/UTF-16 → owned).
     /// - `ZigString`: borrows (UTF-8) or transcodes (UTF-16/non-ASCII Latin-1).
     /// - `StaticZigString`: borrows always.
+    #[inline]
     pub fn to_utf8(&self) -> ZigStringSlice {
         match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8(),
@@ -1009,6 +1019,7 @@ impl String {
 
     /// `bun.String.toSlice` (string.zig:734) — consume `self` into a
     /// [`SliceWithUnderlyingString`], leaving `self` as [`EMPTY`].
+    #[inline]
     pub fn to_slice(&mut self) -> SliceWithUnderlyingString {
         let utf8 = self.to_utf8();
         let underlying = core::mem::replace(self, Self::EMPTY);

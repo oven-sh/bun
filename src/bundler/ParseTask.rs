@@ -1468,6 +1468,9 @@ pub mod parse_worker {
                     contents_dir,
                     false,
                     contents_file.unwrap_valid(),
+                    // TODO(port): thread `bump` once `should_copy_for_bundling`
+                    // routing matches Zig (`bun.default_allocator` vs worker arena).
+                    None,
                 ) {
                     Ok(e) => {
                         // PORT NOTE: `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
@@ -1477,6 +1480,7 @@ pub mod parse_worker {
                         let contents = match e.contents {
                             RC::Empty => crate::cache::Contents::Empty,
                             RC::Owned(v) => crate::cache::Contents::Owned(v),
+                            RC::Arena { ptr, len } => crate::cache::Contents::Arena { ptr, len },
                             RC::SharedBuffer { ptr, len } => {
                                 crate::cache::Contents::SharedBuffer { ptr, len }
                             }

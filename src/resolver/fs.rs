@@ -2370,6 +2370,105 @@ pub fn read_file_contents<'buf>(
     .map(|p| p.contents)
 }
 
+/// Arena-backed twin of the `USE_SHARED_BUFFER = false` arm of
+/// [`read_file_with_handle_impl`]. Port of the `allocator` forwarding in
+/// `Fs.readFileWithHandleAndAllocator` (fs.zig:1617): the returned bytes live
+/// in `arena` so they are bulk-freed when the per-call `MimallocArena` is
+/// `mi_heap_destroy`'d (`TranspilerJob::run` / `ParseTask`), instead of
+/// round-tripping through the worker thread's *default* mimalloc heap (which
+/// is never destroyed and retains the segment for the process lifetime).
+///
+/// Returns `(ptr, len)` into `arena`-owned memory; a sentinel NUL is written
+/// at `ptr[len]` (not counted in `len`), matching Zig's `[:0]u8` `dupeZ`.
+pub fn read_file_contents_in_arena(
+    file: &bun_sys::File,
+    path: &[u8],
+    arena: &bun_alloc::Arena,
+) -> Result<(core::ptr::NonNull<u8>, usize), bun_core::Error> {
+    let _ = path;
+    FileSystem::set_max_fd(file.handle().native());
+
+    let mut initial_buf = [0u8; 16384];
+
+    // Optimization: don't call stat() unless the file is big enough that we
+    // need to dynamically allocate memory to read it.
+    let read_count = match file.read_all(&mut initial_buf) {
+        Ok(n) => n,
+        Err(err) => return Err(err.into()),
+    };
+    if read_count + 1 < initial_buf.len() {
+        // allocator.dupeZ — own the buffer in `arena`; trailing NUL not in len.
+        let buf = arena.alloc_slice_fill_copy::<u8>(read_count + 1, 0);
+        buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
+        return Ok(finish_arena_contents(arena, buf, read_count));
+    }
+    let initial_len = read_count;
+
+    // Skip the extra file.stat() call when possible (size_hint is always None
+    // on this path — `cache::Fs::read_file_with_allocator` never passes one).
+    let size = match file.get_end_pos() {
+        Ok(s) => s,
+        Err(err) => return Err(err.into()),
+    };
+    debug!("stat({}) = {}", file.handle(), size);
+
+    if size == 0 {
+        return Ok((core::ptr::NonNull::dangling(), 0));
+    }
+
+    // `arena.alloc_slice(size + 1)` instead of `vec![0u8; size + 1]` — this is
+    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
+    let buf = arena.alloc_slice_fill_copy::<u8>(size + 1, 0);
+    buf[..initial_len].copy_from_slice(&initial_buf[..initial_len]);
+
+    let read_count = match file.read_all(&mut buf[initial_len..]) {
+        Ok(n) => n,
+        Err(err) => return Err(err.into()),
+    };
+    let total = read_count + initial_len;
+    debug!("read({}, {}) = {}", file.handle(), size, read_count);
+
+    Ok(finish_arena_contents(arena, buf, total))
+}
+
+/// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
+/// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
+#[inline]
+fn finish_arena_contents(
+    arena: &bun_alloc::Arena,
+    buf: &mut [u8],
+    mut total: usize,
+) -> (core::ptr::NonNull<u8>, usize) {
+    if let Some(bom) = BOM::detect(&buf[..total]) {
+        debug!("Convert {} BOM", bom.tag_name());
+        match bom {
+            BOM::Utf8 => {
+                let n = BOM::UTF8_BYTES.len();
+                buf.copy_within(n..total, 0);
+                total -= n;
+            }
+            other => {
+                // Rare path (UTF-16 source on the concurrent transpiler) —
+                // re-encode via the global-heap helper, then copy into the
+                // arena so the *retained* bytes still land there. The temp
+                // `Vec` drops in-scope.
+                let converted = other.remove_and_convert_to_utf8_and_free(buf[..total].to_vec());
+                let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
+                dst[..converted.len()].copy_from_slice(&converted);
+                // SAFETY: `dst` is a non-null arena slice of length ≥ 1.
+                let ptr = unsafe { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
+                return (ptr, converted.len());
+            }
+        }
+    }
+    debug_assert!(buf.len() > total);
+    buf[total] = 0;
+    // SAFETY: `buf` is a non-null arena slice (len ≥ 1 on every path that
+    // reaches here; the `size == 0` / empty cases return earlier).
+    let ptr = unsafe { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
+    (ptr, total)
+}
+
 pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
     path: &'p [u8],
     size_hint: Option<usize>,

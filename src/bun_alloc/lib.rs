@@ -2642,18 +2642,41 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         this: *mut Self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
-        // ── std.fmt.count: drive a discarding `fmt::Write` that only sums byte lengths.
-        let len = crate::fmt_count(args);
+        // Zig's `std.fmt.count` + `std.fmt.bufPrint` are both comptime-expanded
+        // straight-line writes, so the count-then-write double pass is free
+        // there. Rust's `core::fmt::write` drives a `dyn fmt::Write` vtable per
+        // argument piece, so a literal port pays that dispatch *twice* — the
+        // dominant cost in `extract_tarball::build_url`, which is called once
+        // per lockfile package with 6+ args.
+        //
+        // Single-pass instead: format into a stack scratch (one `core::fmt`
+        // drive), then memcpy the exact bytes into the store via `append`
+        // (which adds the trailing NUL itself, matching the original `len + 1`
+        // reservation). 512 B covers every current caller (npm tarball URLs,
+        // interned dirnames); longer outputs fall through to the original
+        // count-then-reserve path below.
+        const STACK: usize = 512;
+        let mut scratch = [MaybeUninit::<u8>::uninit(); STACK];
+        // SAFETY: `SliceCursor::write_str` only *writes* into `buf[at..end]`
+        // via `copy_from_slice` and never reads it, so forming `&mut [u8]` over
+        // uninit bytes is sound here — every byte in `[..c.at]` is initialized
+        // before being observed below. Same pattern as `do_append`'s
+        // `backing_buf` slice formation.
+        let mut c = crate::SliceCursor::new(unsafe {
+            core::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<u8>(), STACK)
+        });
+        if core::fmt::write(&mut c, args).is_ok() {
+            let written: &[u8] = &c.buf[..c.at];
+            // SAFETY: forwarded — see `append`.
+            return unsafe { Self::append(this, written) };
+        }
 
-        // var buf = try self.appendMutable(EmptyType, .{ .len = count + 1 });
+        // Overflow (> STACK bytes — rare): count exactly, reserve, re-format.
+        let len = crate::fmt_count(args);
         // SAFETY: forwarded — see `append_mutable`.
         let buf = unsafe { Self::append_mutable(this, EmptyType { len: len + 1 })? };
         let buf_len = buf.len();
-        // buf[buf.len - 1] = 0;
         buf[buf_len - 1] = 0;
-
-        // ── std.fmt.bufPrint(buf[0..len-1], fmt, args) catch unreachable
-        // `catch unreachable`: we counted the exact length above.
         let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
         Ok(&buf[..written])
     }

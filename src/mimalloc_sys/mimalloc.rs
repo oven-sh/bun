@@ -277,10 +277,14 @@ bun_opaque::opaque_ffi! {
     /// Opaque mimalloc v3 thread-local heap handle (`mi_theap_t`).
     ///
     /// A `THeap` is the per-thread allocation state belonging to a [`Heap`].
-    /// `mi_heap_*` entry points resolve `heap → theap` on **every** call via
-    /// `_mi_heap_theap` (TLS read of `__mi_theap_cached` + heap-tag compare,
-    /// falling back to `_mi_heap_theap_get_or_init`); the `mi_theap_*` entry
-    /// points take the resolved `THeap` directly and skip that lookup.
+    /// `mi_heap_*` entry points resolve `heap → theap` on every call via
+    /// `_mi_heap_theap`; the `mi_theap_*` entry points take the resolved
+    /// `THeap` directly and skip that lookup.
+    ///
+    /// **Do not cache across `Send`**: a `mi_theap_t*` is per-OS-thread, while
+    /// the `mi_heap_t*` it belongs to is `Send`. Zig parity is plain
+    /// `mi_heap_*`; see `MimallocArena.rs` PERF NOTE. The entry points below
+    /// are `#[deprecated]` for this reason.
     pub struct THeap;
 }
 
@@ -288,10 +292,13 @@ unsafe extern "C" {
     /// Resolve (creating if necessary) this thread's `mi_theap_t` for `heap`,
     /// and prime mimalloc's internal `__mi_theap_cached` TLS slot. Public
     /// wrapper around `_mi_heap_theap` (`heap.c`).
+    #[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
     pub fn mi_heap_theap(heap: *mut Heap) -> *mut THeap;
     /// `mi_heap_malloc` minus the per-call `heap → theap` lookup.
+    #[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
     pub fn mi_theap_malloc(theap: *mut THeap, size: usize) -> *mut c_void;
     /// `mi_heap_malloc_aligned` minus the per-call `heap → theap` lookup.
+    #[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
     pub fn mi_theap_malloc_aligned(
         theap: *mut THeap,
         size: usize,
@@ -563,6 +570,8 @@ pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usi
 ///
 /// # Safety
 /// `theap` must point to a live `mi_theap_t` for the calling thread.
+#[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
+#[allow(deprecated)]
 #[inline(always)]
 pub unsafe fn mi_theap_malloc_auto_align(
     theap: *mut THeap,

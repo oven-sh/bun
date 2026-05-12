@@ -244,12 +244,10 @@ unsafe fn init_runtime_state(
         editor_context: Default::default(),
         entry_point: ServerEntryPoint::default(),
         // Zig parity: spec VirtualMachine.zig:1241 threads
-        // `bun.default_allocator` (= global mimalloc) into `Transpiler.init`;
-        // a fresh `mi_heap_new()` here is a SECOND heap interleaved with
-        // `AstAlloc` in the hot parser loop, thrashing mimalloc's per-thread
-        // `theap` cache. `borrowing_default()` wraps `mi_heap_main()` so
-        // `Transpiler`-level allocations use the same heap as the global
-        // allocator (no `_mi_heap_theap_get_or_init` ping-pong).
+        // `bun.default_allocator` (= global mimalloc) into `Transpiler.init`.
+        // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
+        // allocations use the same heap as the global allocator and skip the
+        // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
     }));
@@ -1920,17 +1918,14 @@ fn transpile_source_code_inner(
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };
             // Spec :122 — `Transpiler::reset_store`.
-            // PERF: inline only the block-store half of `reset_store()` and
-            // SKIP `store_ast_alloc_heap::reset()`. We bind `AST_HEAP` to
+            // Inline only the block-store half and SKIP
+            // `store_ast_alloc_heap::reset()`: we bind `AST_HEAP` to
             // `arena.heap_ptr()` below so `AstAlloc` and the parser scratch
-            // share ONE `mi_heap_t*` for this transpile (43% of `heap_malloc`
-            // calls in build/create-vue hit the slow path because they
-            // alternated between the side-arena heap and `arena`'s heap,
-            // thrashing `_mi_theap_cached`). The two have identical lifetime —
-            // both reclaimed at the give-back `arena.reset_retain_with_limit`
-            // — so unifying is semantically equivalent and also drops the
-            // per-file `mi_heap_destroy`/`mi_heap_new` pair the side-arena
-            // reset paid.
+            // share ONE `mi_heap_t*` for this transpile. The two have
+            // identical lifetime — both reclaimed at the give-back
+            // `arena.reset_retain_with_limit` — so unifying is semantically
+            // equivalent and also drops the per-file `mi_heap_destroy`/
+            // `mi_heap_new` pair the side-arena reset paid.
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
@@ -1950,11 +1945,10 @@ fn transpile_source_code_inner(
                 (*jsc_vm).module_loader.transpile_source_code_arena.take()
             }
             .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
-            // PERF: route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
+            // Route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
             // `reset_store` note above). `_ast_scope.enter()` already nulled
             // `AST_HEAP`; this rebinds it to the heap that the parser scratch
-            // and printer arena allocations also use, so mimalloc's
-            // `_mi_theap_cached` stays pinned for the whole transpile.
+            // and printer arena allocations also use.
             bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
             let mut give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a

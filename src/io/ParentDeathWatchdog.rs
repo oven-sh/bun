@@ -182,6 +182,12 @@ static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
 /// `bunfig.toml`'s `[run] noOrphans` and the `--no-orphans` flag call
 /// `enable()` directly later in startup if the env var wasn't set.
+///
+/// `#[inline]`: this is on the unconditional startup path and is just an
+/// env-var flag check that almost always early-returns. Folding it into
+/// `main()` avoids a cross-crate call frame on every process start; the
+/// rare-taken arm body lives in `#[cold] enable()`.
+#[inline]
 pub fn install() {
     #[cfg(unix)]
     {
@@ -195,6 +201,12 @@ pub fn install() {
 /// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
 /// descendant reaper, and (lazily) the macOS kqueue parent watch. Safe to call
 /// from `main()` (env-var path) and again from bunfig / CLI flag parsing.
+///
+/// `#[cold] #[inline(never)]`: only reached when no-orphans is opted into;
+/// keeps the prctl/setenv/getppid body out of the inlined `install()` fast
+/// path so `main()` stays small.
+#[cold]
+#[inline(never)]
 pub fn enable() {
     #[cfg(unix)]
     // SAFETY: called only on the main thread during startup, before any

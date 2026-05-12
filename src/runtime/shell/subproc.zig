@@ -641,6 +641,12 @@ pub const ShellSubprocess = struct {
             const r: *Readable = &@field(this, @tagName(tag));
             if (r.* == .pipe and r.pipe.state == .pending) {
                 r.pipe.state = .{ .err = null };
+                // If pipe.start() never ran, reader.handle is still `.closed` and
+                // PipeReader.deinit() won't close the spawn-created fd. Close it here
+                // so callers that run before stdout/stderr start() don't leak it.
+                if (r.pipe.reader.handle == .closed) {
+                    if (r.pipe.stdio_result) |fd| fd.close();
+                }
             }
         }
         this.deinit();

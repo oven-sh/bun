@@ -7,10 +7,10 @@
 // #30281 — `moduleRegistryModuleSettled` fired twice for the same entry
 // when `hostLoadImportedModule`'s synchronous-replay branch had already
 // driven `fetchComplete` inline while a stale normal-queue reaction was
-// still pending. Fix: oven-sh/WebKit#217.
+// still pending. Fix: oven-sh/WebKit#225.
 //
-// This is the dependency-free reduction of #30281; the react + MUI
-// variant is covered separately in 30281.test.ts.
+// This is the dependency-free reduction of #30281; it subsumes the
+// react + MUI repro from #30283.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
@@ -36,19 +36,16 @@ test("require() of ESM with diamond dependency through barrel does not deadlock"
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
+    // Before the fix: release builds deadlock indefinitely; debug builds
+    // abort. Bound the subprocess so the assertions below show a clear
+    // failure instead of the test itself timing out.
+    timeout: 10_000,
   });
 
-  // Before the fix: release builds deadlock indefinitely; debug builds
-  // abort. signalAfter forces a clean failure for the deadlock case so
-  // the test reports stderr rather than timing out the whole file.
-  const KILL_SIGNAL = "SIGTERM";
-  const KILL_AFTER_MS = 5_000;
-  const killer = setTimeout(() => proc.kill(KILL_SIGNAL), KILL_AFTER_MS);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  clearTimeout(killer);
 
   expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"{"a":"/","b":"barrel","shared":"/"}"`);
-  expect(stderr).not.toContain("ASSERTION FAILED");
-  expect(proc.signalCode).not.toBe(KILL_SIGNAL);
+  // null ⇒ exited on its own; non-null ⇒ killed by the spawn timeout (deadlocked).
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

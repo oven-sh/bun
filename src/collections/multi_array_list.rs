@@ -1030,6 +1030,33 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = 0;
     }
 
+    /// Run every element's destructor, then reset to empty (`len = 0`,
+    /// capacity retained).
+    ///
+    /// `Drop` for this type is **slab-only** — it frees the SoA backing buffer
+    /// but never runs column destructors (see the `Drop` impl for why: bitwise
+    /// [`clone`] aliasing). When `T` has fields that own global-heap resources
+    /// and the list is the unique owner, call this before the list goes out of
+    /// scope or those payloads leak. No-op when `!needs_drop::<T>()`.
+    ///
+    /// Elements are dropped by gathering each row's column bytes back into a
+    /// stack `T` (the inverse of [`scatter`]) and letting it drop, so every
+    /// field — not just one named column — is destructed.
+    pub fn drop_elements(&mut self) {
+        if core::mem::needs_drop::<T>() && self.len != 0 {
+            let s = self.slice();
+            for i in 0..self.len {
+                // SAFETY: `i < len <= capacity`; every column holds an
+                // initialized field at `i`. `gather` bit-copies those bytes
+                // into a stack `T`; dropping it runs each field's destructor
+                // exactly once. The SoA bytes for row `i` are not read again:
+                // `len` is zeroed immediately after the loop.
+                unsafe { drop(gather::<T>(&s.ptrs, i)) };
+            }
+        }
+        self.len = 0;
+    }
+
     /// Reduce length to `new_len`.
     pub fn shrink_retaining_capacity(&mut self, new_len: usize) {
         self.len = new_len;
@@ -1214,9 +1241,18 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
 impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
     fn drop(&mut self) {
-        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())`.
-        // PERF(port): does not drop column elements (matches Zig — callers
-        // own field lifetimes); revisit if a Drop-aware variant is needed.
+        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())` — slab
+        // only, no per-element destructors. This is **intentionally preserved**:
+        // [`clone`] is a bitwise SoA memcpy (Zig semantics), so two live lists
+        // can alias the same column heap pointers — see `bundle_v2.rs`
+        // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
+        // one alias and relies on the other dropping slab-only. Running
+        // element destructors here would double-free that side.
+        //
+        // For lists that *do* uniquely own heap-backed columns (e.g.
+        // `LineOffsetTable.columns_for_non_ascii: Vec<i32>`), call
+        // [`MultiArrayList::drop_elements`] before letting this run, or the
+        // column payloads leak.
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: `bytes` was allocated with exactly `layout` and is
             // freed exactly once here.

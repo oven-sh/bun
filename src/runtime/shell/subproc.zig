@@ -237,8 +237,7 @@ pub const ShellSubprocess = struct {
 
                     switch (pipe.writer.start(pipe.fd, true)) {
                         .result => {},
-                        .err => |err| {
-                            _ = err; // autofix
+                        .err => {
                             pipe.deref();
                             stdio.readable_stream.cancel(global);
                             return error.UnexpectedCreatingStdin;

@@ -401,10 +401,9 @@ it("should handle semver-like names", async () => {
   const urls: string[] = [];
   setHandler(async request => {
     expect(request.method).toBe("GET");
-    expect([
+    expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-      "application/json, */*",
-    ]).toContain(request.headers.get("accept"));
+    );
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
     urls.push(request.url);
@@ -443,10 +442,9 @@ it("should handle @scoped names", async () => {
   const urls: string[] = [];
   setHandler(async request => {
     expect(request.method).toBe("GET");
-    expect([
+    expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-      "application/json, */*",
-    ]).toContain(request.headers.get("accept"));
+    );
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
     urls.push(request.url);

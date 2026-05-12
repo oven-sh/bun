@@ -255,9 +255,9 @@ The default is controlled by a `configVersion` field in your lockfile. For a det
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, Bun enforces a minimum age requirement for npm packages. Package versions published more recently than the specified threshold will be filtered out during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold will be filtered out during installation.
 
-For new projects (lockfile `configVersion` ≥ 2) this defaults to **two days**. Projects created with older Bun versions default to disabled. Pass `0` to disable the filter.
+Starting in Bun 1.4, new projects (lockfile `configVersion` ≥ 2) default to a **two-day** minimum release age. Projects with existing lockfiles keep the current disabled default. Pass `0` to disable the filter.
 
 The value accepts either an [`ms`](https://npmjs.com/package/ms)-style duration string (`3d`, `1 week`, `48h`) or a bare number of seconds:
 

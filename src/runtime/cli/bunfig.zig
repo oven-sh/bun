@@ -785,7 +785,7 @@ pub const Bunfig = struct {
                         switch (min_age.data) {
                             .e_number => |seconds| {
                                 if (seconds.value < 0) {
-                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
+                                    try this.addError(min_age.loc, "Expected a non-negative number of seconds for minimumReleaseAge (0 disables)");
                                     return;
                                 }
                                 install.minimum_release_age_ms = seconds.value * std.time.ms_per_s;
@@ -797,7 +797,7 @@ pub const Bunfig = struct {
                                     return;
                                 };
                                 if (ms < 0) {
-                                    try this.addError(min_age.loc, "Expected a positive duration for minimumReleaseAge");
+                                    try this.addError(min_age.loc, "Expected a non-negative duration for minimumReleaseAge (0 disables)");
                                     return;
                                 }
                                 install.minimum_release_age_ms = ms;

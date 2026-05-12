@@ -278,7 +278,20 @@ pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
 /// Must be called after `Options.load()` and after the lockfile has been
 /// loaded, but before any package resolution.
 pub fn applyConfigVersionDefaults(this: *PackageManager, load_result: *const Lockfile.LoadResult) bool {
-    const config_version, const changed_config_version = load_result.chooseConfigVersion();
+    var config_version, const changed_config_version = load_result.chooseConfigVersion();
+
+    // Until `breaking_changes_1_4` flips `ConfigVersion.current` to `.v2`, the
+    // `BUN_FEATURE_FLAG_INSTALL_CONFIG_V2` environment variable opts fresh
+    // projects into the new defaults for testing. This mirrors what 1.4 will
+    // do: only the `.not_found` / `.err` cases (which currently pick
+    // `.current`) are affected; existing and migrated lockfiles keep their
+    // chosen version.
+    if (comptime !bun.FeatureFlags.breaking_changes_1_4) {
+        if (load_result.* != .ok and bun.feature_flag.BUN_FEATURE_FLAG_INSTALL_CONFIG_V2.get()) {
+            config_version = .v2;
+        }
+    }
+
     this.options.config_version = config_version;
 
     switch (config_version) {

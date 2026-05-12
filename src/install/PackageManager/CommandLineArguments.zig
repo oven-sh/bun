@@ -843,11 +843,11 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
             secs * std.time.ms_per_s
         else |_|
             bun.fmt.parseMs(min_age) orelse {
-                Output.errGeneric("Expected --minimum-release-age to be a positive number of seconds or a duration like \"2d\": {s}", .{min_age});
+                Output.errGeneric("Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {s}", .{min_age});
                 Global.crash();
             };
         if (ms < 0) {
-            Output.errGeneric("Expected --minimum-release-age to be a positive number of seconds or a duration like \"2d\": {s}", .{min_age});
+            Output.errGeneric("Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {s}", .{min_age});
             Global.crash();
         }
         cli.minimum_release_age_ms = ms;

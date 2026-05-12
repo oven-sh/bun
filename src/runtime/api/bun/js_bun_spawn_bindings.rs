@@ -149,20 +149,6 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwn
     ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
 }
 
-/// Obtain `&mut Process` from the intrusively-refcounted `*mut Process` stored
-/// on `Subprocess`. Zig stores `*Process` and mutates freely; every `Process`
-/// is single-threaded and only ever mutated from the owning event-loop thread.
-///
-/// # Safety
-/// `p` must be a live `Process` allocated by `Process::init_posix`/`init_windows`
-/// (Box-backed, intrusive `ThreadSafeRefCount`); caller must be on the owning
-/// JS thread with no other live `&mut Process` to the same allocation.
-#[inline]
-unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
-    // SAFETY: see fn doc; Process has interior single-thread ownership.
-    unsafe { &mut *p }
-}
-
 bun_output::declare_scope!(Subprocess, hidden);
 
 // `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
@@ -1291,8 +1277,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             subprocess.finalize_streams();
-            // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.detach();
+            subprocess.process_mut().detach();
             // Zig: `subprocess.process.deref()` releases the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
@@ -1348,9 +1333,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: see `process_mut` doc; `subprocess_ptr` is the live JSC-allocated
-    // Subprocess that owns `process` and outlives it.
-    unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_handler(unsafe {
+    // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
+    // `process` and outlives it (handler ctx invariant).
+    subprocess.process_mut().set_exit_handler(unsafe {
         bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
     });
 
@@ -1568,8 +1553,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             Subprocess::js::terminal_set_cached(out, global_this, terminal_js_value);
         }
 
-        // SAFETY: see `process_mut` doc.
-        match unsafe { process_mut(subprocess.process.as_ptr()) }.watch() {
+        match subprocess.process_mut().watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1585,7 +1569,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     scopeguard::defer! {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { process_mut((*subprocess_ptr_exit).process.as_ptr()) };
+            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1678,15 +1662,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: jsc_vm_ptr is the live thread VM.
         unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        // SAFETY: see `process_mut` doc.
-        unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+        subprocess.process_mut().wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
-    // SAFETY: see `process_mut` doc.
-    match unsafe { process_mut(subprocess.process.as_ptr()) }.watch_or_reap() {
+    match subprocess.process_mut().watch_or_reap() {
         sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -1702,8 +1684,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         }
         sys::Result::Err(_) => {
-            // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+            subprocess.process_mut().wait(true);
         }
     }
 

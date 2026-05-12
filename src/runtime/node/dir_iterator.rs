@@ -190,16 +190,14 @@ mod platform {
                 let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
                 let d_ino: u64 = unsafe { addr_of!((*entry).d_ino).read_unaligned() };
                 let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                let entry_idx = self.index;
                 self.index += d_reclen as usize;
 
-                // SAFETY: d_name is d_namlen initialized bytes within the
-                // record; the slice borrows `self.buf` until the next call.
-                let name = unsafe {
-                    core::slice::from_raw_parts(
-                        addr_of!((*entry).d_name).cast::<u8>(),
-                        d_namlen as usize,
-                    )
-                };
+                // d_name is `d_namlen` initialized bytes at a fixed offset within
+                // the record; slice it directly from `buf` (bounds-checked) instead
+                // of going through the raw `*const dirent`.
+                let name_off = entry_idx + offset_of!(libc::dirent, d_name);
+                let name = &self.buf.0[name_off..name_off + d_namlen as usize];
 
                 if name == b"." || name == b".." || d_ino == 0 {
                     continue 'start_over;
@@ -297,15 +295,13 @@ mod platform {
                 let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
                 let d_fileno: u64 = unsafe { addr_of!((*entry).d_fileno).read_unaligned() };
                 let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                let entry_idx = self.index;
                 self.index += d_reclen as usize;
 
-                // SAFETY: name is d_namlen bytes within the record
-                let name = unsafe {
-                    core::slice::from_raw_parts(
-                        addr_of!((*entry).d_name).cast::<u8>(),
-                        d_namlen as usize,
-                    )
-                };
+                // d_name is `d_namlen` bytes at a fixed offset within the record;
+                // slice it directly from `buf` (bounds-checked).
+                let name_off = entry_idx + offset_of!(libc::dirent, d_name);
+                let name = &self.buf.0[name_off..name_off + d_namlen as usize];
                 if name == b"." || name == b".." || d_fileno == 0 {
                     continue 'start_over;
                 }
@@ -400,18 +396,17 @@ mod platform {
                 // SAFETY: entry points at a valid record header within buf.
                 let d_reclen: u16 = unsafe { core::ptr::addr_of!((*entry).d_reclen).read() };
                 let d_type: u8 = unsafe { core::ptr::addr_of!((*entry).d_type).read() };
-                let next_index = self.index + d_reclen as usize;
+                let entry_idx = self.index;
+                let next_index = entry_idx + d_reclen as usize;
                 self.index = next_index;
 
-                // SAFETY: dirent64.d_name is NUL-terminated within the record
-                let name = unsafe {
-                    let p = core::ptr::addr_of!((*entry).d_name).cast::<u8>();
-                    let mut len = 0usize;
-                    while *p.add(len) != 0 {
-                        len += 1;
-                    }
-                    core::slice::from_raw_parts(p, len)
-                };
+                // dirent64.d_name is NUL-terminated within [name_off, next_index);
+                // slice it directly from `buf` (bounds-checked) and scan for NUL
+                // instead of dereferencing the raw `*const dirent64`.
+                let name_off = entry_idx + offset_of!(libc::dirent64, d_name);
+                let region = &self.buf.0[name_off..next_index];
+                let nul = region.iter().position(|&b| b == 0).unwrap_or(region.len());
+                let name = &region[..nul];
 
                 // skip . and .. entries
                 if name == b"." || name == b".." {

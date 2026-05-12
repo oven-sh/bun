@@ -2016,18 +2016,16 @@ impl BlobExt for Blob {
                 // `resolve_file_stat` — it materializes `&mut File` on the same
                 // memory (Stacked Borrows UB; the optimizer may legally cache the
                 // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read through the raw store pointer after the mutating call.
-                // Mirrors Zig, which re-loads `store.data.file.*` each time.
-                let store_ptr = store.as_ptr();
-                // SAFETY: `store_ptr` is the live `heap::alloc` pointer behind
-                // `StoreRef`; single-threaded JS event loop ⇒ no concurrent writers.
-                let last_modified = unsafe { (*store_ptr).data.as_file() }.last_modified;
+                // Re-read via `StoreRef::data_mut` (raw-ptr-backed accessor) after
+                // the mutating call. Mirrors Zig, which re-loads
+                // `store.data.file.*` each time.
+                let last_modified = store.data_mut().as_file().last_modified;
                 // last_modified can be already set during read.
                 if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
                     resolve_file_stat(store);
                 }
-                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(unsafe { (*store_ptr).data.as_file() }.last_modified as f64);
+                // Fresh borrow after possible mutation by `resolve_file_stat`.
+                return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
             }
         }
 
@@ -2143,12 +2141,9 @@ impl BlobExt for Blob {
         // materializes `&mut File` on the same memory via the raw
         // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
         // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. Mirrors Zig, which re-loads
-        // `store.data.file.*` fresh after `resolveFileStat`.
-        let store_ptr = store.as_ptr();
-        // SAFETY: `store_ptr` is the live `heap::alloc` pointer behind
-        // `StoreRef`; single-threaded JS event loop ⇒ no concurrent writers.
-        match unsafe { &(*store_ptr).data }.tag() {
+        // through to `self.size.get() = 0`. `StoreRef::data_mut` centralises
+        // the raw-ptr deref so each read here is a fresh, safe borrow.
+        match store.data_mut().tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2158,12 +2153,11 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::File => {
-                // SAFETY: see above; short-lived read, dropped before the call.
-                if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
+                if store.data_mut().as_file().seekable.is_none() {
                     resolve_file_stat(store);
                 }
-                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = unsafe { (*store_ptr).data.as_file() };
+                // Fresh borrow after possible mutation by `resolve_file_stat`.
+                let file = store.data_mut().as_file();
 
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
@@ -2194,12 +2188,9 @@ impl BlobExt for Blob {
             return (self.offset.get(), 0);
         };
         // PORT NOTE: see `resolve_size` — dispatch on the copied tag and re-read
-        // through the raw store pointer after `resolve_file_stat` so no
+        // via `StoreRef::data_mut` after `resolve_file_stat` so no
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
-        let store_ptr = store.as_ptr();
-        // SAFETY: `store_ptr` is the live `heap::alloc` pointer behind
-        // `StoreRef`; single-threaded JS event loop.
-        match unsafe { &(*store_ptr).data }.tag() {
+        match store.data_mut().tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2209,12 +2200,11 @@ impl BlobExt for Blob {
                 (self.offset.get(), self.size.get())
             }
             store::DataTag::File => {
-                // SAFETY: see above; short-lived read, dropped before the call.
-                if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
+                if store.data_mut().as_file().seekable.is_none() {
                     resolve_file_stat(store);
                 }
-                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = unsafe { (*store_ptr).data.as_file() };
+                // Fresh borrow after possible mutation by `resolve_file_stat`.
+                let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
@@ -2397,23 +2387,18 @@ impl BlobExt for Blob {
             return empty();
         }
         let Some(store_ref) = self.store() else { return empty() };
-        // `as_ptr()` yields the `*mut Store` originally produced by
-        // `heap::alloc` (see `StoreRef::from<Box<Store>>`), so it carries
-        // mutable provenance over the whole allocation.
-        let store = store_ref.as_ptr();
-        // SAFETY: `store` is live (we hold a `StoreRef`). No `&Store` is
-        // materialized here — we go straight from the raw pointer — so the
-        // brief `&mut` to the payload below does not alias any outstanding
-        // borrow (other `StoreRef`s only hold raw `NonNull<Store>`, never a
-        // long-lived `&Store`; JS execution is single-threaded).
-        let (base, len) = unsafe {
-            match &mut (*store).data {
-                store::Data::Bytes(bytes) => {
-                    let v = bytes.as_array_list_leak();
-                    (v.as_mut_ptr(), v.len())
-                }
-                _ => return empty(),
+        // `StoreRef::data_mut` derefs the original `heap::alloc` `*mut Store`
+        // (mutable provenance over the whole allocation) without materializing
+        // a `Deref`-produced `&Store`, so the brief `&mut` to the payload does
+        // not alias any outstanding borrow (other `StoreRef`s only hold raw
+        // `NonNull<Store>`, never a long-lived `&Store`; JS execution is
+        // single-threaded).
+        let (base, len) = match store_ref.data_mut() {
+            store::Data::Bytes(bytes) => {
+                let v = bytes.as_array_list_leak();
+                (v.as_mut_ptr(), v.len())
             }
+            _ => return empty(),
         };
         if len == 0 {
             return empty();
@@ -5503,9 +5488,10 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
 
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &StoreRef) {
-    // SAFETY: `StoreRef::as_ptr()` yields the original `heap::alloc` pointer; the
-    // caller holds the only ref across this call, so an exclusive borrow is sound.
-    let file = unsafe { (*store.as_ptr()).data.as_file_mut() };
+    // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
+    // `StoreRef` liveness invariant; the caller holds the only ref across
+    // this call, so an exclusive borrow is sound.
+    let file = store.data_mut().as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();

@@ -127,6 +127,7 @@ impl Method {
         )
     }
 
+    #[inline]
     pub fn find(str: &[u8]) -> Option<Method> {
         Self::which(str)
     }
@@ -140,6 +141,16 @@ impl Method {
     /// hot path takes the upper arm; the all-lower entries exist only for
     /// `new Request("get", …)` JS-side convenience and match the Zig table
     /// exactly (mixed-case still rejects).
+    ///
+    /// `#[inline]`: the Zig `ComptimeStringMapWithKeyType` lookup is fully
+    /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
+    /// release binary). Without the hint LLVM keeps this as a ~600-byte
+    /// out-of-line call because the full match tree looks heavy, even though
+    /// every per-request caller only ever exercises the len=3 `b"GET"` arm —
+    /// trivially branch-predicted once the outer `match str.len()` is visible
+    /// at the call site. Showed up as 8 self-time samples (0.09 %) in the
+    /// `server/node-http` bench from the call alone.
+    #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
         use Method::*;
         Some(match str.len() {

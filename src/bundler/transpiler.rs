@@ -2194,20 +2194,29 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
 /// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
 
+// PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
+// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs, AsyncModule.rs,
+// JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
+// `&mut BufferPrinter`. Leaving the public entry points generic forced each
+// downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
+// out its own copy of the 109-fn `Printer<W,A,B,C,D,E>` recursion tree —
+// `llvm-nm --print-size` showed `bun_js_printer` .text at 1,367 KB vs 594 KB on
+// the Zig build, with both the `_11bun_runtime` and `_7bun_jsc` copies of
+// `print_expr<…>` live in `perf` and thrashing icache against each other
+// (L1-icache-misses +5.1%, iTLB-misses +13.2%, IPC 1.40 vs 1.50). Pinning `W`
+// to the one concrete type and marking the public entry points
+// `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
-    fn print_with_source_map_maybe<W, const ENABLE_SOURCE_MAP: bool>(
+    fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
+    ) -> Result<usize, bun_core::Error> {
         // TODO(port): narrow error set
         // TODO(port): `bun.perf.trace("JSPrinter.printWithSourceMap")` /
         // `("JSPrinter.print")` — `bun_perf::trace` now takes a `PerfEvent`
@@ -2249,7 +2258,7 @@ impl<'a> Transpiler<'a> {
         // three cold arms behind `#[cold] #[inline(never)]` thunks so their
         // instantiation trees land in `.text.unlikely` instead.
         match format {
-            js_printer::Format::Cjs => self.print_cjs_cold::<W, ENABLE_SOURCE_MAP>(
+            js_printer::Format::Cjs => self.print_cjs_cold::<ENABLE_SOURCE_MAP>(
                 writer,
                 &ast,
                 symbols,
@@ -2258,7 +2267,7 @@ impl<'a> Transpiler<'a> {
                 runtime_transpiler_cache,
             ),
 
-            js_printer::Format::Esm => self.print_esm_cold::<W, ENABLE_SOURCE_MAP>(
+            js_printer::Format::Esm => self.print_esm_cold::<ENABLE_SOURCE_MAP>(
                 writer,
                 &ast,
                 symbols,
@@ -2273,7 +2282,7 @@ impl<'a> Transpiler<'a> {
                 // `print_ast_esm_ascii` helper so the const-generic IS_BUN can
                 // also drive `module_type`.
                 if self.options.target.is_bun() {
-                    self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, true>(
+                    self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         writer,
                         ast,
                         symbols,
@@ -2284,7 +2293,7 @@ impl<'a> Transpiler<'a> {
                         module_info,
                     )
                 } else {
-                    self.print_ast_esm_ascii_not_bun_cold::<W, ENABLE_SOURCE_MAP>(
+                    self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
                         writer,
                         ast,
                         symbols,
@@ -2308,19 +2317,16 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_cjs_cold<W, const ENABLE_SOURCE_MAP: bool>(
+    fn print_cjs_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
-        js_printer::print_common_js::<W, false, ENABLE_SOURCE_MAP>(
+    ) -> Result<usize, bun_core::Error> {
+        js_printer::print_common_js::<_, false, ENABLE_SOURCE_MAP>(
             writer,
             // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
             // the Rust port (for `binary_expression_stack` arena). Zig
@@ -2355,18 +2361,15 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_esm_cold<W, const ENABLE_SOURCE_MAP: bool>(
+    fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
+    ) -> Result<usize, bun_core::Error> {
         let opts = js_printer::Options {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
@@ -2384,7 +2387,7 @@ impl<'a> Transpiler<'a> {
             mangled_props: None,
             ..Default::default()
         };
-        js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
             writer,
             // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
             // `binary_expression_stack` arena) — same as the Cjs arm.
@@ -2399,9 +2402,9 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii_not_bun_cold<W, const ENABLE_SOURCE_MAP: bool>(
+    fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         ast: bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
@@ -2409,11 +2412,8 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
-        self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
+    ) -> Result<usize, bun_core::Error> {
+        self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             writer,
             ast,
             symbols,
@@ -2429,9 +2429,9 @@ impl<'a> Transpiler<'a> {
     // print_with_source_map_maybe to express the comptime bool dispatch as a
     // const generic.
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii<W, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
+    fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         ast: bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
@@ -2439,10 +2439,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
+    ) -> Result<usize, bun_core::Error> {
         // Spec transpiler.zig:662-663 — both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
         // null); it is exclusively owned by this print call until T6 reclaims
@@ -2481,7 +2478,7 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
             // PORT NOTE: thread the per-transpiler arena (mirrors the Cjs arm /
             // spec transpiler.zig:635 — same shape across all three arms).
@@ -2489,16 +2486,19 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    pub fn print<W>(
+    // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` (not
+    // `<W: WriterTrait>`) so this is compiled exactly once in `bun_bundler`
+    // and called by symbol from bun_runtime / bun_jsc / bun_install instead of
+    // each crate re-monomorphizing the entire `Printer<W,…>` recursion tree.
+    // See the PERF block above this `impl` for the icache-thrash measurement.
+    #[inline(never)]
+    pub fn print(
         &mut self,
         result: ParseResult,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
-        self.print_with_source_map_maybe::<W, false>(
+    ) -> Result<usize, bun_core::Error> {
+        self.print_with_source_map_maybe::<false>(
             result.ast,
             &result.source,
             writer,
@@ -2509,24 +2509,26 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    pub fn print_with_source_map<W>(
+    // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
+    // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
+    // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
+    // copies of `print_expr<true,false,true,false,true>` (244 KB → ~61 KB).
+    #[inline(never)]
+    pub fn print_with_source_map(
         &mut self,
         result: ParseResult,
-        writer: W,
+        writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error>
-    where
-        W: js_printer::WriterTrait,
-    {
+    ) -> Result<usize, bun_core::Error> {
         // PORT NOTE: env_var feature_flag getters return `Option<bool>`
         // (Some(default) when unset); Zig's `.get()` is plain `bool`.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS
             .get()
             .unwrap_or(false)
         {
-            return self.print_with_source_map_maybe::<W, false>(
+            return self.print_with_source_map_maybe::<false>(
                 result.ast,
                 &result.source,
                 writer,
@@ -2536,7 +2538,7 @@ impl<'a> Transpiler<'a> {
                 module_info,
             );
         }
-        self.print_with_source_map_maybe::<W, true>(
+        self.print_with_source_map_maybe::<true>(
             result.ast,
             &result.source,
             writer,

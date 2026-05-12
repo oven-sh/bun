@@ -62,6 +62,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Setup GPG
         uses: crazy-max/ghaction-import-gpg@d6f3f49f3345e29369fe57596a3ca8f94c4d2ca7 # v5
         with:
@@ -95,6 +97,7 @@ jobs:
         with:
           # To workaround issue
           ref: main
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -119,6 +122,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Setup Node.js
         uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
         with:
@@ -171,10 +176,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: DefinitelyTyped/DefinitelyTyped
+          persist-credentials: false
       - name: Checkout (bun)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: bun
+          persist-credentials: false
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
@@ -230,6 +237,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Setup Docker emulator
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - id: buildx
@@ -312,6 +321,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -331,6 +342,8 @@ jobs:
     name: Notify Sentry
     runs-on: ubuntu-latest
     needs: s3
+    permissions:
+      contents: read
     steps:
       - name: Notify Sentry
         uses: getsentry/action-release@e769183448303de84c5a06aaaddf9da7be26d6c7 # v1.7.0

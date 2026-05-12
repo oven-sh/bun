@@ -2227,6 +2227,13 @@ pub const BundleV2 = struct {
         }
 
         defer {
+            // Free any parsed input sourcemaps before the backing
+            // MultiArrayList goes away. These own their mappings + source
+            // contents on `bun.default_allocator` independent of the bundle
+            // arena.
+            for (this.graph.input_files.items(.input_source_map)) |maybe_map| {
+                if (maybe_map) |ism| ism.deinit();
+            }
             this.graph.ast.deinit(this.allocator());
             this.graph.input_files.deinit(this.allocator());
             this.graph.entry_points.deinit(this.allocator());
@@ -3664,6 +3671,10 @@ pub const BundleV2 = struct {
 
                 // Record which loader we used for this file
                 graph.input_files.items(.loader)[result.source.index.get()] = result.loader;
+
+                // Move ownership of the parsed inline `//# sourceMappingURL=`
+                // onto the input file so the linker can chain through it.
+                graph.input_files.items(.input_source_map)[result.source.index.get()] = result.input_source_map;
 
                 debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                     result.source.index.get(),

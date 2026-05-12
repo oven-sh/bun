@@ -211,6 +211,14 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
 
         line_offset_table_byte_offset_list: []const u32 = &.{},
 
+        /// When the input file carried a trailing `//# sourceMappingURL=`,
+        /// remap each mapping through its inner map so the emitted
+        /// `source_index` / original `(line, col)` refer to the authored
+        /// source instead of the bundler's intermediate input. Unset
+        /// otherwise — the emitted mapping uses the Builder's own
+        /// `prev_state.source_index` (the outer source's slot).
+        input_source_map: ?*bun.SourceMap.InputSourceMap = null,
+
         // This is a workaround for a bug in the popular "source-map" library:
         // https://github.com/mozilla/source-map/issues/261. The library will
         // sometimes return null when querying a source map unless every line
@@ -356,6 +364,37 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
 
             b.updateGeneratedLineAndColumn(output);
 
+            // If the input file carried its own `//# sourceMappingURL=`,
+            // translate the (line, column) we just computed — which refers
+            // to the intermediate file — into the authored source's
+            // (source_index, line, column) via the inner map.
+            //
+            // Layout of the per-outer-source slots in the output
+            // sourcemap's `sources[]` array:
+            //   0               → the intermediate input file
+            //   1 + inner_idx   → inner `sources[inner_idx]`
+            // The emitted `source_index` is relative to the chunk's start
+            // (the Builder always begins with `prev_state.source_index = 0`);
+            // `LinkerContext` stitches the absolute base in when joining
+            // chunks. Mappings the inner map doesn't cover fall back to
+            // slot 0 (the intermediate) so stack traces land in the right
+            // file rather than silently disappearing.
+            var mapped_source_index: i32 = 0;
+            var mapped_original_line: i32 = @max(original_line, 0);
+            var mapped_original_column: i32 = @max(original_column, 0);
+            if (b.input_source_map) |ism| {
+                if (ism.map.findMapping(
+                    .fromZeroBased(@intCast(mapped_original_line)),
+                    .fromZeroBased(@intCast(mapped_original_column)),
+                )) |inner| {
+                    mapped_source_index = 1 + inner.source_index;
+                    mapped_original_line = @intCast(inner.original.lines.zeroBased());
+                    mapped_original_column = @intCast(inner.original.columns.zeroBased());
+                }
+                // else: fall back to the intermediate (slot 0), using the
+                // (line, col) we already have in the intermediate.
+            }
+
             // If this line doesn't start with a mapping and we're about to add a mapping
             // that's not at the start, insert a mapping first so the line starts with one.
             if (b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.generated_column > 0 and b.has_prev_state) {
@@ -371,9 +410,9 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
             b.appendMapping(.{
                 .generated_line = b.prev_state.generated_line,
                 .generated_column = @max(b.generated_column, 0),
-                .source_index = b.prev_state.source_index,
-                .original_line = @max(original_line, 0),
-                .original_column = @max(original_column, 0),
+                .source_index = mapped_source_index,
+                .original_line = mapped_original_line,
+                .original_column = mapped_original_column,
             });
 
             // This line now has a mapping on it, so don't insert another one

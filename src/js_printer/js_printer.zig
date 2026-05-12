@@ -428,6 +428,13 @@ pub const Options = struct {
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
+    /// Parsed trailing `//# sourceMappingURL=` of the input file, if any.
+    /// When set, the printer's sourcemap builder remaps each mapping
+    /// through this inner map so the emitted `source_index` and original
+    /// (line, column) reference the authored source rather than the
+    /// bundler's intermediate input. Owned by `Graph.InputFile`.
+    input_source_map: ?*SourceMap.InputSourceMap = null,
+
     mangled_props: ?*const bun.bundle_v2.MangledProps,
 
     // Default indentation is 2 spaces
@@ -5930,6 +5937,7 @@ pub fn getSourceMapBuilder(
             );
             break :brk .empty;
         },
+        .input_source_map = opts.input_source_map,
     };
 }
 

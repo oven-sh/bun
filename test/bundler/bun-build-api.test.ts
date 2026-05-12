@@ -1391,3 +1391,178 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// https://github.com/oven-sh/bun/issues/30536 — Bun.build ignores inline
+// `//# sourceMappingURL=` comments on input files. A `.vue` / `.svelte` /
+// `.ts` file compiled to an intermediate `.js` with an inline sourcemap
+// should have its authored sources surface in the final bundle's map.
+describe("Bun.build chains inline input sourcemaps", () => {
+  // Build a tiny intermediate `.js` that carries an inline base64 sourcemap
+  // pointing at a fake "authored" source, then bundle an entry that imports
+  // it. The output map's `sources[]` should include the authored source,
+  // and `sourcesContent[]` should include the inner content verbatim
+  // (without the trailing `//# sourceMappingURL=` comment).
+  test("inline data: URL — authored source surfaces in bundled map", async () => {
+    const authoredSrc = "export const x = 5;\nthrow new Error('authored');\n";
+    const innerMap = {
+      version: 3,
+      sources: ["authored.ts"],
+      sourcesContent: [authoredSrc],
+      names: [],
+      mappings: "AAAA;AACA;",
+    };
+    const inline = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap", {
+      "intermediate.js": authoredSrc + inline,
+      "entry.ts": `import { x } from './intermediate.js';\nconsole.log(x);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+
+    // The authored source name must appear somewhere in `sources[]`.
+    const sourcesJoined = parsed.sources.join("|");
+    expect(sourcesJoined).toMatch(/authored\.ts/);
+
+    // `sourcesContent` length must equal `sources` length (spec).
+    expect(parsed.sourcesContent).toHaveLength(parsed.sources.length);
+
+    // The slot for `authored.ts` must hold the clean authored content, no
+    // trailing `//# sourceMappingURL=` comment.
+    const authoredIdx = parsed.sources.findIndex((s: string) => s.endsWith("authored.ts"));
+    expect(authoredIdx).toBeGreaterThanOrEqual(0);
+    expect(parsed.sourcesContent[authoredIdx]).toBe(authoredSrc);
+    expect(parsed.sourcesContent[authoredIdx]).not.toMatch(/sourceMappingURL/);
+  });
+
+  // Non-base64 `data:application/json,<json>` must work too — some
+  // toolchains emit the comment in that form.
+  test("inline data: URL without base64 — authored source surfaces", async () => {
+    const authoredSrc = "export const y = 1;\n";
+    const innerMap = {
+      version: 3,
+      sources: ["authored.ts"],
+      sourcesContent: [authoredSrc],
+      names: [],
+      mappings: "AAAA;",
+    };
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-raw", {
+      "intermediate.js":
+        authoredSrc + `\n//# sourceMappingURL=data:application/json,${JSON.stringify(innerMap)}\n`,
+      "entry.ts": `import { y } from './intermediate.js';\nconsole.log(y);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    expect(parsed.sources.some((s: string) => s.endsWith("authored.ts"))).toBe(true);
+  });
+
+  // Inner map with multiple sources (e.g. a `.vue` compiler splitting
+  // template vs script into two virtual sources) — each must round-trip.
+  test("inline map with multiple inner sources — all surface", async () => {
+    const scriptSrc = "export const x = 5;\n";
+    const templateSrc = "// template part\n";
+    const innerMap = {
+      version: 3,
+      sources: ["component.vue?script", "component.vue?template"],
+      sourcesContent: [scriptSrc, templateSrc],
+      names: [],
+      mappings: "AAAA;ACAA;",
+    };
+    const intermediate = scriptSrc + templateSrc;
+    const inline = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-multi", {
+      "intermediate.js": intermediate + inline,
+      "entry.ts": `import { x } from './intermediate.js';\nconsole.log(x);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    expect(parsed.sources.some((s: string) => s.endsWith("component.vue?script"))).toBe(true);
+    expect(parsed.sources.some((s: string) => s.endsWith("component.vue?template"))).toBe(true);
+    expect(parsed.sourcesContent).toHaveLength(parsed.sources.length);
+  });
+
+  // A malformed inline map must not break the build — we silently fall
+  // back to the intermediate as the deepest source.
+  test("malformed inline map — build succeeds and falls back", async () => {
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-bad", {
+      "intermediate.js":
+        "export const z = 2;\n//# sourceMappingURL=data:application/json;base64,!!!not-valid!!!\n",
+      "entry.ts": `import { z } from './intermediate.js';\nconsole.log(z);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+    // Must still produce a valid output map — regression guard for the
+    // "parse failure kills the whole build" path.
+    const text = await Bun.file(result.outputs[0].path).text();
+    expect(text).toMatch(/sourceMappingURL=data:application\/json;base64,/);
+  });
+
+  // Non-inline `sourceMappingURL=foo.js.map` references aren't chained
+  // (external map resolution is out of scope for this change). The build
+  // must behave exactly as before — the intermediate ends up as the
+  // deepest source, not a spurious crash.
+  test("external .map reference — unchanged behavior", async () => {
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-external", {
+      "intermediate.js": "export const q = 3;\n//# sourceMappingURL=intermediate.js.map\n",
+      "entry.ts": `import { q } from './intermediate.js';\nconsole.log(q);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // No inner chain. The intermediate should be in sources[], not some
+    // phantom "authored.ts".
+    expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
+  });
+});

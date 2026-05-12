@@ -302,6 +302,21 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     global.bun_vm().as_mut().console.cast::<ConsoleObject>()
 }
 
+/// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
+/// box. Consolidates the open-coded `&mut *vm_console(global)` deref at the
+/// `Bun__ConsoleObject__*` FFI entry points (each is a top-level JS-thread
+/// host call, so the `&mut` is exclusive for the duration). Callers that need
+/// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
+/// keep using the raw [`vm_console`] pointer instead.
+#[inline]
+fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
+    // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
+    // at VM construction to a boxed `ConsoleObject` that lives for the VM's
+    // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before
+    // that. Single-JS-thread invariant ⇒ the returned `&mut` is exclusive.
+    unsafe { &mut *vm_console(global) }
+}
+
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
@@ -5497,8 +5512,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
-    let this = unsafe { &mut *vm_console(global_this) };
+    let this = vm_console_mut(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -5534,8 +5548,7 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     ptr: *const u8,
     len: usize,
 ) {
-    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
-    let this = unsafe { &mut *vm_console(global_this) };
+    let this = vm_console_mut(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -5647,8 +5660,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
-    let console = unsafe { &mut *vm_console(global) };
+    let console = vm_console_mut(global);
     let mut writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {

@@ -323,7 +323,9 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
     {
-        unsafe extern "C" fn handle<U, H, const SSL: bool>(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             amount: u64,
             data: *mut c_void,
@@ -363,7 +365,9 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
     {
-        unsafe extern "C" fn handle<U, H, const SSL: bool>(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
         ) where
@@ -395,7 +399,9 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
     {
-        unsafe extern "C" fn handle<U, H, const SSL: bool>(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
         ) where
@@ -432,7 +438,9 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
     {
-        unsafe extern "C" fn handle<U, H, const SSL: bool>(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             chunk_ptr: *const u8,
             len: usize,
@@ -474,7 +482,9 @@ impl<const SSL: bool> Response<SSL> {
     /// in Rust callers pass a closure capturing what would have been the args tuple.
     // PORT NOTE: reshaped — `(handler, args_tuple)` collapsed to `FnOnce()`.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
-        unsafe extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
+        extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
             let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
             // PERF(port): was @call(.always_inline)
@@ -497,7 +507,9 @@ impl<const SSL: bool> Response<SSL> {
         // cork is synchronous, so we can stack-allocate the (handler, data) pair
         // and recover it inside the trampoline.
         type Ctx<U> = (fn(*mut U), *mut U);
-        unsafe extern "C" fn handle<U>(user_data: *mut c_void) {
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
+        extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
             let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
             // PERF(port): was @call(.always_inline)

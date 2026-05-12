@@ -103,7 +103,10 @@ impl Request {
     where
         H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
     {
-        unsafe extern "C" fn each<Ctx, H>(
+        // Safe fn item: nested local, only ever coerced to the C-ABI fn-pointer
+        // type passed to C — never callable by name from safe Rust. Body wraps
+        // its raw-ptr ops explicitly.
+        extern "C" fn each<Ctx, H>(
             n: *const u8,
             nl: usize,
             v: *const u8,
@@ -247,7 +250,9 @@ impl Response {
     where
         H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
         where
             H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
         {
@@ -267,7 +272,9 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response) + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
@@ -288,7 +295,9 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response) + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
@@ -309,7 +318,9 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(
             r: *mut Response,
             chunk_ptr: *const u8,
             len: usize,
@@ -342,7 +353,9 @@ impl Response {
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
         type Ctx<UD> = (fn(*mut UD), *mut UD);
-        unsafe extern "C" fn cb<UD>(p: *mut c_void) {
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
             let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
             // PERF(port): was @call(.always_inline)
@@ -416,7 +429,9 @@ impl App {
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
         {
@@ -515,7 +530,9 @@ impl App {
     where
         H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
     {
-        unsafe extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
         where
             H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
         {

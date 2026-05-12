@@ -6846,7 +6846,10 @@ pub mod elf {
         }
         let mut ctx = Ctx { address, result: None };
 
-        unsafe extern "C" fn callback(
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type `dl_iterate_phdr` expects — never callable by name
+        // from safe Rust. Body wraps its raw-ptr ops explicitly.
+        extern "C" fn callback(
             info: *mut libc::dl_phdr_info,
             _size: libc::size_t,
             data: *mut c_void,

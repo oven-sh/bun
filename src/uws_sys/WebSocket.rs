@@ -105,7 +105,9 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     // TODO(port): comptime-callback monomorphization — Phase B may want a
     // per-callsite `extern "C" fn` to avoid the indirect call.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
-        unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
@@ -311,7 +313,9 @@ impl AnyWebSocket {
 
     // TODO(port): comptime-callback monomorphization — see NewWebSocket::cork.
     pub fn cork<C>(self, ctx: &mut C, callback: fn(&mut C)) {
-        unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
+        // Safe fn item: nested local thunk, only coerced to the C-ABI
+        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
+        extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };

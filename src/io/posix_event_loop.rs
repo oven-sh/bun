@@ -1479,7 +1479,10 @@ impl Store {
         vm.set_after_event_loop_callback(Some(callback), std::ptr::from_mut::<Store>(self).cast::<c_void>());
     }
 
-    unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
+    // Safe fn item: module-private thunk, only coerced to the C-ABI
+    // `OpaqueCallback` fn-pointer type — never callable by name outside
+    // `Store`. Body wraps its raw-ptr op explicitly.
+    extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
         let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();

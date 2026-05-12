@@ -5036,4 +5036,30 @@ const y: number = 10;`;
       expect(out.endsWith("\n")).toBe(true);
     });
   }
+
+  // Sync and async must agree on the synthetic source filename even
+  // when the caller passes a per-call loader that differs from the
+  // constructor's `default_loader`. Pre-fix, sync used
+  // `default_loader.stdinName()` (e.g. `"input.jsx"`) while async used
+  // the overridden loader — observable on `map.sources` and the
+  // `//# sourceMappingURL=<name>.map` footer.
+  it("per-call loader override affects sources name consistently (sync vs async)", async () => {
+    // No loader set in the constructor → default_loader = "jsx".
+    // Pass "ts" as the per-call override.
+    const t = new Bun.Transpiler({ sourcemap: "external" });
+    const sync = t.transformSync("const x: number = 5;", "ts");
+    const async_ = await t.transform("const x: number = 5;", "ts");
+    expect(JSON.parse(sync.map).sources).toEqual(JSON.parse(async_.map).sources);
+    expect(JSON.parse(sync.map).sources).toEqual(["/input.ts"]);
+  });
+
+  it("per-call loader override affects linked footer consistently (sync vs async)", async () => {
+    const t = new Bun.Transpiler({ sourcemap: "linked" });
+    const sync = t.transformSync("const x: number = 5;", "ts");
+    const async_ = await t.transform("const x: number = 5;", "ts");
+    const syncFooter = sync.code.match(/sourceMappingURL=[^\s]+/)?.[0];
+    const asyncFooter = async_.code.match(/sourceMappingURL=[^\s]+/)?.[0];
+    expect(syncFooter).toBe(asyncFooter);
+    expect(syncFooter).toBe("sourceMappingURL=input.ts.map");
+  });
 });

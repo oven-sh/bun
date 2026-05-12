@@ -888,7 +888,12 @@ fn isLikelyObjectLiteral(code: []const u8) bool {
 }
 
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSCtx) ?Transpiler.ParseResult {
-    const name = this.config.default_loader.stdinName();
+    // Use the per-call loader (when provided) for the virtual source
+    // name, matching `TransformTask.run()`'s use of the override. The
+    // name ends up in `source.path.text` and flows into the v3 map's
+    // `sources` array and the `//# sourceMappingURL=<name>.map` footer,
+    // so sync and async must agree on it for the same inputs.
+    const name = (loader orelse this.config.default_loader).stdinName();
 
     // In REPL mode, wrap potential object literals in parentheses
     // If code starts with { and doesn't end with ; it might be an object literal

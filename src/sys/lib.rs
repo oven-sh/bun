@@ -1010,10 +1010,10 @@ pub fn last_errno() -> i32 { bun_core::ffi::errno() }
 #[cfg(unix)]
 #[inline]
 pub fn errno() -> *mut i32 {
-    // SAFETY: `__errno_location()` (and per-OS equivalents) take no arguments
-    // and unconditionally return the calling thread's errno slot; obtaining the
+    // `errno_ptr()` is a `safe fn` (its `__errno_location`/`__error`/`_errno`
+    // extern is declared `safe fn` — no args, never null); obtaining the
     // pointer has no preconditions. The deref obligation lives at the call site.
-    unsafe { bun_core::ffi::errno_ptr() }
+    bun_core::ffi::errno_ptr()
 }
 
 /// `std.posix.toPosixPath` — copy `path` into a NUL-terminated buffer.
@@ -3758,10 +3758,10 @@ pub mod c {
     /// thread-local errno. Canonical cfg-ladder lives in `bun_core::ffi`.
     #[inline]
     pub fn errno_location() -> *mut c_int {
-        // SAFETY: `__errno_location()` (and per-OS equivalents) take no args and
-        // return the calling thread's TLS errno cell — obtaining the pointer has
+        // `errno_ptr()` is a `safe fn` (its per-libc TLS-accessor extern is
+        // declared `safe fn` — no args, never null); obtaining the pointer has
         // no caller precondition (dereferencing it is what requires care).
-        unsafe { bun_core::ffi::errno_ptr() }
+        bun_core::ffi::errno_ptr()
     }
     // Win32 file APIs frequently spelled `bun.C.*` in Zig (windows.zig flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs

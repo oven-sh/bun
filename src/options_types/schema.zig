@@ -2977,13 +2977,6 @@ pub const api = struct {
         /// scoped
         scoped: ?NpmRegistryMap = null,
 
-        /// When set, every package (scoped and unscoped) resolves through this
-        /// registry. Overrides `default_registry`, `scoped`, `--registry`, and
-        /// `NPM_CONFIG_REGISTRY`. Intended for IT-managed devices where a global
-        /// bunfig (or `BUN_CONFIG_FORCE_REGISTRY`) pins installs to a corporate
-        /// registry regardless of per-project configuration.
-        force_registry: ?NpmRegistry = null,
-
         /// lockfile_path
         lockfile_path: ?[]const u8 = null,
 

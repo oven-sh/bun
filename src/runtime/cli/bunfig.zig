@@ -588,16 +588,6 @@ pub const Bunfig = struct {
                         install.default_registry = try this.parseRegistry(registry);
                     }
 
-                    if (install_obj.get("forceRegistry")) |registry| {
-                        // First writer wins. The global bunfig is parsed before
-                        // the project bunfig, so a device-level `forceRegistry`
-                        // (e.g. set by IT via `~/.bunfig.toml`) cannot be changed
-                        // or cleared by a project-level bunfig.
-                        if (install.force_registry == null) {
-                            install.force_registry = try this.parseRegistry(registry);
-                        }
-                    }
-
                     if (install_obj.get("scopes")) |scopes| {
                         var registry_map = install.scoped orelse api.NpmRegistryMap{};
                         try this.expect(scopes, .e_object);

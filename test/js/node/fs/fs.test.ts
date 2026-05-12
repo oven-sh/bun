@@ -4,7 +4,9 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isPosix,
   isWindows,
@@ -2667,7 +2669,11 @@ describe("fs/promises", () => {
   );
 
   for (let withFileTypes of [false, true] as const) {
-    const iterCount = 200;
+    // 200 × recursive(test/js/node) ⇒ ~2M Dirent.to_js + 200×~5k-string sort,
+    // which under debug+ASAN JSC blows the 10s budget by ~20× and stalls the
+    // suite in JSC::sortBucketSort. Scale to debug-survivable size while
+    // keeping enough concurrency to exercise the work-pool path.
+    const iterCount = isDebug || isASAN ? 32 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -2747,7 +2753,11 @@ describe("fs/promises", () => {
 
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
-    const iterCount = 200;
+    // Same debug+ASAN sortBucketSort throughput issue as the async block above —
+    // and unlike the async case there's no work-pool parallelism here, so each
+    // recursive walk + 5k-string sort + deep toEqual runs serially. 8 is enough
+    // to catch the FD-leak regression this guards.
+    const iterCount = isDebug || isASAN ? 8 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {

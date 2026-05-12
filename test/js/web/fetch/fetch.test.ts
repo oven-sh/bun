@@ -7,7 +7,9 @@ import {
   exampleSite,
   exampleHtml as fixture,
   gc,
+  isASAN,
   isBroken,
+  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -739,21 +741,30 @@ it.concurrent("simultaneous HTTPS fetch", async () => {
       expect(await result[i].text()).toBe(fixture);
     }
   }
-});
+}, 30_000);
 
-it.concurrent("website with tlsextname", async () => {
-  using server = Bun.serve({
-    port: 0,
-    tls,
-    fetch() {
-      return new Response("OK");
-    },
-  });
-  const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tls.cert } });
-  expect(resp.status).toBe(200);
-});
+it.concurrent(
+  "website with tlsextname",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+    const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tls.cert } });
+    expect(resp.status).toBe(200);
+  },
+  30_000,
+);
 
 function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?: boolean) {
+  // Per-byte forced full GC under debug/ASAN is ~10-20ms each; with the utf16 emoji
+  // payload (~250 bytes) that's ~500 sync GCs ≈ 5-10s, which blows the 5s default
+  // timeout and starves concurrent TLS tests. Keep the outer gc() calls for coverage
+  // but skip the inner per-byte ones on slow builds.
+  const perByteGC = !isDebug && !isASAN;
   for (let withGC of [false, true]) {
     for (let jsonObject of [
       { hello: true },
@@ -833,10 +844,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
           }
         });
         if (withGC) gc();
@@ -856,10 +867,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
           }
         });
         if (withGC) gc();
@@ -881,10 +892,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
           }
         });
         if (withGC) gc();
@@ -906,10 +917,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
+            if (withGC && perByteGC) gc();
           }
         });
         if (withGC) gc();
@@ -976,7 +987,8 @@ describe.concurrent("Bun.file", () => {
   }
 
   // on Windows the creator of the file will be able to read from it so this test is disabled on it
-  describe.skipIf(isWindows)("bad permissions throws", () => {
+  // root (uid 0) bypasses DAC permission bits on Linux, so chmod 000 still reads fine — skip there too
+  describe.skipIf(isWindows || process.getuid?.() === 0)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
@@ -1949,7 +1961,7 @@ it.concurrent("should allow very long redirect URLS", async () => {
     expect(url).toBe(`${server.url.origin}${Location}`);
     expect(status).toBe(404);
   }
-});
+}, 30_000);
 
 it.concurrent("304 not modified with missing content-length does not cause a request timeout", async () => {
   const server = await Bun.listen({

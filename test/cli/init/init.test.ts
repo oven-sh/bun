@@ -212,7 +212,9 @@ import path from "path";
     expect(await Bun.file(path.join(temp, "mydir/index.ts")).text()).toMatchInlineSnapshot(`"my edited index.ts"`);
     expect(await Bun.file(path.join(temp, "mydir/README.md")).text()).toMatchInlineSnapshot(`"my edited README.md"`);
     expect(await Bun.file(path.join(temp, "mydir/.gitignore")).text()).toMatchInlineSnapshot(`"my edited .gitignore"`);
-    expect(await Bun.file(path.join(temp, "mydir/bunfig.toml")).text()).toMatchInlineSnapshot(`"# my edited bunfig.toml"`);
+    expect(await Bun.file(path.join(temp, "mydir/bunfig.toml")).text()).toMatchInlineSnapshot(
+      `"# my edited bunfig.toml"`,
+    );
     expect(await Bun.file(path.join(temp, "mydir/package.json")).json()).toMatchInlineSnapshot(`
     {
       "devDependencies": {

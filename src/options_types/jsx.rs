@@ -10,6 +10,7 @@
 
 use crate::schema::api;
 use bun_string::strings;
+use std::borrow::Cow;
 
 /// Port of `options.JSX.Runtime` (options.zig:1359 — `pub const Runtime =
 /// api.JsxRuntime;`). 4-state including `_None` so `Pragma.runtime` preserves
@@ -53,39 +54,131 @@ pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::p
     b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
 };
 
+/// Port of Zig `[]const string` for `Pragma.{factory,fragment}`.
+///
+/// In Zig (options.zig:1193) the field is a fat slice that, by default, points
+/// at the static `Defaults.Factory` array — copying the struct is a 16-byte
+/// pointer copy with **zero** allocations. The original Rust port boxed every
+/// element (`Box<[Box<[u8]>]>`), making `Pragma::default()` / `Clone` cost ~10
+/// heap allocations and dominating mimalloc samples in the resolver hot path.
+///
+/// `MemberList` restores Zig's cost model: the overwhelmingly-common case
+/// (`Static`) borrows a `&'static [&'static [u8]]` so default+clone are a
+/// pointer copy; only an explicit override (`/** @jsx foo */`, tsconfig
+/// `jsxFactory`, …) materialises an `Owned` boxed slice.
+#[derive(Debug, Clone)]
+pub enum MemberList {
+    Static(&'static [&'static [u8]]),
+    Owned(Box<[Box<[u8]>]>),
+}
+
+impl Default for MemberList {
+    /// Empty static slice — used by `core::mem::take`. `Pragma::default()`
+    /// sets the real `defaults::FACTORY`/`FRAGMENT` explicitly.
+    #[inline]
+    fn default() -> Self {
+        MemberList::Static(&[])
+    }
+}
+
+impl From<Box<[Box<[u8]>]>> for MemberList {
+    #[inline]
+    fn from(v: Box<[Box<[u8]>]>) -> Self {
+        MemberList::Owned(v)
+    }
+}
+
+impl MemberList {
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            MemberList::Static(s) => s.len(),
+            MemberList::Owned(o) => o.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    pub fn get(&self, i: usize) -> Option<&[u8]> {
+        match self {
+            MemberList::Static(s) => s.get(i).copied(),
+            MemberList::Owned(o) => o.get(i).map(|b| &**b),
+        }
+    }
+
+    #[inline]
+    pub fn first(&self) -> Option<&[u8]> {
+        self.get(0)
+    }
+
+    #[inline]
+    pub fn iter(&self) -> MemberListIter<'_> {
+        MemberListIter { list: self, i: 0 }
+    }
+}
+
+pub struct MemberListIter<'a> {
+    list: &'a MemberList,
+    i: usize,
+}
+
+impl<'a> Iterator for MemberListIter<'a> {
+    type Item = &'a [u8];
+    #[inline]
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let r = self.list.get(self.i)?;
+        self.i += 1;
+        Some(r)
+    }
+}
+
 /// Port of `options.JSX.ImportSource` (options.zig:1208).
+///
+/// Zig stores `[]const u8` borrowing `Defaults.ImportSourceDev`/`ImportSource`;
+/// `Cow::Borrowed` matches that (zero-alloc default/clone), `Cow::Owned` covers
+/// the `set_import_source()` override path.
 #[derive(Debug, Clone)]
 pub struct ImportSource {
-    pub development: Box<[u8]>,
-    pub production: Box<[u8]>,
+    pub development: Cow<'static, [u8]>,
+    pub production: Cow<'static, [u8]>,
 }
 
 impl Default for ImportSource {
+    #[inline]
     fn default() -> Self {
         ImportSource {
-            development: Box::from(defaults::IMPORT_SOURCE_DEV),
-            production: Box::from(defaults::IMPORT_SOURCE),
+            development: Cow::Borrowed(defaults::IMPORT_SOURCE_DEV),
+            production: Cow::Borrowed(defaults::IMPORT_SOURCE),
         }
     }
 }
 
 /// Port of `options.JSX.Pragma` (options.zig:1192).
+///
+/// All string fields default to borrowed `'static` data (matching Zig's
+/// `Defaults.*` slice initialisers), so `Pragma::default()` and the derived
+/// `Clone` perform **zero** heap allocations in the common case. Hot callers
+/// — `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
+/// (per resolve) — clone this struct on every operation.
 #[derive(Debug, Clone)]
 pub struct Pragma {
     // these need to be arrays
     // Zig: `[]const string` — either the static `Defaults.Factory` or a
-    // heap slice from `memberListToComponentsIfDifferent`. Owned here so
-    // the alloc path doesn't leak (PORTING.md §Forbidden patterns).
-    pub factory: Box<[Box<[u8]>]>,
-    pub fragment: Box<[Box<[u8]>]>,
+    // heap slice from `memberListToComponentsIfDifferent`.
+    pub factory: MemberList,
+    pub fragment: MemberList,
     pub runtime: Runtime,
     pub import_source: ImportSource,
 
     /// Facilitates automatic JSX importing
     /// Set on a per file basis like this:
     /// /** @jsxImportSource @emotion/core */
-    pub classic_import_source: Box<[u8]>,
-    pub package_name: Box<[u8]>,
+    pub classic_import_source: Cow<'static, [u8]>,
+    pub package_name: Cow<'static, [u8]>,
 
     /// Configuration Priority:
     /// - `--define=process.env.NODE_ENV=...`
@@ -97,14 +190,15 @@ pub struct Pragma {
 }
 
 impl Default for Pragma {
+    #[inline]
     fn default() -> Self {
         Pragma {
-            factory: defaults::FACTORY.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-            fragment: defaults::FRAGMENT.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            factory: MemberList::Static(defaults::FACTORY),
+            fragment: MemberList::Static(defaults::FRAGMENT),
             runtime: Runtime::Automatic,
             import_source: ImportSource::default(),
-            classic_import_source: Box::from(b"react".as_slice()),
-            package_name: Box::from(b"react".as_slice()),
+            classic_import_source: Cow::Borrowed(b"react"),
+            package_name: Cow::Borrowed(b"react"),
             development: true,
             parse: true,
             side_effects: false,
@@ -166,20 +260,39 @@ impl Pragma {
             || &*self.package_name == b"@emotion/react"
     }
 
+    /// Port of `options.JSX.Pragma.setImportSource` (Zig wraps
+    /// `strings.concatIfNeeded`). When `package_name` is the default
+    /// `"react"`, this borrows the interned `defaults::IMPORT_SOURCE*` —
+    /// matching Zig's interned-string fast path with zero allocations.
     pub fn set_import_source(&mut self) {
-        strings::concat_if_needed(
-            &mut self.import_source.development,
-            &[&self.package_name, b"/jsx-dev-runtime"],
-            &[defaults::IMPORT_SOURCE_DEV],
-        )
-        .expect("unreachable");
+        self.import_source.development = Self::concat_or_interned(
+            &self.package_name,
+            b"/jsx-dev-runtime",
+            defaults::IMPORT_SOURCE_DEV,
+        );
+        self.import_source.production = Self::concat_or_interned(
+            &self.package_name,
+            b"/jsx-runtime",
+            defaults::IMPORT_SOURCE,
+        );
+    }
 
-        strings::concat_if_needed(
-            &mut self.import_source.production,
-            &[&self.package_name, b"/jsx-runtime"],
-            &[defaults::IMPORT_SOURCE],
-        )
-        .expect("unreachable");
+    #[inline]
+    fn concat_or_interned(
+        pkg: &[u8],
+        suffix: &'static [u8],
+        interned: &'static [u8],
+    ) -> Cow<'static, [u8]> {
+        if pkg.len() + suffix.len() == interned.len()
+            && &interned[..pkg.len()] == pkg
+            && &interned[pkg.len()..] == suffix
+        {
+            return Cow::Borrowed(interned);
+        }
+        let mut out = Vec::with_capacity(pkg.len() + suffix.len());
+        out.extend_from_slice(pkg);
+        out.extend_from_slice(suffix);
+        Cow::Owned(out)
     }
 
     pub fn set_production(&mut self, is_production: bool) {
@@ -190,9 +303,9 @@ impl Pragma {
     // ...unless new is "React.createElement" and original is ["React", "createElement"]
     // saves an allocation for the majority case
     pub fn member_list_to_components_if_different(
-        original: Box<[Box<[u8]>]>,
+        original: MemberList,
         new: &[u8],
-    ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
+    ) -> Result<MemberList, bun_core::Error> {
         let count = strings::count_char(new, b'.') + 1;
 
         let mut needs_alloc = false;
@@ -201,16 +314,13 @@ impl Pragma {
             if str.is_empty() {
                 continue;
             }
-            if current_i >= original.len() {
-                needs_alloc = true;
-                break;
+            match original.get(current_i) {
+                Some(part) if part == str => current_i += 1,
+                _ => {
+                    needs_alloc = true;
+                    break;
+                }
             }
-
-            if &*original[current_i] != str {
-                needs_alloc = true;
-                break;
-            }
-            current_i += 1;
         }
 
         if !needs_alloc {
@@ -224,7 +334,7 @@ impl Pragma {
             }
             out.push(Box::from(str));
         }
-        Ok(out.into_boxed_slice())
+        Ok(MemberList::Owned(out.into_boxed_slice()))
     }
 
     pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
@@ -248,7 +358,7 @@ impl Pragma {
         pragma.side_effects = jsx.side_effects;
 
         if !jsx.import_source.is_empty() {
-            pragma.package_name = jsx.import_source.clone();
+            pragma.package_name = Cow::Owned(jsx.import_source.into_vec());
             pragma.set_import_source();
             pragma.classic_import_source = pragma.package_name.clone();
         }

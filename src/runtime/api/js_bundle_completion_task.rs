@@ -837,37 +837,31 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.jsx = options::jsx::Pragma {
             factory: if !config.jsx.factory.is_empty() {
                 options::jsx::Pragma::member_list_to_components_if_different(
-                    Box::default(),
+                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
                     &config.jsx.factory,
                 )?
             } else {
-                options::jsx::defaults::FACTORY
-                    .iter()
-                    .map(|s| Box::<[u8]>::from(*s))
-                    .collect()
+                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
             },
             fragment: if !config.jsx.fragment.is_empty() {
                 options::jsx::Pragma::member_list_to_components_if_different(
-                    Box::default(),
+                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
                     &config.jsx.fragment,
                 )?
             } else {
-                options::jsx::defaults::FRAGMENT
-                    .iter()
-                    .map(|s| Box::<[u8]>::from(*s))
-                    .collect()
+                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
             },
             runtime: options::jsx::Runtime::from(config.jsx.runtime),
             development: config.jsx.development,
             package_name: if !jsx_import.is_empty() {
-                Box::from(&**jsx_import)
+                std::borrow::Cow::Owned(jsx_import.to_vec())
             } else {
-                Box::from(b"react".as_slice())
+                std::borrow::Cow::Borrowed(b"react".as_slice())
             },
             classic_import_source: if !jsx_import.is_empty() {
-                Box::from(&**jsx_import)
+                std::borrow::Cow::Owned(jsx_import.to_vec())
             } else {
-                Box::from(b"react".as_slice())
+                std::borrow::Cow::Borrowed(b"react".as_slice())
             },
             side_effects: config.jsx.side_effects,
             parse: true,
@@ -875,16 +869,16 @@ impl CompletionStruct for JSBundleCompletionTask {
                 development: if !jsx_import.is_empty() {
                     let mut v = Vec::with_capacity(jsx_import.len() + 16);
                     let _ = write!(&mut v, "{}/jsx-dev-runtime", bstr::BStr::new(jsx_import));
-                    v.into_boxed_slice()
+                    std::borrow::Cow::Owned(v)
                 } else {
-                    Box::from(b"react/jsx-dev-runtime".as_slice())
+                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE_DEV)
                 },
                 production: if !jsx_import.is_empty() {
                     let mut v = Vec::with_capacity(jsx_import.len() + 12);
                     let _ = write!(&mut v, "{}/jsx-runtime", bstr::BStr::new(jsx_import));
-                    v.into_boxed_slice()
+                    std::borrow::Cow::Owned(v)
                 } else {
-                    Box::from(b"react/jsx-runtime".as_slice())
+                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE)
                 },
             },
         };

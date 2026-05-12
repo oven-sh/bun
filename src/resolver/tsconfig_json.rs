@@ -387,7 +387,7 @@ impl TSConfigJSON {
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFactory") {
                 if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.factory =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?;
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?.into();
                     result.jsx_flags.insert(JsxField::Factory);
                 }
             }
@@ -396,7 +396,7 @@ impl TSConfigJSON {
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFragmentFactory") {
                 if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.fragment =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?;
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?.into();
                     result.jsx_flags.insert(JsxField::Fragment);
                 }
             }
@@ -428,7 +428,7 @@ impl TSConfigJSON {
                         result.jsx_flags.insert(JsxField::Runtime);
                     }
 
-                    result.jsx.package_name = Box::from(str);
+                    result.jsx.package_name = str.to_vec().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }

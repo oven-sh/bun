@@ -2298,10 +2298,6 @@ impl PackageManifest {
                                     _ => {
                                         let group_start = extern_strings_bin_entries_cursor;
                                         let group_len = obj.properties.slice().len() * 2;
-                                        // SAFETY: all_extern_strings_bin_entries is heap-allocated and sized in counting pass
-                                        let group_slice_ptr = unsafe {
-                                            all_extern_strings_bin_entries.as_mut_ptr().add(group_start)
-                                        };
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
@@ -2309,19 +2305,21 @@ impl PackageManifest {
                                         };
                                         let mut group_i: u32 = 0;
 
+                                        // PORT NOTE: Zig wrote through a raw `*[len]ExternalString`
+                                        // sub-pointer. The boxed slice is fully initialised
+                                        // (`vec![Default; n].into_boxed_slice()` in the counting
+                                        // pass) and `ExternalString: Copy`, so plain absolute
+                                        // indexing at `group_start + group_i` is the safe
+                                        // equivalent — no `from_raw_parts`/`.add()` needed, and
+                                        // the `prev` read at a disjoint index needs no split.
                                         for bin_prop in obj.properties.slice() {
                                             let Some(k) = bin_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                                                 break 'bin;
                                             };
-                                            // SAFETY: group_i < group_len by construction
-                                            unsafe {
-                                                *group_slice_ptr.add(group_i as usize) =
-                                                    string_builder.append::<ExternalString>(k);
-                                            }
+                                            let cur = string_builder.append::<ExternalString>(k);
+                                            all_extern_strings_bin_entries[group_start + group_i as usize] = cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                // SAFETY: indices in range
-                                                let cur = unsafe { *group_slice_ptr.add(group_i as usize) };
                                                 let prev_item = all_extern_strings_bin_entries[prev.start + group_i as usize];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
@@ -2341,15 +2339,10 @@ impl PackageManifest {
                                             let Some(v) = bin_prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
                                                 break 'bin;
                                             };
-                                            // SAFETY: group_i < group_len
-                                            unsafe {
-                                                *group_slice_ptr.add(group_i as usize) =
-                                                    string_builder.append::<ExternalString>(v);
-                                            }
+                                            let cur = string_builder.append::<ExternalString>(v);
+                                            all_extern_strings_bin_entries[group_start + group_i as usize] = cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                // SAFETY: group_i < group_len; group_slice_ptr valid for group_len elements
-                                                let cur = unsafe { *group_slice_ptr.add(group_i as usize) };
                                                 let prev_item = all_extern_strings_bin_entries[prev.start + group_i as usize];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {

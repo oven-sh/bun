@@ -464,20 +464,17 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn put(&mut self, bytes: &[u8]) {
         let end = self.at + bytes.len();
-        debug_assert!(end <= self.buf.len(), "cached folder name overflowed PathBuffer");
-        // SAFETY: `buf` is a `PathBuffer`-sized slice; the maximum formatted
-        // length (see type doc) cannot exceed it. Debug-asserted above.
-        unsafe {
-            core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf.as_mut_ptr().add(self.at), bytes.len());
-        }
+        // `buf` is a `PathBuffer`-sized slice; the maximum formatted length
+        // (see type doc) cannot exceed it. Safe slice indexing replaces the
+        // raw `as_mut_ptr().add()` write — the bounds check is statically
+        // unreachable and LLVM elides it after inlining the fixed-size callers.
+        self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
     }
 
     #[inline(always)]
     fn put_byte(&mut self, b: u8) {
-        debug_assert!(self.at < self.buf.len());
-        // SAFETY: see `put`.
-        unsafe { *self.buf.as_mut_ptr().add(self.at) = b };
+        self.buf[self.at] = b;
         self.at += 1;
     }
 

@@ -379,6 +379,13 @@ impl SubscriptionCtx {
 // auto-derefs to `&T` so the impls below compile against either. `JsCell` is
 // `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
 // `ValkeyClient::parent`) sees identical offsets.
+//
+// `#[repr(C)]`: declared layout must match the Zig original — `client` MUST be
+// at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
+// `from_field_ptr!`, but belt-and-suspenders against any path that assumes
+// `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
+// — see `connect()` below).
+#[repr(C)]
 pub struct JSValkeyClient {
     pub client: JsCell<valkey::ValkeyClient>,
     pub global_object: GlobalRef,
@@ -1623,10 +1630,15 @@ impl JSValkeyClient {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
         });
-        // PORT NOTE: reshaped for borrowck — `address` is a field of `client`,
-        // and `connect` needs `*mut ValkeyClient` as the socket user-data. Go
-        // through a raw pointer; `Address::connect` only reads host/path bytes
-        // and forwards `client_ptr` opaquely (no overlapping write).
+        // PORT NOTE: the socket ext slot is typed `ExtSlot<JSValkeyClient>`
+        // (uws_handlers.rs `Valkey<SSL> = NsHandler<JSValkeyClient, …>`); store
+        // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
+        // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
+        // `offsetof(JSValkeyClient, client)` again → garbage `&mut ValkeyClient`).
+        // Reshaped for borrowck — `address` is a field of `client`; go through a
+        // raw pointer. `Address::connect` only reads host/path bytes and forwards
+        // `owner_ptr` opaquely (no overlapping write).
+        let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
@@ -1634,7 +1646,7 @@ impl JSValkeyClient {
         let socket = unsafe {
             (*client_ptr)
                 .address
-                .connect(client_ptr, &mut *group, ssl_ctx, is_tls)
+                .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
         }?;
         self.client_mut().socket = socket;
         // Disarm errdefers on success.

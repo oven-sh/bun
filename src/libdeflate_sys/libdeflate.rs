@@ -179,6 +179,31 @@ impl Compressor {
         }
     }
 
+    /// Compress `input` into `out`'s **spare capacity** (append mode).
+    ///
+    /// Does not clear `out`; on [`Status::Success`] `out.len()` is advanced by
+    /// `result.written`. libdeflate compress never returns `InsufficientSpace`
+    /// when `out` was sized via [`max_bytes_needed`](Self::max_bytes_needed),
+    /// so callers need no retry loop.
+    ///
+    /// Safe replacement for the open-coded
+    /// `compress_into(out.spare_capacity_mut()) + unsafe { set_len }` pattern,
+    /// and for the zero-init `vec![0u8; bound]` + `truncate` form.
+    pub fn compress_to_vec(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        encoding: Encoding,
+    ) -> Result {
+        let result = self.compress_into(input, out.spare_capacity_mut(), encoding);
+        if result.status == Status::Success {
+            // SAFETY: result.written ≤ spare.len() and libdeflate has
+            // initialized spare[..result.written].
+            unsafe { out.set_len(out.len() + result.written) };
+        }
+        result
+    }
+
     pub fn zlib(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
         let result = unsafe {
@@ -359,6 +384,59 @@ impl Decompressor {
             }
         };
         Result { read, written, status }
+    }
+
+    /// Decompress `input` into `out`'s **spare capacity** (append mode).
+    ///
+    /// - Does **not** clear `out`; existing contents are preserved and the
+    ///   decompressed bytes land after them.
+    /// - Does **not** retry or grow `out`.
+    /// - On [`Status::Success`], `out.len()` is advanced by `result.written`.
+    ///   On any other status, `out.len()` is left unchanged (libdeflate does
+    ///   not define `actual_out_nbytes_ret` on failure).
+    ///
+    /// Safe replacement for the open-coded
+    /// `decompress_into(out.spare_capacity_mut()) + unsafe { set_len }` pattern,
+    /// and for the UB-adjacent `slice_mut(ptr, capacity)` form that materialized
+    /// `&mut [u8]` over uninitialized bytes.
+    pub fn decompress_to_vec(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        encoding: Encoding,
+    ) -> Result {
+        let result = self.decompress_into(input, out.spare_capacity_mut(), encoding);
+        if result.status == Status::Success {
+            // SAFETY: result.written ≤ spare.len() and libdeflate has
+            // initialized spare[..result.written].
+            unsafe { out.set_len(out.len() + result.written) };
+        }
+        result
+    }
+
+    /// [`decompress_to_vec`](Self::decompress_to_vec) with a doubling retry loop.
+    ///
+    /// Clears `out` first (libdeflate restarts decompression from scratch on
+    /// each call), then repeatedly doubles `out`'s capacity on
+    /// [`Status::InsufficientSpace`] until success, hard error, or
+    /// `out.capacity() > max_capacity` (returned as the final
+    /// `InsufficientSpace`). On success, `out.len() == result.written`.
+    pub fn decompress_to_vec_grow(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        encoding: Encoding,
+        max_capacity: usize,
+    ) -> Result {
+        loop {
+            out.clear();
+            let result = self.decompress_to_vec(input, out, encoding);
+            if result.status != Status::InsufficientSpace || out.capacity() > max_capacity {
+                return result;
+            }
+            let new_cap = out.capacity().max(1) * 2;
+            out.reserve(new_cap.saturating_sub(out.len()));
+        }
     }
 }
 

@@ -503,6 +503,82 @@ pub fn must_use_aligned_alloc(alignment: usize) -> bool {
     alignment > MI_MAX_ALIGN_SIZE
 }
 
+/// `mi_malloc_aligned` when `align > MI_MAX_ALIGN_SIZE`, else `mi_malloc`.
+/// mimalloc's small-block fast path is only hit when no explicit alignment is
+/// requested, so callers should not unconditionally pass through `_aligned`.
+/// No preconditions; returns null on failure.
+#[inline(always)]
+pub fn mi_malloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_malloc_aligned(size, align)
+    } else {
+        mi_malloc(size)
+    }
+}
+
+/// Zeroing variant of [`mi_malloc_auto_align`]. No preconditions; null on failure.
+#[inline(always)]
+pub fn mi_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_zalloc_aligned(size, align)
+    } else {
+        mi_zalloc(size)
+    }
+}
+
+/// Heap-scoped variant of [`mi_malloc_auto_align`].
+///
+/// # Safety
+/// `heap` must point to a live `mi_heap_t`.
+#[inline(always)]
+pub unsafe fn mi_heap_malloc_auto_align(heap: *mut Heap, size: usize, align: usize) -> *mut c_void {
+    // SAFETY: caller guarantees `heap` is live.
+    unsafe {
+        if must_use_aligned_alloc(align) {
+            mi_heap_malloc_aligned(heap, size, align)
+        } else {
+            mi_heap_malloc(heap, size)
+        }
+    }
+}
+
+/// Heap-scoped zeroing variant of [`mi_malloc_auto_align`].
+///
+/// # Safety
+/// `heap` must point to a live `mi_heap_t`.
+#[inline(always)]
+pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usize) -> *mut c_void {
+    // SAFETY: caller guarantees `heap` is live.
+    unsafe {
+        if must_use_aligned_alloc(align) {
+            mi_heap_zalloc_aligned(heap, size, align)
+        } else {
+            mi_heap_zalloc(heap, size)
+        }
+    }
+}
+
+/// `THeap`-scoped variant of [`mi_malloc_auto_align`] (skips per-call
+/// `heap → theap` lookup).
+///
+/// # Safety
+/// `theap` must point to a live `mi_theap_t` for the calling thread.
+#[inline(always)]
+pub unsafe fn mi_theap_malloc_auto_align(
+    theap: *mut THeap,
+    size: usize,
+    align: usize,
+) -> *mut c_void {
+    // SAFETY: caller guarantees `theap` is live for this thread.
+    unsafe {
+        if must_use_aligned_alloc(align) {
+            mi_theap_malloc_aligned(theap, size, align)
+        } else {
+            mi_theap_malloc(theap, size)
+        }
+    }
+}
+
 pub type mi_arena_id_t = *mut c_void;
 
 unsafe extern "C" {

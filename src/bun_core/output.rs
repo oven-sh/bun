@@ -1572,7 +1572,7 @@ macro_rules! declare_scope {
 /// MUST gate arg evaluation: expands to a dead branch in release builds.
 #[macro_export]
 macro_rules! scoped_log {
-    ($scope:ident, $fmt:expr $(, $arg:expr)* $(,)?) => {
+    ($scope:path, $fmt:expr $(, $arg:expr)* $(,)?) => {
         // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`, env.rs:89) so
         // release builds dead-strip the body. Do NOT gate on a Cargo feature —
         // there is no `debug_logs` feature and §Forbidden bans silent no-ops.
@@ -1601,6 +1601,39 @@ macro_rules! scoped_log {
                     $crate::output::_LowerTag($scope.tagname), $($arg,)* __NL
                 ));
             }
+        }
+    };
+}
+
+/// Declare a scoped logger static **and** a local forwarding macro in one shot.
+/// Replaces the per-file `declare_scope!(X, vis); macro_rules! log { … }` boilerplate.
+///
+/// ```ignore
+/// bun_core::define_scoped_log!(log, EventLoop, hidden);
+/// log!("tick {}", n);
+/// ```
+///
+/// The two-arg form skips `declare_scope!` and just forwards to an existing
+/// `ScopedLogger` static (by path) — for hand-declared statics (keyword tagnames)
+/// or scopes that live in another module.
+//
+// Nested-macro `$` escaping uses the "`$` token smuggle" so caller crates do
+// NOT need `#![feature(macro_metavar_expr)]`: the public arms forward a
+// literal `$` token to a `(@inner …, $d:tt)` arm, which then writes `$d`
+// where the inner macro wants `$`.
+#[macro_export]
+macro_rules! define_scoped_log {
+    ($mac:ident, $scope:ident, $vis:tt) => {
+        $crate::declare_scope!($scope, $vis);
+        $crate::define_scoped_log!(@inner $mac, $scope, $);
+    };
+    ($mac:ident, $scope:path) => {
+        $crate::define_scoped_log!(@inner $mac, $scope, $);
+    };
+    (@inner $mac:ident, $scope:path, $d:tt) => {
+        #[allow(unused_macros)]
+        macro_rules! $mac {
+            ($d($d arg:tt)*) => { $crate::scoped_log!($scope, $d($d arg)*) };
         }
     };
 }

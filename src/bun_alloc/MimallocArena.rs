@@ -502,13 +502,7 @@ impl MimallocArena {
         // SAFETY: `theap` is the live theap for `self.heap` on this (owning)
         // thread — invariant established by `resolve_theap` and maintained by
         // `reset()` clearing the cache when the heap is destroyed.
-        let p = unsafe {
-            if mimalloc::must_use_aligned_alloc(align) {
-                mimalloc::mi_theap_malloc_aligned(theap, len, align)
-            } else {
-                mimalloc::mi_theap_malloc(theap, len)
-            }
-        };
+        let p = unsafe { mimalloc::mi_theap_malloc_auto_align(theap, len, align) };
         #[cfg(debug_assertions)]
         if !p.is_null() {
             // SAFETY: `p` was just returned by mimalloc.
@@ -726,15 +720,7 @@ impl Drop for MimallocArena {
 // `Vec<T, &'a MimallocArena>` borrows the arena for `'a` — matching
 // `bumpalo`'s `&'bump Bump: Allocator` shape and the `ArenaVec<'a, T>` alias.
 
-/// Wrap a raw mimalloc pointer in the `Result<NonNull<[u8]>, AllocError>` shape
-/// the `Allocator` trait wants. `#[inline(always)]` keeps codegen identical to
-/// the open-coded `match` this replaced (hot path).
-#[inline(always)]
-fn alloc_result(p: *mut u8, size: usize) -> Result<NonNull<[u8]>, AllocError> {
-    NonNull::new(p)
-        .map(|p| NonNull::slice_from_raw_parts(p, size))
-        .ok_or(AllocError)
-}
+use crate::alloc_result;
 
 // SAFETY: every pointer returned by `allocate` comes from
 // `mi_heap_malloc[_aligned]` on `self.heap`, which yields a block of at least
@@ -759,14 +745,8 @@ unsafe impl Allocator for &MimallocArena {
         self.track_alloc(layout.size());
         let heap = self.heap_ptr();
         // SAFETY: `heap` is live.
-        let p = unsafe {
-            if mimalloc::must_use_aligned_alloc(layout.align()) {
-                mimalloc::mi_heap_zalloc_aligned(heap, layout.size(), layout.align())
-            } else {
-                mimalloc::mi_heap_zalloc(heap, layout.size())
-            }
-        };
-        alloc_result(p.cast::<u8>(), layout.size())
+        let p = unsafe { mimalloc::mi_heap_zalloc_auto_align(heap, layout.size(), layout.align()) };
+        alloc_result(p, layout.size())
     }
 
     #[inline]
@@ -806,7 +786,7 @@ unsafe impl Allocator for &MimallocArena {
                 new.align(),
             )
         };
-        alloc_result(p.cast::<u8>(), new.size())
+        alloc_result(p, new.size())
     }
 
     #[inline]
@@ -830,13 +810,7 @@ unsafe impl Allocator for &MimallocArena {
 #[inline]
 unsafe fn heap_alloc_maybe_aligned(heap: *mut mimalloc::Heap, len: usize, align: usize) -> *mut u8 {
     // SAFETY: caller guarantees `heap` is live.
-    let p = unsafe {
-        if mimalloc::must_use_aligned_alloc(align) {
-            mimalloc::mi_heap_malloc_aligned(heap, len, align)
-        } else {
-            mimalloc::mi_heap_malloc(heap, len)
-        }
-    };
+    let p = unsafe { mimalloc::mi_heap_malloc_auto_align(heap, len, align) };
     #[cfg(debug_assertions)]
     if !p.is_null() {
         // SAFETY: `p` was just returned by mimalloc.
@@ -903,11 +877,7 @@ unsafe fn global_vtable_alloc(
     // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no input
     // preconditions — any len/alignment is valid; returns null on OOM), so no
     // `unsafe { }` is required here.
-    if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
-        mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
-    } else {
-        mimalloc::mi_malloc(len).cast()
-    }
+    mimalloc::mi_malloc_auto_align(len, a.to_byte_units()).cast()
 }
 
 /// Zig: `global_mimalloc_vtable`.

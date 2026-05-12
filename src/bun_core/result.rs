@@ -30,8 +30,8 @@ pub struct Error(NonZeroU16);
 // `pub const` Errors below have stable values without touching the lock.
 
 /// Pre-seeded names. **Append only** — existing indices are load-bearing for
-/// the `pub const` Errors below. (The errno→name map lives in the per-platform
-/// `SYSTEM_ERRNO_NAMES` table; entries here are only fast-path intern hits.)
+/// the `pub const` Errors below. (The errno→name map lives in bun_errno via the
+/// `ErrnoNames` hook; entries here are only fast-path intern hits.)
 const SEED: &[&str] = &[
     // — well-known Zig error-set members the runtime matches on by value —
     "Unexpected",       // 1  (Zig's catch-all; also `errno_map` default)
@@ -46,7 +46,7 @@ const SEED: &[&str] = &[
     "Aborted",          // 10
     "WouldBlock",       // 11
     // — POSIX errno tag names (intern fast-path only; the actual errno→name
-    //   mapping is `SYSTEM_ERRNO_NAMES`, which is per-platform and full-range) —
+    //   mapping is the per-platform table in bun_errno, via ErrnoNames hook) —
     "EPERM",   // 12
     "ENOENT",  // 13
     "ESRCH",   // 14
@@ -83,223 +83,12 @@ const SEED: &[&str] = &[
     "ERANGE",  // 45
 ];
 
-// ── per-platform errno → tag-name table ───────────────────────────────────
-//
-// Mirrors the comptime `for (std.enums.values(sys.SystemErrno))` loop in
-// bun.zig:2841-2851. Index = raw OS errno; value = `@tagName(SystemErrno)`.
-// Index 0 ("SUCCESS") is the no-error hole. These tables are duplicated from
-// `bun_errno`'s per-platform `SystemErrno` enums because `bun_errno` depends
-// on `bun_core` (cycle); keep in lockstep with `src/errno/*_errno.rs`.
-
-// Android shares the Linux kernel errno space; bionic's `errno.h` is a
-// straight import of `<asm/errno.h>`. Rust splits `target_os` into
-// `linux`/`android` (Zig keeps both as `os.tag == .linux`), so the gate must
-// list both for the Android cross-targets to see this table.
-#[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
-pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
-    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
-    "ECHILD", "EAGAIN", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
-    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
-    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EDEADLK", "ENAMETOOLONG",
-    "ENOLCK", "ENOSYS", "ENOTEMPTY", "ELOOP", "EWOULDBLOCK", "ENOMSG", "EIDRM", "ECHRNG",
-    "EL2NSYNC", "EL3HLT", "EL3RST", "ELNRNG", "EUNATCH", "ENOCSI", "EL2HLT", "EBADE", "EBADR",
-    "EXFULL", "ENOANO", "EBADRQC", "EBADSLT", "EDEADLOCK", "EBFONT", "ENOSTR", "ENODATA", "ETIME",
-    "ENOSR", "ENONET", "ENOPKG", "EREMOTE", "ENOLINK", "EADV", "ESRMNT", "ECOMM", "EPROTO",
-    "EMULTIHOP", "EDOTDOT", "EBADMSG", "EOVERFLOW", "ENOTUNIQ", "EBADFD", "EREMCHG", "ELIBACC",
-    "ELIBBAD", "ELIBSCN", "ELIBMAX", "ELIBEXEC", "EILSEQ", "ERESTART", "ESTRPIPE", "EUSERS",
-    "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT", "EPROTONOSUPPORT",
-    "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE", "EADDRNOTAVAIL",
-    "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET", "ENOBUFS", "EISCONN",
-    "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED", "EHOSTDOWN",
-    "EHOSTUNREACH", "EALREADY", "EINPROGRESS", "ESTALE", "EUCLEAN", "ENOTNAM", "ENAVAIL", "EISNAM",
-    "EREMOTEIO", "EDQUOT", "ENOMEDIUM", "EMEDIUMTYPE", "ECANCELED", "ENOKEY", "EKEYEXPIRED",
-    "EKEYREVOKED", "EKEYREJECTED", "EOWNERDEAD", "ENOTRECOVERABLE", "ERFKILL", "EHWPOISON",
-];
-
-#[cfg(windows)]
-pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
-    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
-    "ECHILD", "EAGAIN", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
-    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
-    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EDEADLK", "ENAMETOOLONG",
-    "ENOLCK", "ENOSYS", "ENOTEMPTY", "ELOOP", "EWOULDBLOCK", "ENOMSG", "EIDRM", "ECHRNG",
-    "EL2NSYNC", "EL3HLT", "EL3RST", "ELNRNG", "EUNATCH", "ENOCSI", "EL2HLT", "EBADE", "EBADR",
-    "EXFULL", "ENOANO", "EBADRQC", "EBADSLT", "EDEADLOCK", "EBFONT", "ENOSTR", "ENODATA", "ETIME",
-    "ENOSR", "ENONET", "ENOPKG", "EREMOTE", "ENOLINK", "EADV", "ESRMNT", "ECOMM", "EPROTO",
-    "EMULTIHOP", "EDOTDOT", "EBADMSG", "EOVERFLOW", "ENOTUNIQ", "EBADFD", "EREMCHG", "ELIBACC",
-    "ELIBBAD", "ELIBSCN", "ELIBMAX", "ELIBEXEC", "EILSEQ", "ERESTART", "ESTRPIPE", "EUSERS",
-    "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT", "EPROTONOSUPPORT",
-    "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE", "EADDRNOTAVAIL",
-    "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET", "ENOBUFS", "EISCONN",
-    "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED", "EHOSTDOWN",
-    "EHOSTUNREACH", "EALREADY", "EINPROGRESS", "ESTALE", "EUCLEAN", "ENOTNAM", "ENAVAIL", "EISNAM",
-    "EREMOTEIO", "EDQUOT", "ENOMEDIUM", "EMEDIUMTYPE", "ECANCELED", "ENOKEY", "EKEYEXPIRED",
-    "EKEYREVOKED", "EKEYREJECTED", "EOWNERDEAD", "ENOTRECOVERABLE", "ERFKILL", "EHWPOISON",
-    "EUNKNOWN", "ECHARSET", "EOF", "EFTYPE",
-    // The sparse UV_* range (negated libuv codes) is handled out-of-line by
-    // `uv_errno_name` below — the dense table stops at EFTYPE=137.
-];
-
-/// Sparse half of the Windows `SystemErrno` enum: discriminant `-uv.UV_*` →
-/// `@tagName`. Mirrors windows_errno.zig:445-530; values are the Windows-side
-/// `UV__*` constants from vendor/libuv/include/uv/errno.h (the `!defined(_WIN32)`
-/// fallback arm). Consulted by `from_errno`/`system_errno_name` when `n` falls
-/// outside the dense 0..=137 table, so the Zig `errno_map[@abs(uv_code)]`
-/// lookup (bun.zig:2841-2851) round-trips on Windows too.
-#[cfg(windows)]
-fn uv_errno_name(n: u32) -> Option<&'static str> {
-    Some(match n {
-        4093 => "UV_E2BIG",
-        4092 => "UV_EACCES",
-        4091 => "UV_EADDRINUSE",
-        4090 => "UV_EADDRNOTAVAIL",
-        4089 => "UV_EAFNOSUPPORT",
-        4088 => "UV_EAGAIN",
-        3000 => "UV_EAI_ADDRFAMILY",
-        3001 => "UV_EAI_AGAIN",
-        3002 => "UV_EAI_BADFLAGS",
-        3013 => "UV_EAI_BADHINTS",
-        3003 => "UV_EAI_CANCELED",
-        3004 => "UV_EAI_FAIL",
-        3005 => "UV_EAI_FAMILY",
-        3006 => "UV_EAI_MEMORY",
-        3007 => "UV_EAI_NODATA",
-        3008 => "UV_EAI_NONAME",
-        3009 => "UV_EAI_OVERFLOW",
-        3014 => "UV_EAI_PROTOCOL",
-        3010 => "UV_EAI_SERVICE",
-        3011 => "UV_EAI_SOCKTYPE",
-        4084 => "UV_EALREADY",
-        4083 => "UV_EBADF",
-        4082 => "UV_EBUSY",
-        4081 => "UV_ECANCELED",
-        4080 => "UV_ECHARSET",
-        4079 => "UV_ECONNABORTED",
-        4078 => "UV_ECONNREFUSED",
-        4077 => "UV_ECONNRESET",
-        4076 => "UV_EDESTADDRREQ",
-        4075 => "UV_EEXIST",
-        4074 => "UV_EFAULT",
-        4036 => "UV_EFBIG",
-        4073 => "UV_EHOSTUNREACH",
-        4071 => "UV_EINVAL",
-        4072 => "UV_EINTR",
-        4069 => "UV_EISCONN",
-        4070 => "UV_EIO",
-        4067 => "UV_ELOOP",
-        4068 => "UV_EISDIR",
-        4065 => "UV_EMSGSIZE",
-        4066 => "UV_EMFILE",
-        4063 => "UV_ENETDOWN",
-        4064 => "UV_ENAMETOOLONG",
-        4061 => "UV_ENFILE",
-        4062 => "UV_ENETUNREACH",
-        4059 => "UV_ENODEV",
-        4060 => "UV_ENOBUFS",
-        4057 => "UV_ENOMEM",
-        4058 => "UV_ENOENT",
-        4035 => "UV_ENOPROTOOPT",
-        4056 => "UV_ENONET",
-        4054 => "UV_ENOSYS",
-        4055 => "UV_ENOSPC",
-        4052 => "UV_ENOTDIR",
-        4053 => "UV_ENOTCONN",
-        4050 => "UV_ENOTSOCK",
-        4051 => "UV_ENOTEMPTY",
-        4026 => "UV_EOVERFLOW",
-        4049 => "UV_ENOTSUP",
-        4047 => "UV_EPIPE",
-        4048 => "UV_EPERM",
-        4045 => "UV_EPROTONOSUPPORT",
-        4046 => "UV_EPROTO",
-        4034 => "UV_ERANGE",
-        4044 => "UV_EPROTOTYPE",
-        4042 => "UV_ESHUTDOWN",
-        4043 => "UV_EROFS",
-        4040 => "UV_ESRCH",
-        4041 => "UV_ESPIPE",
-        4038 => "UV_ETXTBSY",
-        4039 => "UV_ETIMEDOUT",
-        4094 => "UV_UNKNOWN",
-        4037 => "UV_EXDEV",
-        4033 => "UV_ENXIO",
-        4095 => "UV_EOF",
-        4031 => "UV_EHOSTDOWN",
-        4032 => "UV_EMLINK",
-        4029 => "UV_ENOTTY",
-        4030 => "UV_EREMOTEIO",
-        4027 => "UV_EILSEQ",
-        4028 => "UV_EFTYPE",
-        4024 => "UV_ENODATA",
-        4025 => "UV_ESOCKTNOSUPPORT",
-        4096 => "UV_ERRNO_MAX",
-        4023 => "UV_EUNATCH",
-        4022 => "UV_ENOEXEC",
-        _ => return None,
-    })
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
-    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
-    "ECHILD", "EDEADLK", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
-    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
-    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EAGAIN", "EINPROGRESS",
-    "EALREADY", "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT",
-    "EPROTONOSUPPORT", "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE",
-    "EADDRNOTAVAIL", "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET",
-    "ENOBUFS", "EISCONN", "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED",
-    "ELOOP", "ENAMETOOLONG", "EHOSTDOWN", "EHOSTUNREACH", "ENOTEMPTY", "EPROCLIM", "EUSERS",
-    "EDQUOT", "ESTALE", "EREMOTE", "EBADRPC", "ERPCMISMATCH", "EPROGUNAVAIL", "EPROGMISMATCH",
-    "EPROCUNAVAIL", "ENOLCK", "ENOSYS", "EFTYPE", "EAUTH", "ENEEDAUTH", "EPWROFF", "EDEVERR",
-    "EOVERFLOW", "EBADEXEC", "EBADARCH", "ESHLIBVERS", "EBADMACHO", "ECANCELED", "EIDRM", "ENOMSG",
-    "EILSEQ", "ENOATTR", "EBADMSG", "EMULTIHOP", "ENODATA", "ENOLINK", "ENOSR", "ENOSTR", "EPROTO",
-    "ETIME", "EOPNOTSUPP", "ENOPOLICY", "ENOTRECOVERABLE", "EOWNERDEAD", "EQFULL",
-];
-
-#[cfg(target_os = "freebsd")]
-pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
-    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
-    "ECHILD", "EDEADLK", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
-    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
-    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EAGAIN", "EINPROGRESS",
-    "EALREADY", "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT",
-    "EPROTONOSUPPORT", "ESOCKTNOSUPPORT", "EOPNOTSUPP", "EPFNOSUPPORT", "EAFNOSUPPORT",
-    "EADDRINUSE", "EADDRNOTAVAIL", "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED",
-    "ECONNRESET", "ENOBUFS", "EISCONN", "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT",
-    "ECONNREFUSED", "ELOOP", "ENAMETOOLONG", "EHOSTDOWN", "EHOSTUNREACH", "ENOTEMPTY", "EPROCLIM",
-    "EUSERS", "EDQUOT", "ESTALE", "EREMOTE", "EBADRPC", "ERPCMISMATCH", "EPROGUNAVAIL",
-    "EPROGMISMATCH", "EPROCUNAVAIL", "ENOLCK", "ENOSYS", "EFTYPE", "EAUTH", "ENEEDAUTH", "EIDRM",
-    "ENOMSG", "EOVERFLOW", "ECANCELED", "EILSEQ", "ENOATTR", "EDOOFUS", "EBADMSG", "EMULTIHOP",
-    "ENOLINK", "EPROTO", "ENOTCAPABLE", "ECAPMODE", "ENOTRECOVERABLE", "EOWNERDEAD", "EINTEGRITY",
-];
-
-// Lock each table's length to the Zig `SystemErrno` enum's cardinality
-// (`src/errno/*_errno.zig`). A mismatch here means the duplicated table has
-// drifted from its source of truth — fix the table, not the assertion.
-#[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
-const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 134); // linux_errno.zig: 0..=EHWPOISON(133)
-#[cfg(windows)]
-const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 138); // windows_errno.zig: 0..=EFTYPE(137); UV_* sparse range in `uv_errno_name`
-#[cfg(target_os = "macos")]
-const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 107); // darwin_errno.zig: 0..=EQFULL(106)
-#[cfg(target_os = "freebsd")]
-const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 98); // freebsd_errno.zig: 0..=EINTEGRITY(97)
-
 /// Platform errno integer → its `SystemErrno` tag name. `None` for 0/out-of-range.
+/// The per-platform table lives in `bun_errno` (strum derive on `SystemErrno`);
+/// reached through the `ErrnoNames` link-interface so this crate stays leaf.
 #[inline]
 pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
-    let n = if cfg!(windows) { errno.unsigned_abs() } else {
-        if errno <= 0 { return None; }
-        errno as u32
-    };
-    match SYSTEM_ERRNO_NAMES.get(n as usize) {
-        Some(&name) if n != 0 => Some(name),
-        #[cfg(windows)]
-        _ => uv_errno_name(n),
-        #[cfg(not(windows))]
-        _ => None,
-    }
+    crate::ErrnoNames::SYS.name(errno)
 }
 
 /// Dynamically interned names (codes `> SEED.len()`). Append-only; never
@@ -412,12 +201,12 @@ impl Error {
         // bounds-checked array index — same cost as the Zig version.
         static ERRNO_MAP: crate::Once<Box<[Error]>> = crate::Once::new();
         let map = ERRNO_MAP.get_or_init(|| {
-            SYSTEM_ERRNO_NAMES
-                .iter()
-                .map(|&name| {
-                    // Index 0 ("SUCCESS") is the no-error hole → Unexpected,
-                    // matching the Zig `@memset(&map, error.Unexpected)`.
-                    if name == "SUCCESS" { Error::UNEXPECTED } else { Error::intern(name) }
+            // Index 0 ("SUCCESS") is the no-error hole → Unexpected,
+            // matching the Zig `@memset(&map, error.Unexpected)`.
+            (0..crate::ErrnoNames::SYS.max_dense())
+                .map(|i| match system_errno_name(i as i32) {
+                    Some(name) => Error::intern(name),
+                    None => Error::UNEXPECTED,
                 })
                 .collect()
         });
@@ -434,7 +223,7 @@ impl Error {
         // `from_errno(-4058)` → `error.UV_ENOENT`, matching Zig's full-width
         // `errno_map` (bun.zig:2841-2851 sizes it to `max(@intFromEnum)+1`).
         #[cfg(windows)]
-        if let Some(name) = uv_errno_name(n) {
+        if let Some(name) = system_errno_name(errno) {
             return Self::intern(name);
         }
         Self::UNEXPECTED
@@ -460,7 +249,7 @@ impl From<std::io::Error> for Error {
             Some(code) => Self::from_errno(code),
             // Windows: `raw_os_error()` returns the raw Win32 `GetLastError()`
             // code (ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, …),
-            // NOT a `SystemErrno`. Indexing `SYSTEM_ERRNO_NAMES` by it would
+            // NOT a `SystemErrno`. Routing it through `ErrnoNames::SYS.name()` would
             // alias garbage (5→EIO, 32→EPIPE). The Zig pipeline first runs
             // `Win32Error.toSystemErrno()` (windows_errno.zig:290) before any
             // `errno_map` lookup; that table lives in `bun_errno`, which is
@@ -559,7 +348,7 @@ macro_rules! impl_tag_error {
 // EnumMap lives in `bun_sys::coreutils_error_map`; that crate is tier-above
 // `bun_core`, so for `output.rs`'s integer-errno hot path we keep a parallel
 // table here, keyed by `SystemErrno` *name* and resolved through the per-OS
-// `SYSTEM_ERRNO_NAMES` index — i.e. the same `errno → SystemErrno → message`
+// `ErrnoNames` hook — i.e. the same `errno → SystemErrno → message`
 // composition the Zig does, just without the cross-crate enum.
 pub mod coreutils_error_map {
     /// Returns the GNU-coreutils-style short label for an errno, if known.
@@ -969,71 +758,9 @@ mod tests {
         assert_eq!(Error::from_raw(Error::OUT_OF_MEMORY.as_u16()), Error::OUT_OF_MEMORY);
     }
 
-    #[test]
-    fn errno_mapping() {
-        assert_eq!(Error::from_errno(2).name(), "ENOENT");
-        assert_eq!(Error::from_errno(2), Error::intern("ENOENT"));
-        assert_eq!(Error::from_errno(12), Error::intern("ENOMEM"));
-        assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
-        assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
-        // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
-        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
-        {
-            assert_eq!(Error::from_errno(11), Error::intern("EAGAIN"));
-            assert_eq!(Error::from_errno(104), Error::intern("ECONNRESET"));
-        }
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
-            assert_eq!(Error::from_errno(11), Error::intern("EDEADLK"));
-            assert_eq!(Error::from_errno(35), Error::intern("EAGAIN"));
-            assert_eq!(Error::from_errno(54), Error::intern("ECONNRESET"));
-        }
-    }
-
-    /// Exhaustive: every slot in the per-platform table round-trips through
-    /// `from_errno → name()` and matches the table entry, and the table covers
-    /// the full Zig `SystemErrno` range (not just the 1..34 POSIX-common subset).
-    #[test]
-    fn errno_table_full_range() {
-        // Slot 0 is the SUCCESS hole.
-        assert_eq!(SYSTEM_ERRNO_NAMES[0], "SUCCESS");
-        assert_eq!(system_errno_name(0), None);
-        for (i, &name) in SYSTEM_ERRNO_NAMES.iter().enumerate().skip(1) {
-            assert_eq!(system_errno_name(i as i32), Some(name), "slot {i}");
-            assert_eq!(Error::from_errno(i as i32).name(), name, "slot {i}");
-        }
-        // One past the end → Unexpected.
-        assert_eq!(Error::from_errno(SYSTEM_ERRNO_NAMES.len() as i32), Error::UNEXPECTED);
-
-        // Spot-check the last entry on each platform against the Zig source.
-        #[cfg(any(target_os = "linux", target_family = "wasm"))]
-        assert_eq!(SYSTEM_ERRNO_NAMES[133], "EHWPOISON");
-        #[cfg(windows)]
-        {
-            assert_eq!(SYSTEM_ERRNO_NAMES[137], "EFTYPE");
-            // Sparse UV_* range round-trips (bun.zig errno_map covers 0..=4096).
-            assert_eq!(Error::from_errno(-4058).name(), "UV_ENOENT");
-            assert_eq!(Error::from_errno(-4092).name(), "UV_EACCES");
-            assert_eq!(Error::from_errno(-4095).name(), "UV_EOF");
-            assert_eq!(Error::from_errno(-3008).name(), "UV_EAI_NONAME");
-            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
-            assert_eq!(Error::from_errno(-5000), Error::UNEXPECTED);
-        }
-        #[cfg(target_os = "macos")]
-        assert_eq!(SYSTEM_ERRNO_NAMES[106], "EQFULL");
-        #[cfg(target_os = "freebsd")]
-        assert_eq!(SYSTEM_ERRNO_NAMES[97], "EINTEGRITY");
-    }
-
-    #[test]
-    fn coreutils_map() {
-        assert_eq!(coreutils_error_map::get(2), Some("No such file or directory"));
-        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
-        assert_eq!(coreutils_error_map::get(11), Some("Resource temporarily unavailable"));
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        assert_eq!(coreutils_error_map::get(11), Some("Resource deadlock avoided"));
-        assert_eq!(coreutils_error_map::get(0), None);
-    }
+    // `errno_mapping`, `errno_table_full_range`, `coreutils_map` moved to
+    // `bun_errno::errno_name_tests` — they link through the `ErrnoNames` hook
+    // and would fail `cargo test -p bun_core` (no provider in this crate).
 
     #[test]
     fn err_macro_distinct() {

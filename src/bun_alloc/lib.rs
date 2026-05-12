@@ -283,6 +283,86 @@ pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
     &s[..end]
 }
 
+/// Zig: `std.mem.trimLeft(u8, s, chars)`.
+/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_left`.
+#[inline]
+pub fn trim_left<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+    let mut begin = 0usize;
+    while begin < s.len() && chars.contains(&s[begin]) {
+        begin += 1;
+    }
+    &s[begin..]
+}
+
+/// Zig: `std.mem.trim(u8, s, chars)` — strip `chars` from both ends.
+/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim`.
+#[inline]
+pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+    trim_right(trim_left(s, chars), chars)
+}
+
+// ─── ascii-lowercase helpers ──────────────────────────────────────────────
+// Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
+// it without a dep cycle (bun_core → bun_alloc, not the reverse). bun_core
+// re-exports both names so all existing callers of
+// `bun_core::strings::copy_lowercase` / `bun_string::immutable::copy_lowercase`
+// keep compiling unchanged.
+
+/// Zig: `strings.copyLowercase` (src/string/immutable.zig). ASCII-lowercase
+/// `in_` into `out` (which must be at least `in_.len()`), returning the
+/// written prefix. Memcpy-runs + per-uppercase-byte fixup; identical output
+/// to a byte-at-a-time `to_ascii_lowercase` zip.
+pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
+    let mut in_slice = in_;
+    // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
+    let mut out_off: usize = 0;
+
+    'begin: loop {
+        for (i, &c) in in_slice.iter().enumerate() {
+            if let b'A'..=b'Z' = c {
+                out[out_off..out_off + i].copy_from_slice(&in_slice[0..i]);
+                out[out_off + i] = c.to_ascii_lowercase();
+                let end = i + 1;
+                in_slice = &in_slice[end..];
+                out_off += end;
+                continue 'begin;
+            }
+        }
+
+        out[out_off..out_off + in_slice.len()].copy_from_slice(in_slice);
+        break;
+    }
+
+    &out[0..in_.len()]
+}
+
+/// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
+/// `Some((buf, input.len()))` or `None` if `input.len() > N`. The unused tail
+/// of `buf` is zero-filled. Covers the ubiquitous "lowercase a short key into
+/// a stack buffer, then look it up in a phf/length-gated map" pattern.
+#[inline]
+pub fn ascii_lowercase_buf<const N: usize>(input: &[u8]) -> Option<([u8; N], usize)> {
+    if input.len() > N {
+        return None;
+    }
+    let mut buf = [0u8; N];
+    copy_lowercase(input, &mut buf[..input.len()]);
+    Some((buf, input.len()))
+}
+
+/// Wrap a raw allocator pointer in the `Result<NonNull<[u8]>, AllocError>`
+/// shape `core::alloc::Allocator` wants. Null → `Err(AllocError)`. Generic
+/// over the pointee so mimalloc's `*mut c_void` returns pass straight in.
+#[inline(always)]
+pub(crate) fn alloc_result<T>(
+    p: *mut T,
+    size: usize,
+) -> core::result::Result<NonNull<[u8]>, core::alloc::AllocError> {
+    NonNull::new(p.cast::<u8>())
+        .map(|p| NonNull::slice_from_raw_parts(p, size))
+        .ok_or(core::alloc::AllocError)
+}
+
 /// Port of `std.fmt.count`: number of bytes the formatted args would produce.
 ///
 /// Drives a discarding `fmt::Write` that only sums `s.len()` — no allocation,
@@ -394,27 +474,12 @@ use mimalloc::MI_MAX_ALIGN_SIZE;
 unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        // PERF(port): mirrors basic.zig `must_use_aligned_alloc` branch.
-        // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no
-        // input preconditions; null on OOM), so no inner `unsafe { }` needed.
-        if layout.align() <= MI_MAX_ALIGN_SIZE {
-            mimalloc::mi_malloc(layout.size())
-        } else {
-            mimalloc::mi_malloc_aligned(layout.size(), layout.align())
-        }
-        .cast()
+        mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        // `mi_zalloc[_aligned]` are declared `safe fn` (zero-fill alloc; no
-        // input preconditions), so no inner `unsafe { }` needed.
-        if layout.align() <= MI_MAX_ALIGN_SIZE {
-            mimalloc::mi_zalloc(layout.size())
-        } else {
-            mimalloc::mi_zalloc_aligned(layout.size(), layout.align())
-        }
-        .cast()
+        mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
@@ -2220,14 +2285,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
                 core::cell::RefCell::new(Box::new([0u8; 4096]));
         }
         let (ptr, len) = LOWERCASE_BUF.with_borrow_mut(|buf| {
-            for (i, &c) in value.iter().enumerate() {
-                buf[i] = c.to_ascii_lowercase();
-            }
             // `do_append` only reads `slice` via `BSSAppendable::copy_into`
             // (copies into `self.backing_buf` / a fresh heap alloc) and returns
             // raw parts pointing at that owned storage, not at `slice` — so the
             // thread-local borrow does not escape the closure.
-            let slice: &[u8] = &buf[..value.len()];
+            let slice: &[u8] = crate::copy_lowercase(value, &mut buf[..value.len()]);
             self.do_append(slice)
         })?;
         // SAFETY: see `append`.

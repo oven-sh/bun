@@ -338,6 +338,17 @@ impl Task {
         // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
         unsafe { bun_core::from_field_ptr!(Task, node, node) }
     }
+
+    /// Project `NonNull<Task>` → `NonNull<Node>` for the intrusive `node` field.
+    ///
+    /// `node` is the first field of `#[repr(C)] Task`, so the pointer cast is
+    /// address-preserving and needs no `unsafe` deref. Single safe accessor for
+    /// the recurring `addr_of_mut!((*task.as_ptr()).node)` pattern.
+    #[inline]
+    fn node_of(task: NonNull<Task>) -> NonNull<Node> {
+        const _: () = assert!(core::mem::offset_of!(Task, node) == 0);
+        task.cast::<Node>()
+    }
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
@@ -360,7 +371,7 @@ impl Batch {
         }
         let task = self.head.unwrap();
         // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*task.as_ptr()).node.next };
+        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
         if !next.is_null() {
             // SAFETY: next points to the `node` field of the following Task.
             self.head = NonNull::new(unsafe { Task::from_node(next) });
@@ -397,13 +408,10 @@ impl Batch {
         if self.len == 0 {
             *self = batch;
         } else {
+            let tail_node = Task::node_of(self.tail.unwrap());
+            let new_next = batch.head.map_or(ptr::null_mut(), |h| Task::node_of(h).as_ptr());
             // SAFETY: self.len != 0 implies tail is Some; intrusive list link assignment.
-            unsafe {
-                (*self.tail.unwrap().as_ptr()).node.next = match batch.head {
-                    Some(h) => ptr::addr_of_mut!((*h.as_ptr()).node),
-                    None => ptr::null_mut(),
-                };
-            }
+            unsafe { (*tail_node.as_ptr()).next = new_next };
             self.tail = batch.tail;
             self.len += batch.len;
         }
@@ -556,16 +564,10 @@ impl ThreadPool {
         }
 
         // Extract out the `Node`s from the `Task`s
-        // SAFETY: batch.len != 0 implies head/tail are Some.
-        let mut list = unsafe {
-            node::List {
-                head: NonNull::new_unchecked(ptr::addr_of_mut!(
-                    (*batch.head.unwrap().as_ptr()).node
-                )),
-                tail: NonNull::new_unchecked(ptr::addr_of_mut!(
-                    (*batch.tail.unwrap().as_ptr()).node
-                )),
-            }
+        // batch.len != 0 implies head/tail are Some.
+        let mut list = node::List {
+            head: Task::node_of(batch.head.unwrap()),
+            tail: Task::node_of(batch.tail.unwrap()),
         };
 
         // .monotonic access is okay because:
@@ -1078,8 +1080,7 @@ impl Thread {
     }
 
     pub fn push_idle_task(&self, task: *mut Task) {
-        // SAFETY: task is non-null per caller contract.
-        let node_ptr = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!((*task).node)) };
+        let node_ptr = Task::node_of(NonNull::new(task).expect("non-null task"));
         let list = node::List {
             head: node_ptr,
             tail: node_ptr,

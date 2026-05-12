@@ -38,10 +38,16 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
+    use core::fmt::Write as _;
     /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
-    pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, _enc: Encoding) -> fmt::Result {
-        super::encode_json_string(f, input)
+    pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
+        f.write_char('"')?;
+        match enc {
+            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input)?,
+            _ => super::encode_json_string_chars(f, input)?,
+        }
+        f.write_char('"')
     }
     pub fn write_pre_quoted_string(
         input: &[u8],
@@ -54,8 +60,11 @@ pub mod js_printer {
         // "already quoted" passthrough for fmt.rs JS-string display.
         // Zig writePreQuotedString writes the escaped body WITHOUT surrounding
         // quotes — delegate to the canonical chars-only escaper.
-        let _ = (quote, enc);
-        super::encode_json_string_chars(f, input)
+        let _ = quote;
+        match enc {
+            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input),
+            _ => super::encode_json_string_chars(f, input),
+        }
     }
 }
 use strum::IntoStaticStr;
@@ -3568,6 +3577,54 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
                 let hex = hex_u16::<true>(b as u16);
                 w.write_str("\\u")?;
                 write_bytes(w, &hex)?;
+                run = i + 1;
+                continue;
+            }
+            _ => continue,
+        };
+        if run < i {
+            write_bytes(w, &s[run..i])?;
+        }
+        w.write_str(esc)?;
+        run = i + 1;
+    }
+    if run < s.len() {
+        write_bytes(w, &s[run..])?;
+    }
+    Ok(())
+}
+
+/// Latin-1 sibling of [`encode_json_string_chars`]: same escape table, but
+/// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
+/// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
+/// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
+pub fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+    let mut run = 0;
+    for (i, &b) in s.iter().enumerate() {
+        let esc: &str = match b {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            0x08 => "\\b",
+            0x0C => "\\f",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x00..=0x1F => {
+                if run < i {
+                    write_bytes(w, &s[run..i])?;
+                }
+                let hex = hex_u16::<true>(b as u16);
+                w.write_str("\\u")?;
+                write_bytes(w, &hex)?;
+                run = i + 1;
+                continue;
+            }
+            0x80..=0xFF => {
+                if run < i {
+                    write_bytes(w, &s[run..i])?;
+                }
+                // Widen Latin-1 byte → Unicode scalar → UTF-8.
+                w.write_char(b as char)?;
                 run = i + 1;
                 continue;
             }

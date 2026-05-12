@@ -717,8 +717,12 @@ impl Worker {
                 boxed.wire_after_move();
                 data.other_transpiler = Some(boxed);
             }
-            // SAFETY: just populated above (or on a prior call).
-            let other = unsafe { data.other_transpiler.as_deref_mut().unwrap_unchecked() };
+            // Just populated above (or on a prior call) — `expect` is
+            // unreachable. No `unsafe` needed for a set-once `Option<Box<_>>`.
+            let other = data
+                .other_transpiler
+                .as_deref_mut()
+                .expect("other_transpiler set above");
             debug_assert!(other.options.target == target);
             return other;
         }

@@ -1300,13 +1300,15 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
 
     #[inline]
     fn src(&self) -> &OSPathSliceZ {
-        // SAFETY: `create()` invariant — `path_buf[src_len] == 0`.
-        unsafe { OSPathSliceZ::from_raw(self.path_buf.as_ptr(), self.src_len) }
+        // `create()` invariant — `path_buf[src_len] == 0` (debug-asserted there
+        // and again by `from_buf`).
+        OSPathSliceZ::from_buf(&self.path_buf, self.src_len)
     }
     #[inline]
     fn dest(&self) -> &OSPathSliceZ {
-        // SAFETY: `create()` invariant — `path_buf[src_len + 1 + dest_len] == 0`.
-        unsafe { OSPathSliceZ::from_raw(self.path_buf.as_ptr().add(self.src_len + 1), self.dest_len) }
+        // `create()` invariant — `path_buf[src_len + 1 + dest_len] == 0`
+        // (debug-asserted there and again by `from_buf`).
+        OSPathSliceZ::from_buf(&self.path_buf[self.src_len + 1..], self.dest_len)
     }
 
     fn run_owned(self: Box<Self>) {
@@ -5345,13 +5347,14 @@ impl NodeFS {
 
             let flags = sys::O::DIRECTORY | sys::O::RDONLY;
             let atfd = if *root_fd == FD::INVALID { FD::cwd() } else { *root_fd };
-            // SAFETY: root_basename is already NUL-terminated; queued items are
-            // pushed below with the join_z_buf NUL kept intact.
+            // root_basename is already NUL-terminated; queued items are pushed
+            // below with the join_z_buf NUL kept intact (`from_slice_with_nul`
+            // debug-asserts the trailing NUL).
             let basename_z: &ZStr = if is_root {
                 root_basename
             } else {
                 // item was stored with trailing NUL (see push site).
-                unsafe { ZStr::from_raw(item.as_ptr(), item.len().saturating_sub(1)) }
+                ZStr::from_slice_with_nul(&item)
             };
             let fd = match Syscall::openat(atfd, basename_z, flags, 0) {
                 Err(err) => {
@@ -6623,9 +6626,9 @@ impl NodeFS {
                     if let Err(_) = r { return r; }
                 }
                 _ => {
-                    // SAFETY: NUL written at [len] above.
-                    let src_z = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), sd + 1 + name_slice.len()) };
-                    let dest_z = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd + 1 + name_slice.len()) };
+                    // NUL written at [len] above; `from_buf` debug-asserts it.
+                    let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
+                    let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
                     let r = self._copy_single_file_sync(
                         src_z, dest_z,
                         constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0i32 }),

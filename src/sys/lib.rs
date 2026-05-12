@@ -1248,6 +1248,12 @@ pub(crate) mod safe_libc {
         // is ABI-`int` on every Unix (glibc's `__rlimit_resource_t` is a
         // `c_uint`-typed enum, same 32-bit register slot).
         pub(crate) safe fn tcsetattr(fd: c_int, action: c_int, t: &libc::termios) -> c_int;
+        // Out-param is `&mut MaybeUninit<termios>` (`MaybeUninit<T>` is
+        // `#[repr(transparent)]`, so ABI-identical to `*mut termios`,
+        // non-null, valid for `sizeof(termios)` writes); libc only writes the
+        // slot on success and reports failure via the return value — bad fd →
+        // `ENOTTY`/`EBADF`, never UB.
+        pub(crate) safe fn tcgetattr(fd: c_int, t: &mut core::mem::MaybeUninit<libc::termios>) -> c_int;
         pub(crate) safe fn getrlimit(resource: c_int, rlim: &mut libc::rlimit) -> c_int;
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
     }
@@ -2351,7 +2357,12 @@ mod posix_impl {
             fn clonefile(src: *const i8, dst: *const i8, flags: u32) -> i32;
             fn clonefileat(src_dir: i32, src: *const i8, dst_dir: i32, dst: *const i8, flags: u32) -> i32;
             fn copyfile(from: *const i8, to: *const i8, state: *mut core::ffi::c_void, flags: u32) -> i32;
-            fn fcopyfile(from: i32, to: i32, state: *mut core::ffi::c_void, flags: u32) -> i32;
+            // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
+            // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
+            // (FFI-safe via the null-pointer niche → ABI-identical to a
+            // nullable `copyfile_state_t`); Bun never allocates a state, so
+            // every caller passes `None`.
+            safe fn fcopyfile(from: i32, to: i32, state: Option<core::ptr::NonNull<core::ffi::c_void>>, flags: u32) -> i32;
         }
         pub fn clonefile_(from: &ZStr, to: &ZStr) -> Maybe<()> {
             check_p!(unsafe { clonefile(from.as_ptr(), to.as_ptr(), 0) }, Tag::clonefile, from); Ok(())
@@ -2368,7 +2379,7 @@ mod posix_impl {
             Ok(())
         }
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
-            check!(unsafe { fcopyfile(from.native(), to.native(), core::ptr::null_mut(), flags) }, Tag::fcopyfile);
+            check!(fcopyfile(from.native(), to.native(), None, flags), Tag::fcopyfile);
             Ok(())
         }
     }
@@ -4752,14 +4763,16 @@ impl DynLib {
     }
     /// `dlsym` typed lookup.
     pub fn lookup<T>(&self, name: &ZStr) -> Option<T> {
+        const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
         let p = dlsym_impl(Some(self.handle), name)?;
         // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
         // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
         // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
         // are not `bytemuck::Pod` (not zeroable), so no safe cast exists.
         // `transmute_copy` is used over `transmute` because `T` is generic and
-        // its size cannot be checked at the definition site (debug-asserted at
-        // monomorphisation). Same contract as Zig `bun.cast(T, ptr)`.
+        // its size cannot be checked at the definition site; the `const` assert
+        // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
+        // monomorphisation. Same contract as Zig `bun.cast(T, ptr)`.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
     pub fn close(self) {
@@ -4833,12 +4846,14 @@ macro_rules! dlsym_with_handle {
                 PTR.store(p, ::core::sync::atomic::Ordering::Relaxed);
             }
         });
+        const { assert!(::core::mem::size_of::<$T>() == ::core::mem::size_of::<*mut ::core::ffi::c_void>()) };
         // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
         // fn pointers are not `bytemuck::Pod`, so the `*mut c_void` → `$T`
         // reinterpretation cannot be expressed safely. `p` is non-null (checked
         // below) and was obtained from `dlsym`, so it is a valid code address;
-        // `Once` provides happens-before for the store. Same as Zig
-        // `bun.cast($T, ptr)`.
+        // `Once` provides happens-before for the store. The `const` assert above
+        // enforces `size_of::<$T>() == size_of::<*mut c_void>()` at expansion.
+        // Same as Zig `bun.cast($T, ptr)`.
         let p = PTR.load(::core::sync::atomic::Ordering::Relaxed);
         if p.is_null() { None } else {
             Some(unsafe { ::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(&p) })
@@ -6335,9 +6350,9 @@ pub mod posix {
     #[cfg(unix)]
     pub fn tcgetattr(fd: c_int) -> core::result::Result<Termios, super::Error> {
         let mut t = core::mem::MaybeUninit::<Termios>::uninit();
-        // SAFETY: tcgetattr fully initializes `t` on success.
-        let rc = unsafe { libc::tcgetattr(fd, t.as_mut_ptr()) };
+        let rc = crate::safe_libc::tcgetattr(fd, &mut t);
         if rc < 0 { return Err(super::err_with(super::Tag::ioctl)); }
+        // SAFETY: tcgetattr fully initializes `t` on success (rc == 0).
         Ok(unsafe { t.assume_init() })
     }
     #[cfg(unix)]

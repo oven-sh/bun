@@ -2983,6 +2983,10 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 // across the boundary, layout is irrelevant. Defined `extern "C" SYSV_ABI`.
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
+    // PRECONDITION: `ptr` must point to a live `Interpreter` — C++ calls back
+    // into `ShellInterpreter__estimatedSize(ptr)` which dereferences it, and
+    // the JS wrapper takes ownership of the allocation (freed via `finalize`).
+    // Cannot be `safe fn`: `NonNull` alone does not encode points-to-valid-T.
     fn Bun__createShellInterpreter(
         global: *const crate::jsc::JSGlobalObject,
         ptr: *mut Interpreter,

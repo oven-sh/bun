@@ -1518,19 +1518,19 @@ pub fn normalize_string_buf_t<'a,
     // above. Every predicate is a `const`, so this folds to a single direct
     // call (or is dead-stripped) per monomorphization — no runtime branch.
     if matches!(P::P, Platform::Posix) && !T::IS_U16 {
-        // SAFETY: `PathChar` is implemented only for `u8` and `u16` in this
-        // crate; `!T::IS_U16` ⇒ `T == u8`, so `[T]` and `[u8]` are the same
-        // type and the slice transmutes are layout no-ops.
-        let str8: &[u8] = unsafe { core::mem::transmute::<&[T], &[u8]>(str) };
-        let buf8: &'a mut [u8] = unsafe { core::mem::transmute::<&'a mut [T], &'a mut [u8]>(buf) };
+        // `PathChar` is implemented only for `u8` and `u16`; `!T::IS_U16` ⇒
+        // `T == u8`, so these `Pod` slice casts are 1:1 layout no-ops (the
+        // size/align checks in `bytemuck` const-fold away per monomorphization).
+        let str8: &[u8] = bytemuck::cast_slice(str);
+        let buf8: &'a mut [u8] = bytemuck::cast_slice_mut(buf);
         let out: &'a mut [u8] = match (ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH) {
             (false, false) => normalize_string_buf_posix_u8_ff(str8, buf8),
             (false, true)  => normalize_string_buf_posix_u8_ft(str8, buf8),
             (true,  false) => normalize_string_buf_posix_u8_tf(str8, buf8),
             (true,  true)  => normalize_string_buf_posix_u8_tt(str8, buf8),
         };
-        // SAFETY: inverse of the `buf` transmute above (`T == u8`).
-        return unsafe { core::mem::transmute::<&'a mut [u8], &'a mut [T]>(out) };
+        // Inverse of the `buf` cast above (`T == u8`).
+        return bytemuck::cast_slice_mut(out);
     }
     match P::P {
         Platform::Nt => unreachable!("not implemented"),
@@ -2752,7 +2752,7 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // Zig had no trait — it relied on duck-typed comptime. Phase B may move this
 // into bun_paths or bun_str.
 // ─────────────────────────────────────────────────────────────────────────────
-pub trait PathChar: Copy + Eq + Ord + 'static {
+pub trait PathChar: Copy + Eq + Ord + bytemuck::Pod + 'static {
     const IS_U16: bool;
     fn from_u8(b: u8) -> Self;
     fn to_u8(self) -> u8;

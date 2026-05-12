@@ -22,13 +22,9 @@ use bun_sys::ReturnCodeExt as _;
 use bun_sys::Fd;
 use bun_uws;
 
-// `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization.
-// Declared at module level (same convention as DOMURL.rs / JSObject.rs) so the
-// safe wrappers below can route through `from_js_host_call`.
-unsafe extern "C" {
-    fn IPCSerialize(global_object: *const JSGlobalObject, message: JSValue, handle: JSValue) -> JSValue;
-    fn IPCParse(global_object: *const JSGlobalObject, target: JSValue, serialized: JSValue, fd: JSValue) -> JSValue;
-}
+// `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
+// (`IPCSerialize` / `IPCParse`) are declared once in `crate::cpp` and called
+// through that module's safe wrappers; no local extern block needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // SendQueue ownership (§Layering / Dispatch).

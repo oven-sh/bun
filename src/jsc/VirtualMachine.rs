@@ -2895,9 +2895,13 @@ pub fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::Stri
 
 // Additional FFI used by the formerly-gated impl.
 // C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
+//
+// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `&` is
+// ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
+// through it is interior to the cell.
 crate::jsc_abi_extern! {
     #[allow(improper_ctypes)]
-    fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
+    safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
 }
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
@@ -2924,10 +2928,9 @@ extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c
 impl VirtualMachine {
     /// Spec VirtualMachine.zig:234 `getDevServerAsyncLocalStorage`.
     pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
-        let global = self.global;
         let global_ref = self.global();
-        let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
-            Bake__getAsyncLocalStorage(global)
+        let jsvalue = jsc::from_js_host_call(global_ref, || {
+            Bake__getAsyncLocalStorage(global_ref)
         })?;
         if jsvalue.is_empty_or_undefined_or_null() {
             return Ok(None);
@@ -3427,25 +3430,25 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1028 `waitFor`.
-    pub fn wait_for(&mut self, cond: &mut bool) {
+    ///
+    /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant
+    /// `tick()/auto_tick()` calls run JS that flips the flag through an
+    /// independently-captured handle, so the read must not be `noalias`.
+    /// `Cell` is `!Freeze`, which suppresses the LLVM `noalias`/`readonly`
+    /// attributes and forces a real reload on every `.get()` — no raw-pointer
+    /// laundering needed for the condition.
+    pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): both `&mut self` and
-        // `cond: &mut bool` are LLVM-`noalias`. `tick()/auto_tick()` re-enter
-        // JS, which sets `*cond` via a closure that captured it *before* this
-        // call (so `cond` itself never escapes here). LLVM is therefore
-        // licensed to hoist `!*cond` out of the loop → infinite spin once the
-        // condition fires. ASM-verified PROVEN_CACHED. Launder both pointers
-        // so every read goes through an opaque address.
+        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
+        // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
+        // `self` again via `VirtualMachine::get()`. Launder `self` so each
+        // access goes through an opaque address.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let cond: *mut bool = core::hint::black_box(core::ptr::from_mut(cond));
-        // SAFETY: `this` is the unique live VM; `cond` is the caller's stack
-        // local, live for this frame. Each deref is a momentary access only.
-        while !unsafe { *cond } {
+        // SAFETY: `this` is the unique live VM; each deref is a momentary
+        // access only (no borrow held across the re-entrant call).
+        while !cond.get() {
             unsafe { (*this).event_loop_mut().tick() };
-            // Re-escape between the two re-entrant calls so `*cond` isn't
-            // forwarded across `tick()`.
-            let cond = core::hint::black_box(cond);
-            if !unsafe { *cond } {
+            if !cond.get() {
                 unsafe { (*this).auto_tick() };
             }
         }

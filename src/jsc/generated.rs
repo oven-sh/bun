@@ -213,11 +213,15 @@ struct ExternSocketConfigHandlers {
     binary_type: SocketConfigHandlersBinaryType,
 }
 
+// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+// ABI-identical to non-null `*mut`); `&mut MaybeUninit<T>` is ABI-identical to
+// non-null `*mut T` (`MaybeUninit<T>` is layout-transparent over `T`). The C++
+// side fully initializes `*result` iff it returns `true`.
 unsafe extern "C" {
-    fn bindgenConvertJSToSocketConfigHandlers(
-        global: *mut JSGlobalObject,
+    safe fn bindgenConvertJSToSocketConfigHandlers(
+        global: &JSGlobalObject,
         value: JSValue,
-        result: *mut ExternSocketConfigHandlers,
+        result: &mut MaybeUninit<ExternSocketConfigHandlers>,
     ) -> bool;
 }
 
@@ -243,12 +247,8 @@ impl SocketConfigHandlers {
         // *before* the FFI call so the C++ ThrowScope's `simulateThrow()` is
         // satisfied under `validateExceptionChecks=1`.
         let mut ext = MaybeUninit::<ExternSocketConfigHandlers>::uninit();
-        // SAFETY: `global` is an opaque ZST FFI handle (see
-        // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
-        // never written through on the Rust side; `ext` is a valid out-param;
-        // C++ fully initializes `*result` iff it returns true.
-        crate::call_false_is_throw(global, || unsafe {
-            bindgenConvertJSToSocketConfigHandlers(global.as_ptr(), value, ext.as_mut_ptr())
+        crate::call_false_is_throw(global, || {
+            bindgenConvertJSToSocketConfigHandlers(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
         Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
@@ -514,11 +514,13 @@ struct ExternSSLConfig {
     client_renegotiation_window: u32,
 }
 
+// safe: same handle/out-param contract as
+// `bindgenConvertJSToSocketConfigHandlers` above.
 unsafe extern "C" {
-    fn bindgenConvertJSToSSLConfig(
-        global: *mut JSGlobalObject,
+    safe fn bindgenConvertJSToSSLConfig(
+        global: &JSGlobalObject,
         value: JSValue,
-        result: *mut ExternSSLConfig,
+        result: &mut MaybeUninit<ExternSSLConfig>,
     ) -> bool;
 }
 
@@ -547,12 +549,8 @@ impl SSLConfig {
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         let mut ext = MaybeUninit::<ExternSSLConfig>::uninit();
-        // SAFETY: `global` is an opaque ZST FFI handle (see
-        // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
-        // never written through on the Rust side; C++ fully initializes
-        // `*result` iff true.
-        crate::call_false_is_throw(global, || unsafe {
-            bindgenConvertJSToSSLConfig(global.as_ptr(), value, ext.as_mut_ptr())
+        crate::call_false_is_throw(global, || {
+            bindgenConvertJSToSSLConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
         Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
@@ -638,11 +636,13 @@ struct ExternSocketConfig {
     fd: ExternOptional<i32>,
 }
 
+// safe: same handle/out-param contract as
+// `bindgenConvertJSToSocketConfigHandlers` above.
 unsafe extern "C" {
-    fn bindgenConvertJSToSocketConfig(
-        global: *mut JSGlobalObject,
+    safe fn bindgenConvertJSToSocketConfig(
+        global: &JSGlobalObject,
         value: JSValue,
-        result: *mut ExternSocketConfig,
+        result: &mut MaybeUninit<ExternSocketConfig>,
     ) -> bool;
 }
 
@@ -665,12 +665,8 @@ impl SocketConfig {
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         let mut ext = MaybeUninit::<ExternSocketConfig>::uninit();
-        // SAFETY: `global` is an opaque ZST FFI handle (see
-        // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
-        // never written through on the Rust side; C++ fully initializes
-        // `*result` iff true.
-        crate::call_false_is_throw(global, || unsafe {
-            bindgenConvertJSToSocketConfig(global.as_ptr(), value, ext.as_mut_ptr())
+        crate::call_false_is_throw(global, || {
+            bindgenConvertJSToSocketConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
         Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))

@@ -3579,9 +3579,10 @@ impl VirtualMachine {
         vm_ref.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
         vm_ref.regular_event_loop.global = NonNull::new(new_global);
-        // SAFETY: `new_global` is freshly created and live for VM lifetime.
-        // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow).
-        vm_ref.jsc_vm = unsafe { &*new_global }.vm_ptr();
+        // `new_global` is freshly created and live for VM lifetime; safe
+        // ZST-handle deref. `vm_ptr()` returns the FFI `*mut VM` directly
+        // (no `&VM` reborrow).
+        vm_ref.jsc_vm = JSGlobalObject::opaque_ref(new_global).vm_ptr();
         // SAFETY: per-thread uws loop is live.
         unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
         vm_ref.event_loop_mut().ensure_waker();
@@ -4543,10 +4544,10 @@ impl VirtualMachine {
         self.unhandled_error_counter = 0;
 
         let old_global = self.global;
-        // SAFETY: `old_global` valid for VM lifetime; `console` is the live
-        // per-VM ConsoleObject.
+        // `old_global` valid for VM lifetime (safe ZST-handle deref);
+        // `console` is the live per-VM ConsoleObject.
         let new_global: *mut JSGlobalObject =
-            JSGlobalObject::create_for_test_isolation(unsafe { &*old_global }, self.console.cast());
+            JSGlobalObject::create_for_test_isolation(JSGlobalObject::opaque_ref(old_global), self.console.cast());
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);

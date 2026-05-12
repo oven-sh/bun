@@ -1007,10 +1007,10 @@ impl EventLoop {
     }
 
     pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
-        // owned by C++ that outlives this VM (BACKREF — see field decl).
-        let worker = unsafe {
-            &*(*self.vm()).worker.expect("worker is not initialized").cast::<crate::web_worker::WebWorker>()
-        };
+        // BACKREF — `WebWorker` is owned by C++ and outlives this VM (see
+        // [`VirtualMachine::worker_ref`]); route through the safe accessor
+        // instead of open-coding the raw `*const c_void` cast + deref.
+        let worker = self.vm_ref().worker_ref().expect("worker is not initialized");
         match promise.status() {
             PromiseStatus::Pending => {
                 while !worker.has_requested_terminate() && promise.status() == PromiseStatus::Pending {

@@ -1391,8 +1391,9 @@ impl JSGlobalObject {
             .take_exception(proof)
             .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
             .expect("exception value must be an Exception cell");
-        // SAFETY: `as_exception` returned a non-null cell pointer rooted on the VM.
-        let _ = report_uncaught_exception(self, unsafe { &*exc });
+        // `as_exception` returned a non-null cell pointer rooted on the VM;
+        // `Exception` is an opaque ZST handle — safe deref (panics on null).
+        let _ = report_uncaught_exception(self, crate::Exception::opaque_ref(exc));
     }
 
     pub fn create_error(&self, args: Arguments<'_>) -> JSValue {

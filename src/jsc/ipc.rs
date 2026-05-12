@@ -1019,17 +1019,14 @@ impl SendQueue {
             // Spec ipc.zig:589 calls `bunVM().enqueueTask(...)` on a raw
             // `*VirtualMachine`. Do NOT materialize `&mut VirtualMachine` from
             // `bun_vm()`'s shared `&VirtualMachine` (Stacked-Borrows UB —
-            // `&mut T` while other `&T` exist). `event_loop()` takes `&self`
-            // and yields the raw `*mut EventLoop`; route the enqueue through
-            // that, mirroring `VirtualMachine::enqueue_task`'s body without
-            // the `&mut self` receiver.
-            // SAFETY: `event_loop()` returns the VM-owned `*mut EventLoop`,
-            // live for the VM's lifetime; short-lived `&mut` reborrow at the
-            // call site only.
-            unsafe {
-                (*(*self.get_global_this().bun_vm()).event_loop())
-                    .enqueue_task(self.after_close_task.unwrap());
-            }
+            // `&mut T` while other `&T` exist). Route through the safe
+            // `event_loop_mut(&self)` accessor (single audited deref), which
+            // mirrors `VirtualMachine::enqueue_task`'s body without the
+            // `&mut self` receiver.
+            self.get_global_this()
+                .bun_vm()
+                .event_loop_mut()
+                .enqueue_task(self.after_close_task.unwrap());
         }
     }
 
@@ -1583,9 +1580,9 @@ impl SendQueue {
         // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
-        // JSC for the VM's lifetime.
-        // SAFETY: `global_this()` returns the live VM-lifetime global.
-        crate::GlobalRef::from(unsafe { &*self.owner_ref().global_this() })
+        // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
+        // (panics on null) — see `bun_opaque::opaque_deref`.
+        crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
     }
 
     #[cfg(windows)]

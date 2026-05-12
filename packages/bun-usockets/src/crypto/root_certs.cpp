@@ -204,6 +204,13 @@ static X509_STORE *shared_store = nullptr;
 static STACK_OF(X509) *user_root_certs = nullptr;
 static bool has_user_root_certs = false;
 
+extern "C" int us_has_user_root_certs() {
+  // No lock: a cheap racy read is fine — the only consumer
+  // (us_internal_ssl_attach) falls through to the shared-store path on false,
+  // and a stale true costs one extra SSL_set0_verify_cert_store call.
+  return has_user_root_certs ? 1 : 0;
+}
+
 extern "C" void us_set_user_root_certs(STACK_OF(X509) *certs) {
   std::lock_guard<std::mutex> lock(shared_store_mutex);
   if (user_root_certs) {

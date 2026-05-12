@@ -14,6 +14,7 @@
 #include "openssl/x509.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
 
+#include <limits>
 #include <set>
 
 namespace Bun {
@@ -153,6 +154,12 @@ static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(
     ERR_clear_error();
     // BoringSSL takes ossl_ssize_t (= ptrdiff_t) here; an int cast would
     // truncate a >2GB input and make BoringSSL treat it as NUL-terminated.
+    // Guard the upper bound explicitly so a pathological ArrayBufferView
+    // byteLength can't wrap to a small positive length.
+    if (data.size() > static_cast<size_t>(std::numeric_limits<ossl_ssize_t>::max())) {
+        OPENSSL_PUT_ERROR(PEM, PEM_R_BAD_END_LINE);
+        return ERR_peek_last_error();
+    }
     BIO* bio = BIO_new_mem_buf(data.data(), static_cast<ossl_ssize_t>(data.size()));
     if (bio == nullptr) {
         return ERR_peek_last_error();

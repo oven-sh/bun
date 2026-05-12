@@ -215,14 +215,21 @@ describe.concurrent("tls.setDefaultCACertificates", () => {
   });
 
   test("overrides the trust store used for new TLS connections", async () => {
-    // agent8-cert.pem is signed by fake-startcom-root-cert.pem. A client that
-    // trusts only fake-startcom-root should verify the server; after swapping
-    // to an empty trust set the next connection must fail verification.
+    // agent8-cert.pem is signed by fake-startcom-root-cert.pem.
+    //
+    // 1. Connect BEFORE installing the root — must fail. This forces the
+    //    HTTPS client's long-lived SSL_CTX (built once on the HTTP thread)
+    //    to be created with the bundled store, so step 2 proves that
+    //    setDefaultCACertificates() takes effect even for a cached CTX.
+    // 2. Install the root and connect again — must succeed.
+    // 3. Clear the roots and connect again — must fail.
     const { stdout, stderr, exitCode } = await run(`
       const tls = require("node:tls");
       const https = require("node:https");
       const fs = require("node:fs");
       const assert = require("node:assert");
+
+      const ca = fs.readFileSync(${JSON.stringify(fakeRootCert)}, "utf8");
 
       const server = https.createServer({
         cert: fs.readFileSync(${JSON.stringify(agent8Cert)}),
@@ -232,40 +239,53 @@ describe.concurrent("tls.setDefaultCACertificates", () => {
         res.end("hello");
       });
 
-      server.listen(0, () => {
-        const port = server.address().port;
-
-        tls.setDefaultCACertificates([fs.readFileSync(${JSON.stringify(fakeRootCert)}, "utf8")]);
-
-        const req1 = https.request({ hostname: "localhost", port, path: "/", method: "GET" }, res => {
-          assert.strictEqual(res.statusCode, 200);
-          let data = "";
-          res.on("data", c => data += c);
-          res.on("end", () => {
-            assert.strictEqual(data, "hello");
-
-            // Now drop all trust roots — the next connection must fail.
-            tls.setDefaultCACertificates([]);
-            const req2 = https.request({ hostname: "127.0.0.1", port, path: "/", method: "GET" }, () => {
-              console.log("unexpected-success");
-              server.close();
-            });
-            req2.on("error", err => {
-              // Exact code varies between runtimes; what matters is that
-              // verification fails now that the trust store is empty.
-              assert(err, "expected verification error after clearing CA store");
-              console.log("ok");
-              server.close();
-            });
-            req2.end();
+      function request(opts) {
+        return new Promise((resolve, reject) => {
+          const req = https.request(opts, res => {
+            let data = "";
+            res.on("data", c => data += c);
+            res.on("end", () => resolve({ status: res.statusCode, data }));
           });
+          req.on("error", reject);
+          req.end();
         });
-        req1.on("error", err => {
-          console.log("req1-error:" + (err.code || err.message));
-          server.close();
+      }
+
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const port = server.address().port;
+
+      // 1. No custom root yet — verification fails.
+      try {
+        await request({ hostname: "localhost", port, path: "/", method: "GET" });
+        throw new Error("step1: connection unexpectedly succeeded without CA");
+      } catch (err) {
+        assert(err.code && err.code !== "ERR_ASSERTION", "step1: " + err.message);
+      }
+
+      // 2. Install the signing root — verification succeeds.
+      tls.setDefaultCACertificates([ca]);
+      const ok = await request({ hostname: "localhost", port, path: "/", method: "GET" });
+      assert.strictEqual(ok.status, 200);
+      assert.strictEqual(ok.data, "hello");
+
+      // 3. Clear the roots — verification fails again. New Agent to avoid
+      //    any keep-alive/session reuse masking the effect.
+      tls.setDefaultCACertificates([]);
+      try {
+        await request({
+          hostname: "localhost",
+          port,
+          path: "/",
+          method: "GET",
+          agent: new https.Agent(),
         });
-        req1.end();
-      });
+        throw new Error("step3: connection unexpectedly succeeded with empty CA store");
+      } catch (err) {
+        assert(err.code && err.code !== "ERR_ASSERTION", "step3: " + err.message);
+      }
+
+      server.close();
+      console.log("ok");
     `);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ok");

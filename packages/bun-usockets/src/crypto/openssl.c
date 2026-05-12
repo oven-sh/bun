@@ -116,6 +116,12 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
+/* us_ctx_default_ca_ex_idx (SSL_CTX): non-NULL when the CTX's cert store was
+ * populated only with the process default CA set (no user ca/ca_file). Lets
+ * us_internal_ssl_attach() know it's safe to swap in a fresh shared default
+ * store per-SSL after tls.setDefaultCACertificates() mutates the defaults —
+ * without clobbering a CTX that carried an explicit `ca` option. */
+static int us_ctx_default_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
 #ifdef _WIN32
@@ -155,6 +161,7 @@ static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
+  us_ctx_default_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 }
@@ -555,6 +562,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   } else if (options.request_cert) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    /* Mark this CTX as verifying against the *default* CA set so new client
+     * SSL objects can refresh to the current shared store if
+     * tls.setDefaultCACertificates() was called after this CTX was built
+     * (the fetch/https HTTPS context is built once at HTTP-thread spawn). */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_default_ca_ex_idx, (void *)1);
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
@@ -671,6 +683,16 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+    } else if (us_has_user_root_certs()
+               && us_ctx_default_ca_ex_idx >= 0
+               && SSL_CTX_get_ex_data(ctx, us_ctx_default_ca_ex_idx) != NULL) {
+      /* CTX was built against the process defaults (no explicit `ca`), but
+       * tls.setDefaultCACertificates() has since replaced those defaults.
+       * Override the verify store for this SSL only so the new roots take
+       * effect without rebuilding the cached SSL_CTX (fetch()/https.request()
+       * cache their HTTPS context for the process lifetime). */
       X509_STORE *roots = us_get_shared_default_ca_store();
       if (roots) SSL_set0_verify_cert_store(ssl, roots);
     }

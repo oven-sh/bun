@@ -15,3 +15,4 @@ STACK_OF(X509) *us_dup_user_root_certs(bool *out_has_override);
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
 CPPDECL void us_set_user_root_certs(STACK_OF(X509) *certs);
+CPPDECL int us_has_user_root_certs();

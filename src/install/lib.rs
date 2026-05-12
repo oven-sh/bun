@@ -489,6 +489,10 @@ impl RunCommand {
 
     /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
     /// at runtime via GetTempPathW, so this constant is POSIX-only.
+    ///
+    /// NOTE: the SHA alone does not uniquely identify a binary — two local
+    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
+    /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
         // PORT NOTE: Zig used comptime `++`; `const_format::concatcp!` cannot host
@@ -649,14 +653,32 @@ impl RunCommand {
             };
 
             for dest in [NODE_LINK, BUN_LINK] {
-                let mut retried = false;
+                let mut made_dir = false;
+                let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => break,
-                        Err(_) if !retried => {
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+                            // The dir is keyed only on GIT_SHA_SHORT, so two
+                            // different binaries built at the same commit (e.g.
+                            // side-by-side local builds being benchmarked)
+                            // collide here. Blindly reusing the existing link
+                            // would make every `--bun` child of the SECOND
+                            // binary silently exec the FIRST. Verify the target
+                            // before reusing; replace it once if stale.
+                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let matches = bun_sys::readlink(dest, &mut buf)
+                                .map(|n| &buf[..n] == argv0_z.as_bytes())
+                                .unwrap_or(false);
+                            if matches || replaced {
+                                break;
+                            }
+                            let _ = bun_sys::unlink(dest);
+                            replaced = true;
+                        }
+                        Err(_) if !made_dir => {
                             let _ = bun_sys::mkdir(DIR_Z, 0o755);
-                            retried = true;
+                            made_dir = true;
                         }
                         Err(_) => return Ok(()),
                     }

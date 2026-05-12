@@ -255,13 +255,13 @@ impl AnyWebSocket {
     /// `ws.close()` → `on_close` → `flags.set_closed(true)`); a live `noalias`
     /// `&mut T` across that call lets LLVM dead-store the re-entrant write.
     ///
-    /// # Safety
-    /// Caller must guarantee the user data was set to a `*mut T` for this socket.
+    /// Safe: `uws_ws_get_user_data` is a `safe fn` (opaque-handle + scalar
+    /// args) and raw-pointer `cast` is safe; only the eventual *dereference*
+    /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
-    pub unsafe fn as_ptr<T>(self) -> *mut T {
+    pub fn as_ptr<T>(self) -> *mut T {
         let (ssl, ws) = self.split();
-        // SAFETY: see `as_::<T>`; here we keep the result as a raw pointer.
-        unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>() }
+        c::uws_ws_get_user_data(ssl, ws).cast::<T>()
     }
 
     /// (ssl_flag, &mut socket) pair for the C shims that take both.
@@ -587,9 +587,9 @@ where
 
     pub unsafe extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time. `*mut T` (not
-        // `&mut T`) — no `noalias` borrow held across the re-entrant handler.
-        let this = unsafe { ws.as_ptr::<T>() };
+        // `*mut T` (not `&mut T`) — no `noalias` borrow held across the
+        // re-entrant handler. User data was set to *mut T at upgrade time.
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
@@ -604,41 +604,41 @@ where
         opcode: Opcode,
     ) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        let this = unsafe { ws.as_ptr::<T>() };
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
         unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
     pub unsafe extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: see `on_open`.
-        let this = unsafe { ws.as_ptr::<T>() };
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
+        // SAFETY: see `on_open`.
         unsafe { T::on_drain(this, ws) };
     }
 
     pub unsafe extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        let this = unsafe { ws.as_ptr::<T>() };
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
         unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        let this = unsafe { ws.as_ptr::<T>() };
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
         unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
@@ -649,11 +649,11 @@ where
         length: usize,
     ) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
-        let this = unsafe { ws.as_ptr::<T>() };
+        let this = ws.as_ptr::<T>();
         if this.is_null() {
             return;
         }
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 

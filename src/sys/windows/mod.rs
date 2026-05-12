@@ -51,7 +51,9 @@ pub mod kernel32 {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         // ── IOCP / async directory watching ──
-        pub fn CreateIoCompletionPort(
+        // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
+        // a bad handle yields NULL + GetLastError, no UB.
+        pub safe fn CreateIoCompletionPort(
             FileHandle: HANDLE,
             ExistingCompletionPort: HANDLE,
             CompletionKey: ULONG_PTR,
@@ -88,7 +90,9 @@ pub mod kernel32 {
             lpStartupInfo: *mut STARTUPINFOW,
             lpProcessInformation: *mut PROCESS_INFORMATION,
         ) -> BOOL;
-        pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        // safe: by-value `HANDLE` + `DWORD`; a bad handle yields
+        // `WAIT_FAILED` + GetLastError, no UB.
+        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
         // ── file moves ──
         pub fn MoveFileExW(
@@ -393,12 +397,9 @@ pub fn CreateIoCompletionPort(
     completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
 ) -> core::result::Result<HANDLE, bun_core::Error> {
-    // SAFETY: thin syscall; all pointer args are opaque handles.
-    let h = unsafe {
-        kernel32::CreateIoCompletionPort(
-            file_handle, existing_completion_port, completion_key, concurrent_threads,
-        )
-    };
+    let h = kernel32::CreateIoCompletionPort(
+        file_handle, existing_completion_port, completion_key, concurrent_threads,
+    );
     if h.is_null() { return Err(bun_core::err!("Unexpected")); }
     Ok(h)
 }

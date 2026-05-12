@@ -154,7 +154,8 @@ pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 mod c {
     // TODO(port): move to uws_sys
     unsafe extern "C" {
-        pub(crate) fn us_get_default_ciphers() -> *const core::ffi::c_char;
+        // safe: no args; returns a process-static NUL-terminated cipher list.
+        pub(crate) safe fn us_get_default_ciphers() -> *const core::ffi::c_char;
     }
 }
 
@@ -1026,7 +1027,8 @@ pub mod ssl_wrapper {
         /// Process-wide bundled root store from `root_certs.cpp` — built once and
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
         /// CTX. Returns null if root loading fails (treated as "no roots").
-        fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        // safe: no args; idempotent lazy init reading a process global — no preconditions.
+        safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
         /// Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

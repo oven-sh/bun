@@ -153,9 +153,7 @@ pub trait PosixPipeWriter {
             usize::MAX
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig passed `buffer` (borrow of self) into
-        // drain_buffered_data which also takes &mut self. Re-fetch inside.
-        match self.drain_buffered_data_from_self(max_write, received_hup) {
+        match self.drain_buffered_data(max_write, received_hup) {
             WriteResult::Pending(wrote) => {
                 if wrote > 0 {
                     self.on_write(wrote, WriteStatus::Pending);
@@ -184,41 +182,34 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// PORT NOTE: helper that re-fetches the buffer to avoid borrowck overlap in on_poll.
-    fn drain_buffered_data_from_self(
-        &mut self,
-        max_write_size: usize,
-        received_hup: bool,
-    ) -> WriteResult {
-        // TODO(port): borrowck — Zig passed `buf: []const u8` separately while
-        // also mutating `self`. Phase B: verify get_buffer() stable across loop.
-        let buf_len = self.get_buffer().len();
-        // SAFETY: buffer points into self; Zig code never mutated the underlying
-        // storage during this loop (only reads). Phase B should refactor to take
-        // a raw slice.
-        let buf_ptr = self.get_buffer().as_ptr();
-        let buf = unsafe { core::slice::from_raw_parts(buf_ptr, buf_len) };
-        self.drain_buffered_data(buf, max_write_size, received_hup)
-    }
-
+    /// Zig passed `buf: []const u8` separately while also mutating `self`;
+    /// here we re-derive the slice from `self.get_buffer()` each iteration.
+    /// `try_write` only needs `&self`, so the shared borrow of the buffer
+    /// coexists with it, and the `&mut self` for `on_error` is taken after
+    /// the temporary slice borrow has ended — no raw-pointer escape needed.
     fn drain_buffered_data(
         &mut self,
-        buf: &[u8],
         max_write_size: usize,
         received_hup: bool,
     ) -> WriteResult {
         let _ = received_hup; // autofix
 
-        let trimmed = if max_write_size < buf.len() && max_write_size > 0 {
-            &buf[0..max_write_size]
+        let buf_len = self.get_buffer().len();
+        let limit = if max_write_size < buf_len && max_write_size > 0 {
+            max_write_size
         } else {
-            buf
+            buf_len
         };
 
         let mut drained: usize = 0;
 
-        while drained < trimmed.len() {
-            let attempt = self.try_write(self.get_force_sync(), &trimmed[drained..]);
+        while drained < limit {
+            let force_sync = self.get_force_sync();
+            // `try_write` takes `&self`; re-fetching the buffer here keeps the
+            // shared borrow scoped to this statement so the `&mut self` for
+            // `on_error` below is unencumbered. `try_write` does not mutate
+            // `self`, so `get_buffer()` is stable across iterations.
+            let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
             match attempt {
                 WriteResult::Pending(pending) => {
                     drained += pending;
@@ -979,8 +970,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             false
         };
 
-        // PORT NOTE: reshaped for borrowck — re-fetch buffer inside.
-        let rc = self.drain_buffered_data_from_self(usize::MAX, received_hup);
+        let rc = self.drain_buffered_data(usize::MAX, received_hup);
         // update head
         match rc {
             WriteResult::Pending(written) => {
@@ -1584,13 +1574,13 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — capture ptr/len before mutating self.
-        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
-        let buffer_ptr = buffer.as_ptr();
+        // Snapshot the slice into an owned `uv_buf_t` (ptr + len, `Copy`) now;
+        // this ends the `&self` borrow held by `buffer` so the `&mut self`
+        // accesses below (`self.source.as_mut()`, field writes) are unencumbered.
+        // The underlying storage is not reallocated before libuv consumes it
+        // (only handed to libuv via uv_buf_t / write_req).
         let buffer_len = buffer.len();
-        // SAFETY: buffer points into get_buffer_internal()'s storage which is not
-        // reallocated below (only handed to libuv via uv_buf_t / write_req).
-        let buffer = unsafe { core::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let write_buf = uv::uv_buf_t::init(buffer);
 
         // BORROW_PARAM (raw-ptr break): the match arms mutate `self` while
         // borrowing into `self.source`. The boxed `File`/`Pipe` live in their
@@ -1616,7 +1606,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             self.pending_payload_size = buffer_len;
             file.fs.data = core::ptr::from_mut(self).cast::<c_void>();
             file.prepare();
-            self.write_buffer = uv::uv_buf_t::init(buffer);
+            self.write_buffer = write_buf;
 
             // SAFETY: file is fully initialized; libuv stores the cb and fires
             // it on the event loop. parent BACKREF valid.
@@ -1641,7 +1631,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         } else {
             // the buffered version should always have a stable ptr
             self.pending_payload_size = buffer_len;
-            self.write_buffer = uv::uv_buf_t::init(buffer);
+            self.write_buffer = write_buf;
             let self_ptr = self as *mut Self;
             if let Some(write_err) = self
                 .write_req
@@ -2154,11 +2144,17 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         // current payload is empty we can just swap with outgoing
         unsafe { mem::swap(&mut (*this).current_payload, &mut (*this).outgoing) };
-        // PORT NOTE: reshaped for borrowck — re-read bytes from current_payload (post-swap).
-        let bytes_ptr = unsafe { (*this).current_payload.slice().as_ptr() };
-        // SAFETY: current_payload storage is not reallocated until on_write_complete resets it;
-        // libuv reads via uv_buf_t which holds this same ptr/len.
-        let bytes = unsafe { core::slice::from_raw_parts(bytes_ptr, bytes_len) };
+        // Snapshot the post-swap payload into an owned `uv_buf_t` (ptr + len,
+        // `Copy`); the underlying storage is not reallocated until
+        // `on_write_complete` resets it, and libuv reads it via this same
+        // ptr/len. `current_payload` was just swapped from `outgoing`, so its
+        // slice length equals `bytes_len` captured above.
+        // SAFETY: `this` is the sole access path on the JS thread (see launder
+        // note at function head).
+        let write_buf = unsafe {
+            debug_assert_eq!((*this).current_payload.slice().len(), bytes_len);
+            uv::uv_buf_t::init((*this).current_payload.slice())
+        };
 
         if !file_raw.is_null() {
             // SAFETY: see raw-ptr break note above.
@@ -2168,7 +2164,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
             file.fs.data = this.cast::<c_void>();
             file.prepare();
-            unsafe { (*this).write_buffer = uv::uv_buf_t::init(bytes) };
+            unsafe { (*this).write_buffer = write_buf };
 
             // SAFETY: file is fully initialized; libuv stores the cb and fires
             // it on the event loop. parent BACKREF valid.
@@ -2195,7 +2191,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             }
         } else {
             // enqueue the write
-            unsafe { (*this).write_buffer = uv::uv_buf_t::init(bytes) };
+            unsafe { (*this).write_buffer = write_buf };
             if let Some(err) = unsafe {
                 (*this)
                     .write_req

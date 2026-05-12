@@ -1211,3 +1211,18 @@ test.skipIf(!isDebug && !isASAN)(
   },
   120_000,
 );
+
+test("Bun.build with many conditions does not crash", async () => {
+  const dir = tempDirWithFilesAnon({
+    "entry.js": "console.log('hi')",
+  });
+
+  for (const target of ["browser", "bun", "node"] as const) {
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      target,
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+    });
+    expect(result.success).toBe(true);
+  }
+});

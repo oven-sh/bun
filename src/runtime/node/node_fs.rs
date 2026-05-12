@@ -4281,10 +4281,10 @@ impl NodeFS {
             }
 
             let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
-                let _ = unsafe { libc::ftruncate(fd.native(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
-                // SAFETY: same fd as above
-                let _ = unsafe { libc::fchmod(fd.native(), m) };
+                // ftruncate/fchmod take only ints — no memory-safety preconditions; route
+                // through the existing `bun_sys` safe wrappers (same as lines above).
+                let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+                let _ = Syscall::fchmod(fd, m as u32);
                 fd.close();
             });
 
@@ -4456,8 +4456,14 @@ impl NodeFS {
         #[cfg(windows)]
         { return Syscall::fsync(args.fd); }
         #[cfg(not(windows))]
-        Maybe::<ret::Fsync>::errno_sys(unsafe { libc::fsync(args.fd.native()) }, sys::Tag::fsync)
-            .unwrap_or(Ok(()))
+        {
+            // `fsync(int)` has no memory-safety preconditions (a bad fd just yields
+            // EBADF), so declare it `safe fn` instead of routing through
+            // `libc::fsync` (which is blanket-`unsafe`). Mirrors `fdatasync` above.
+            unsafe extern "C" { safe fn fsync(fd: libc::c_int) -> libc::c_int; }
+            Maybe::<ret::Fsync>::errno_sys(fsync(args.fd.native()), sys::Tag::fsync)
+                .unwrap_or(Ok(()))
+        }
     }
 
     pub fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
@@ -5926,7 +5932,7 @@ impl NodeFS {
 
         if args.flush {
             #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) }; }
-            #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.native()) }; }
+            #[cfg(not(windows))] { let _ = Syscall::fsync(fd); }
         }
 
         Ok(())

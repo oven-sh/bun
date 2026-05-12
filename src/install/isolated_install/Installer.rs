@@ -826,7 +826,11 @@ impl Task {
         // narrowed `addr_of_mut!` field projections still go through the raw
         // `manager_ptr` directly (same provenance tag as `manager_ref.ptr`).
         let manager_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(manager_ptr) };
-        let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
+        // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
+        // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
+        // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
+        // write under `trusted_dependencies_mutex` below.
+        let lockfile: &Lockfile = installer.lockfile();
 
         let pkgs = lockfile.packages.slice();
         let pkg_names = pkgs.items_name();

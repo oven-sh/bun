@@ -272,8 +272,8 @@ pub mod bun_core {
         pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
             if ptr.is_null() {
                 assert!(len == 0, "ffi::slice_mut: null ptr with non-zero len");
-                // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
-                unsafe { core::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0) }
+                // Empty mut slice literal: `'static`, no backing needed — no unsafe required.
+                &mut []
             } else {
                 // SAFETY: caller contract.
                 unsafe { core::slice::from_raw_parts_mut(ptr, len) }

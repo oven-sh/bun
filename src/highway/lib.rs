@@ -14,11 +14,6 @@ unsafe extern "C" {
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
-    fn highway_index_of_newline_or_non_ascii_or_ansi(
-        haystack: *const u8,
-        haystack_len: usize,
-    ) -> usize;
-
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
         haystack: *const u8,
         haystack_len: usize,
@@ -141,31 +136,6 @@ pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
             || haystack_char == b'\n')
         {
             panic!("Invalid character found in indexOfNewlineOrNonASCII");
-        }
-    }
-
-    Some(result)
-}
-
-#[inline(always)]
-pub fn index_of_newline_or_non_ascii_or_ansi(haystack: &[u8]) -> Option<usize> {
-    debug_assert!(!haystack.is_empty());
-
-    // SAFETY: haystack.ptr/len are a valid readable range (len > 0 asserted above).
-    let result =
-        unsafe { highway_index_of_newline_or_non_ascii_or_ansi(haystack.as_ptr(), haystack.len()) };
-
-    if result == haystack.len() {
-        return None;
-    }
-    if cfg!(debug_assertions) {
-        let haystack_char = haystack[result];
-        if !(haystack_char > 127
-            || haystack_char < 0x20
-            || haystack_char == b'\r'
-            || haystack_char == b'\n')
-        {
-            panic!("Invalid character found in indexOfNewlineOrNonASCIIOrANSI");
         }
     }
 

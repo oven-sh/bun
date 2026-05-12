@@ -6758,11 +6758,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     let mut name_to_use = path.pretty;
-    // SEP_STR ++ "node_modules" ++ SEP_STR
-    let needle =
-        const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes();
-    if let Some(node_modules) = strings::last_index_of(path.text, needle) {
-        name_to_use = &path.text[node_modules + 14..];
+    if let Some(node_modules) = strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
+        name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
     }
 
     // Zig: `bun.options.JSX.Pragma.parsePackageName` — pure slice helper.

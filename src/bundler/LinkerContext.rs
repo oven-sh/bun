@@ -127,25 +127,10 @@ pub fn bundle_generate_chunk_action(
     bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
-// `debug` / `debug_tree_shake` are the canonical wrappers for the `LinkerCtx`
-// / `TreeShake` scoped loggers (LinkerContext.zig:2, :2705). Re-exported via
-// `pub(crate) use` so the `linker_context/*` submodules can `use
-// crate::linker_context_mod::debug;` instead of redeclaring the macro. The
-// body brings the scope static into local scope by path so callers do NOT need
-// `LinkerCtx` imported (`scoped_log!` takes `$scope:ident`, hence the alias).
-macro_rules! debug {
-    ($($arg:tt)*) => {{
-        use $crate::linker_context_mod::LinkerCtx as __scope;
-        bun_core::scoped_log!(__scope, $($arg)*)
-    }};
-}
+// Scoped-log wrappers (LinkerContext.zig:2, :2705); re-exported so `linker_context/*` submodules import directly.
+bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
-macro_rules! debug_tree_shake {
-    ($($arg:tt)*) => {{
-        use $crate::linker_context_mod::TreeShake as __scope;
-        bun_core::scoped_log!(__scope, $($arg)*)
-    }};
-}
+bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
 #[allow(unused_imports)]
 pub(crate) use debug_tree_shake;
 

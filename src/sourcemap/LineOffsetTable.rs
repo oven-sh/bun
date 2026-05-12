@@ -206,19 +206,7 @@ impl LineOffsetTable {
             if !columns_for_non_ascii.is_empty() {
                 let line_bytes_so_far = offset - line_byte_offset;
                 let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
-                columns_for_non_ascii.reserve(need);
-                // SAFETY: `reserve(need)` guarantees `need` spare slots past `len`; i32 is
-                // trivially-copyable so a raw store initializes the slot. This is the direct
-                // equivalent of Zig's `appendAssumeCapacity` loop — avoids the per-push
-                // RawVec capacity branch that showed up as +5.5M instr on build/create-vue.
-                unsafe {
-                    let len = columns_for_non_ascii.len();
-                    let p = columns_for_non_ascii.as_mut_ptr().add(len);
-                    for i in 0..need {
-                        *p.add(i) = column;
-                    }
-                    columns_for_non_ascii.set_len(len + need);
-                }
+                bun_core::vec::push_n(&mut columns_for_non_ascii, column, need);
                 column_byte_offset = line_bytes_so_far + 1;
             } else {
                 match c {
@@ -293,16 +281,7 @@ impl LineOffsetTable {
         if !columns_for_non_ascii.is_empty() {
             let line_bytes_so_far = contents.len() as u32 - line_byte_offset;
             let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
-            columns_for_non_ascii.reserve(need);
-            // SAFETY: same invariant as the in-loop fill above.
-            unsafe {
-                let len = columns_for_non_ascii.len();
-                let p = columns_for_non_ascii.as_mut_ptr().add(len);
-                for i in 0..need {
-                    *p.add(i) = column;
-                }
-                columns_for_non_ascii.set_len(len + need);
-            }
+            bun_core::vec::push_n(&mut columns_for_non_ascii, column, need);
         }
         {
             let owned = if columns_for_non_ascii.is_empty() {

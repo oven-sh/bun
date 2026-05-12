@@ -633,35 +633,22 @@ impl<'a> JsonParser<'a> {
                         b'r' => out.push(b'\r'),
                         b't' => out.push(b'\t'),
                         b'u' => {
-                            if self.pos + 4 > self.input.len() {
-                                return Err(());
-                            }
-                            let hex = &self.input[self.pos..self.pos + 4];
+                            let mut cp = u32::from(
+                                bun_core::fmt::parse_hex4(&self.input[self.pos..]).ok_or(())?,
+                            );
                             self.pos += 4;
-                            let mut cp: u32 = 0;
-                            for &h in hex {
-                                cp = cp * 16
-                                    + u32::from(bun_core::fmt::hex_digit_value(h).ok_or(())?);
-                            }
                             // Handle surrogate pair (cp/lo are \uHHHH-parsed so <=0xFFFF, cast is lossless)
-                            if bun_core::strings::u16_is_lead(cp as u16) {
-                                if self.input[self.pos..].starts_with(b"\\u")
-                                    && self.pos + 6 <= self.input.len()
+                            if bun_core::strings::u16_is_lead(cp as u16)
+                                && self.input[self.pos..].starts_with(b"\\u")
+                                && self.pos + 6 <= self.input.len()
+                            {
+                                let lo =
+                                    bun_core::fmt::parse_hex4(&self.input[self.pos + 2..]).ok_or(())?;
+                                if let Some(full) =
+                                    bun_core::strings::decode_surrogate_pair(cp as u16, lo)
                                 {
-                                    let hex2 = &self.input[self.pos + 2..self.pos + 6];
-                                    let mut lo: u32 = 0;
-                                    for &h in hex2 {
-                                        lo = lo * 16
-                                            + u32::from(
-                                                bun_core::fmt::hex_digit_value(h).ok_or(())?,
-                                            );
-                                    }
-                                    if let Some(full) = bun_core::strings::decode_surrogate_pair(
-                                        cp as u16, lo as u16,
-                                    ) {
-                                        self.pos += 6;
-                                        cp = full;
-                                    }
+                                    self.pos += 6;
+                                    cp = full;
                                 }
                             }
                             match char::from_u32(cp) {

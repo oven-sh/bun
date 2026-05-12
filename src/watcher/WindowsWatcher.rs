@@ -50,11 +50,7 @@ pub enum Error {
     CreateFileFailed,
     InvalidPath,
 }
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(Error);
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]

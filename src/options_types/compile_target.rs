@@ -166,7 +166,7 @@ impl CompileTarget {
         // PERF(port): was comptime monomorphization (inline else over os/arch/libc/baseline
         // building a comptime format string) — profile. Runtime concat is fine
         // for a one-shot URL build.
-        let os = self.os.npm_name();
+        let os = self.os.npm_name().as_bytes();
         let arch = self.arch.npm_name();
         let libc = self.libc.npm_name();
         let baseline: &[u8] = if self.baseline { b"-baseline" } else { b"" };
@@ -500,7 +500,7 @@ impl fmt::Display for CompileTarget {
         write!(
             f,
             "bun-{}-{}{}{}-v{}.{}.{}",
-            bstr::BStr::new(self.os.npm_name()),
+            self.os.npm_name(),
             bstr::BStr::new(self.arch.npm_name()),
             self.libc,
             BaselineFormatter {

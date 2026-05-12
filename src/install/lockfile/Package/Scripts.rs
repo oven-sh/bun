@@ -449,7 +449,7 @@ impl List {
         format_type: PrintFormat,
     ) {
         // PERF(port): was comptime enum param — profile in Phase B
-        let needle = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
+        let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",

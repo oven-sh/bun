@@ -1,119 +1,3 @@
-// Local ports of the four `bun.strings.*` helpers we call. Bodies are 1:1 with
-// `src/string/immutable/unicode.zig` + `src/string/immutable.zig`; kept inline
-// because `codepoint_size` / `encode_wtf8_rune_t` are not (yet) re-exported
-// from `bun_core::strings`.
-mod strings {
-    /// Port of `bun.strings.codepointSize` — UTF-8 sequence length from leading byte.
-    /// Returns 0 for an invalid leading byte.
-    #[inline]
-    pub(super) fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
-        match r.into() {
-            0b0000_0000..=0b0111_1111 => 1,
-            0b1100_0000..=0b1101_1111 => 2,
-            0b1110_0000..=0b1110_1111 => 3,
-            0b1111_0000..=0b1111_0111 => 4,
-            _ => 0,
-        }
-    }
-
-    /// Port of `bun.strings.decodeWTF8RuneT` (and its `decodeWTF8RuneTMultibyte`
-    /// tail). Converts potentially ill-formed UTF-8 bytes to a codepoint;
-    /// invalid sequences return `zero`.
-    #[inline]
-    pub(super) fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: u8, zero: T) -> T
-    where
-        T: Copy
-            + From<u8>
-            + core::ops::Shl<u32, Output = T>
-            + core::ops::BitOr<Output = T>
-            + PartialOrd,
-    {
-        if len == 0 {
-            return zero;
-        }
-        if len == 1 {
-            return T::from(p[0]);
-        }
-
-        // decodeWTF8RuneTMultibyte:
-        debug_assert!(len > 1);
-
-        let s1 = p[1];
-        if (s1 & 0xC0) != 0x80 {
-            return zero;
-        }
-
-        if len == 2 {
-            let cp = (T::from(p[0] & 0x1F) << 6) | T::from(s1 & 0x3F);
-            if cp < T::from(0x80) {
-                return zero;
-            }
-            return cp;
-        }
-
-        let s2 = p[2];
-        if (s2 & 0xC0) != 0x80 {
-            return zero;
-        }
-
-        if len == 3 {
-            let cp = (T::from(p[0] & 0x0F) << 12) | (T::from(s1 & 0x3F) << 6) | T::from(s2 & 0x3F);
-            // 0x800 doesn't fit u8 — build via shift (T is u32/i32 in practice).
-            if cp < (T::from(0x08) << 8) {
-                return zero;
-            }
-            return cp;
-        }
-
-        let s3 = p[3];
-        if (s3 & 0xC0) != 0x80 {
-            return zero;
-        }
-
-        let cp = (T::from(p[0] & 0x07) << 18)
-            | (T::from(s1 & 0x3F) << 12)
-            | (T::from(s2 & 0x3F) << 6)
-            | T::from(s3 & 0x3F);
-        let lo = T::from(1) << 16; // 0x1_0000
-        let hi = (T::from(0x10) << 16) | (T::from(0xFF) << 8) | T::from(0xFF); // 0x10_FFFF
-        if cp < lo || cp > hi {
-            return zero;
-        }
-        cp
-    }
-
-    /// Port of `bun.strings.encodeWTF8RuneT` — clone of golang's
-    /// `utf8.EncodeRune` modified for WTF-8.
-    #[inline]
-    pub(super) fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> u8 {
-        let r: u32 = r.into();
-        match r {
-            0..=0x7F => {
-                p[0] = r as u8;
-                1
-            }
-            0x80..=0x7FF => {
-                p[0] = (0xC0 | (r >> 6)) as u8;
-                p[1] = (0x80 | (r & 0x3F)) as u8;
-                2
-            }
-            0x800..=0xFFFF => {
-                p[0] = (0xE0 | (r >> 12)) as u8;
-                p[1] = (0x80 | ((r >> 6) & 0x3F)) as u8;
-                p[2] = (0x80 | (r & 0x3F)) as u8;
-                3
-            }
-            _ => {
-                p[0] = (0xF0 | (r >> 18)) as u8;
-                p[1] = (0x80 | ((r >> 12) & 0x3F)) as u8;
-                p[2] = (0x80 | ((r >> 6) & 0x3F)) as u8;
-                p[3] = (0x80 | (r & 0x3F)) as u8;
-                4
-            }
-        }
-    }
-}
-
 use super::entity as entity_mod;
 use super::types::{OFF, TextType};
 
@@ -288,7 +172,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
         };
     }
 
-    let seq_len = strings::codepoint_size::<u8>(b0);
+    let seq_len = bun_core::strings::utf8_byte_sequence_length(b0);
     if seq_len == 0 {
         return Utf8DecodeResult {
             codepoint: 0xFFFD,
@@ -307,10 +191,10 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     let n = seq_len as usize;
     buf[..n].copy_from_slice(&text[off..][..n]);
 
-    let cp = strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
+    let cp = bun_core::strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
     Utf8DecodeResult {
         codepoint: cp,
-        len: u8::try_from(seq_len).expect("int cast"),
+        len: seq_len,
     }
 }
 
@@ -345,7 +229,7 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
 
 /// Encode a Unicode codepoint as UTF-8.
 pub fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
-    u8::try_from(strings::encode_wtf8_rune_t::<u32>(buf, codepoint)).expect("int cast")
+    bun_core::strings::encode_wtf8_rune(buf, codepoint) as u8
 }
 
 /// Skip UTF-8 BOM if present at the start of the text.

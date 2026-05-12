@@ -14,32 +14,7 @@ use super::storage_class::StorageClass;
 
 bun_core::declare_scope!(AWS, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// fmt helpers (defined before use — macro_rules! is textual-order)
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct NoSpaceLeft;
-
-/// `std.fmt.bufPrint` equivalent: write formatted bytes into `buf`, return the written slice.
-macro_rules! buf_print {
-    ($buf:expr, $($arg:tt)*) => {{
-        let buf: &mut [u8] = &mut $buf[..];
-        let ptr = buf.as_ptr();
-        let total = buf.len();
-        let mut cursor: &mut [u8] = buf;
-        match write!(cursor, $($arg)*) {
-            Ok(()) => {
-                let written = total - cursor.len();
-                // SAFETY: cursor is a tail of buf; head is initialized.
-                Ok::<&[u8], NoSpaceLeft>(unsafe {
-                    core::slice::from_raw_parts(ptr, written)
-                })
-            }
-            Err(_) => Err(NoSpaceLeft),
-        }
-    }};
-}
+use bun_core::fmt::buf_print;
 
 /// `std.fmt.allocPrint` equivalent: build into a fresh Vec<u8>.
 macro_rules! alloc_print {
@@ -478,20 +453,15 @@ impl S3Credentials {
 
         let normalized_path: &[u8] = 'brk: {
             if self.virtual_hosted_style {
-                break 'brk buf_print!(
+                break 'brk buf_print(
                     &mut normalized_path_buffer,
-                    "{}/{}",
-                    BStr::new(extra_path),
-                    BStr::new(path)
+                    format_args!("{}/{}", BStr::new(extra_path), BStr::new(path)),
                 )
                 .map_err(|_| SignError::InvalidPath)?;
             } else {
-                break 'brk buf_print!(
+                break 'brk buf_print(
                     &mut normalized_path_buffer,
-                    "{}/{}/{}",
-                    BStr::new(extra_path),
-                    BStr::new(bucket),
-                    BStr::new(path)
+                    format_args!("{}/{}/{}", BStr::new(extra_path), BStr::new(bucket), BStr::new(path)),
                 )
                 .map_err(|_| SignError::InvalidPath)?;
             }
@@ -530,12 +500,9 @@ impl S3Credentials {
             let mut hmac_sig_service2 = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
 
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
-                let key = buf_print!(
+                let key = buf_print(
                     &mut tmp_buffer,
-                    "{}{}{}",
-                    BStr::new(region),
-                    service_name,
-                    BStr::new(&self.secret_access_key)
+                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 // PORT NOTE: was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
@@ -544,10 +511,9 @@ impl S3Credentials {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
-                let aws4_key = buf_print!(
+                let aws4_key = buf_print(
                     &mut tmp_buffer,
-                    "AWS4{}",
-                    BStr::new(&self.secret_access_key)
+                    format_args!("AWS4{}", BStr::new(&self.secret_access_key)),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let sig_date = bun_sha_hmac::generate(
@@ -588,12 +554,9 @@ impl S3Credentials {
                 // so Zig passes corrupted bytes to `cache.set` (latent bug → cache never hits).
                 // We recompute the correct `{region}{service}{secret}` key here.
                 // TODO(port): fix the overwritten-key bug in credentials.zig as well.
-                let key = buf_print!(
+                let key = buf_print(
                     &mut tmp_buffer,
-                    "{}{}{}",
-                    BStr::new(region),
-                    service_name,
-                    BStr::new(&self.secret_access_key)
+                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 aws_cache_set(date_result.numeric_day, key, digest);
@@ -699,14 +662,16 @@ impl S3Credentials {
                         query_string.extend_from_slice(part);
                     }
 
-                    break 'brk_canonical buf_print!(
+                    break 'brk_canonical buf_print(
                         &mut tmp_buffer,
-                        "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
-                        method_name,
-                        BStr::new(normalized_path),
-                        BStr::new(&query_string),
-                        BStr::new(&host),
-                        BStr::new(aws_content_hash)
+                        format_args!(
+                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                            method_name,
+                            BStr::new(normalized_path),
+                            BStr::new(&query_string),
+                            BStr::new(&host),
+                            BStr::new(aws_content_hash)
+                        ),
                     )
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
@@ -715,14 +680,16 @@ impl S3Credentials {
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
-                let sign_value = buf_print!(
+                let sign_value = buf_print(
                     &mut tmp_buffer,
-                    "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
-                    BStr::new(&amz_date),
-                    BStr::new(amz_day),
-                    BStr::new(region),
-                    service_name,
-                    HexLower(&sha_digest)
+                    format_args!(
+                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                        BStr::new(&amz_date),
+                        BStr::new(amz_day),
+                        BStr::new(region),
+                        service_name,
+                        HexLower(&sha_digest)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
 
@@ -827,14 +794,16 @@ impl S3Credentials {
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
-                let sign_value = buf_print!(
+                let sign_value = buf_print(
                     &mut tmp_buffer,
-                    "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
-                    BStr::new(&amz_date),
-                    BStr::new(amz_day),
-                    BStr::new(region),
-                    service_name,
-                    HexLower(&sha_digest)
+                    format_args!(
+                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                        BStr::new(&amz_date),
+                        BStr::new(amz_day),
+                        BStr::new(region),
+                        service_name,
+                        HexLower(&sha_digest)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
 
@@ -952,14 +921,7 @@ impl S3Credentials {
     }
 }
 
-#[inline]
-fn dupe_slice(s: &[u8]) -> Box<[u8]> {
-    if !s.is_empty() {
-        Box::<[u8]>::from(s)
-    } else {
-        Box::default()
-    }
-}
+use bun_ptr::owned::alloc_dupe_slice as dupe_slice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DateResult / getAMZDate
@@ -1279,11 +1241,7 @@ pub enum SignError {
     NoSpaceLeft,
 }
 
-impl From<SignError> for bun_core::Error {
-    fn from(e: SignError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(SignError);
 
 impl<'a> Default for SignOptions<'a> {
     fn default() -> Self {
@@ -1441,14 +1399,10 @@ impl CanonicalRequest {
         session_token: Option<&[u8]>,
         storage_class: Option<&[u8]>,
         signed_headers: &[u8],
-    ) -> Result<&'b [u8], NoSpaceLeft> {
-        let ptr = buf.as_ptr();
-        let total = buf.len();
-        let mut cursor: &mut [u8] = buf;
+    ) -> Result<&'b [u8], core::fmt::Error> {
+        let mut c = bun_core::fmt::SliceCursor::new(buf);
         macro_rules! w {
-            ($($arg:tt)*) => {
-                write!(cursor, $($arg)*).map_err(|_| NoSpaceLeft)?
-            };
+            ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
         // method, path, query
         w!(
@@ -1499,10 +1453,8 @@ impl CanonicalRequest {
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));
 
-        let written = total - cursor.len();
-        // PORT NOTE: reshaped for borrowck — recompute slice from original buffer.
-        // SAFETY: `cursor` is a tail of `buf`; `written` bytes at the head are initialized.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, written) })
+        let len = c.at;
+        Ok(&c.buf[..len])
     }
 }
 

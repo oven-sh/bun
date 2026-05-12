@@ -1043,16 +1043,11 @@ pub mod bv2_impl {
                     // Also try joining a relative specifier against the importer's
                     // directory. Relative = not posix-absolute and not Windows
                     // drive-absolute (e.g. `C:/`).
-                    if !specifier.is_empty()
-                        && specifier[0] != b'/'
-                        && !(specifier.len() >= 3
-                            && specifier[1] == b':'
-                            && (specifier[2] == b'/' || specifier[2] == b'\\'))
-                    {
+                    if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).
                         let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                        let abs_source_file: &[u8] = if Self::is_absolute_path(source_file) {
+                        let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                             source_file
                         } else {
                             bun_resolver::fs::FileSystem::instance()
@@ -1130,22 +1125,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                /// Posix or Windows (drive-letter / UNC) absolute path check.
-                fn is_absolute_path(path: &[u8]) -> bool {
-                    if path.is_empty() {
-                        return false;
-                    }
-                    if path[0] == b'/' {
-                        return true;
-                    }
-                    if path.len() >= 3 && path[1] == b':' && (path[2] == b'/' || path[2] == b'\\') {
-                        return matches!(path[0], b'a'..=b'z' | b'A'..=b'Z');
-                    }
-                    if path.len() >= 2 && path[0] == b'\\' && path[1] == b'\\' {
-                        return true;
-                    }
-                    false
-                }
             }
 
             /// Mirrors `JSBundler.Resolve.MiniImportRecord` (zig:1242).

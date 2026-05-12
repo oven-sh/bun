@@ -286,8 +286,7 @@ fn os_monotonic_ns() -> u64 {
     }
 }
 
-use bun_core::time::NS_PER_MS;
-const NS_PER_S: u64 = 1_000_000_000;
+use bun_core::time::{NS_PER_MS, NS_PER_S};
 
 // TODO(port): move to perf_sys / bun_sys
 #[cfg(all(

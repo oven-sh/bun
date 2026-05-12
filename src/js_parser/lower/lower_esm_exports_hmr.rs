@@ -709,28 +709,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             if self.export_props.is_empty() {
                 core::mem::swap(&mut self.export_props, &mut self.export_star_props);
             } else {
-                // PORT NOTE: Zig grew `export_props` in place, shifted right with
-                // `bun.copy`, then `@memcpy`'d the star props into the front.
-                // `G::Property` is not `Copy` in Rust (contains `Vec`), so the
-                // bitwise overlap-copy is reproduced via raw ptr ops.
-                let export_star_len = self.export_star_props.len();
-                self.export_props.reserve(export_star_len);
-                let len = self.export_props.len();
-                // SAFETY: capacity reserved above; the next two copies fully initialize
-                // [0..len+export_star_len). `G::Property` is no-Drop arena POD.
-                unsafe {
-                    let base = self.export_props.as_mut_ptr();
-                    // bun.copy with overlapping src/dst within same buffer
-                    core::ptr::copy(base, base.add(export_star_len), len);
-                    core::ptr::copy_nonoverlapping(
-                        self.export_star_props.as_ptr(),
-                        base,
-                        export_star_len,
-                    );
-                    self.export_props.set_len(len + export_star_len);
-                    // Star props were bitwise-moved; don't double-drop the BabyLists.
-                    self.export_star_props.set_len(0);
-                }
+                bun_collections::prepend_from(&mut self.export_props, &mut self.export_star_props);
             }
         }
 

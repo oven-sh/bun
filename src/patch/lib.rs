@@ -1067,7 +1067,7 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
 }
 
 fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
-    let parsed_mode = parse_u32_ascii(mode, 8)? & 0o777;
+    let parsed_mode = bun_core::parse_int::<u32>(mode, 8).ok()? & 0o777;
     FileMode::from_u32(parsed_mode)
 }
 
@@ -1469,17 +1469,10 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
     }
 
     Ok(HunkHeaderLineImpl {
-        line_nr: 1.max(parse_u32_ascii(line_nr, 10).ok_or(ParseErr::bad_header_line)?),
-        line_count: parse_u32_ascii(line_nr_count, 10).ok_or(ParseErr::bad_header_line)?,
+        line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
+        line_count: bun_core::parse_decimal::<u32>(line_nr_count).ok_or(ParseErr::bad_header_line)?,
         rest: text,
     })
-}
-
-/// Byte-slice `u32` parser (radix 8 or 10). Patch input is arbitrary bytes,
-/// not UTF-8; `parse_unsigned` avoids the `from_utf8` round-trip.
-#[inline]
-fn parse_u32_ascii(s: &[u8], radix: u32) -> Option<u32> {
-    bun_core::parse_unsigned::<u32>(s, radix as u8).ok()
 }
 
 fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {

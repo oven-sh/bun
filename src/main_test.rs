@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, time::milli_timestamp};
 use bun_runtime::test_runner::harness::recover;
 
 // pub const panic = bun.crash_handler.panic;
@@ -275,11 +275,6 @@ pub struct TestFn {
 // TODO(port): builtin.test_functions registry stub.
 fn test_functions() -> &'static [TestFn] {
     &[]
-}
-
-// TODO(port): std.time.milliTimestamp() — wall-clock ms since Unix epoch as i64.
-fn milli_timestamp() -> i64 {
-    bun_core::time::milli_timestamp()
 }
 
 #[derive(PartialEq, Eq)]

@@ -76,19 +76,12 @@ impl Integrity {
         }
 
         while i < end {
-            // npm sha1 strings are always [0-9a-f]; canonical hex_digit_value
+            // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.
-            let x0 = bun_core::fmt::hex_digit_value(buf[i])
+            integrity.value[out_i] = bun_core::fmt::hex_pair_value(buf[i], buf[i + 1])
                 .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
-            i += 1;
-            let x1 = bun_core::fmt::hex_digit_value(buf[i])
-                .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
-
-            // parse hex integer
-            integrity.value[out_i] = (x0 << 4) | x1;
-
             out_i += 1;
-            i += 1;
+            i += 2;
         }
 
         Ok(integrity)

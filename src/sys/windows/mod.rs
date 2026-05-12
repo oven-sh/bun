@@ -449,7 +449,7 @@ impl Win32ErrorUnwrap for Win32Error {
             return Ok(());
         }
         if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error().into());
+            return Err(err.to_error());
         }
         Ok(())
     }
@@ -3268,96 +3268,7 @@ mod _win32error_full_table {
 
 pub use bun_libuv_sys as libuv;
 
-/// Port of Zig `bun.windows.libuv.translateUVErrorToE` (libuv.zig:2776). Lives
-/// here (not in `bun_libuv_sys`) because the table needs `bun_errno::E`, which
-/// would create a layering cycle from the leaf binding crate.
-pub fn translate_uv_error_to_e(code_in: c_int) -> E {
-    use bun_libuv_sys::*;
-    match code_in {
-        UV_EPERM => E::PERM,
-        UV_ENOENT => E::NOENT,
-        UV_ESRCH => E::SRCH,
-        UV_EINTR => E::INTR,
-        UV_EIO => E::IO,
-        UV_ENXIO => E::NXIO,
-        UV_E2BIG => E::_2BIG,
-        UV_ENOEXEC => E::NOEXEC,
-        UV_EBADF => E::BADF,
-        UV_EAGAIN => E::AGAIN,
-        UV_ENOMEM => E::NOMEM,
-        UV_EACCES => E::ACCES,
-        UV_EFAULT => E::FAULT,
-        UV_EBUSY => E::BUSY,
-        UV_EEXIST => E::EXIST,
-        UV_EXDEV => E::XDEV,
-        UV_ENODEV => E::NODEV,
-        UV_ENOTDIR => E::NOTDIR,
-        UV_EISDIR => E::ISDIR,
-        UV_EINVAL => E::INVAL,
-        UV_ENFILE => E::NFILE,
-        UV_EMFILE => E::MFILE,
-        UV_ENOTTY => E::NOTTY,
-        UV_EFTYPE => E::FTYPE,
-        UV_ETXTBSY => E::TXTBSY,
-        UV_EFBIG => E::FBIG,
-        UV_ENOSPC => E::NOSPC,
-        UV_ESPIPE => E::SPIPE,
-        UV_EROFS => E::ROFS,
-        UV_EMLINK => E::MLINK,
-        UV_EPIPE => E::PIPE,
-        UV_ERANGE => E::RANGE,
-        UV_ENAMETOOLONG => E::NAMETOOLONG,
-        UV_ENOSYS => E::NOSYS,
-        UV_ENOTEMPTY => E::NOTEMPTY,
-        UV_ELOOP => E::LOOP,
-        UV_EUNATCH => E::UNATCH,
-        UV_ENODATA => E::NODATA,
-        UV_ENONET => E::NONET,
-        UV_EPROTO => E::PROTO,
-        UV_EOVERFLOW => E::OVERFLOW,
-        UV_EILSEQ => E::ILSEQ,
-        UV_ENOTSOCK => E::NOTSOCK,
-        UV_EDESTADDRREQ => E::DESTADDRREQ,
-        UV_EMSGSIZE => E::MSGSIZE,
-        UV_EPROTOTYPE => E::PROTOTYPE,
-        UV_ENOPROTOOPT => E::NOPROTOOPT,
-        UV_EPROTONOSUPPORT => E::PROTONOSUPPORT,
-        UV_ESOCKTNOSUPPORT => E::SOCKTNOSUPPORT,
-        UV_ENOTSUP => E::NOTSUP,
-        UV_EAFNOSUPPORT => E::AFNOSUPPORT,
-        UV_EADDRINUSE => E::ADDRINUSE,
-        UV_EADDRNOTAVAIL => E::ADDRNOTAVAIL,
-        UV_ENETDOWN => E::NETDOWN,
-        UV_ENETUNREACH => E::NETUNREACH,
-        UV_ECONNABORTED => E::CONNABORTED,
-        UV_ECONNRESET => E::CONNRESET,
-        UV_ENOBUFS => E::NOBUFS,
-        UV_EISCONN => E::ISCONN,
-        UV_ENOTCONN => E::NOTCONN,
-        UV_ESHUTDOWN => E::SHUTDOWN,
-        UV_ETIMEDOUT => E::TIMEDOUT,
-        UV_ECONNREFUSED => E::CONNREFUSED,
-        UV_EHOSTDOWN => E::HOSTDOWN,
-        UV_EHOSTUNREACH => E::HOSTUNREACH,
-        UV_EALREADY => E::ALREADY,
-        UV_EREMOTEIO => E::REMOTEIO,
-        UV_ECANCELED => E::CANCELED,
-        UV_ECHARSET => E::CHARSET,
-        UV_EOF => E::EOF,
-        UV_UNKNOWN => E::UNKNOWN,
-        // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
-        // libuv codes not explicitly mapped above (e.g. Windows-specific -4000s)
-        // are tried as `E` discriminants, falling back to UNKNOWN.
-        // Zig spec: `std.meta.intToEnum(bun.sys.E, -%code) catch .UNKNOWN` —
-        // a CHECKED tag lookup. `E` is sparse (dense 0..=137, then isolated
-        // UV_* in 3000–4095), so `from_raw` (transmute) on an unmapped value
-        // would be UB; use the checked `try_from_raw`.
-        other => u16::try_from(other.wrapping_neg())
-            .ok()
-            .and_then(E::try_from_raw)
-            .unwrap_or(E::UNKNOWN),
-    }
-}
+pub use bun_errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
 

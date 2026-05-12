@@ -1499,7 +1499,7 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = 1000.0;
+                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value * MS_PER_S);
                 }
                 _ => {

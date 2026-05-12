@@ -7,6 +7,7 @@ use std::io::Write as _;
 
 use bun_collections::StringHashMap;
 use bun_core::env_var;
+use bun_core::output::ansi_b;
 
 use bun_core::strings;
 
@@ -225,22 +226,22 @@ impl InlineStyle {
         match span_type {
             SpanType::Em => Some(InlineStyle {
                 flag: SPAN_EM,
-                on: style(AnsiStyle::Italic),
+                on: ansi_b::ITALIC,
                 off: b"\x1b[23m",
             }),
             SpanType::Strong => Some(InlineStyle {
                 flag: SPAN_STRONG,
-                on: style(AnsiStyle::Bold),
+                on: ansi_b::BOLD,
                 off: b"\x1b[22m",
             }),
             SpanType::U => Some(InlineStyle {
                 flag: SPAN_U,
-                on: style(AnsiStyle::Underline),
+                on: ansi_b::UNDERLINE,
                 off: b"\x1b[24m",
             }),
             SpanType::Del => Some(InlineStyle {
                 flag: SPAN_DEL,
-                on: style(AnsiStyle::Strikethrough),
+                on: ansi_b::STRIKETHROUGH,
                 off: b"\x1b[29m",
             }),
             _ => None,
@@ -384,9 +385,9 @@ impl<'a> AnsiRenderer<'a> {
                         break 'blk (
                             g,
                             if checked {
-                                color(AnsiColor::Green)
+                                ansi_b::GREEN
                             } else {
-                                color(AnsiColor::Dim)
+                                ansi_b::DIM
                             },
                         );
                     }
@@ -396,7 +397,7 @@ impl<'a> AnsiRenderer<'a> {
                             let written: &[u8] =
                                 bun_core::fmt::buf_print(&mut num_buf, format_args!("{num}. "))
                                     .unwrap_or(b"? ");
-                            break 'blk (written, color(AnsiColor::Cyan));
+                            break 'blk (written, ansi_b::CYAN);
                         }
                     }
                     break 'blk (
@@ -405,11 +406,11 @@ impl<'a> AnsiRenderer<'a> {
                         } else {
                             b"* "
                         },
-                        color(AnsiColor::Cyan),
+                        ansi_b::CYAN,
                     );
                 };
                 self.write_styled(glyph_color, glyph);
-                self.write_styled(reset(), b"");
+                self.write_styled(ansi_b::RESET, b"");
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
                 entry.indent = u32::try_from(visible_width(glyph)).expect("int cast");
@@ -436,12 +437,12 @@ impl<'a> AnsiRenderer<'a> {
                 } else {
                     b"-"
                 };
-                self.write_styled(color(AnsiColor::Dim), b"");
+                self.write_styled(ansi_b::DIM, b"");
                 while i < width {
                     self.write_raw(dash);
                     i += 1;
                 }
-                self.write_styled(reset(), b"");
+                self.write_styled(ansi_b::RESET, b"");
                 self.write_raw(b"\n");
                 self.last_was_newline = true;
                 self.col = 0;
@@ -528,7 +529,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.ensure_newline();
             }
             BlockType::P => {
-                self.write_styled(reset(), b"");
+                self.write_styled(ansi_b::RESET, b"");
                 self.ensure_newline();
                 self.col = 0;
             }
@@ -594,8 +595,8 @@ impl<'a> AnsiRenderer<'a> {
                             self.write_raw_no_color(b"\x1b\\");
                         }
                     }
-                    self.write_styled(color(AnsiColor::Blue), b"");
-                    self.write_styled(style(AnsiStyle::Underline), b"");
+                    self.write_styled(ansi_b::BLUE, b"");
+                    self.write_styled(ansi_b::UNDERLINE, b"");
                 }
             }
             SpanType::Img => {
@@ -607,10 +608,10 @@ impl<'a> AnsiRenderer<'a> {
                 }
             }
             SpanType::Wikilink => {
-                self.write_styled(color(AnsiColor::Blue), b"[[");
+                self.write_styled(ansi_b::BLUE, b"[[");
             }
-            SpanType::Latexmath => self.write_styled(color(AnsiColor::Magenta), b"$"),
-            SpanType::LatexmathDisplay => self.write_styled(color(AnsiColor::Magenta), b"$$"),
+            SpanType::Latexmath => self.write_styled(ansi_b::MAGENTA, b"$"),
+            SpanType::LatexmathDisplay => self.write_styled(ansi_b::MAGENTA, b"$$"),
         }
     }
 
@@ -653,9 +654,9 @@ impl<'a> AnsiRenderer<'a> {
                             // Show URL in parens for non-hyperlink terminals.
                             // image_depth==0 keeps " (url)" out of image alt
                             // text when a link sits inside an image span.
-                            self.write_styled(color(AnsiColor::Dim), b" (");
+                            self.write_styled(ansi_b::DIM, b" (");
                             self.write_styled(b"", &href);
-                            self.write_styled(color(AnsiColor::Dim), b")");
+                            self.write_styled(ansi_b::DIM, b")");
                             self.write_styled(b"\x1b[39m\x1b[22m", b"");
                             self.reapply_styles();
                         }
@@ -702,7 +703,7 @@ impl<'a> AnsiRenderer<'a> {
                 // Render raw HTML dimmed. Close with the targeted dim-off
                 // (\x1b[22m) rather than a full reset, then reapply any
                 // outer span/link styles.
-                self.write_styled(color(AnsiColor::Dim), b"");
+                self.write_styled(ansi_b::DIM, b"");
                 self.write_content(content);
                 self.write_styled(b"\x1b[22m", b"");
                 self.reapply_styles();
@@ -1121,27 +1122,27 @@ impl<'a> AnsiRenderer<'a> {
         // If we're inside a heading's buffered content, the outer bold +
         // color wrapper must also be reapplied.
         if self.heading_level > 0 {
-            self.emit_inline(style(AnsiStyle::Bold));
+            self.emit_inline(ansi_b::BOLD);
             self.emit_inline(heading_color(self.heading_level));
         }
         if self.span_flags & SPAN_STRONG != 0 {
-            self.emit_inline(style(AnsiStyle::Bold));
+            self.emit_inline(ansi_b::BOLD);
         }
         if self.span_flags & SPAN_EM != 0 {
-            self.emit_inline(style(AnsiStyle::Italic));
+            self.emit_inline(ansi_b::ITALIC);
         }
         if self.span_flags & SPAN_U != 0 {
-            self.emit_inline(style(AnsiStyle::Underline));
+            self.emit_inline(ansi_b::UNDERLINE);
         }
         if self.span_flags & SPAN_DEL != 0 {
-            self.emit_inline(style(AnsiStyle::Strikethrough));
+            self.emit_inline(ansi_b::STRIKETHROUGH);
         }
         if self.span_flags & SPAN_CODE != 0 {
             self.emit_inline(code_span_open(self.theme.light));
         }
         if self.link_depth > 0 {
-            self.emit_inline(color(AnsiColor::Blue));
-            self.emit_inline(style(AnsiStyle::Underline));
+            self.emit_inline(ansi_b::BLUE);
+            self.emit_inline(ansi_b::UNDERLINE);
         }
     }
 
@@ -1349,7 +1350,7 @@ impl<'a> AnsiRenderer<'a> {
                 text_w.min((self.theme.columns as usize).saturating_sub(indent_cols as usize))
             };
             if self.theme.colors {
-                self.out.write(color(AnsiColor::Dim));
+                self.out.write(ansi_b::DIM);
             }
             let ch: &[u8] = if self.theme.colors {
                 if level == 1 {
@@ -1415,7 +1416,7 @@ impl<'a> AnsiRenderer<'a> {
 
         // Language badge
         if self.theme.colors {
-            self.out.write(color(AnsiColor::Dim));
+            self.out.write(ansi_b::DIM);
         }
         self.write_indent();
         let badge: &[u8] = if !self.code_lang.is_empty() {
@@ -1437,7 +1438,7 @@ impl<'a> AnsiRenderer<'a> {
             }
         } else {
             if self.theme.colors {
-                self.out.write(color(AnsiColor::Dim));
+                self.out.write(ansi_b::DIM);
             }
             self.out.write(top_bare);
             if self.theme.colors {
@@ -1456,7 +1457,7 @@ impl<'a> AnsiRenderer<'a> {
                 let line = &body[line_start..i];
                 self.write_indent();
                 if self.theme.colors {
-                    self.out.write(color(AnsiColor::Dim));
+                    self.out.write(ansi_b::DIM);
                 }
                 self.out.write(side);
                 if self.theme.colors {
@@ -1476,7 +1477,7 @@ impl<'a> AnsiRenderer<'a> {
         // Closing border
         self.write_indent();
         if self.theme.colors {
-            self.out.write(color(AnsiColor::Dim));
+            self.out.write(ansi_b::DIM);
         }
         self.out.write(bottom);
         if self.theme.colors {
@@ -1564,7 +1565,7 @@ impl<'a> AnsiRenderer<'a> {
 
         self.write_indent();
         if self.theme.colors {
-            self.out.write(color(AnsiColor::Dim));
+            self.out.write(ansi_b::DIM);
         }
         self.out.write(chars.tl);
         for (i, w) in widths.iter().enumerate() {
@@ -1599,7 +1600,7 @@ impl<'a> AnsiRenderer<'a> {
 
         self.write_indent();
         if self.theme.colors {
-            self.out.write(color(AnsiColor::Dim));
+            self.out.write(ansi_b::DIM);
         }
         self.out.write(chars.bl);
         for (i, w) in widths.iter().enumerate() {
@@ -1693,7 +1694,7 @@ impl<'a> AnsiRenderer<'a> {
         while line < lines {
             self.write_indent();
             if self.theme.colors {
-                self.out.write(color(AnsiColor::Dim));
+                self.out.write(ansi_b::DIM);
             }
             self.out.write(chars.v);
             if self.theme.colors {
@@ -1754,7 +1755,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_padding(right);
                 self.out.write_byte(b' ');
                 if self.theme.colors {
-                    self.out.write(color(AnsiColor::Dim));
+                    self.out.write(ansi_b::DIM);
                 }
                 self.out.write(chars.v);
                 if self.theme.colors {
@@ -1771,7 +1772,7 @@ impl<'a> AnsiRenderer<'a> {
         let chars = self.box_chars();
         self.write_indent();
         if self.theme.colors {
-            self.out.write(color(AnsiColor::Dim));
+            self.out.write(ansi_b::DIM);
         }
         self.out.write(chars.ml);
         for (i, w) in widths.iter().enumerate() {
@@ -1933,7 +1934,7 @@ impl<'a> AnsiRenderer<'a> {
         } else {
             b"[img] "
         };
-        self.write_styled(color(AnsiColor::Magenta), img_marker);
+        self.write_styled(ansi_b::MAGENTA, img_marker);
         // Route alt/title through writeContent so word-wrap applies and
         // any hard breaks (`\n` captured from .br events) get a proper
         // writeIndent() afterwards — otherwise long alts overflow and
@@ -1949,7 +1950,7 @@ impl<'a> AnsiRenderer<'a> {
         } else {
             self.write_content(b"(image)");
         }
-        self.write_styled(reset(), b"");
+        self.write_styled(ansi_b::RESET, b"");
         self.reapply_styles();
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;\x1b\\");
@@ -2279,61 +2280,13 @@ struct BoxChars {
 /// ANSI color for a given heading level.
 fn heading_color(level: u8) -> &'static [u8] {
     match level {
-        1 => color(AnsiColor::Magenta),
-        2 => color(AnsiColor::Cyan),
-        3 => color(AnsiColor::Yellow),
-        4 => color(AnsiColor::Green),
-        5 => color(AnsiColor::Blue),
-        _ => color(AnsiColor::White),
+        1 => ansi_b::MAGENTA,
+        2 => ansi_b::CYAN,
+        3 => ansi_b::YELLOW,
+        4 => ansi_b::GREEN,
+        5 => ansi_b::BLUE,
+        _ => ansi_b::WHITE,
     }
-}
-
-#[derive(Clone, Copy)]
-enum AnsiColor {
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-    Dim,
-}
-
-fn color(c: AnsiColor) -> &'static [u8] {
-    match c {
-        AnsiColor::Black => b"\x1b[30m",
-        AnsiColor::Red => b"\x1b[31m",
-        AnsiColor::Green => b"\x1b[32m",
-        AnsiColor::Yellow => b"\x1b[33m",
-        AnsiColor::Blue => b"\x1b[34m",
-        AnsiColor::Magenta => b"\x1b[35m",
-        AnsiColor::Cyan => b"\x1b[36m",
-        AnsiColor::White => b"\x1b[37m",
-        AnsiColor::Dim => b"\x1b[2m",
-    }
-}
-
-#[derive(Clone, Copy)]
-enum AnsiStyle {
-    Bold,
-    Italic,
-    Underline,
-    Strikethrough,
-}
-
-fn style(s: AnsiStyle) -> &'static [u8] {
-    match s {
-        AnsiStyle::Bold => b"\x1b[1m",
-        AnsiStyle::Italic => b"\x1b[3m",
-        AnsiStyle::Underline => b"\x1b[4m",
-        AnsiStyle::Strikethrough => b"\x1b[9m",
-    }
-}
-
-fn reset() -> &'static [u8] {
-    b"\x1b[0m"
 }
 
 fn code_span_open(light: bool) -> &'static [u8] {

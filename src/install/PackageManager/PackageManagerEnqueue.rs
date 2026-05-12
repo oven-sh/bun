@@ -70,7 +70,7 @@ const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 pub type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
 pub type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;
 
-const MS_PER_S: f64 = 1000.0;
+const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
 // ─────────────────────────────────────────────────────────────────────────────
 

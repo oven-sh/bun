@@ -292,39 +292,21 @@ impl AnyWebSocket {
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_send_with_options(1, p, message.as_ptr(), message.len(), opcode, compress, fin)
-            },
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_send_with_options(0, p, message.as_ptr(), message.len(), opcode, compress, fin)
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_send_with_options(ssl, ws, message.as_ptr(), message.len(), opcode, compress, fin) }
     }
 
     pub fn send_last_fragment(self, message: &[u8], compress: bool) -> SendStatus {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_send_last_fragment(0, p, message.as_ptr(), message.len(), compress)
-            },
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_send_last_fragment(1, p, message.as_ptr(), message.len(), compress)
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_send_last_fragment(ssl, ws, message.as_ptr(), message.len(), compress) }
     }
 
     pub fn end(self, code: i32, message: &[u8]) {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_end(0, p, code, message.as_ptr(), message.len())
-            },
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_end(1, p, code, message.as_ptr(), message.len())
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_end(ssl, ws, code, message.as_ptr(), message.len()) }
     }
 
     // TODO(port): comptime-callback monomorphization — see NewWebSocket::cork.
@@ -338,48 +320,28 @@ impl AnyWebSocket {
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         let ud = (&raw mut data).cast::<c_void>();
-        // SAFETY: `p` is a live uWS-owned socket; `data` lives on this stack
-        // frame for the duration of the synchronous uws_ws_cork call.
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe { c::uws_ws_cork(1, p, Some(wrap::<C>), ud) },
-            AnyWebSocket::Tcp(p) => unsafe { c::uws_ws_cork(0, p, Some(wrap::<C>), ud) },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); `data` lives on
+        // this stack frame for the duration of the synchronous uws_ws_cork call.
+        unsafe { c::uws_ws_cork(ssl, ws, Some(wrap::<C>), ud) }
     }
 
     pub fn subscribe(self, topic: &[u8]) -> bool {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_subscribe(1, p, topic.as_ptr(), topic.len())
-            },
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_subscribe(0, p, topic.as_ptr(), topic.len())
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_subscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn unsubscribe(self, topic: &[u8]) -> bool {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_unsubscribe(1, p, topic.as_ptr(), topic.len())
-            },
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_unsubscribe(0, p, topic.as_ptr(), topic.len())
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_unsubscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn is_subscribed(self, topic: &[u8]) -> bool {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_is_subscribed(1, p, topic.as_ptr(), topic.len())
-            },
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_is_subscribed(0, p, topic.as_ptr(), topic.len())
-            },
-        }
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe { c::uws_ws_is_subscribed(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     // getTopicsAsJSArray — deleted: *_jsc alias (see PORTING.md). Lives in
@@ -390,18 +352,12 @@ impl AnyWebSocket {
     // }
 
     pub fn publish(self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
-        // SAFETY: `p` is a live uWS-owned socket; ptr+len from &[u8].
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe {
-                c::uws_ws_publish_with_options(
-                    1, p, topic.as_ptr(), topic.len(), message.as_ptr(), message.len(), opcode, compress,
-                )
-            },
-            AnyWebSocket::Tcp(p) => unsafe {
-                c::uws_ws_publish_with_options(
-                    0, p, topic.as_ptr(), topic.len(), message.as_ptr(), message.len(), opcode, compress,
-                )
-            },
+        let (ssl, ws) = self.split();
+        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
+        unsafe {
+            c::uws_ws_publish_with_options(
+                ssl, ws, topic.as_ptr(), topic.len(), message.as_ptr(), message.len(), opcode, compress,
+            )
         }
     }
 

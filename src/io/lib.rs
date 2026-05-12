@@ -130,32 +130,30 @@ impl EventLoopCtx {
     // copies; these wrappers instead perform one counter adjustment and drop
     // the borrow before returning, so no `&mut` escapes. Collapses N
     // identical `ctx.platform_event_loop().op()` call sites into the single
-    // deref inside each wrapper.
+    // deref inside [`loop_mut`].
+    //
+    // `loop_mut` is the single nonnull-asref accessor: private, `&self → &mut`
+    // (so it must NOT be called twice with overlapping live results). Every
+    // caller below is a leaf op that consumes the borrow before returning and
+    // never re-enters `EventLoopCtx`, so no two `&mut Loop` ever coexist.
     #[inline]
-    pub fn loop_ref(&self) {
-        // SAFETY: per-thread set-once pointer; sole `&mut Loop` for this call.
-        unsafe { &mut *self.platform_event_loop_ptr() }.ref_();
+    fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+        // SAFETY: per-thread set-once pointer (the uws loop singleton); the
+        // event loop is single-threaded so no concurrent `&mut` exists, and
+        // every (private-to-this-impl) caller is a leaf counter op that drops
+        // the borrow before returning — see block comment above.
+        unsafe { &mut *self.platform_event_loop_ptr() }
     }
     #[inline]
-    pub fn loop_unref(&self) {
-        // SAFETY: see `loop_ref`.
-        unsafe { &mut *self.platform_event_loop_ptr() }.unref();
-    }
+    pub fn loop_ref(&self) { self.loop_mut().ref_(); }
     #[inline]
-    pub fn loop_dec(&self) {
-        // SAFETY: see `loop_ref`.
-        unsafe { &mut *self.platform_event_loop_ptr() }.dec();
-    }
+    pub fn loop_unref(&self) { self.loop_mut().unref(); }
     #[inline]
-    pub fn loop_add_active(&self, n: u32) {
-        // SAFETY: see `loop_ref`.
-        unsafe { &mut *self.platform_event_loop_ptr() }.add_active(n);
-    }
+    pub fn loop_dec(&self) { self.loop_mut().dec(); }
     #[inline]
-    pub fn loop_sub_active(&self, n: u32) {
-        // SAFETY: see `loop_ref`.
-        unsafe { &mut *self.platform_event_loop_ptr() }.sub_active(n);
-    }
+    pub fn loop_add_active(&self, n: u32) { self.loop_mut().add_active(n); }
+    #[inline]
+    pub fn loop_sub_active(&self, n: u32) { self.loop_mut().sub_active(n); }
     #[cfg(not(windows))]
     #[inline]
     pub fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {

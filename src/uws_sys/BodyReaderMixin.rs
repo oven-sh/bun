@@ -111,15 +111,22 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         resp.on_aborted(Self::on_aborted_handler::<R>, wrap);
     }
 
-    /// Forward offset `Wrap` → its embedded mixin field. Inverse direction of
-    /// Zig's `@fieldParentPtr` — we go parent→field because the stored user_data
-    /// is the parent (full provenance), never the field.
+    /// Forward offset `Wrap` → its embedded mixin field, materialised as `&mut`.
+    /// Inverse direction of Zig's `@fieldParentPtr` — we go parent→field because
+    /// the stored user_data is the parent (full provenance), never the field.
+    ///
+    /// # Safety
+    /// `wrap` must point to a live `Wrap` and no other `&`/`&mut` into the
+    /// allocation may overlap the returned borrow. The borrow must be dropped
+    /// (NLL) before any `Wrap::on_body`/`on_error` call, which may
+    /// `heap::take(wrap)`.
     #[inline]
-    unsafe fn mixin_of(wrap: *mut Wrap) -> *mut Self {
-        // SAFETY: caller guarantees `wrap` points to a live Wrap; MIXIN_OFFSET
-        // is `offset_of!(Wrap, <field>)`, so the result is in-bounds and
-        // inherits `wrap`'s provenance over the whole allocation.
-        unsafe { wrap.byte_add(Wrap::MIXIN_OFFSET).cast::<Self>() }
+    unsafe fn mixin_of<'a>(wrap: *mut Wrap) -> &'a mut Self {
+        // SAFETY: caller guarantees `wrap` points to a live Wrap with no
+        // overlapping borrow; MIXIN_OFFSET is `offset_of!(Wrap, <field>)`, so
+        // the result is in-bounds and inherits `wrap`'s provenance over the
+        // whole allocation.
+        unsafe { &mut *wrap.byte_add(Wrap::MIXIN_OFFSET).cast::<Self>() }
     }
 
     fn on_data_generic<R: BodyResponse>(wrap: *mut Wrap, r: &mut R, chunk: &[u8], last: bool) {
@@ -137,8 +144,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
 
     fn on_aborted_handler<R>(wrap: *mut Wrap, _r: &mut R) {
         // SAFETY: wrap was registered via read_body and remains alive for the
-        // request duration; mixin_of yields an in-bounds field pointer.
-        unsafe { (*Self::mixin_of(wrap)).body = Vec::new() };
+        // request duration; mixin_of yields the in-bounds field. The temporary
+        // &mut ends at the `;`, before on_error.
+        unsafe { Self::mixin_of(wrap) }.body = Vec::new();
         // SAFETY: wrap is the original heap-allocated pointer; the temporary
         // &mut to the mixin field above has ended, so on_error receives sole
         // ownership of the allocation and may heap::take it.
@@ -151,13 +159,13 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         chunk: &[u8],
         last: bool,
     ) -> Result<(), bun_core::Error> {
-        // SAFETY: wrap was registered via read_body with full-Wrap provenance.
-        let mixin = unsafe { Self::mixin_of(wrap) };
         if last {
-            // Free everything after. Take via raw mixin ptr first — no `&mut Wrap`
-            // is live yet, so this short-lived field borrow does not overlap one.
-            // SAFETY: mixin is an in-bounds field of *wrap.
-            let mut body = unsafe { mem::take(&mut (*mixin).body) };
+            // Free everything after. Take via the mixin field first — no
+            // `&mut Wrap` is live yet, and the temporary `&mut Self` ends at
+            // the `;` (before `on_body`, which may heap::take(wrap)).
+            // SAFETY: wrap was registered via read_body with full-Wrap
+            // provenance; mixin_of yields the in-bounds field.
+            let mut body = mem::take(&mut unsafe { Self::mixin_of(wrap) }.body);
             resp.clear_on_data();
             // SAFETY: wrap is the original heap-allocated pointer; the &mut to
             // mixin.body has ended, so on_body receives sole ownership of the
@@ -173,18 +181,19 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // `body` drops here (was `defer body.deinit()` in Zig)
             Ok(())
         } else {
-            // SAFETY: mixin is an in-bounds field of *wrap; no other &mut into
-            // *wrap is live.
-            unsafe { (*mixin).body.extend_from_slice(chunk) };
+            // SAFETY: wrap was registered via read_body with full-Wrap
+            // provenance; mixin_of yields the in-bounds field and no other
+            // &mut into *wrap is live.
+            unsafe { Self::mixin_of(wrap) }.body.extend_from_slice(chunk);
             Ok(())
         }
     }
 
     fn on_oom(wrap: *mut Wrap, r: AnyResponse) {
         // SAFETY: wrap was registered via read_body with full-Wrap provenance;
-        // mixin_of yields an in-bounds field pointer and no other &mut into
-        // *wrap is live.
-        drop(unsafe { mem::take(&mut (*Self::mixin_of(wrap)).body) });
+        // mixin_of yields the in-bounds field and no other &mut into *wrap is
+        // live. The temporary &mut ends at the `;`, before on_error.
+        drop(mem::take(&mut unsafe { Self::mixin_of(wrap) }.body));
         r.clear_aborted();
         r.clear_on_data();
         r.clear_on_writable();
@@ -199,9 +208,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
 
     fn on_invalid(wrap: *mut Wrap, r: AnyResponse) {
         // SAFETY: wrap was registered via read_body with full-Wrap provenance;
-        // mixin_of yields an in-bounds field pointer and no other &mut into
-        // *wrap is live.
-        drop(unsafe { mem::take(&mut (*Self::mixin_of(wrap)).body) });
+        // mixin_of yields the in-bounds field and no other &mut into *wrap is
+        // live. The temporary &mut ends at the `;`, before on_error.
+        drop(mem::take(&mut unsafe { Self::mixin_of(wrap) }.body));
 
         r.clear_aborted();
         r.clear_on_data();

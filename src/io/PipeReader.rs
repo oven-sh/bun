@@ -1821,20 +1821,22 @@ impl WindowsBufferedReader {
 
     #[cfg(windows)]
     extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
-        // SAFETY: handle.data was set to the pipe itself before close.
-        let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
-        // SAFETY: pipe was Box-allocated; reclaim and drop.
-        drop(unsafe { bun_core::heap::take(this) });
+        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
+        // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
+        // ptr — no need to round-trip through `.data`.
+        // SAFETY: pipe was Box-allocated (into_raw in close_impl); reclaim.
+        drop(unsafe { bun_core::heap::take(handle) });
     }
 
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-        // SAFETY: handle.data was set to the tty itself before close.
-        let this = unsafe { (*handle).data.cast::<uv::uv_tty_t>() };
+        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
+        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
         // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `this` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(this));
-        drop(unsafe { bun_core::heap::take(this) });
+        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
+        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
+        // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
+        drop(unsafe { bun_core::heap::take(handle) });
     }
 
     pub fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {

@@ -86,8 +86,11 @@ unsafe extern "C" {
         ctx: *mut c_void,
     ) -> JSValue;
     fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
-    fn JSC__ArrayBuffer__ref(self_: *mut JSCArrayBuffer);
-    fn JSC__ArrayBuffer__deref(self_: *mut JSCArrayBuffer);
+    // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
+    // `UnsafeCell`); `&` is ABI-identical to a non-null `*mut` and the C++
+    // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
+    safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
+    safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
 }
 
 impl ArrayBuffer {
@@ -1032,12 +1035,12 @@ pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 // `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.
 unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
     unsafe fn ext_ref(this: *mut Self) {
-        // SAFETY: FFI — `this` is a valid `JSC::ArrayBuffer*` per trait contract.
-        unsafe { JSC__ArrayBuffer__ref(this) }
+        // `opaque_ref` is the centralised ZST-handle non-null deref proof;
+        // trait contract guarantees `this` is a valid `JSC::ArrayBuffer*`.
+        JSC__ArrayBuffer__ref(JSCArrayBuffer::opaque_ref(this))
     }
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: FFI — `this` is a valid `JSC::ArrayBuffer*` per trait contract.
-        unsafe { JSC__ArrayBuffer__deref(this) }
+        JSC__ArrayBuffer__deref(JSCArrayBuffer::opaque_ref(this))
     }
 }
 

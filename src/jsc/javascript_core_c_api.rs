@@ -268,12 +268,14 @@ unsafe extern "C" {
         arguments: *const JSValueRef,
     ) -> JSValue;
 
-    pub fn JSRemoteInspectorDisableAutoStart();
-    pub fn JSRemoteInspectorStart();
+    // safe: no parameters / by-value `bool` only — process-global JSC inspector
+    // toggles with no Rust-side preconditions.
+    pub safe fn JSRemoteInspectorDisableAutoStart();
+    pub safe fn JSRemoteInspectorStart();
 
-    pub fn JSRemoteInspectorSetLogToSystemConsole(enabled: bool);
-    pub fn JSRemoteInspectorGetInspectionEnabledByDefault() -> bool;
-    pub fn JSRemoteInspectorSetInspectionEnabledByDefault(enabled: bool);
+    pub safe fn JSRemoteInspectorSetLogToSystemConsole(enabled: bool);
+    pub safe fn JSRemoteInspectorGetInspectionEnabledByDefault() -> bool;
+    pub safe fn JSRemoteInspectorSetInspectionEnabledByDefault(enabled: bool);
 
     pub fn JSObjectGetProxyTarget(object: JSObjectRef) -> JSObjectRef;
 }

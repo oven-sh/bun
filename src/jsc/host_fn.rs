@@ -790,10 +790,18 @@ mod private {
     use super::*;
 
     // TODO(port): move to jsc_sys
+    //
+    // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
+    // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
+    // to a nullable `*const ZigString` via the guaranteed null-pointer
+    // optimization (C++ reads `nullptr` as "no name"). `data` /
+    // `input_function_ptr` are opaque round-trip pointers C++ only stores into
+    // the JSFunction's private slot (never dereferenced as Rust data) — same
+    // contract as `Bun__FFIFunction_setDataPtr` below.
     unsafe extern "C" {
-        pub fn Bun__CreateFFIFunctionWithDataValue(
-            global: *mut JSGlobalObject,
-            symbol_name: *const ZigString, // ?*const ZigString
+        pub safe fn Bun__CreateFFIFunctionWithDataValue(
+            global: &JSGlobalObject,
+            symbol_name: Option<&ZigString>,
             arg_count: u32,
             // Zig `*const JSHostFn` is a fn *pointer*; `JsHostFn` in Rust is already
             // `unsafe extern "C" fn(...)`, i.e. the pointer type.
@@ -801,9 +809,9 @@ mod private {
             data: *mut c_void,
         ) -> JSValue;
 
-        pub fn Bun__CreateFFIFunctionValue(
-            global_object: *mut JSGlobalObject,
-            symbol_name: *const ZigString, // ?*const ZigString
+        pub safe fn Bun__CreateFFIFunctionValue(
+            global_object: &JSGlobalObject,
+            symbol_name: Option<&ZigString>,
             arg_count: u32,
             function: JsHostFn,
             add_ptr_field: bool,
@@ -828,19 +836,14 @@ pub fn new_runtime_function(
     input_function_ptr: Option<*mut c_void>,
 ) -> JSValue {
     jsc::mark_binding();
-    // SAFETY: thin FFI wrapper; arguments forwarded as-is from caller-validated values.
-    // `JSGlobalObject` is an `UnsafeCell`-backed opaque handle, so `as_mut_ptr()`
-    // yields a `*mut` with write provenance from `&self` (C++ mutates VM/global state).
-    unsafe {
-        private::Bun__CreateFFIFunctionValue(
-            global_object.as_mut_ptr(),
-            symbol_name.map_or(core::ptr::null(), |s| std::ptr::from_ref(s)),
-            arg_count,
-            function_pointer,
-            add_ptr_property,
-            input_function_ptr.unwrap_or(core::ptr::null_mut()),
-        )
-    }
+    private::Bun__CreateFFIFunctionValue(
+        global_object,
+        symbol_name,
+        arg_count,
+        function_pointer,
+        add_ptr_property,
+        input_function_ptr.unwrap_or(core::ptr::null_mut()),
+    )
 }
 
 #[track_caller]
@@ -868,17 +871,13 @@ pub fn new_function_with_data(
     // Zig: `toJSHostFn(function)` wrapped a `comptime JSHostFnZig` here. In Rust the
     // caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
     // TODO(port): proc-macro — callers must apply `#[bun_jsc::host_fn]` themselves.
-    // SAFETY: thin FFI wrapper. `JSGlobalObject` is an `UnsafeCell`-backed opaque
-    // handle, so `as_mut_ptr()` yields a `*mut` with write provenance from `&self`.
-    unsafe {
-        private::Bun__CreateFFIFunctionWithDataValue(
-            global_object.as_mut_ptr(),
-            symbol_name.map_or(core::ptr::null(), |s| std::ptr::from_ref(s)),
-            arg_count,
-            function,
-            data,
-        )
-    }
+    private::Bun__CreateFFIFunctionWithDataValue(
+        global_object,
+        symbol_name,
+        arg_count,
+        function,
+        data,
+    )
 }
 
 // ───────────────────────────── DOMEffect ──────────────────────────────

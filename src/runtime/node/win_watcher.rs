@@ -37,18 +37,22 @@ bun_output::declare_scope!(fs_watch, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: singleton ptr → RacyCell, guarded by
+// PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
 // `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
 // (each Worker is its own OS thread + VM), so the unguarded read+write the
 // Zig original gets away with is a data race in Rust. Mirror the posix
 // `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
+// `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
+// unsynchronized racing reader observes either null or a fully-published
+// pointer — and lets every load/store be safe code (`RacyCell` required an
+// `unsafe` block per access for the same single-word op).
 //
 // NOTE: the manager binds to one VM's `uv_loop`, so even with the mutex this
 // remains a per-VM resource — `watch()` debug-asserts the caller's `vm`
 // matches the stored one. Promoting this to per-VM storage (e.g. `RareData`)
 // is the longer-term fix; the mutex closes the UB window meanwhile.
-static DEFAULT_MANAGER: bun_core::RacyCell<Option<*mut PathWatcherManager>> =
-    bun_core::RacyCell::new(None);
+static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
+    bun_core::AtomicCell::new(ptr::null_mut());
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -109,12 +113,8 @@ impl PathWatcherManager {
         // enable to create a new manager
         {
             let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-            // SAFETY: DEFAULT_MANAGER is only read/written while holding
-            // DEFAULT_MANAGER_MUTEX (see static decl).
-            unsafe {
-                if DEFAULT_MANAGER.read() == Some(this) {
-                    DEFAULT_MANAGER.write(None);
-                }
+            if DEFAULT_MANAGER.load() == this {
+                DEFAULT_MANAGER.store(ptr::null_mut());
             }
         }
 
@@ -494,28 +494,28 @@ pub fn watch(
 
     let manager = {
         let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-        // SAFETY: DEFAULT_MANAGER is only read/written while holding
+        // DEFAULT_MANAGER is only read/written while holding
         // DEFAULT_MANAGER_MUTEX (see static decl). `fs.watch()` is reachable
         // from Worker threads, so an unguarded read+write here would be a data
         // race — the prior "JS main thread only" claim was false.
-        unsafe {
-            match DEFAULT_MANAGER.read() {
-                Some(m) => {
-                    // The manager is bound to one VM's uv_loop; reusing it from a
-                    // different VM (Worker) would drive libuv cross-thread. Catch
-                    // that in debug until this becomes per-VM storage.
-                    debug_assert!(
-                        core::ptr::eq((*m).vm, vm),
-                        "win_watcher PathWatcherManager reused across VMs (Worker fs.watch)",
-                    );
-                    m
-                }
-                None => {
-                    let m = PathWatcherManager::init(vm);
-                    DEFAULT_MANAGER.write(Some(m));
-                    m
-                }
-            }
+        let m = DEFAULT_MANAGER.load();
+        if m.is_null() {
+            let m = PathWatcherManager::init(vm);
+            DEFAULT_MANAGER.store(m);
+            m
+        } else {
+            // The manager is bound to one VM's uv_loop; reusing it from a
+            // different VM (Worker) would drive libuv cross-thread. Catch
+            // that in debug until this becomes per-VM storage.
+            debug_assert!(
+                // SAFETY: `m` is a non-null pointer published under
+                // DEFAULT_MANAGER_MUTEX (which we hold) by `init` above on a
+                // prior call; the allocation lives until `deinit` clears the
+                // slot, so it is valid here.
+                core::ptr::eq(unsafe { (*m).vm }, vm),
+                "win_watcher PathWatcherManager reused across VMs (Worker fs.watch)",
+            );
+            m
         }
     };
 

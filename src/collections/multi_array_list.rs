@@ -191,12 +191,7 @@ macro_rules! __mal_split_raw_impl {
             let __len = self.len();
             $struct {
                 $( $field: ::core::ptr::slice_from_raw_parts_mut(
-                    // SAFETY: `items_raw` is `unsafe` only as a lint on the
-                    // returned pointer's read/write contract; merely obtaining
-                    // it is always sound. The pointer is computed by raw `add`
-                    // on the heap buffer base — no `&`/`&mut` intermediate —
-                    // so it carries the allocation's root provenance.
-                    unsafe { self.items_raw::<{ ::core::stringify!($field) }, $ty>() },
+                    self.items_raw::<{ ::core::stringify!($field) }, $ty>(),
                     __len,
                 ), )*
                 __mal: ::core::marker::PhantomData,
@@ -518,11 +513,13 @@ impl<T> Slice<T> {
     /// multiple distinct columns (which `items_mut`'s `&mut self` borrow would
     /// otherwise forbid). Compile-time type-checked like `items`.
     ///
-    /// # Safety
-    /// The returned pointer is valid for `self.len()` reads/writes; the caller
-    /// must not create overlapping `&mut` references to the same column.
+    /// Obtaining the pointer is always sound — it is computed by raw `add` on
+    /// the heap buffer base with no `&`/`&mut` intermediate, so it carries the
+    /// allocation's root provenance. The returned pointer is valid for
+    /// `self.len()` reads/writes; the caller must not create overlapping
+    /// `&mut` references to the same column when *dereferencing* it.
     #[inline]
-    pub unsafe fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
+    pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
             return ptr::NonNull::<F>::dangling().as_ptr();
@@ -768,12 +765,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         unsafe { core::slice::from_raw_parts_mut(p, self.len) }
     }
 
-    /// Raw column pointer; see [`Slice::items_raw`].
-    ///
-    /// # Safety
-    /// See [`Slice::items_raw`].
+    /// Raw column pointer; see [`Slice::items_raw`]. Obtaining the pointer is
+    /// always sound; the read/write contract is on the caller's *dereference*.
     #[inline]
-    pub unsafe fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
+    pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
             return ptr::NonNull::<F>::dangling().as_ptr();

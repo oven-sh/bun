@@ -1042,8 +1042,7 @@ impl Fd {
     #[cfg(windows)] #[inline] pub fn stdout() -> Fd { fd::WINDOWS_CACHED_STDOUT.get().copied().unwrap_or(Fd::INVALID) }
     #[cfg(windows)] #[inline] pub fn stderr() -> Fd { fd::WINDOWS_CACHED_STDERR.get().copied().unwrap_or(Fd::INVALID) }
     #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
-        // SAFETY: PEB is process-global; only reading the cached cwd handle.
-        Fd::from_system(unsafe { fd::windows_current_directory_handle() })
+        Fd::from_system(fd::windows_current_directory_handle())
     }
 
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
@@ -1133,8 +1132,7 @@ impl Fd {
         {
             match self.decode_windows() {
                 DecodeWindows::Windows(handle) => {
-                    // SAFETY: PEB is process-global, read-only access.
-                    let p = unsafe { fd::windows_process_parameters() };
+                    let p = fd::windows_process_parameters();
                     if handle == p.hStdInput { Some(Stdio::StdIn) }
                     else if handle == p.hStdOutput { Some(Stdio::StdOut) }
                     else if handle == p.hStdError { Some(Stdio::StdErr) }
@@ -1417,19 +1415,24 @@ pub mod fd {
         pub hStdError: *mut c_void,
     }
     #[cfg(windows)]
-    pub unsafe fn windows_process_parameters() -> &'static ProcessParametersStdio {
-        // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. The
-        // `crate::windows_sys::ProcessParameters` layout places the three
-        // handles at the same consecutive offsets as this view, so a pointer
-        // cast is sound.
-        // SAFETY: PEB is process-lifetime; handle fields are at fixed offsets.
+    pub fn windows_process_parameters() -> ProcessParametersStdio {
+        // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. Snapshot
+        // the three handles by value (raw-pointer reads — no `&` formed over
+        // OS-mutable memory) so the call site is safe.
+        // SAFETY: PEB and ProcessParameters are process-lifetime; the three
+        // handle fields are at fixed asserted offsets (`windows_sys`). Reading
+        // a `*mut c_void` is `Copy` and atomic on x64.
         unsafe {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
-            &*(core::ptr::addr_of!((*pp).hStdInput) as *const ProcessParametersStdio)
+            ProcessParametersStdio {
+                hStdInput: (*pp).hStdInput as *mut c_void,
+                hStdOutput: (*pp).hStdOutput as *mut c_void,
+                hStdError: (*pp).hStdError as *mut c_void,
+            }
         }
     }
     #[cfg(windows)]
-    pub unsafe fn windows_current_directory_handle() -> *mut c_void {
+    pub fn windows_current_directory_handle() -> *mut c_void {
         // Zig spec (`fd.zig:70`): `FD.cwd() = .fromNative(std.fs.cwd().fd)`,
         // and Zig's `std.fs.cwd()` on Windows reads
         // `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on

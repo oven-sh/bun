@@ -192,24 +192,24 @@ pub fn parseFromSource(source: []const u8) ?*InputSourceMap {
     return parseDataUrl(url);
 }
 
-/// Find the trailing `//# sourceMappingURL=<url>` comment in a file. The
-/// spec calls for the *last* such comment, hence `lastIndexOf`.
+/// Find the trailing `//# sourceMappingURL=<url>` comment in a file. Per
+/// the Source Map spec the comment MUST be on the last line of the file
+/// (see "3. Source Map Format" / "Linking generated code to source maps"),
+/// so we anchor to the final line rather than the first `lastIndexOf`
+/// match — a string literal earlier in the file containing that needle
+/// must not hijack the lookup.
 fn findSourceMappingURL(source: []const u8) ?[]const u8 {
+    // Trim trailing whitespace/newlines so a file that ends with
+    // `\n//# sourceMappingURL=...\n\n` still resolves to its final line.
+    const body = std.mem.trimRight(u8, source, " \r\n\t");
+    if (body.len == 0) return null;
+
+    const last_line_start = if (std.mem.lastIndexOfScalar(u8, body, '\n')) |i| i + 1 else 0;
+    const last_line = body[last_line_start..];
+
     const needle = "//# sourceMappingURL=";
-    // Require a preceding newline so we don't mis-detect the comment as
-    // the opening line of a compiled-away string literal etc.
-    const found = std.mem.lastIndexOf(u8, source, "\n" ++ needle) orelse {
-        // First line edge case: if the file literally starts with the
-        // comment, `lastIndexOf` with a leading newline would miss it.
-        if (bun.strings.hasPrefixComptime(source, needle)) {
-            const end = std.mem.indexOfScalarPos(u8, source, needle.len, '\n') orelse source.len;
-            return bun.strings.trim(source[needle.len..end], " \r\t");
-        }
-        return null;
-    };
-    const start = found + 1 + needle.len;
-    const end = std.mem.indexOfScalarPos(u8, source, start, '\n') orelse source.len;
-    return bun.strings.trim(source[start..end], " \r\t");
+    if (!bun.strings.hasPrefixComptime(last_line, needle)) return null;
+    return bun.strings.trim(last_line[needle.len..], " \r\t");
 }
 
 /// Decode `data:application/json[;base64],...` payloads. Returns `null`

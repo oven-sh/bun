@@ -1472,10 +1472,61 @@ describe("Bun.build chains inline input sourcemaps", () => {
       sourcemap: "inline",
     });
     expect(result.success).toBe(true);
-    // Must still produce a valid output map — regression guard for the
-    // "parse failure kills the whole build" path.
+
+    // Regression guard for the "parse failure kills the whole build"
+    // path: a valid output map must still be produced, and the deepest
+    // source must be the intermediate (no spurious chained source from
+    // the malformed payload).
     const text = await Bun.file(result.outputs[0].path).text();
-    expect(text).toMatch(/sourceMappingURL=data:application\/json;base64,/);
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
+  });
+
+  // Guard the last-line anchoring — a file that has a fully-valid
+  // `//# sourceMappingURL=` marker embedded EARLIER in the body (inside
+  // a template literal / multi-line string) but NO trailing comment must
+  // not get mis-chained off that in-body text. Without last-line
+  // anchoring, `lastIndexOf("\n//# sourceMappingURL=")` finds the
+  // embedded marker and chains through the fake payload — the authored
+  // "hijack.ts" would show up in the output sources.
+  test("sourceMappingURL marker in body is ignored (only trailing line counts)", async () => {
+    const hijackMap = {
+      version: 3,
+      sources: ["hijack.ts"],
+      sourcesContent: ["// i should not appear\n"],
+      names: [],
+      mappings: "AAAA;",
+    };
+    const hijackInline = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(hijackMap)).toString("base64")}`;
+    // Embed the full valid inline comment inside a template literal so
+    // the file parses as JS, but the real trailing line is the plain
+    // `export` — no sourcemap comment at end-of-file.
+    const intermediate = ["export const doc = `", hijackInline, "`;", "export const val = 99;", ""].join("\n");
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-nohijack", {
+      "intermediate.js": intermediate,
+      "entry.ts": `import { val } from './intermediate.js';\nconsole.log(val);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // The in-body marker must not hijack the chain — `hijack.ts` must
+    // NOT appear as a source in the final map.
+    expect(parsed.sources.some((s: string) => s.endsWith("hijack.ts"))).toBe(false);
+    expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
   });
 
   // Non-inline `sourceMappingURL=foo.js.map` references aren't chained

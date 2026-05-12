@@ -41,7 +41,7 @@ unsafe extern "C" {
     fn JSC__JSValue__isStrictEqual(this: JSValue, other: JSValue, global: *mut JSGlobalObject) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
     safe fn AsyncContextFrame__withAsyncContextIfNeeded(global: &JSGlobalObject, callback: JSValue) -> JSValue;
-    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
+    safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
 }
 
 impl JSValueNapiExt for JSValue {
@@ -69,10 +69,8 @@ impl JSValueNapiExt for JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
-        // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
-        bun_jsc::call_zero_is_throw!(global, || unsafe {
-            JSBuffer__bufferFromLength(global.as_ptr(), len as i64)
-        })
+        // FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
+        bun_jsc::call_zero_is_throw!(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
 }
 

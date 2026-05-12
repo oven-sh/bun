@@ -700,9 +700,7 @@ fn parse_array(
 
     // postgres dont really support arrays with more than 2^31 elements, 2ˆ32 is the max we support, but users should never reach this branch
     if !reached_end || array.len() > u32::MAX as usize {
-        #[cold]
-        fn cold() {}
-        cold();
+        bun_core::hint::cold();
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
 
@@ -1562,21 +1560,13 @@ impl<'a> Putter<'a> {
     }
 }
 
-// TODO(port): std.fmt.parseInt with radix 0 auto-detects base (0x/0o/0b prefixes).
-// Postgres text-format integers are always decimal, so radix 10 is used here.
-// Phase B: confirm no callers rely on prefix detection.
+// Postgres text-format integers are always decimal — radix 10.
 #[inline]
-fn parse_int_i32(s: &[u8]) -> Option<i32> {
-    core::str::from_utf8(s).ok()?.parse::<i32>().ok()
-}
+fn parse_int_i32(s: &[u8]) -> Option<i32> { bun_core::fmt::parse_int(s, 10).ok() }
 #[inline]
-fn parse_int_i64(s: &[u8]) -> Option<i64> {
-    core::str::from_utf8(s).ok()?.parse::<i64>().ok()
-}
+fn parse_int_i64(s: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(s, 10).ok() }
 #[inline]
-fn parse_int_u32(s: &[u8]) -> Option<u32> {
-    core::str::from_utf8(s).ok()?.parse::<u32>().ok()
-}
+fn parse_int_u32(s: &[u8]) -> Option<u32> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // External C++ formatting functions
 // TODO(port): move to <area>_sys

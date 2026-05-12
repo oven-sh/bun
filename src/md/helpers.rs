@@ -166,27 +166,13 @@ pub fn is_digit(c: u8) -> bool {
     c.is_ascii_digit()
 }
 
-/// Check if byte is ASCII hex digit.
-#[inline]
-pub fn is_hex_digit(c: u8) -> bool {
-    c.is_ascii_hexdigit()
-}
-
 /// Check if a Unicode codepoint is whitespace per CommonMark spec.
 /// This includes ASCII whitespace + Unicode Zs category.
 pub fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
-        return is_whitespace(u8::try_from(codepoint).expect("int cast"));
+        return is_whitespace(codepoint as u8);
     }
-    matches!(
-        codepoint,
-        0x00A0          // NO-BREAK SPACE
-        | 0x1680        // OGHAM SPACE MARK
-        | 0x2000..=0x200A // EN QUAD...HAIR SPACE
-        | 0x202F        // NARROW NO-BREAK SPACE
-        | 0x205F        // MEDIUM MATHEMATICAL SPACE
-        | 0x3000        // IDEOGRAPHIC SPACE
-    )
+    bun_string::strings::is_unicode_space_separator(codepoint)
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
@@ -345,7 +331,7 @@ pub fn find_entity(content: &[u8], start: usize) -> Option<usize> {
             // Hex
             pos += 1;
             let digit_start = pos;
-            while pos < content.len() && is_hex_digit(content[pos]) && pos - digit_start < 6 {
+            while pos < content.len() && content[pos].is_ascii_hexdigit() && pos - digit_start < 6 {
                 pos += 1;
             }
             if pos > digit_start && pos < content.len() && content[pos] == b';' {
@@ -480,12 +466,8 @@ pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
             if ec == b';' {
                 break;
             }
-            cp = cp.wrapping_mul(16).wrapping_add(match ec {
-                b'0'..=b'9' => (ec - b'0') as u32,
-                b'a'..=b'f' => (ec - b'a' + 10) as u32,
-                b'A'..=b'F' => (ec - b'A' + 10) as u32,
-                _ => 0,
-            });
+            // md4c is lenient on bad hex (`_ => 0`) — preserve via .unwrap_or(0).
+            cp = cp.wrapping_mul(16).wrapping_add(u32::from(bun_core::fmt::hex_digit_value(ec).unwrap_or(0)));
         }
     } else {
         for &ec in &entity_text[2..] {
@@ -568,16 +550,8 @@ pub fn generate_slug<'a>(
         text_buf.truncate(out_len);
         text_buf.push(b'-');
 
-        // Inline decimal formatting (count is always >= 1)
-        let mut dec_buf: [u8; 10] = [0; 10];
-        let mut v = count;
-        let mut i: usize = dec_buf.len();
-        while v > 0 {
-            i -= 1;
-            dec_buf[i] = u8::try_from(u32::from(b'0') + v % 10).expect("int cast");
-            v /= 10;
-        }
-        text_buf.extend_from_slice(&dec_buf[i..]);
+        let mut dec_buf = [0u8; 20];
+        text_buf.extend_from_slice(bun_core::fmt::itoa_u64(&mut dec_buf, u64::from(count)));
         return text_buf.as_slice();
     }
 

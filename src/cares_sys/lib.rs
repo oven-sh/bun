@@ -6,17 +6,14 @@
 pub mod c_ares_draft;
 
 /// Winsock typedefs not provided by `libc` on `x86_64-pc-windows-msvc`.
-/// Kept local so this `*_sys` crate stays leaf (no `bun_sys`/`windows-sys`).
 #[cfg(windows)]
 pub(crate) mod winsock {
-    use core::ffi::{c_int, c_long, c_ushort};
+    use core::ffi::{c_int, c_long};
     pub type socklen_t = c_int; // ws2tcpip.h: `typedef int socklen_t;`
-    #[repr(C)] #[derive(Clone, Copy)]
-    pub struct sockaddr { pub sa_family: c_ushort, pub sa_data: [u8; 14] }
-    #[repr(C)] #[derive(Clone, Copy)]
-    pub struct sockaddr_in { pub sin_family: c_ushort, pub sin_port: c_ushort, pub sin_addr: [u8; 4], pub sin_zero: [u8; 8] }
-    #[repr(C)] #[derive(Clone, Copy)]
-    pub struct sockaddr_in6 { pub sin6_family: c_ushort, pub sin6_port: c_ushort, pub sin6_flowinfo: u32, pub sin6_addr: [u8; 16], pub sin6_scope_id: u32 }
+    // Same nominal type as `bun_sys::posix::sockaddr*`; sin_addr is `in_addr{s_addr}`
+    // (vs the previous `[u8;4]`) but the only caller (c_ares.rs `get_sockaddr`)
+    // takes `&raw mut → cast<c_void>`, so the field's nominal type is transparent.
+    pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
     #[repr(C)] #[derive(Clone, Copy)]
     pub struct timeval { pub tv_sec: c_long, pub tv_usec: c_long }
     /// c-ares' `ares.h` defines its own POSIX-layout `struct iovec { void *iov_base; size_t iov_len; }`

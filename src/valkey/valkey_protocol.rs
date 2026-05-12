@@ -250,11 +250,7 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_integer(&mut self) -> Result<i64, RedisError> {
         let str = self.read_until_crlf()?;
-        // TODO(port): RESP integers are ASCII; from_utf8 here only rejects already-invalid input.
-        core::str::from_utf8(str)
-            .ok()
-            .and_then(|s| s.parse::<i64>().ok())
-            .ok_or(RedisError::InvalidInteger)
+        bun_core::fmt::parse_int::<i64>(str, 10).map_err(|_| RedisError::InvalidInteger)
     }
 
     pub fn read_double(&mut self) -> Result<f64, RedisError> {
@@ -272,11 +268,7 @@ impl<'a> ValkeyReader<'a> {
         }
 
         // Parse normal double
-        // TODO(port): RESP doubles are ASCII; from_utf8 here only rejects already-invalid input.
-        core::str::from_utf8(str)
-            .ok()
-            .and_then(|s| s.parse::<f64>().ok())
-            .ok_or(RedisError::InvalidDouble)
+        bun_core::fmt::parse_f64(str).ok_or(RedisError::InvalidDouble)
     }
 
     pub fn read_boolean(&mut self) -> Result<bool, RedisError> {

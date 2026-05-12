@@ -18,7 +18,7 @@ pub fn lookup(name: &[u8]) -> Option<[u32; 2]> {
     let mut high: usize = ENTITY_MAP.len();
     while low < high {
         let mid = low + (high - low) / 2;
-        let cmp = order_strings(ENTITY_MAP[mid].name, name);
+        let cmp = bun_string::strings::order(ENTITY_MAP[mid].name, name);
         if cmp == Ordering::Less {
             low = mid + 1;
         } else if cmp == Ordering::Greater {
@@ -28,20 +28,6 @@ pub fn lookup(name: &[u8]) -> Option<[u32; 2]> {
         }
     }
     None
-}
-
-fn order_strings(a: &[u8], b: &[u8]) -> Ordering {
-    let len = a.len().min(b.len());
-    debug_assert_eq!(a[..len].len(), b[..len].len());
-    for (ca, cb) in a[..len].iter().zip(b[..len].iter()) {
-        if ca < cb {
-            return Ordering::Less;
-        }
-        if ca > cb {
-            return Ordering::Greater;
-        }
-    }
-    a.len().cmp(&b.len())
 }
 
 #[rustfmt::skip]

@@ -147,10 +147,6 @@ pub mod postgres {
     pub mod postgres_protocol;
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[path = "DebugSocketMonitorReader.rs"]
-    pub mod debug_socket_monitor_reader;
-    #[path = "DebugSocketMonitorWriter.rs"]
-    pub mod debug_socket_monitor_writer;
 
     pub mod types {
         #[path = "int_types.rs"]

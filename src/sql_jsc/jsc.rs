@@ -375,7 +375,7 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+        bun_io::js_vm_ctx()
     }
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
@@ -445,6 +445,37 @@ impl TimerHeap {
         // inserted by the caller.
         unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
     }
+}
+
+/// Stamp out `from_timer_ptr` / `from_max_lifetime_timer_ptr` on a SQL
+/// connection type. Both connection types embed two private
+/// `JsCell<EventLoopTimer>` slots; `bun_runtime::__bun_fire_timer` recovers
+/// the owner via `container_of` but cannot name the private fields, so each
+/// type exposes this pair of thunks. (Zig inlines `@fieldParentPtr` directly
+/// — these accessors are purely a Rust-visibility port artifact.)
+#[doc(hidden)]
+#[macro_export]
+macro_rules! impl_timer_backref {
+    ($T:ty, $timer:ident, $max:ident) => {
+        impl $T {
+            /// Recover `*mut Self` from its intrusive idle-timeout timer slot.
+            /// # Safety
+            /// `t` must point at this type's idle-timeout `EventLoopTimer` field.
+            #[inline]
+            pub unsafe fn from_timer_ptr(t: *mut $crate::jsc::EventLoopTimer) -> *mut Self {
+                // SAFETY: caller contract.
+                unsafe { bun_core::from_field_ptr!(Self, $timer, t) }
+            }
+            /// Recover `*mut Self` from its intrusive max-lifetime timer slot.
+            /// # Safety
+            /// `t` must point at this type's max-lifetime `EventLoopTimer` field.
+            #[inline]
+            pub unsafe fn from_max_lifetime_timer_ptr(t: *mut $crate::jsc::EventLoopTimer) -> *mut Self {
+                // SAFETY: caller contract.
+                unsafe { bun_core::from_field_ptr!(Self, $max, t) }
+            }
+        }
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -673,193 +704,18 @@ pub use bun_jsc::JsClass;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod codegen {
-    use super::{JSGlobalObject, JSValue};
-    use core::ffi::c_void;
+    ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+    ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
+        as crate::postgres::PostgresSQLQuery, impl_js_class { binding, columns, pendingValue, target });
 
-    macro_rules! cached_slot {
-        ($get:ident, $set:ident, $get_ext:ident, $set_ext:ident) => {
-            // C++ side (`generate-classes.ts`) defines these as
-            // `extern JSC_CALLCONV` (= SysV ABI on win-x64); a plain
-            // `extern "C"` block here is the Win64 ABI on Windows and would
-            // mis-pass args → null deref. See commit 2a62b6aa97c1 for the
-            // analogous UDPSocket__create fix.
-            //
-            // SAFETY (safe fn): `JSValue` is a by-value NaN-boxed scalar and
-            // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`
-            // with write provenance (the type is `UnsafeCell`-backed). The C++
-            // side reads no caller memory beyond these, so no caller-side
-            // preconditions remain → `safe fn`.
-            ::bun_jsc::jsc_abi_extern! {
-                safe fn $get_ext(this_value: JSValue) -> JSValue;
-                safe fn $set_ext(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
-            }
-            pub fn $get(this_value: JSValue) -> Option<JSValue> {
-                let result = $get_ext(this_value);
-                if result.is_empty() { None } else { Some(result) }
-            }
-            pub fn $set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-                $set_ext(this_value, global, value)
-            }
-        };
-    }
-
-    macro_rules! get_constructor {
-        ($extern_name:ident) => {
-            // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
-            // SAFETY (safe fn): `&JSGlobalObject` is ABI-identical to a
-            // non-null `JSGlobalObject*`; the reference type discharges the
-            // validity precondition, so no caller-side obligation remains.
-            ::bun_jsc::jsc_abi_extern! {
-                safe fn $extern_name(global: &JSGlobalObject) -> JSValue;
-            }
-            pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                $extern_name(global)
-            }
-        };
-    }
-
-    macro_rules! js_class_fns {
-        ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident) => {
-            // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
-            // SAFETY (safe fn): `JSValue` is by-value; `&JSGlobalObject` is
-            // ABI-identical to a non-null `JSGlobalObject*`. `$create`'s `ptr`
-            // is an opaque round-trip the C++ side stores into `m_ctx` without
-            // dereferencing here; the safe `to_js` wrapper already accepts the
-            // same raw-pointer shape from safe code, so the memory-validity
-            // contract is identical → `safe fn` (precedent:
-            // `JSC__constructObjectFromDataCell` in SQLDataCell.rs).
-            ::bun_jsc::jsc_abi_extern! {
-                safe fn $create(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                safe fn $from_js(value: JSValue) -> *mut c_void;
-                safe fn $from_js_direct(value: JSValue) -> *mut c_void;
-            }
-            pub fn to_js(ptr: *mut $payload, g: &JSGlobalObject) -> JSValue {
-                $create(g, ptr.cast::<c_void>())
-            }
-            pub fn from_js(v: JSValue) -> Option<*mut $payload> {
-                let p = $from_js(v);
-                if p.is_null() { None } else { Some(p.cast::<$payload>()) }
-            }
-            /// [`from_js`] as a [`ParentRef`] — encapsulates the per-call-site
-            /// raw-pointer backref deref. The payload is the live `m_ctx`
-            /// of the JS wrapper `v`, which is GC-rooted by the caller's
-            /// `CallFrame` for the duration of the host call, so the
-            /// `ParentRef` invariant (pointee outlives holder) holds for any
-            /// stack-scoped use.
-            pub fn from_js_ref(v: JSValue) -> Option<::bun_ptr::ParentRef<$payload>> {
-                // `from_js` already filtered null → `NonNull::new` cannot fail;
-                // `and_then` keeps this branch-free in the `None` case.
-                from_js(v)
-                    .and_then(core::ptr::NonNull::new)
-                    .map(::bun_ptr::ParentRef::from)
-            }
-            pub fn from_js_direct(v: JSValue) -> Option<*mut $payload> {
-                let p = $from_js_direct(v);
-                if p.is_null() { None } else { Some(p.cast::<$payload>()) }
-            }
-        };
-        // Variant that also emits `impl JsClass` (Zig: `value.as(T)`). Some
-        // payload types already provide their own `impl JsClass` (e.g. the
-        // Connection types), so the impl is opt-in via this trailing marker
-        // rather than unconditional.
-        ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident, impl_js_class) => {
-            js_class_fns!($payload, $create, $from_js, $from_js_direct);
-            impl crate::jsc::JsClass for $payload {
-                fn to_js(self, g: &JSGlobalObject) -> JSValue {
-                    // Ownership transfers to the C++ wrapper (freed via
-                    // `${T}Class__finalize`); box and hand off the raw ptr.
-                    to_js(::bun_core::heap::alloc(self), g)
-                }
-                fn from_js(v: JSValue) -> Option<*mut Self> { from_js(v) }
-                fn from_js_direct(v: JSValue) -> Option<*mut Self> { from_js_direct(v) }
-                fn get_constructor(g: &JSGlobalObject) -> JSValue { get_constructor(g) }
-            }
-        };
-    }
-
-    #[allow(non_snake_case)]
-    pub mod JSPostgresSQLConnection {
-        use super::*;
-        cached_slot!(queries_get_cached, queries_set_cached,
-            PostgresSQLConnectionPrototype__queriesGetCachedValue,
-            PostgresSQLConnectionPrototype__queriesSetCachedValue);
-        cached_slot!(onconnect_get_cached, onconnect_set_cached,
-            PostgresSQLConnectionPrototype__onconnectGetCachedValue,
-            PostgresSQLConnectionPrototype__onconnectSetCachedValue);
-        cached_slot!(onclose_get_cached, onclose_set_cached,
-            PostgresSQLConnectionPrototype__oncloseGetCachedValue,
-            PostgresSQLConnectionPrototype__oncloseSetCachedValue);
-        get_constructor!(PostgresSQLConnection__getConstructor);
-        js_class_fns!(crate::postgres::PostgresSQLConnection,
-            PostgresSQLConnection__create,
-            PostgresSQLConnection__fromJS,
-            PostgresSQLConnection__fromJSDirect);
-    }
-
-    #[allow(non_snake_case)]
-    pub mod JSPostgresSQLQuery {
-        use super::*;
-        cached_slot!(binding_get_cached, binding_set_cached,
-            PostgresSQLQueryPrototype__bindingGetCachedValue,
-            PostgresSQLQueryPrototype__bindingSetCachedValue);
-        cached_slot!(columns_get_cached, columns_set_cached,
-            PostgresSQLQueryPrototype__columnsGetCachedValue,
-            PostgresSQLQueryPrototype__columnsSetCachedValue);
-        cached_slot!(pending_value_get_cached, pending_value_set_cached,
-            PostgresSQLQueryPrototype__pendingValueGetCachedValue,
-            PostgresSQLQueryPrototype__pendingValueSetCachedValue);
-        cached_slot!(target_get_cached, target_set_cached,
-            PostgresSQLQueryPrototype__targetGetCachedValue,
-            PostgresSQLQueryPrototype__targetSetCachedValue);
-        get_constructor!(PostgresSQLQuery__getConstructor);
-        js_class_fns!(crate::postgres::PostgresSQLQuery,
-            PostgresSQLQuery__create,
-            PostgresSQLQuery__fromJS,
-            PostgresSQLQuery__fromJSDirect,
-            impl_js_class);
-    }
-
-    pub mod js_mysql_connection {
-        use super::*;
-        cached_slot!(queries_get_cached, queries_set_cached,
-            MySQLConnectionPrototype__queriesGetCachedValue,
-            MySQLConnectionPrototype__queriesSetCachedValue);
-        cached_slot!(onconnect_get_cached, onconnect_set_cached,
-            MySQLConnectionPrototype__onconnectGetCachedValue,
-            MySQLConnectionPrototype__onconnectSetCachedValue);
-        cached_slot!(onclose_get_cached, onclose_set_cached,
-            MySQLConnectionPrototype__oncloseGetCachedValue,
-            MySQLConnectionPrototype__oncloseSetCachedValue);
-        get_constructor!(MySQLConnection__getConstructor);
-        js_class_fns!(crate::mysql::js_my_sql_connection::JSMySQLConnection,
-            MySQLConnection__create,
-            MySQLConnection__fromJS,
-            MySQLConnection__fromJSDirect);
-    }
+    ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
+        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
     #[allow(non_snake_case)]
     pub use js_mysql_connection as JSMySQLConnection;
 
-    pub mod js_mysql_query {
-        use super::*;
-        cached_slot!(binding_get_cached, binding_set_cached,
-            MySQLQueryPrototype__bindingGetCachedValue,
-            MySQLQueryPrototype__bindingSetCachedValue);
-        cached_slot!(columns_get_cached, columns_set_cached,
-            MySQLQueryPrototype__columnsGetCachedValue,
-            MySQLQueryPrototype__columnsSetCachedValue);
-        cached_slot!(pending_value_get_cached, pending_value_set_cached,
-            MySQLQueryPrototype__pendingValueGetCachedValue,
-            MySQLQueryPrototype__pendingValueSetCachedValue);
-        cached_slot!(target_get_cached, target_set_cached,
-            MySQLQueryPrototype__targetGetCachedValue,
-            MySQLQueryPrototype__targetSetCachedValue);
-        get_constructor!(MySQLQuery__getConstructor);
-        js_class_fns!(crate::mysql::js_mysql_query::JSMySQLQuery,
-            MySQLQuery__create,
-            MySQLQuery__fromJS,
-            MySQLQuery__fromJSDirect,
-            impl_js_class);
-    }
+    ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
+        as crate::mysql::js_mysql_query::JSMySQLQuery, impl_js_class { binding, columns, pendingValue, target });
     #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;
 }

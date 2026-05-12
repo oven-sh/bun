@@ -22,11 +22,7 @@ use crate::windows_watcher as platform;
 #[cfg(target_arch = "wasm32")]
 compile_error!("Unsupported platform");
 
-bun_core::declare_scope!(watcher, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(watcher, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, watcher, visible);
 
 // ─── constants ────────────────────────────────────────────────────────────
 

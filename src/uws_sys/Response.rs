@@ -576,6 +576,52 @@ macro_rules! any_dispatch {
     };
 }
 
+/// Stamp the per-variant ZST adapter triplet and register it via the matching
+/// `Response<SSL>` / `H3Response` `$method`. Mirrors Zig's hand-rolled
+/// `wrapper` structs in `Response.zig` (`onData`/`onWritable`/`onTimeout`/
+/// `onAborted`): each arm is a generic fn *item* monomorphized over `<U, H>`,
+/// so it is itself a ZST satisfying both the `Response<SSL>` bound
+/// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
+/// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
+///
+/// Syntax:
+///   any_response_register_cb! {
+///       self, $method, $opt_data;
+///       <U, H: [bounds…]>
+///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
+///   }
+/// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
+/// - `r` is the typed `&mut {TLS,TCP,H3}Response` param; `any` is the
+///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
+macro_rules! any_response_register_cb {
+    (
+        $self:expr, $method:ident, $opt_data:expr;
+        <$U:ident, $H:ident : [$($bound:tt)*]>
+        |$u:ident $(, $pre:ident : $pre_ty:ty)* ; $r:ident, $any:ident $(, $post:ident : $post_ty:ty)*| -> $ret:ty
+        { $($body:tt)* }
+    ) => {{
+        const { assert!(core::mem::size_of::<$H>() == 0, "handler must be a fn item or capture-less closure") };
+        fn ssl<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TLSResponse $(, $post: $post_ty)*) -> $ret {
+            let $any = AnyResponse::SSL(std::ptr::from_mut($r));
+            $($body)*
+        }
+        fn tcp<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TCPResponse $(, $post: $post_ty)*) -> $ret {
+            let $any = AnyResponse::TCP(std::ptr::from_mut($r));
+            $($body)*
+        }
+        fn h3<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
+            let $u = std::ptr::from_mut::<$U>($u);
+            let $any = AnyResponse::H3(std::ptr::from_mut($r));
+            $($body)*
+        }
+        match $self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl::<$U, $H>, $opt_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp::<$U, $H>, $opt_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3::<$U, $H>, $opt_data),
+        }
+    }};
+}
+
 impl AnyResponse {
     pub fn assert_ssl(self) -> *mut TLSResponse {
         match self {
@@ -671,30 +717,10 @@ impl AnyResponse {
     where
         H: Fn(*mut U, &[u8], bool) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
-        // Per-variant adapters drop the typed `*Response` arg (Zig `wrapper` structs).
-        // They are generic fn *items* (ZSTs), so they monomorphize over the user `H`
-        // and can be passed both to `Response::<SSL>::on_data` (generic ZST handler)
-        // and to `H3Response::on_data` (fn-pointer coercion).
-        fn ssl<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
-            u: *mut U, _r: &mut TLSResponse, d: &[u8], l: bool,
-        ) {
-            thunk::zst::<H>()(u, d, l)
-        }
-        fn tcp<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
-            u: *mut U, _r: &mut TCPResponse, d: &[u8], l: bool,
-        ) {
-            thunk::zst::<H>()(u, d, l)
-        }
-        fn h3<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
-            u: &mut U, _r: &mut H3Response, d: &[u8], l: bool,
-        ) {
-            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), d, l)
-        }
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_data(ssl::<U, H>, optional_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_data(tcp::<U, H>, optional_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_data(h3::<U, H>, optional_data),
+        any_response_register_cb! {
+            self, on_data, optional_data;
+            <U, H: [Fn(*mut U, &[u8], bool) + Copy + 'static]>
+            |u; _r, _any, d: &[u8], l: bool| -> () { thunk::zst::<H>()(u, d, l) }
         }
     }
 
@@ -770,28 +796,10 @@ impl AnyResponse {
     where
         H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
-        // Per-variant adapters wrap the typed `*Response` back into `AnyResponse`
-        // before calling `H` (mirrors Zig's per-variant `wrapper` structs).
-        fn ssl<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
-            u: *mut U, off: u64, r: &mut TLSResponse,
-        ) -> bool {
-            thunk::zst::<H>()(u, off, AnyResponse::SSL(std::ptr::from_mut(r)))
-        }
-        fn tcp<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
-            u: *mut U, off: u64, r: &mut TCPResponse,
-        ) -> bool {
-            thunk::zst::<H>()(u, off, AnyResponse::TCP(std::ptr::from_mut(r)))
-        }
-        fn h3<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
-            u: &mut U, off: u64, r: &mut H3Response,
-        ) -> bool {
-            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), off, AnyResponse::H3(std::ptr::from_mut(r)))
-        }
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_writable(ssl::<U, H>, optional_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_writable(tcp::<U, H>, optional_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_writable(h3::<U, H>, optional_data),
+        any_response_register_cb! {
+            self, on_writable, optional_data;
+            <U, H: [Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static]>
+            |u, off: u64; r, any| -> bool { thunk::zst::<H>()(u, off, any) }
         }
     }
 
@@ -799,20 +807,10 @@ impl AnyResponse {
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
-        fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
-            thunk::zst::<H>()(u, AnyResponse::SSL(std::ptr::from_mut(r)))
-        }
-        fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
-            thunk::zst::<H>()(u, AnyResponse::TCP(std::ptr::from_mut(r)))
-        }
-        fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
-            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
-        }
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_timeout(ssl::<U, H>, optional_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_timeout(tcp::<U, H>, optional_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_timeout(h3::<U, H>, optional_data),
+        any_response_register_cb! {
+            self, on_timeout, optional_data;
+            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
+            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
         }
     }
 
@@ -820,20 +818,10 @@ impl AnyResponse {
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
-        fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
-            thunk::zst::<H>()(u, AnyResponse::SSL(std::ptr::from_mut(r)))
-        }
-        fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
-            thunk::zst::<H>()(u, AnyResponse::TCP(std::ptr::from_mut(r)))
-        }
-        fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
-            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
-        }
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_aborted(ssl::<U, H>, optional_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_aborted(tcp::<U, H>, optional_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_aborted(h3::<U, H>, optional_data),
+        any_response_register_cb! {
+            self, on_aborted, optional_data;
+            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
+            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
         }
     }
 

@@ -1946,7 +1946,8 @@ pub mod pattern {
         OptionalCatchAll = 3,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, bun_core::EnumTag)]
+    #[enum_tag(existing = Tag)]
     pub enum Value {
         Static(HashedString),
         Dynamic(TinyPtr),
@@ -1955,15 +1956,6 @@ pub mod pattern {
     }
 
     impl Value {
-        pub fn tag(&self) -> Tag {
-            match self {
-                Value::Static(_) => Tag::Static,
-                Value::Dynamic(_) => Tag::Dynamic,
-                Value::CatchAll(_) => Tag::CatchAll,
-                Value::OptionalCatchAll(_) => Tag::OptionalCatchAll,
-            }
-        }
-
         pub fn eql(a: &Value, b: &Value) -> bool {
             a.tag() == b.tag()
                 && match (a, b) {
@@ -2128,9 +2120,7 @@ mod tests {
         ) -> Result<Routes, bun_core::Error> {
             Output::init_test();
             make_test(test_name.as_bytes(), data)?;
-            // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
-            bun_ast::expr::Expr::data_store_create();
-            bun_ast::stmt::Stmt::data_store_create();
+            bun_ast::initialize_store();
             // const fs = try FileSystem.init(null);
             let _ = bun_resolver::fs::FileSystem::init(None)?;
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -2204,9 +2194,7 @@ mod tests {
             data: &[(&str, &str)],
         ) -> Result<Router<'static>, bun_core::Error> {
             make_test(test_name.as_bytes(), data)?;
-            // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
-            bun_ast::expr::Expr::data_store_create();
-            bun_ast::stmt::Stmt::data_store_create();
+            bun_ast::initialize_store();
             // const fs = try FileSystem.initWithForce(null, true);
             let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;

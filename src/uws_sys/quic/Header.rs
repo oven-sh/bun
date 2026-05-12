@@ -117,14 +117,8 @@ impl Qpack {
         // `build_request` produces mixed-case names ("Transfer-Encoding",
         // "Host", …). Lowercase into a small stack buffer first — every known
         // key is ≤ 19 bytes, so anything longer is a guaranteed miss.
-        let mut buf = [0u8; 19];
-        if name.len() > buf.len() {
-            return None;
-        }
-        let lower = &mut buf[..name.len()];
-        for (d, s) in lower.iter_mut().zip(name) {
-            *d = s.to_ascii_lowercase();
-        }
+        let (buf, len) = bun_core::strings::ascii_lowercase_buf::<19>(name)?;
+        let lower = &buf[..len];
         // PERF(port): length-gated match instead of phf::Map. 34 keys spread
         // over 14 distinct lengths (max 5 per bucket, first bytes mostly
         // unique within a bucket), so the outer length dispatch rejects most

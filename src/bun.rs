@@ -1278,7 +1278,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
         if self.value == LazyBoolValue::Unknown {
             // SAFETY: self points to Parent.<field> at FIELD_OFFSET
             let parent = unsafe {
-                &mut *(core::ptr::from_mut(self).cast::<u8>().sub(FIELD_OFFSET).cast::<Parent>())
+                &mut *bun_ptr::container_of::<Parent, _>(core::ptr::from_mut(self), FIELD_OFFSET)
             };
             self.value = if (self.getter)(parent) {
                 LazyBoolValue::Yes
@@ -1671,38 +1671,22 @@ pub fn unsafe_assert(condition: bool) {
 }
 
 // ─── time ─────────────────────────────────────────────────────────────────────
-// PERF(port): was comptime enum monomorphization — profile in Phase B
+// `bun.timespec` is canonical in `bun_core::util::Timespec`. FakeTimers writes
+// `bun_core::mock_time` (FakeTimers.rs:65/87), so `Timespec::now(AllowMockedTime)`
+// already sees the fake clock — the `bun_jsc::Jest::...` path was a Phase-A stub
+// that never existed.
+pub use bun_core::{Timespec as timespec, TimespecMockMode, timespec_mode, mock_time};
+
+#[inline]
 pub fn get_rough_tick_count(mock_mode: TimespecMockMode) -> timespec {
-    if matches!(mock_mode, TimespecMockMode::AllowMockedTime) {
-        if let Some(fake_time) =
-            bun_jsc::Jest::bun_test::FakeTimers::current_time().get_timespec_now()
-        {
-            return fake_time;
-        }
-    }
-    let ns_value = hw_timer::now_ns();
-    timespec {
-        sec: i64::try_from(ns_value / NS_PER_S).expect("int cast"),
-        nsec: i64::try_from(ns_value % NS_PER_S).expect("int cast"),
-    }
+    bun_core::Timespec::now(mock_mode)
 }
 
 /// Monotonic milliseconds. Values are only meaningful relative to other calls.
-// PERF(port): was comptime enum monomorphization — profile in Phase B
+#[inline]
 pub fn get_rough_tick_count_ms(mock_mode: TimespecMockMode) -> u64 {
-    if matches!(mock_mode, TimespecMockMode::AllowMockedTime) {
-        if let Some(fake_time) =
-            bun_jsc::Jest::bun_test::FakeTimers::current_time().get_timespec_now()
-        {
-            return fake_time.ns() / NS_PER_MS;
-        }
-    }
-    hw_timer::now_ms()
+    bun_core::Timespec::now(mock_mode).ms_unsigned()
 }
-
-const NS_PER_S: u64 = 1_000_000_000;
-use bun_core::time::NS_PER_MS;
-const MS_PER_S: i64 = 1_000;
 
 #[derive(Copy, Clone)]
 pub struct MaybeMockedTimespec {
@@ -1714,160 +1698,6 @@ impl MaybeMockedTimespec {
         MaybeMockedTimespec { mocked: 0, timespec: timespec::EPOCH };
     pub fn eql(&self, other: &MaybeMockedTimespec) -> bool {
         self.mocked == other.mocked && self.timespec.eql(&other.timespec)
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-#[allow(non_camel_case_types)]
-pub struct timespec {
-    pub sec: i64,
-    pub nsec: i64,
-}
-
-// PORT NOTE: reshaped — Zig nested `MockMode` inside `timespec`; Rust can't
-// declare an enum inside an inherent impl. Use `timespec::MockMode` via this
-// path-aliased module trick in Phase B, or reference `TimespecMockMode` directly.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum TimespecMockMode {
-    AllowMockedTime,
-    ForceRealTime,
-}
-
-impl timespec {
-    pub const EPOCH: timespec = timespec { sec: 0, nsec: 0 };
-    pub type MockMode = TimespecMockMode;
-    // TODO(port): inherent associated types are unstable; Phase B may move to a
-    // `mod timespec { pub struct timespec; pub enum MockMode; }` layout.
-
-    pub fn eql(&self, other: &timespec) -> bool {
-        self.sec == other.sec && self.nsec == other.nsec
-    }
-
-    // TODO: this is wrong!
-    pub fn duration(&self, other: &timespec) -> timespec {
-        let mut sec_diff = self.sec.wrapping_sub(other.sec);
-        let mut nsec_diff = self.nsec.wrapping_sub(other.nsec);
-        if nsec_diff < 0 {
-            sec_diff = sec_diff.wrapping_sub(1);
-            nsec_diff = nsec_diff.wrapping_add(NS_PER_S as i64);
-        }
-        timespec { sec: sec_diff, nsec: nsec_diff }
-    }
-
-    pub fn order(&self, b: &timespec) -> core::cmp::Ordering {
-        match self.sec.cmp(&b.sec) {
-            core::cmp::Ordering::Equal => self.nsec.cmp(&b.nsec),
-            o => o,
-        }
-    }
-
-    pub fn ns(&self) -> u64 {
-        if self.sec <= 0 {
-            return u64::try_from(self.nsec.max(0)).expect("int cast");
-        }
-        debug_assert!(self.sec >= 0);
-        debug_assert!(self.nsec >= 0);
-        let s_ns = match u64::try_from(self.sec.max(0)).expect("int cast").checked_mul(NS_PER_S) {
-            Some(v) => v,
-            None => return u64::MAX,
-        };
-        match s_ns.checked_add(u64::try_from(self.nsec.max(0)).expect("int cast")) {
-            Some(v) => v,
-            None => i64::MAX as u64,
-        }
-    }
-
-    pub fn ns_signed(&self) -> i64 {
-        let ns_per_sec = self.sec.wrapping_mul(NS_PER_S as i64);
-        let ns_from_nsec = self.nsec.div_euclid(1_000_000);
-        ns_per_sec.wrapping_add(ns_from_nsec)
-    }
-
-    pub fn ms(&self) -> i64 {
-        let ms_from_sec = self.sec.wrapping_mul(1000);
-        let ms_from_nsec = self.nsec.div_euclid(1_000_000);
-        ms_from_sec.wrapping_add(ms_from_nsec)
-    }
-
-    pub fn ms_unsigned(&self) -> u64 {
-        self.ns() / NS_PER_MS
-    }
-
-    pub fn greater(&self, b: &timespec) -> bool {
-        self.order(b) == core::cmp::Ordering::Greater
-    }
-
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
-    pub fn now(mock_mode: TimespecMockMode) -> timespec {
-        get_rough_tick_count(mock_mode)
-    }
-
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
-    pub fn since_now(&self, mock_mode: TimespecMockMode) -> u64 {
-        Self::now(mock_mode).duration(self).ns()
-    }
-
-    pub fn add_ms(&self, interval: i64) -> timespec {
-        let sec_inc = interval / MS_PER_S;
-        let nsec_inc = (interval % MS_PER_S) * NS_PER_MS as i64;
-        let mut t = *self;
-        t.sec = t.sec.wrapping_add(sec_inc);
-        t.nsec = t.nsec.wrapping_add(nsec_inc);
-        if t.nsec >= NS_PER_S as i64 {
-            t.sec = t.sec.wrapping_add(1);
-            t.nsec = t.nsec.wrapping_sub(NS_PER_S as i64);
-        }
-        t
-    }
-
-    pub fn add_ms_float(&self, interval_ms: f64) -> timespec {
-        let ns_per_ms_f = NS_PER_MS as f64;
-        let mut t = *self;
-        let ms_whole_f = interval_ms.floor();
-        let ms_inc: i64 = ms_whole_f as i64; // lossyCast
-        let ns_total_f = interval_ms * ns_per_ms_f;
-        let ns_remainder_f = ns_total_f.rem_euclid(ns_per_ms_f);
-        let nsec_inc: i64 = ns_remainder_f.floor() as i64;
-        let sec_inc = ms_inc / MS_PER_S;
-        let ms_remainder = ms_inc.rem_euclid(MS_PER_S);
-        t.sec = t.sec.wrapping_add(sec_inc);
-        t.nsec = t.nsec.wrapping_add(ms_remainder * NS_PER_MS as i64 + nsec_inc);
-        if t.nsec >= NS_PER_S as i64 {
-            t.sec = t.sec.wrapping_add(1);
-            t.nsec = t.nsec.wrapping_sub(NS_PER_S as i64);
-        } else if t.nsec < 0 {
-            t.sec = t.sec.wrapping_sub(1);
-            t.nsec = t.nsec.wrapping_add(NS_PER_S as i64);
-        }
-        t
-    }
-
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
-    pub fn ms_from_now(mock_mode: TimespecMockMode, interval: i64) -> timespec {
-        Self::now(mock_mode).add_ms(interval)
-    }
-
-    pub fn min(a: timespec, b: timespec) -> timespec {
-        if a.order(&b) == core::cmp::Ordering::Less { a } else { b }
-    }
-    pub fn max(a: timespec, b: timespec) -> timespec {
-        if a.order(&b) == core::cmp::Ordering::Greater { a } else { b }
-    }
-    pub fn order_ignore_epoch(a: timespec, b: timespec) -> core::cmp::Ordering {
-        if a.eql(&b) {
-            return core::cmp::Ordering::Equal;
-        }
-        if a.eql(&Self::EPOCH) {
-            return core::cmp::Ordering::Greater;
-        }
-        if b.eql(&Self::EPOCH) {
-            return core::cmp::Ordering::Less;
-        }
-        a.order(&b)
-    }
-    pub fn min_ignore_epoch(a: timespec, b: timespec) -> timespec {
-        if Self::order_ignore_epoch(a, b) == core::cmp::Ordering::Less { a } else { b }
     }
 }
 

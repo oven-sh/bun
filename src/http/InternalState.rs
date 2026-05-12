@@ -8,8 +8,7 @@ use crate::{
     extremely_verbose,
 };
 
-bun_core::declare_scope!(HTTPInternalState, hidden);
-macro_rules! log { ($($t:tt)*) => { bun_core::scoped_log!(HTTPInternalState, $($t)*) }; }
+bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -279,21 +278,13 @@ impl<'a> InternalState<'a> {
                         body_out_str
                             .list
                             .reserve_exact((estimated_size as usize).saturating_sub(body_out_str.list.len()));
-                        // SAFETY: write into the full allocated capacity (Zig allocatedSlice equiv).
-                        // Bytes past `len` are uninitialized; libdeflate writes them as output.
-                        let allocated = unsafe {
-                            bun_core::ffi::slice_mut(
-                                body_out_str.list.as_mut_ptr(),
-                                body_out_str.list.capacity(),
-                            )
-                        };
-                        let result = deflater
-                            .decompressor_mut()
-                            .decompress(buffer, allocated, bun_libdeflate::Encoding::Gzip);
-
+                        body_out_str.list.clear();
+                        let result = deflater.decompressor_mut().decompress_to_vec(
+                            buffer,
+                            &mut body_out_str.list,
+                            bun_libdeflate::Encoding::Gzip,
+                        );
                         if result.status == bun_libdeflate::Status::Success {
-                            // SAFETY: decompress wrote `result.written` initialized bytes into the allocated slice
-                            unsafe { body_out_str.list.set_len(result.written) };
                             still_needs_to_decompress = false;
                         }
 

@@ -200,6 +200,11 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
+// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
+// zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
+// Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no
+// explicit Drop body is needed here.
+#[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
     // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
@@ -235,22 +240,6 @@ impl Clone for S3Credentials {
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
         }
-    }
-}
-
-// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
-// Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no
-// explicit Drop body is needed here.
-impl RefCounted for S3Credentials {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; allocated via Box in IntrusiveRc::new / dupe().
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1212,18 +1201,8 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum EncodeError {
-    #[error("InvalidHexChar")]
-    InvalidHexChar,
     #[error("BufferTooSmall")]
     BufferTooSmall,
-}
-
-fn to_hex_char(value: u8) -> Result<u8, EncodeError> {
-    match value {
-        0..=9 => Ok(value + b'0'),
-        10..=15 => Ok((value - 10) + b'A'),
-        _ => Err(EncodeError::InvalidHexChar),
-    }
 }
 
 pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
@@ -1257,11 +1236,8 @@ pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
                     return Err(EncodeError::BufferTooSmall);
                 }
                 buffer[written] = b'%';
-                // Convert byte to hex
-                let high_nibble: u8 = (c >> 4) & 0xF;
-                let low_nibble: u8 = c & 0xF;
-                buffer[written + 1] = to_hex_char(high_nibble)?;
-                buffer[written + 2] = to_hex_char(low_nibble)?;
+                buffer[written + 1] = bun_core::fmt::hex_char_upper(c >> 4);
+                buffer[written + 2] = bun_core::fmt::hex_char_upper(c);
                 written += 3;
             }
         }

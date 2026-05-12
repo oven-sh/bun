@@ -587,11 +587,12 @@ impl DirEntry {
                 if let Some(&existing_ptr) = map.get_adapted(&prehashed.input, &prehashed) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
-                    existing.mutex.lock();
-                    let _guard = scopeguard::guard(core::ptr::addr_of!(existing.mutex), |m| {
-                        // SAFETY: `m` points into `*existing`, which outlives this guard.
-                        unsafe { (*m).unlock() }
-                    });
+                    // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
+                    // holding it does not borrow `existing` — the field writes
+                    // below remain unconstrained. Replaces the manual
+                    // `lock()` + `scopeguard(addr_of!(mutex), |m| (*m).unlock())`
+                    // backref-deref pair.
+                    let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
                     existing.need_stat = existing.need_stat

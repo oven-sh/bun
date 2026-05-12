@@ -509,6 +509,83 @@ pub const Runner = struct {
         }
     };
 
+    /// Convert a single raw template segment into its "cooked" JS string value.
+    /// Per spec, segments with undecodable escape sequences evaluate to `undefined`
+    /// in the cooked array while still appearing verbatim in `.raw`.
+    fn cookRawTemplateSegment(allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject, raw: string) bun.JSError!jsc.JSValue {
+        // Fast path: no escapes, CR, or non-ASCII → cooked == raw.
+        if (strings.indexOfAny(raw, "\\\r") == null and strings.firstNonASCII(raw) == null) {
+            return bun.String.createUTF8ForJS(globalObject, raw);
+        }
+
+        // The lexer's escape decoder computes diagnostic source positions relative
+        // to the opening quote and can subtract up to three widths from the cursor
+        // when reporting `\u{…}` errors, so give it a source with a short prefix so
+        // the arithmetic can't underflow. We don't surface these diagnostics
+        // anywhere; the log is only inspected to detect failure.
+        const prefix = "   `";
+        const wrapped = bun.handleOom(std.mem.concat(allocator, u8, &.{ prefix, raw, "`" }));
+        defer allocator.free(wrapped);
+
+        var throwaway_log = logger.Log.init(allocator);
+        defer throwaway_log.deinit();
+        const throwaway_source = logger.Source.initPathString("", wrapped);
+        var lexer = bun.js_lexer.Lexer.initWithoutReading(&throwaway_log, &throwaway_source, allocator);
+        defer lexer.deinit();
+
+        var buf = std.array_list.Managed(u16).init(allocator);
+        defer buf.deinit();
+        bun.handleOom(buf.ensureTotalCapacity(raw.len));
+
+        lexer.decodeEscapeSequences(prefix.len - 1, wrapped[prefix.len .. wrapped.len - 1], std.array_list.Managed(u16), &buf) catch {
+            // Invalid escape sequence in a tagged template → cooked value is undefined.
+            return .js_undefined;
+        };
+        if (throwaway_log.hasErrors()) {
+            return .js_undefined;
+        }
+
+        var out, const chars = bun.String.createUninitialized(.utf16, buf.items.len);
+        @memcpy(chars, buf.items);
+        return out.transferToJS(globalObject);
+    }
+
+    /// Build the `TemplateStringsArray`-shaped first argument for a tagged template call.
+    fn makeTemplateStringsArray(allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject, template: *const E.Template) MacroError!jsc.JSValue {
+        const segment_count = 1 + template.parts.len;
+
+        const cooked_array = try jsc.JSValue.createEmptyArray(globalObject, segment_count);
+        cooked_array.protect();
+        defer cooked_array.unprotect();
+
+        const raw_array = try jsc.JSValue.createEmptyArray(globalObject, segment_count);
+        raw_array.protect();
+        defer raw_array.unprotect();
+
+        var i: u32 = 0;
+        while (i < segment_count) : (i += 1) {
+            const contents = if (i == 0) template.head else template.parts[i - 1].tail;
+            switch (contents) {
+                .raw => |raw| {
+                    try raw_array.putIndex(globalObject, i, try bun.String.createUTF8ForJS(globalObject, raw));
+                    try cooked_array.putIndex(globalObject, i, try cookRawTemplateSegment(allocator, globalObject, raw));
+                },
+                .cooked => |*cooked| {
+                    // Tagged templates are parsed with raw contents, so this branch
+                    // should not occur for macro callers. Fall back to using the
+                    // cooked value for both arrays so we never panic.
+                    var cooked_copy = cooked.*;
+                    const js_str = try expr_jsc.stringToJS(&cooked_copy, allocator, globalObject);
+                    try raw_array.putIndex(globalObject, i, js_str);
+                    try cooked_array.putIndex(globalObject, i, js_str);
+                },
+            }
+        }
+
+        cooked_array.put(globalObject, jsc.ZigString.static("raw"), raw_array);
+        return cooked_array;
+    }
+
     pub fn run(
         macro: Macro,
         log: *logger.Log,
@@ -554,8 +631,28 @@ pub const Runner = struct {
                     out.* = value;
                 }
             },
-            .e_template => {
-                @panic("TODO: support template literals in macros");
+            .e_template => |template| {
+                // A tagged template `` fn`a${x}b${y}c` `` is invoked as
+                // `fn(strings, x, y)` where `strings` is a frozen array of the cooked
+                // string segments with a `.raw` property holding the raw segments.
+                const extra = @as(usize, @intFromBool(javascript_object != .zero));
+                js_args = try allocator.alloc(jsc.JSValue, 1 + template.parts.len + extra);
+                js_processed_args_len = 0;
+
+                const strings_array = try makeTemplateStringsArray(allocator, globalObject, template);
+                strings_array.protect();
+                js_args[0] = strings_array;
+                js_processed_args_len = 1;
+
+                for (0.., template.parts) |i, part| {
+                    const value = part.value.toJS(allocator, globalObject) catch |e| {
+                        js_processed_args_len = 1 + i;
+                        return e;
+                    };
+                    value.protect();
+                    js_args[1 + i] = value;
+                }
+                js_processed_args_len = 1 + template.parts.len + extra;
             },
             else => {
                 @panic("Unexpected caller type");
@@ -640,3 +737,5 @@ const ToJSError = js_ast.ToJSError;
 const JavaScript = bun.jsc;
 const jsc = bun.jsc;
 const js = bun.jsc.C;
+
+const expr_jsc = @import("./expr_jsc.zig");

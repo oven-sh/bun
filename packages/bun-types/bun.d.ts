@@ -4692,6 +4692,28 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Process-wide heap-instrumentation snapshot for leak tests.
+     *
+     * Compare per-iteration deltas, not absolute values:
+     * - `bunStringRefBalance` — net `WTF::StringImpl` +1 refs the Rust side
+     *   currently holds. Linear per-iter growth = forgotten `.deref()` on the
+     *   Rust side. Absolute value drifts (uninstrumented FFI handoff paths);
+     *   per-iter delta on a tight loop is exact for that loop's code path.
+     * - `mimallocCommit`/`mimallocRss` — `mi_process_info()` totals: covers
+     *   `bun.default_allocator` and every `MimallocArena`. Does **not**
+     *   include `WTF::fastMalloc`/bmalloc.
+     * - `liveArenaHeaps` — debug-only count of live `MimallocArena` heaps.
+     *   Always 0 in release builds.
+     */
+    function heapStats(): {
+      mimallocCommit: number;
+      mimallocRss: number;
+      mimallocPageFaults: number;
+      bunStringRefBalance: number;
+      liveArenaHeaps: number;
+    };
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

@@ -155,26 +155,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if self.options.features.react_fast_refresh {
             // PORT NOTE: react_refresh.hook_ctx_storage is `Option<NonNull<Option<HookContext>>>`
-            // pointing at a stack-local on the visitStmt caller frame (Zig: `*?Hook`). We pull a
-            // raw ptr to the inner HookContext here to avoid holding a `&mut self` field borrow
-            // across the `&mut self` method call below.
-            let hook_ptr: *mut crate::HookContext = {
-                let storage_ptr = self
-                    .react_refresh
-                    .hook_ctx_storage
-                    .expect("caller did not init hook storage. any function can have react hooks!");
-                // SAFETY: storage_ptr points at stack storage on the caller's frame; valid here.
-                match unsafe { &mut *storage_ptr.as_ptr() }.as_mut() {
-                    Some(h) => std::ptr::from_mut(h),
-                    None => core::ptr::null_mut(),
-                }
-            };
-            if !hook_ptr.is_null() {
-                // SAFETY: `hook_ptr` points into the visiting caller's stack-local
-                // `Option<HookContext>` (set in visitStmt); that frame outlives this call and
+            // pointing at a stack-local on the visitStmt caller frame (Zig: `*?Hook`).
+            // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
+            // borrow detached from `self` (the storage is on the caller's stack frame), so
+            // it can be held across the `&mut self` method call below.
+            let hook_ctx = self
+                .react_refresh
+                .hook_ctx_mut()
+                .expect("caller did not init hook storage. any function can have react hooks!");
+            if let Some(hook) = hook_ctx.as_ref() {
                 // `handle_react_refresh_post_visit_function_body` does not re-enter
                 // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
-                self.handle_react_refresh_post_visit_function_body(&mut stmts, unsafe { &*hook_ptr });
+                self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
             }
         }
 
@@ -332,19 +324,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let Some(call) = decl.value.unwrap().data.e_call() {
                             if core::ptr::eq(last_hook, &raw const *call) {
                                 // PORT NOTE: disjoint field borrows — `react_refresh.hook_ctx_storage`
-                                // and `symbols` are independent fields of `P`.
-                                // SAFETY: hook_ctx_storage points at stack storage on the
-                                // visiting frame; valid for the duration of this borrow.
-                                let hasher = &mut unsafe {
-                                    &mut *self
-                                        .react_refresh
-                                        .hook_ctx_storage
-                                        .unwrap()
-                                        .as_ptr()
-                                }
-                                .as_mut()
-                                .unwrap()
-                                .hasher;
+                                // points at caller-frame stack storage (detached lifetime via
+                                // `hook_ctx_mut`), and `symbols` is an independent field of `P`.
+                                let hasher = &mut self
+                                    .react_refresh
+                                    .hook_ctx_mut()
+                                    .unwrap()
+                                    .as_mut()
+                                    .unwrap()
+                                    .hasher;
                                 decl.binding.data.write_to_hasher(
                                     hasher,
                                     self.symbols.as_mut_slice(),

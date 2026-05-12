@@ -255,51 +255,30 @@ pub mod analyze_transpiled_module {
     /// Heap byte buffer with guaranteed 4-byte alignment.
     ///
     /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
-    /// `&[FetchParameters]` via `slice::from_raw_parts`. A plain `Box<[u8]>` only
+    /// `&[FetchParameters]` via `bytemuck::cast_slice`. A plain `Box<[u8]>` only
     /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. The Zig
     /// sibling sidesteps this by typing the fields `[]align(1) const u32`
     /// (analyze_transpiled_module.zig); Rust has no under-aligned slice type, so we
-    /// instead over-align the allocation itself.
+    /// instead over-align the allocation by storing `Box<[u32]>` and viewing it as
+    /// bytes — no raw alloc/dealloc, and `Send`/`Sync` are auto-derived.
     struct AlignedBytes {
-        ptr: core::ptr::NonNull<u8>,
+        /// 4-byte-aligned backing storage (length rounded up to a whole `u32`).
+        words: Box<[u32]>,
+        /// Logical byte length (`<= words.len() * 4`); trailing pad bytes are zero.
         len: usize,
     }
-    // SAFETY: owns a unique heap allocation; no interior shared mutability.
-    unsafe impl Send for AlignedBytes {}
-    unsafe impl Sync for AlignedBytes {}
     impl AlignedBytes {
         fn copy_from(src: &[u8]) -> Self {
-            let len = src.len();
-            if len == 0 {
-                // Dangling u32 pointer is non-null and 4-aligned — valid for any
-                // zero-length `from_raw_parts::<u32>` we might form over it.
-                return Self { ptr: core::ptr::NonNull::<u32>::dangling().cast(), len: 0 };
-            }
-            let layout = core::alloc::Layout::from_size_align(len, 4).unwrap();
-            // SAFETY: layout size is non-zero.
-            let raw = unsafe { std::alloc::alloc(layout) };
-            let ptr = core::ptr::NonNull::new(raw)
-                .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
-            // SAFETY: `ptr` is a fresh allocation of `len` bytes; regions do not overlap.
-            unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), ptr.as_ptr(), len) };
-            Self { ptr, len }
+            let mut words = vec![0u32; src.len().div_ceil(4)].into_boxed_slice();
+            bytemuck::cast_slice_mut::<u32, u8>(&mut words)[..src.len()].copy_from_slice(src);
+            Self { words, len: src.len() }
         }
     }
     impl core::ops::Deref for AlignedBytes {
         type Target = [u8];
         #[inline]
         fn deref(&self) -> &[u8] {
-            // SAFETY: `ptr` is valid for `len` initialized bytes for our lifetime.
-            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-        }
-    }
-    impl Drop for AlignedBytes {
-        fn drop(&mut self) {
-            if self.len != 0 {
-                let layout = core::alloc::Layout::from_size_align(self.len, 4).unwrap();
-                // SAFETY: same layout as `copy_from` allocated with.
-                unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
-            }
+            &bytemuck::cast_slice::<u32, u8>(&self.words)[..self.len]
         }
     }
 
@@ -1453,6 +1432,7 @@ use js_ast::stmt::{Stmt, Data as StmtData, Tag as StmtTag};
 use js_ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
 use js_ast::Symbol;
 use bun_ast::ImportRecordTag as ImportRecordTag;
+use bun_ptr::BackRef;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-B local helpers — bridge gaps between Phase-A draft and the real
@@ -3089,7 +3069,10 @@ where
                 }
                 if let Some(idx) = found {
                     let exports = self.options.commonjs_named_exports.unwrap();
-                    let key: *const [u8] = &raw const exports.keys()[idx][..];
+                    // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
+                    // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
+                    // `&mut self` print calls below.
+                    let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
                     let value_loc_ref = exports.values()[idx].loc_ref;
                     let value_needs_decl = exports.values()[idx].needs_decl;
                     struct V { loc_ref: js_ast::LocRef, needs_decl: bool }
@@ -3105,8 +3088,7 @@ where
                             self.print_symbol(self.options.commonjs_named_exports_ref);
                         }
 
-                        // SAFETY: `commonjs_named_exports` keys borrow `'a` (Options<'a>).
-                        let key = unsafe { &*key };
+                        let key: &[u8] = key.get();
                         if lexer::is_identifier(key) {
                             self.print(b".");
                             self.print(key);
@@ -3797,12 +3779,11 @@ where
                 } else {
                     e.ref_
                 };
-                // PORT NOTE: reshaped for borrowck — `get_const` borrows self; capture
-                // the two fields we need via the arena raw-ptr convention so the
-                // borrow is dropped before the `&mut self` print calls below.
-                let symbol_ptr: *const Symbol = self.symbols().get_const(ref_).unwrap();
-                // SAFETY: arena-backed; symbol table outlives the print pass.
-                let symbol = unsafe { &*symbol_ptr };
+                // PORT NOTE: reshaped for borrowck — `get_const` borrows self;
+                // capture as `BackRef` so the `&self` borrow is dropped before the
+                // `&mut self` print calls below. Symbol table is arena-backed and
+                // outlives the print pass (BackRef invariant).
+                let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
 
                 if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                     self.print_undefined(expr.loc, level);
@@ -4184,8 +4165,7 @@ where
                                 let sref = unsafe { js_ast::StoreRef::from_raw(str.cast_mut()) };
                                 item.key.as_mut().unwrap().data = ExprData::EString(sref);
                                 // Problematic key names must stay computed for correctness
-                                let s = unsafe { &*str };
-                                if !s.eql_comptime(b"__proto__") && !s.eql_comptime(b"constructor") && !s.eql_comptime(b"prototype") {
+                                if !sref.eql_comptime(b"__proto__") && !sref.eql_comptime(b"constructor") && !sref.eql_comptime(b"prototype") {
                                     set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, false);
                                 }
                             }
@@ -4840,10 +4820,9 @@ where
                             self.print_space();
                             let last = slice_of(s.items).len() - 1;
                             for (i, item) in slice_of(s.items).iter().enumerate() {
-                                // PORT NOTE: reshaped for borrowck — detach symbol from self.
-                                let symbol_ptr: *const Symbol = self.symbols().get_with_link_const(item.name.ref_.expect("infallible: ref bound")).unwrap();
-                                // SAFETY: arena-backed symbol table outlives the print pass.
-                                let symbol = unsafe { &*symbol_ptr };
+                                // PORT NOTE: reshaped for borrowck — detach symbol from
+                                // `&self` via `BackRef` (arena-backed table outlives print).
+                                let symbol = BackRef::<Symbol>::new(self.symbols().get_with_link_const(item.name.ref_.expect("infallible: ref bound")).unwrap());
                                 let name = symbol.original_name.slice();
                                 let mut did_print = false;
 
@@ -4905,10 +4884,10 @@ where
                         let item = array[i];
 
                         if !item.original_name.slice().is_empty() {
-                            // PORT NOTE: reshaped for borrowck — detach symbol from self.
-                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(|s| std::ptr::from_ref(s));
-                            // SAFETY: arena-backed; symbol table outlives the print pass.
-                            if let Some(symbol) = symbol_ptr.map(|p| unsafe { &*p }) {
+                            // PORT NOTE: reshaped for borrowck — detach symbol from
+                            // `&self` via `BackRef` (arena-backed; outlives the print pass).
+                            let symbol = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(BackRef::<Symbol>::new);
+                            if let Some(symbol) = symbol {
                                 if let Some(namespace) = &symbol.namespace_alias {
                                     let import_record = self.import_record(namespace.import_record_index as usize);
                                     if namespace.was_originally_property_access {

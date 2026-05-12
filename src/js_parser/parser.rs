@@ -2336,6 +2336,25 @@ pub struct HookContext {
 }
 
 impl ReactRefresh<'_> {
+    /// Reborrow the stack-allocated `Option<HookContext>` that
+    /// `hook_ctx_storage` points at (Zig: `?*?HookContext`). The returned
+    /// borrow is detached from `self` because the storage lives on a *caller*
+    /// stack frame (set/restored around each visit), disjoint from the parser
+    /// struct. Centralises the one `unsafe` so call sites in `p.rs` /
+    /// `visit/mod.rs` stay safe; callers must not hold two results live at
+    /// once (same uniqueness contract as `P::log()`).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
+        // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
+        // higher on the stack has installed `&mut react_hook_data` (a stack
+        // local) and will restore the previous value before returning, so the
+        // pointee is live and at a stable address for any `'s` not outlasting
+        // that frame. The storage is disjoint from `*self`, so `&mut self`
+        // calls between accessor uses do not invalidate the returned borrow.
+        self.hook_ctx_storage.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42
     pub fn is_componentish_name(id: &[u8]) -> bool {
         if id.is_empty() {

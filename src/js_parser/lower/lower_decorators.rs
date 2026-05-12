@@ -216,7 +216,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
         Property {
             kind: PropertyKind::ClassStaticBlock,
-            class_static_block: Some(NonNull::from(sb)),
+            class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
             ..Default::default()
         }
     }
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             kind: StaticElementKind::Block,
                             index: extracted_static_blocks.len(),
                         });
-                        extracted_static_blocks.push(js_ast::StoreRef::from(sb));
+                        extracted_static_blocks.push(sb);
                     }
                     continue;
                 }

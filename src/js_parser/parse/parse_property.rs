@@ -472,7 +472,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
-                                class_static_block: Some(NonNull::from(block)),
+                                class_static_block: Some(js_ast::StoreRef::from_bump(block)),
                                 ..Default::default()
                             }));
                         }

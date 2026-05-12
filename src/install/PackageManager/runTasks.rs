@@ -78,12 +78,24 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // TODO(port): the Zig calls this with either `task.task_id` (Store.Installer)
-    // or `package_id` (PackageInstaller) as the second arg. Phase B may want two
-    // methods or a small enum for the id parameter.
-    fn on_package_download_error(
+    // PORT NOTE: Zig calls `onPackageDownloadError` with two distinct shapes
+    // depending on the comptime `Ctx`: `task.task_id: Task.Id` for
+    // `*Store.Installer`, `package_id: PackageID` otherwise. Model the
+    // comptime branch as static dispatch via two trait methods so impls
+    // receive the correctly-typed id without a `Task::Id` round-trip pun.
+    fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
-        _id: Task::Id, // or PackageID — see note above
+        _task_id: Task::Id,
+        _name: &[u8],
+        _resolution: &bun_install::Resolution,
+        _err: bun_core::Error,
+        _url: &[u8],
+    ) {
+        unreachable!()
+    }
+    fn on_package_download_error_pkg(
+        _ctx: &mut Self::Ctx,
+        _package_id: PackageID,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
         _err: bun_core::Error,
@@ -719,7 +731,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error(
+                            C::on_package_download_error_store(
                                 extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
@@ -730,10 +742,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error(
+                            C::on_package_download_error_pkg(
                                 extract_ctx,
-                                // TODO(port): second arg is PackageID here, Task::Id above — see trait note
-                                Task::Id::from_package_id(package_id),
+                                package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
                                 err,
@@ -811,7 +822,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error(
+                            C::on_package_download_error_store(
                                 extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
@@ -822,10 +833,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error(
+                            C::on_package_download_error_pkg(
                                 extract_ctx,
-                                // TODO(port): PackageID vs Task::Id — see trait note
-                                Task::Id::from_package_id(package_id),
+                                package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
                                 err,
@@ -1095,7 +1105,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => unreachable!(),
                         };
                         if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error(
+                            C::on_package_download_error_store(
                                 extract_ctx,
                                 task.id,
                                 alias,
@@ -1104,10 +1114,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 fail_url,
                             );
                         } else {
-                            C::on_package_download_error(
+                            C::on_package_download_error_pkg(
                                 extract_ctx,
-                                // TODO(port): PackageID vs Task::Id — see trait note
-                                Task::Id::from_package_id(package_id),
+                                package_id,
                                 alias,
                                 resolution,
                                 err,
@@ -1302,7 +1311,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     manager.lockfile.str(&res_git.resolved),
                                 );
                                 drained_any = true;
-                                C::on_package_download_error(
+                                C::on_package_download_error_store(
                                     extract_ctx,
                                     checkout_id,
                                     name,
@@ -1323,7 +1332,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolved = &clone.res.git().resolved;
                             let checkout_id =
                                 Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            C::on_package_download_error(
+                            C::on_package_download_error_store(
                                 extract_ctx,
                                 checkout_id,
                                 name,
@@ -1444,7 +1453,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
                         let repo = &resolution.git().repo;
-                        C::on_package_download_error(
+                        C::on_package_download_error_store(
                             extract_ctx,
                             task.id,
                             alias.slice(),

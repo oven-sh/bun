@@ -1,6 +1,7 @@
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
+use core::cell::Cell;
 use core::ptr::NonNull;
 use crate::jsc::JSValue;
 
@@ -23,38 +24,42 @@ type Queue = LinearFifo<*mut JSMySQLQuery, DynamicBuffer<*mut JSMySQLQuery>>;
 pub struct MySQLRequestQueue {
     requests: Queue,
 
-    pipelined_requests: u32,
-    nonpipelinable_requests: u32,
+    // Scalar state is `Cell`-wrapped so `advance()` can mutate via the
+    // `ParentRef<Self>` backref (yields `&Self`) without per-site `unsafe`
+    // raw-pointer writes. The queue is single-JS-thread (embedded inside the
+    // connection's `JsCell`), so `Cell`'s `!Sync` is fine.
+    pipelined_requests: Cell<u32>,
+    nonpipelinable_requests: Cell<u32>,
     // TODO: refactor to ENUM
-    waiting_to_prepare: bool,
-    is_ready_for_query: bool,
+    waiting_to_prepare: Cell<bool>,
+    is_ready_for_query: Cell<bool>,
 }
 
 impl MySQLRequestQueue {
     #[inline]
     pub fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
-            && self.is_ready_for_query
-            && self.nonpipelinable_requests == 0
-            && self.pipelined_requests == 0
+            && self.is_ready_for_query.get()
+            && self.nonpipelinable_requests.get() == 0
+            && self.pipelined_requests.get() == 0
     }
 
     #[inline]
     pub fn can_prepare_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
-            && self.is_ready_for_query
-            && !self.waiting_to_prepare
-            && self.pipelined_requests == 0
+            && self.is_ready_for_query.get()
+            && !self.waiting_to_prepare.get()
+            && self.pipelined_requests.get() == 0
     }
 
     #[inline]
     pub fn mark_as_ready_for_query(&mut self) {
-        self.is_ready_for_query = true;
+        self.is_ready_for_query.set(true);
     }
 
     #[inline]
     pub fn mark_as_prepared(&mut self) {
-        self.waiting_to_prepare = false;
+        self.waiting_to_prepare.set(false);
         if let Some(request) = self.current_ref() {
             debug!("markAsPrepared markAsPrepared");
             request.mark_as_prepared();
@@ -73,22 +78,22 @@ impl MySQLRequestQueue {
             return false;
         }
 
-        self.is_ready_for_query
-            && self.nonpipelinable_requests == 0 // need to wait for non pipelinable requests to finish
-            && !self.waiting_to_prepare
+        self.is_ready_for_query.get()
+            && self.nonpipelinable_requests.get() == 0 // need to wait for non pipelinable requests to finish
+            && !self.waiting_to_prepare.get()
             && connection.is_able_to_write()
     }
 
     pub fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
-        self.waiting_to_prepare = false;
+        self.waiting_to_prepare.set(false);
         if item.is_being_prepared() {
             debug!("markCurrentRequestAsFinished markAsPrepared");
             item.mark_as_prepared();
         } else if item.is_running() {
             if item.is_pipelined() {
-                self.pipelined_requests -= 1;
+                self.pipelined_requests.set(self.pipelined_requests.get() - 1);
             } else {
-                self.nonpipelinable_requests -= 1;
+                self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() - 1);
             }
         }
     }
@@ -111,9 +116,8 @@ impl MySQLRequestQueue {
     ///   provenance for the entire `JSMySQLConnection` allocation.
     /// - `run()` / `is_able_to_write()` *do* read queue scalars
     ///   (`is_ready_for_query`, `pipelined_requests`, …) via
-    ///   `connection.can_execute_query()` etc. — this is sound because those
-    ///   reads go through the `&mut *connection` reborrow itself, and no
-    ///   `(*this)` access overlaps the lifetime of that `&mut`.
+    ///   `connection.can_execute_query()` etc. — sound because the scalars are
+    ///   `Cell`-wrapped (interior mutability; no `&mut` needed).
     pub unsafe fn advance(connection: *mut MySQLConnection) {
         // SAFETY: caller contract — `connection` has full-allocation
         // provenance. R-2: the inner protocol struct is wrapped in
@@ -131,11 +135,10 @@ impl MySQLRequestQueue {
         // independent of the outer shared borrow.
         let conn_ref =
             ParentRef::from(NonNull::new(connection).expect("advance: connection non-null"));
-        // R-2: read-only queue accesses (`readable_length`, `peek_item`,
-        // scalar field reads, `can_pipeline`) go through a `ParentRef<Self>`;
-        // each `Deref` materialises a fresh short-lived `&Self` child of the
-        // same SharedRW raw root as `this`, so interleaving with the raw
-        // `(*this).field = …` writes below is sound under Stacked Borrows.
+        // R-2: queue scalar reads/writes and `can_pipeline` go through a
+        // `ParentRef<Self>` (yields `&Self`); the scalars are `Cell`-wrapped so
+        // mutation needs no `&mut`. Only `requests.discard()` below still goes
+        // through the raw `this` (it needs `&mut Queue`).
         let queue_ref: ParentRef<Self> =
             ParentRef::from(NonNull::new(this).expect("queue field of non-null connection"));
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
@@ -144,8 +147,9 @@ impl MySQLRequestQueue {
         'advance: {
             let mut offset: usize = 0;
 
-            // Each remaining `(*this)` deref below forms a fresh short-lived
-            // `&mut` — no two overlap; reads route through `queue_ref` (`&T`).
+            // The two remaining `(*this).requests.discard(1)` derefs below form
+            // a fresh short-lived `&mut Queue` — neither overlaps a `queue_ref`
+            // shared borrow (each `Deref` is dropped before the raw write).
             while queue_ref.requests.readable_length() > offset
                 && conn_ref.is_able_to_write()
             {
@@ -171,14 +175,15 @@ impl MySQLRequestQueue {
 
                 if req.is_being_prepared() {
                     debug!("isBeingPrepared");
-                    unsafe { (*this).waiting_to_prepare = true };
+                    queue_ref.waiting_to_prepare.set(true);
                     // cannot continue the queue until the current request is marked as prepared
                     break 'advance;
                 }
                 if req.is_running() {
                     debug!("isRunning");
-                    let total_requests_running =
-                        (queue_ref.pipelined_requests + queue_ref.nonpipelinable_requests) as usize;
+                    let total_requests_running = (queue_ref.pipelined_requests.get()
+                        + queue_ref.nonpipelinable_requests.get())
+                        as usize;
                     if offset < total_requests_running {
                         offset += total_requests_running;
                     } else {
@@ -213,10 +218,8 @@ impl MySQLRequestQueue {
                     // timer state outside the queue, and no `(*this)` access
                     // overlaps the shared borrow's lifetime.
                     conn_ref.reset_connection_timeout();
-                    unsafe {
-                        (*this).is_ready_for_query = false;
-                        (*this).waiting_to_prepare = true;
-                    }
+                    queue_ref.is_ready_for_query.set(false);
+                    queue_ref.waiting_to_prepare.set(true);
                     break 'advance;
                 } else if req.is_running() {
                     // R-2: `reset_connection_timeout` takes `&self`; touches
@@ -224,10 +227,12 @@ impl MySQLRequestQueue {
                     // overlaps the shared borrow's lifetime.
                     conn_ref.reset_connection_timeout();
                     debug!("isRunning after run");
-                    unsafe { (*this).is_ready_for_query = false };
+                    queue_ref.is_ready_for_query.set(false);
 
                     if req.is_pipelined() {
-                        unsafe { (*this).pipelined_requests += 1 };
+                        queue_ref
+                            .pipelined_requests
+                            .set(queue_ref.pipelined_requests.get() + 1);
                         // `can_pipeline` takes `&self` + `&MySQLConnection`;
                         // both shared reborrows are children of the same raw
                         // tag (`this` was projected from `connection`), so
@@ -240,7 +245,9 @@ impl MySQLRequestQueue {
                         break 'advance;
                     }
                     debug!("nonpipelinable requests");
-                    unsafe { (*this).nonpipelinable_requests += 1 };
+                    queue_ref
+                        .nonpipelinable_requests
+                        .set(queue_ref.nonpipelinable_requests.get() + 1);
                 }
                 break 'advance;
             }
@@ -276,10 +283,10 @@ impl MySQLRequestQueue {
     pub fn init() -> Self {
         Self {
             requests: Queue::init(),
-            pipelined_requests: 0,
-            nonpipelinable_requests: 0,
-            waiting_to_prepare: false,
-            is_ready_for_query: true,
+            pipelined_requests: Cell::new(0),
+            nonpipelinable_requests: Cell::new(0),
+            waiting_to_prepare: Cell::new(false),
+            is_ready_for_query: Cell::new(true),
         }
     }
 
@@ -294,15 +301,15 @@ impl MySQLRequestQueue {
         // is `&self` (interior mutability).
         let req = ParentRef::from(NonNull::new(request).expect("add: request non-null"));
         if req.is_being_prepared() {
-            self.is_ready_for_query = false;
-            self.waiting_to_prepare = true;
+            self.is_ready_for_query.set(false);
+            self.waiting_to_prepare.set(true);
         } else if req.is_running() {
-            self.is_ready_for_query = false;
+            self.is_ready_for_query.set(false);
 
             if req.is_pipelined() {
-                self.pipelined_requests += 1;
+                self.pipelined_requests.set(self.pipelined_requests.get() + 1);
             } else {
-                self.nonpipelinable_requests += 1;
+                self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() + 1);
             }
         }
         req.ref_();
@@ -340,9 +347,9 @@ impl MySQLRequestQueue {
         // into a local first so the re-entrant call sees an empty queue instead of
         // deref()'ing + discard()'ing the same requests out from under us.
         let mut requests = core::mem::replace(&mut self.requests, Queue::init());
-        self.pipelined_requests = 0;
-        self.nonpipelinable_requests = 0;
-        self.waiting_to_prepare = false;
+        self.pipelined_requests.set(0);
+        self.nonpipelinable_requests.set(0);
+        self.waiting_to_prepare.set(false);
         // `requests` drops at scope exit (Zig: defer requests.deinit()).
 
         while let Some(request) = requests.read_item() {
@@ -379,9 +386,9 @@ impl Drop for MySQLRequestQueue {
             // SAFETY: queue held one ref; pointer is live until this deref.
             unsafe { JSMySQLQuery::deref(request) };
         }
-        self.pipelined_requests = 0;
-        self.nonpipelinable_requests = 0;
-        self.waiting_to_prepare = false;
+        self.pipelined_requests.set(0);
+        self.nonpipelinable_requests.set(0);
+        self.waiting_to_prepare.set(false);
         // self.requests drops automatically (Zig: this.#requests.deinit()).
     }
 }

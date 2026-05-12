@@ -148,7 +148,7 @@ struct X509DerLess {
 // Read every PEM certificate contained in `data` (a single entry may hold a
 // bundle). On parse failure, frees anything this call pushed and returns the
 // peeked OpenSSL error so the caller can format it.
-static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(X509)* out)
+static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(X509) * out)
 {
     ERR_clear_error();
     BIO* bio = BIO_new_mem_buf(data.data(), static_cast<int>(data.size()));

@@ -2075,6 +2075,7 @@ name = "bun_shim_impl"
 version = "0.0.0"
 dependencies = [
  "bun_windows_sys",
+ "bytemuck",
 ]
 
 [[package]]

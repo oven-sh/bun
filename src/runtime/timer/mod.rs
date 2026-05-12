@@ -186,18 +186,19 @@ impl DateHeaderTimer {
     /// reschedule for 1s later iff there are active connections.
     pub fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        let loop_ = vm.uws_loop();
+        // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
+        // separate allocation from `RuntimeState.timer` so no aliasing with
+        // `&mut self`).
+        let loop_ = vm.uws_loop_mut();
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
 
         // Record when we last ran it.
         self.event_loop_timer.next = ElTimespec { sec: now.sec, nsec: now.nsec };
 
         // updateDate() is an expensive function.
-        // SAFETY: `uws_loop()` returns the live per-thread uws loop owned by the VM.
-        unsafe { (*loop_).update_date() };
+        loop_.update_date();
 
-        // SAFETY: `loop_` is live for the duration of this call (owned by VM).
-        if unsafe { (*loop_).internal_loop_data.sweep_timer_count } > 0 {
+        if loop_.internal_loop_data.sweep_timer_count > 0 {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(1000);
             self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };

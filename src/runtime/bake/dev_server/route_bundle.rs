@@ -148,6 +148,19 @@ pub struct RouteBundle {
     pub active_viewers: u32,
 }
 
+/// Single deref site for the intrusive-refcounted `StaticRoute` slots above
+/// (`client_bundle` / `cached_response`). Both fields hold an intrusive ref
+/// (bumped at store time, released in `invalidate_client_bundle`/drop), so
+/// while `Some` the pointee strictly outlives the borrow of `slot` — the
+/// `BackRef` invariant. Centralised here so `memory_cost` and future readers
+/// stay safe.
+#[inline]
+fn static_route_opt(slot: &Option<core::ptr::NonNull<StaticRoute>>) -> Option<&StaticRoute> {
+    // SAFETY: see fn doc — intrusive ref keeps pointee live for the borrow of
+    // `slot`; `NonNull::as_ref` ties the returned `&StaticRoute` to that borrow.
+    slot.as_ref().map(|p| unsafe { p.as_ref() })
+}
+
 impl RouteBundle {
     #[inline]
     pub fn source_map_id(&self) -> source_map_store::Key {
@@ -157,9 +170,8 @@ impl RouteBundle {
     /// `RouteBundle.memoryCost` (RouteBundle.zig:137).
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<RouteBundle>();
-        if let Some(bundle) = self.client_bundle {
-            // SAFETY: pointer is live for the lifetime of `self` (intrusive ref held).
-            cost += unsafe { bundle.as_ref() }.memory_cost();
+        if let Some(bundle) = static_route_opt(&self.client_bundle) {
+            cost += bundle.memory_cost();
         }
         match &self.data {
             Data::Framework(_) => {
@@ -170,9 +182,8 @@ impl RouteBundle {
                 if let Some(text) = &html.bundled_html_text {
                     cost += text.len();
                 }
-                if let Some(cached) = html.cached_response {
-                    // SAFETY: pointer is live for the lifetime of `self`.
-                    cost += unsafe { cached.as_ref() }.memory_cost();
+                if let Some(cached) = static_route_opt(&html.cached_response) {
+                    cost += cached.memory_cost();
                 }
             }
         }

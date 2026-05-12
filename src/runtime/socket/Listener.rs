@@ -1503,7 +1503,12 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 #[cfg(windows)]
 pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
-    pub listener: Option<NonNull<Listener>>,
+    /// BACKREF: the parent `Listener` heap-allocated this context in
+    /// `listen_named_pipe` and outlives it (cleared to `None` in
+    /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
+    /// centralises the safe deref so call sites don't open-code a raw
+    /// `NonNull::as_ref`.
+    pub listener: Option<bun_ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
     pub vm: *mut VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
@@ -1534,9 +1539,9 @@ impl WindowsNamedPipeListeningContext {
             // connection dropped or vm is shutting down or we are deiniting/closing
             return;
         }
-        // SAFETY: checked Some above. R-2: deref as shared (`as_ref`) —
-        // `on_name_pipe_created` takes `&Listener`.
-        let listener = unsafe { this_ref.listener.unwrap().as_ref() };
+        // `BackRef` deref — owner `Listener` outlives this context (see field doc).
+        let listener_ref = this_ref.listener.unwrap();
+        let listener: &Listener = listener_ref.get();
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
         let socket: PipeSocketType = if this_ref.ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
@@ -1605,7 +1610,7 @@ impl WindowsNamedPipeListeningContext {
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
-            listener: NonNull::new(listener),
+            listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm_ptr(),
             ctx: None,

@@ -71,8 +71,7 @@ impl DateHeaderTimer {
             );
 
             // update_date() is an expensive function.
-            // SAFETY: uws_loop() returns a valid live *mut Loop owned by the VM.
-            unsafe { (*vm.uws_loop()).update_date() };
+            vm.uws_loop_mut().update_date();
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/

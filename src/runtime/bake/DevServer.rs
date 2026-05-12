@@ -3993,13 +3993,12 @@ pub fn finalize_bundle(
         // index slices via `dev_ptr` (disjoint fields).
         // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
         // `make_array_for_server_components_patch`.
-        let added = unsafe {
-            let s = &(*dev_ptr).incremental_result.client_components_added;
-            ::core::slice::from_raw_parts(s.as_ptr(), s.len())
-        };
-        let removed = unsafe {
-            let s = &(*dev_ptr).incremental_result.client_components_removed;
-            ::core::slice::from_raw_parts(s.as_ptr(), s.len())
+        let (added, removed) = unsafe {
+            let ir = &(*dev_ptr).incremental_result;
+            (
+                ir.client_components_added.as_slice(),
+                ir.client_components_removed.as_slice(),
+            )
         };
         let errors = match dev
             .server_register_update_callback
@@ -4973,16 +4972,12 @@ impl DevServer {
         let failures_start_buf_pos = buf.len();
 
         let len = bun_base64::encode_len(&all_failures);
-        buf.reserve(len);
-        // TODO(port): Zig wrote into unusedCapacitySlice() then bumped len
-        let to_write_into = &mut buf.spare_capacity_mut()[..len];
-        // SAFETY: to_write_into is valid uninit memory of length `len`
-        let written = bun_base64::encode(
-            unsafe { ::core::slice::from_raw_parts_mut(to_write_into.as_mut_ptr().cast::<u8>(), len) },
-            &all_failures,
-        );
-        // SAFETY: `written` bytes of spare_capacity were initialized by encode() above
-        unsafe { buf.set_len(buf.len() + written) };
+        // Zero-extend then encode in place; `encode_len` is an upper bound so
+        // truncate to the actual encoded length afterward. Avoids the
+        // `spare_capacity_mut` + `set_len` unsafe dance for a one-shot path.
+        buf.resize(failures_start_buf_pos + len, 0);
+        let written = bun_base64::encode(&mut buf[failures_start_buf_pos..], &all_failures);
+        buf.truncate(failures_start_buf_pos + written);
 
         // Re-use the encoded buffer to avoid encoding failures more times than neccecary.
         if let Some(agent) = inspector_agent {
@@ -5319,42 +5314,26 @@ impl DevServer {
     }
 
     pub fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {
-        #[repr(C)]
-        struct Fields {
-            incremental_graph_client: u32,
-            incremental_graph_server: u32,
-            js_code: u32,
-            source_maps: u32,
-            assets: u32,
-            other: u32,
-            devserver_tracked: u32,
-            process_used: u32,
-            system_used: u32,
-            system_total: u32,
-        }
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
-        let fields = Fields {
-            incremental_graph_client: cost.incremental_graph_client as u32,
-            incremental_graph_server: cost.incremental_graph_server as u32,
-            js_code: cost.js_code as u32,
-            source_maps: cost.source_maps as u32,
-            assets: cost.assets as u32,
-            other: cost.other as u32,
+        // Wire format: 10 contiguous native-endian u32s — the Zig side declared
+        // a packed `Fields` struct, but a `[u32; 10]` has the identical layout
+        // (no padding) and is `bytemuck::Pod`, so the byte view is safe.
+        let fields: [u32; 10] = [
+            /* incremental_graph_client */ cost.incremental_graph_client as u32,
+            /* incremental_graph_server */ cost.incremental_graph_server as u32,
+            /* js_code */ cost.js_code as u32,
+            /* source_maps */ cost.source_maps as u32,
+            /* assets */ cost.assets as u32,
+            /* other */ cost.other as u32,
             // PORT NOTE: Zig populated this from a debug allocation-scope
             // tracker; Rust ownership has no equivalent runtime counter.
-            devserver_tracked: 0,
-            process_used: sys::self_process_memory_usage().unwrap_or(0) as u32,
-            system_used: system_total.saturating_sub(crate::node::os::freemem()) as u32,
-            system_total: system_total as u32,
-        };
-        // SAFETY: Fields is repr(C) POD
-        payload.extend_from_slice(unsafe {
-            ::core::slice::from_raw_parts(
-                (&raw const fields).cast::<u8>(),
-                ::core::mem::size_of::<Fields>(),
-            )
-        });
+            /* devserver_tracked */ 0,
+            /* process_used */ sys::self_process_memory_usage().unwrap_or(0) as u32,
+            /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
+            /* system_total */ system_total as u32,
+        ];
+        payload.extend_from_slice(bytemuck::bytes_of(&fields));
 
         // SourceMapStore is easy to leak refs in.
         {

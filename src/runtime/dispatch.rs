@@ -1,7 +1,7 @@
 //! `crate::dispatch` — the §Dispatch hot-path payoff.
 //!
 //! Per `docs/PORTING.md` §Dispatch, low-tier crates store
-//! `Task = { tag: TaskTag, ptr: *mut () }` and never name a variant type. This
+//! `Task` is stored as a tag plus opaque payload and never names a variant type. This
 //! crate (highest tier) owns **every** variant type, so the actual `match`
 //! loop lives here. LLVM inlines the per-arm direct calls exactly as Zig's
 //! `switch (task.tag()) { inline else => |p| p.run() }` did.
@@ -503,18 +503,18 @@ pub fn run_task(
     vm: &mut VirtualMachine,
     global: &JSGlobalObject,
 ) -> Result<RunTaskResult, JsTerminated> {
-    /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
+    /// `*(task payload as *mut T)` with the SAFETY invariant spelled once.
     macro_rules! cast {
         ($ty:ty) => {{
-            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
-            // by `Taskable::into_task`/`Task::new`; tag uniquely identifies
+            // SAFETY: §Dispatch — the task tag was set together with the payload
+            // by `Taskable::into_task`/`Task::init`; tag uniquely identifies
             // the pointee type and the pointer is live for this dispatch.
-            unsafe { &mut *task.ptr.cast::<$ty>() }
+            unsafe { &mut *task.cast_ptr::<$ty>() }
         }};
     }
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
-        ($ty:ty) => { task.ptr.cast::<$ty>() };
+        ($ty:ty) => { task.cast_ptr::<$ty>() };
     }
     /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
     /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
@@ -544,7 +544,7 @@ pub fn run_task(
 
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
-    match task.tag {
+    match task.tag() {
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTask => {
             let any = cast!(AnyTask);
@@ -632,7 +632,7 @@ pub fn run_task(
         task_tag::ShellYesTask => {
             // Declared in the union but never dispatched here in Zig (covered
             // by the trailing `else` panic). Mirror that.
-            panic!("Unexpected Task tag: {}", task.tag.0);
+            panic!("Unexpected Task tag: {}", task.tag().0);
         }
 
         // ── fetch / S3 ───────────────────────────────────────────────────
@@ -847,13 +847,13 @@ pub fn run_task(
             // — `ptr` here is *not* a pointer but a packed signal number.
             let _ = core::marker::PhantomData::<PosixSignalTask>;
             bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread(
-                task.ptr as usize as u8,
+                task.payload_usize() as u8,
                 global,
             );
         }
         task_tag::NativePromiseContextDeferredDerefTask => {
             // Zig: `runFromJSThread(@intCast(task.asUintptr()))` — `ptr` packs an int.
-            NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
+            NativePromiseContextDeferredDerefTask::run_from_js_thread(task.payload_usize());
         }
 
         // ── server / bundler / streams ───────────────────────────────────
@@ -889,14 +889,14 @@ pub fn run_task(
             // not provable-unreachable — `unreachable_unchecked()` here would be
             // release-build UB. PORTING.md §Dispatch only sanctions UB for the
             // truly-unreachable wildcard.
-            panic!("Unexpected Task tag: {}", task.tag.0);
+            panic!("Unexpected Task tag: {}", task.tag().0);
         }
 
         _ => {
             // Spec Task.zig:529-535: controlled `bun.Output.panic` with
             // diagnostic. A value outside `task_tag::COUNT` is a producer bug,
             // but the spec treats it as a recoverable crash, not UB.
-            panic!("Unexpected Task tag: {}", task.tag.0);
+            panic!("Unexpected Task tag: {}", task.tag().0);
         }
     }
     Ok(RunTaskResult::Continue)

@@ -233,10 +233,10 @@ impl From<JsTerminated> for bun_core::Error {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
-// `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
+    // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
+    // `Task`'s tag plus opaque payload. Per PORTING.md, the *high tier owns the match loop*:
 // `bun_runtime` registers the real dispatcher at init; this crate only stores
-// `(tag, ptr)` and the hook. The Phase-A draft of the match lives in
+    // that compact task payload and the hook. The Phase-A draft of the match lives in
 // `src/jsc/Task.rs` (still gated — every arm names a `bun_runtime` type).
 // ──────────────────────────────────────────────────────────────────────────
 // The hook receives the specific `EventLoop` to drain (which may be the

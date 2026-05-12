@@ -1736,9 +1736,9 @@ impl Drop for SendQueue {
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if let Some(close_next_tick_task) = self.close_next_tick {
             // SAFETY: the task was created via `ManagedTask::new` (tag ==
-            // ManagedTask) and `Task.ptr` is the heap-allocated ManagedTask.
+            // ManagedTask) and the task payload is the heap-allocated ManagedTask.
             let managed: &mut ManagedTask =
-                unsafe { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
+                unsafe { &mut *close_next_tick_task.cast_ptr::<ManagedTask>() };
             managed.cancel();
         }
         // Same for the close-notification task. `closeSocket` above may have
@@ -1748,7 +1748,7 @@ impl Drop for SendQueue {
         if let Some(after_close_task) = self.after_close_task {
             // SAFETY: see above.
             let managed: &mut ManagedTask =
-                unsafe { &mut *(after_close_task.ptr.cast::<ManagedTask>()) };
+                unsafe { &mut *after_close_task.cast_ptr::<ManagedTask>() };
             managed.cancel();
             self.after_close_task = None;
         }

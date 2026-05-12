@@ -590,7 +590,8 @@ pretend the whole queue has become a closed enum: `bun_runtime::dispatch` still
 owns the `TaskTag` match because it owns JSC, C++, timers, auto-delete
 semantics, promise deref behavior, and the concrete task effect bodies. The
 landed task slice instead removes the public raw producer API: code outside
-`bun_event_loop` can no longer call `Task::new(tag, ptr)`.
+`bun_event_loop` can no longer call `Task::new(tag, ptr)` or construct
+`Task { tag, ptr }` directly.
 
 Normal pointer tasks now have to implement `Taskable` and enqueue with
 `Task::init` / `Task::from_boxed`; packed scalar tasks have to implement
@@ -602,7 +603,7 @@ split remains open.
 ```
 Runtime task current shape
   ├─> producer side
-  │     ├─> Task::new(tag, ptr) is private to bun_event_loop
+  │     ├─> Task::new(tag, ptr) and Task fields are private to bun_event_loop
   │     ├─> BundleV2DeferredBatchTask implements Taskable and enqueues with Task::init
   │     ├─> waiter-thread ResultTask<T> implements Taskable and enqueues with Task::init
   │     ├─> HotReloadTask implements Taskable and enqueues with Task::init
@@ -610,6 +611,7 @@ Runtime task current shape
   │     └─> NativePromiseDeferredDerefTask implements TaskPayload<usize>
   └─> executor side
         ├─> bun_runtime::dispatch::run_task still matches TaskTag
+        ├─> executor reads tag/payload through Task::tag / Task::cast_ptr / Task::payload_usize
         ├─> pointer recovery remains local to each runtime-owned dispatch arm
         ├─> packed scalar decoding remains local to the two scalar task arms
         └─> a real closed-enum task split remains future hard work, not claimed complete here

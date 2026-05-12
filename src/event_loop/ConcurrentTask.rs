@@ -172,8 +172,8 @@ pub mod task_tag {
 
 #[derive(Copy, Clone)]
 pub struct Task {
-    pub tag: TaskTag,
-    pub ptr: *mut (),
+    tag: TaskTag,
+    ptr: *mut (),
 }
 
 /// Type → tag binding for [`Task`]. Implement on every type that can be
@@ -215,6 +215,21 @@ impl Task {
     #[inline]
     const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
         Task { tag, ptr }
+    }
+
+    #[inline]
+    pub fn tag(self) -> TaskTag {
+        self.tag
+    }
+
+    #[inline]
+    pub fn cast_ptr<T>(self) -> *mut T {
+        self.ptr.cast::<T>()
+    }
+
+    #[inline]
+    pub fn payload_usize(self) -> usize {
+        self.ptr as usize
     }
 
     /// Zig: `TaggedPointerUnion.init(_ptr: anytype)` — `@typeInfo` asserted

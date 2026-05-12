@@ -157,33 +157,77 @@ impl T {
     }
 }
 
+/// Pack `N <= 16` bytes into a native-endian `u128` (zero-padded). `const` so
+/// the literal arms in the `by_len!` macros below fold to integer immediates
+/// at compile time; the runtime call (post-monomorphization, fixed `N`) lowers
+/// to one or two unaligned loads.
+///
+/// The `N <= 8` branch routes through a `u64` and widens with `as u128` so the
+/// upper half is the *literal* `0` rather than a stack-buffer read — LLVM
+/// InstCombine then narrows the resulting `icmp eq i128 (zext %lo), C` back to
+/// a single `i64` compare. This is the codegen Zig's `ComptimeStringMap` emits
+/// (`mov (%rsi),%rax; movabs $imm,%rcx; cmp %rcx,%rax`). Matching on
+/// `&[u8; N]` directly does **not** get this: rustc lowers array patterns to a
+/// per-byte `cmpb`+`jne` decision tree (8 branches for `b"function"`), which
+/// is what the previous revision of `by_len!` produced.
+#[inline(always)]
+const fn kw_pack<const N: usize>(arr: &[u8; N]) -> u128 {
+    assert!(N <= 16);
+    if N <= 8 {
+        let mut lo = [0u8; 8];
+        let mut i = 0;
+        while i < N {
+            lo[i] = arr[i];
+            i += 1;
+        }
+        u64::from_ne_bytes(lo) as u128
+    } else {
+        let mut lo = [0u8; 8];
+        let mut hi = [0u8; 8];
+        let mut i = 0;
+        while i < 8 {
+            lo[i] = arr[i];
+            i += 1;
+        }
+        while i < N {
+            hi[i - 8] = arr[i];
+            i += 1;
+        }
+        (u64::from_ne_bytes(lo) as u128) | ((u64::from_ne_bytes(hi) as u128) << 64)
+    }
+}
+
 /// Hot-path keyword classifier — called once per identifier in the lexer.
 ///
 /// Replaces the `phf::Map` lookup for `KEYWORDS` (which hashes through
 /// SipHash13 and showed up as ~4% self-time under `phf_shared::hash` in
 /// `perf record` on the three.js bundle). Mirrors Zig's `ComptimeStringMap`
-/// strategy: bucket by length, then compare against the small set of
-/// same-length candidates as fixed-size arrays so rustc/LLVM emit a single
-/// integer load + compare per candidate (no hash, no bounds checks, no
-/// memcmp call).
+/// strategy: bucket by length, then load the candidate once as a wide integer
+/// and compare against const-folded immediates — one `cmp` per candidate, no
+/// hash, no bounds checks, no `memcmp`, no per-byte ladder.
 ///
 /// All JS keywords are 2..=10 ASCII bytes; the length dispatch rejects the
 /// overwhelming majority of identifiers (which are not keywords) with one
 /// branch when `len > 10`.
 #[inline]
 pub fn keyword(s: &[u8]) -> Option<T> {
-    /// View `s` as `&[u8; $n]` (length already checked by the outer
-    /// `match s.len()`), then match literal byte arrays. Matching on a
-    /// fixed-size array lets LLVM lower each arm to a wide integer compare
-    /// instead of a `memcmp` call. `try_into().unwrap()` is safe and the
-    /// length check folds away against the just-matched discriminant.
+    /// View `s` as `&[u8; $n]` (length already proven by the outer
+    /// `match s.len()`), pack it into a single native-endian integer via
+    /// [`kw_pack`], and compare against const-folded integer immediates. Each
+    /// arm is one wide `cmp`. (Matching on `&[u8; N]` directly lowers to a
+    /// per-byte `cmpb` chain — see [`kw_pack`] doc.)
+    ///
+    /// Spelled as an `if`/`else` chain rather than a `match`: inline-`const`
+    /// in *pattern* position is unstable (`inline_const_pat`), but in
+    /// *expression* position it has been stable since 1.79 and forces the RHS
+    /// to a compile-time immediate. The lowered IR is identical — a `match`
+    /// over scattered `u128` constants is a sequential `cmp`+`je` ladder
+    /// either way (no jump table for sparse 128-bit keys).
     macro_rules! by_len {
         ($n:literal: $($lit:literal => $tok:expr,)*) => {{
             let arr: &[u8; $n] = s.try_into().unwrap();
-            match arr {
-                $($lit => Some($tok),)*
-                _ => None,
-            }
+            let w = kw_pack::<$n>(arr);
+            $(if w == const { kw_pack::<$n>($lit) } { Some($tok) } else)* { None }
         }};
     }
     match s.len() {
@@ -335,10 +379,9 @@ impl PropertyModifierKeyword {
         macro_rules! by_len {
             ($n:literal: $($lit:literal => $tok:expr,)*) => {{
                 let arr: &[u8; $n] = s.try_into().unwrap();
-                match arr {
-                    $($lit => Some($tok),)*
-                    _ => None,
-                }
+                let w = kw_pack::<$n>(arr);
+                // See `keyword`'s `by_len!` for why this is an if-chain.
+                $(if w == const { kw_pack::<$n>($lit) } { Some($tok) } else)* { None }
             }};
         }
         match s.len() {
@@ -380,7 +423,10 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
     macro_rules! by_len {
         ($n:literal: $($lit:literal,)*) => {{
             let arr: &[u8; $n] = s.try_into().unwrap();
-            matches!(arr, $($lit)|*)
+            let w = kw_pack::<$n>(arr);
+            // See `keyword`'s `by_len!` for why this is an `||` chain rather
+            // than a `matches!` over `const { }` patterns.
+            false $(|| w == const { kw_pack::<$n>($lit) })*
         }};
     }
     match s.len() {
@@ -565,10 +611,9 @@ impl TypescriptStmtKeyword {
         macro_rules! by_len {
             ($n:literal: $($lit:literal => $kw:expr,)*) => {{
                 let arr: &[u8; $n] = s.try_into().unwrap();
-                match arr {
-                    $($lit => Some($kw),)*
-                    _ => None,
-                }
+                let w = kw_pack::<$n>(arr);
+                // See `keyword`'s `by_len!` for why this is an if-chain.
+                $(if w == const { kw_pack::<$n>($lit) } { Some($kw) } else)* { None }
             }};
         }
         match s.len() {

@@ -405,6 +405,19 @@ pub const ReadFile = struct {
         // readable.
         if (this.could_block) {
             if (bun.isReadable(fd) == .not_ready) {
+                // A write-only fd (e.g. Bun.stdout when stdout is a pipe) will
+                // never become readable. Fail now instead of waiting forever.
+                if (comptime Environment.isPosix) {
+                    if (bun.sys.getFcntlFlags(fd).unwrap() catch null) |flags| {
+                        if ((flags & (bun.O.RDWR | bun.O.WRONLY)) == bun.O.WRONLY) {
+                            const err = bun.sys.Error.fromCode(.BADF, .read).withFd(fd);
+                            this.errno = bun.errnoToZigErr(err.errno);
+                            this.system_error = err.toSystemError();
+                            this.onFinish();
+                            return;
+                        }
+                    }
+                }
                 this.waitForReadable();
                 return;
             }

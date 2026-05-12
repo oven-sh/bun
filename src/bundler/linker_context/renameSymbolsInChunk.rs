@@ -412,7 +412,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 );
             }
             // Zig: `@TypeOf(r.number_scope_pool.hive.used).initEmpty()`.
-            r.number_scope_pool.hive.used = bun_collections::IntegerBitSet::init_empty();
+            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
     }
 

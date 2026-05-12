@@ -2,17 +2,158 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit, size_of};
 use core::ptr::NonNull;
 
-use crate::bit_set::IntegerBitSet;
 use bun_core::asan;
+
+/// Fixed-width occupancy bitset for [`HiveArray`].
+///
+/// PORT NOTE: Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
+/// `uN` integer (`u128`, `u256`, `u2048`, …). The Rust port's
+/// [`IntegerBitSet`](crate::bit_set::IntegerBitSet) is backed by a single
+/// `usize`, so for `N > 64` it silently held only 64 usable bits — every
+/// `HiveArray<_, 128/256/2048>` pool degraded to 64 effective slots and spilled
+/// to the heap fallback on the 65th in-flight item. Under HTTP load (the
+/// `Body::Value` 256-slot pool, the `RequestContext` 2048-slot pool) this turned
+/// every request into a `Box::new`.
+///
+/// We can't spell `[usize; (CAPACITY+63)/64]` without `generic_const_exprs`
+/// (which would virally add `where` bounds on every `HiveArray` consumer), so
+/// this uses a fixed `[usize; 32]` backing array — 2048 bits, which is the
+/// largest in-tree `HiveArray` capacity. Only the first
+/// `ceil(CAPACITY/64)` words are touched, so smaller pools pay 256 B of dead
+/// storage (negligible next to `buffer: [MaybeUninit<T>; CAPACITY]`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HiveBitSet<const CAPACITY: usize> {
+    masks: [usize; HIVE_BITSET_WORDS],
+}
+
+const HIVE_BITSET_WORDS: usize = 32;
+const WORD_BITS: usize = usize::BITS as usize;
+
+impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
+    const NUM_WORDS: usize = if CAPACITY == 0 {
+        0
+    } else {
+        (CAPACITY + WORD_BITS - 1) / WORD_BITS
+    };
+    const _FITS: () = assert!(
+        CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,
+        "HiveArray CAPACITY exceeds HiveBitSet backing (raise HIVE_BITSET_WORDS)"
+    );
+    /// Mask of valid bits in the last live word (all-ones when CAPACITY is a
+    /// multiple of 64; otherwise zeros in the high padding bits).
+    const LAST_WORD_MASK: usize = {
+        let rem = CAPACITY % WORD_BITS;
+        if rem == 0 { usize::MAX } else { (1usize << rem) - 1 }
+    };
+
+    pub const fn init_empty() -> Self {
+        Self {
+            masks: [0; HIVE_BITSET_WORDS],
+        }
+    }
+
+    #[inline]
+    pub fn is_set(&self, index: usize) -> bool {
+        debug_assert!(index < CAPACITY);
+        (self.masks[index / WORD_BITS] >> (index % WORD_BITS)) & 1 != 0
+    }
+
+    #[inline]
+    pub fn set(&mut self, index: usize) {
+        debug_assert!(index < CAPACITY);
+        self.masks[index / WORD_BITS] |= 1usize << (index % WORD_BITS);
+    }
+
+    #[inline]
+    pub fn unset(&mut self, index: usize) {
+        debug_assert!(index < CAPACITY);
+        self.masks[index / WORD_BITS] &= !(1usize << (index % WORD_BITS));
+    }
+
+    #[inline]
+    pub fn find_first_set(&self) -> Option<usize> {
+        let mut i = 0;
+        while i < Self::NUM_WORDS {
+            let m = self.masks[i];
+            if m != 0 {
+                return Some(i * WORD_BITS + m.trailing_zeros() as usize);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    #[inline]
+    pub fn find_first_unset(&self) -> Option<usize> {
+        let mut i = 0;
+        while i < Self::NUM_WORDS {
+            let live_mask = if i + 1 == Self::NUM_WORDS {
+                Self::LAST_WORD_MASK
+            } else {
+                usize::MAX
+            };
+            let inv = !self.masks[i] & live_mask;
+            if inv != 0 {
+                return Some(i * WORD_BITS + inv.trailing_zeros() as usize);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Forward iterator over set bits. Mirrors `IntegerBitSet::iter_set`.
+    #[inline]
+    pub fn iter_set(&self) -> HiveBitSetIter<CAPACITY> {
+        self.iterator::<true, true>()
+    }
+
+    /// Signature mirrors `IntegerBitSet::iterator` so existing
+    /// `hive.used.iterator::<true, true>()` callers compile unchanged. Only
+    /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
+    /// only one used in-tree); other params assert.
+    #[inline]
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
+        &self,
+    ) -> HiveBitSetIter<CAPACITY> {
+        const { assert!(KIND_SET && DIR_FWD, "HiveBitSet::iterator only supports <true,true>") };
+        HiveBitSetIter {
+            masks: self.masks,
+            word: 0,
+        }
+    }
+}
+
+pub struct HiveBitSetIter<const CAPACITY: usize> {
+    masks: [usize; HIVE_BITSET_WORDS],
+    word: usize,
+}
+
+impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
+    #[inline]
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<usize> {
+        while self.word < HiveBitSet::<CAPACITY>::NUM_WORDS {
+            let m = self.masks[self.word];
+            if m != 0 {
+                let bit = m.trailing_zeros() as usize;
+                self.masks[self.word] &= m - 1;
+                return Some(self.word * WORD_BITS + bit);
+            }
+            self.word += 1;
+        }
+        None
+    }
+}
 
 /// An array that efficiently tracks which elements are in use.
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
 // PORT NOTE: Zig's `capacity: u16` is widened to `usize` here because Rust array
-// lengths and `IntegerBitSet<N>` require a `usize` const generic on stable.
+// lengths require a `usize` const generic on stable.
 pub struct HiveArray<T, const CAPACITY: usize> {
     pub buffer: [MaybeUninit<T>; CAPACITY],
-    pub used: IntegerBitSet<CAPACITY>,
+    pub used: HiveBitSet<CAPACITY>,
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
@@ -25,7 +166,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     pub const fn init() -> Self {
         Self {
             buffer: [const { MaybeUninit::uninit() }; CAPACITY],
-            used: IntegerBitSet::init_empty(),
+            used: HiveBitSet::init_empty(),
         }
     }
 

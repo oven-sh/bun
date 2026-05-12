@@ -269,7 +269,7 @@ impl RuntimeTranspilerStore {
             // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
             // intentionally left untouched (uninit is a valid value).
             addr_of_mut!((*out).store.hive.used)
-                .write(bun_collections::IntegerBitSet::init_empty());
+                .write(bun_collections::hive_array::HiveBitSet::init_empty());
             addr_of_mut!((*out).enabled).write(true);
             addr_of_mut!((*out).queue).write(Queue::new());
         }

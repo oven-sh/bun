@@ -1418,16 +1418,19 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
-            // PERF(port): Zig forwarded `if (use_shared_buffer)
-            // bun.default_allocator else this_parse.arena` — the Rust
-            // `read_file_with_allocator` drops the arena (global mimalloc
-            // for the non-shared path; see resolver/lib.rs PORT NOTE).
+            // Zig (`transpiler.zig:838-839`): `if (use_shared_buffer)
+            // bun.default_allocator else this_parse.allocator`. Thread
+            // `this_parse.arena` (the per-call `MimallocArena` from
+            // `RuntimeTranspilerStore`) so the source bytes land in the
+            // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
+            // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
                 file_descriptor,
+                if USE_SHARED_BUFFER { None } else { Some(arena) },
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -1450,7 +1453,9 @@ impl<'a> Transpiler<'a> {
             // PORT NOTE: `Source.contents: &'static [u8]` (Phase-A `Str`
             // convention). The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or a heap `Contents::Owned(Vec<u8>)`. Thread the
+            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
+            // bulk-freed by `mi_heap_destroy` when the per-call arena is
+            // recycled). Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns). Spec transpiler.zig:853 hands
@@ -2903,6 +2908,7 @@ impl<'a> Transpiler<'a> {
                         file_path_text,
                         resolve_result.dirname_fd,
                         false,
+                        None,
                         None,
                     ) {
                         Ok(e) => e,

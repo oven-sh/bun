@@ -1082,6 +1082,7 @@ impl PackageJSON {
             dirname_fd,
             false,
             None,
+            None,
         ) {
             Ok(e) => e,
             Err(err) => {

@@ -678,9 +678,10 @@ pub fn call_check_slow_at<R>(
     {
         let _ = src;
         let r = f();
-        // SAFETY: trivial FFI; reads vm.m_exception (with trap check) — same body as
-        // `RETURN_IF_EXCEPTION` in C++. `[[ZIG_EXPORT(nothrow)]]`.
-        if unsafe { crate::cpp::raw::Bun__RETURN_IF_EXCEPTION(global.as_ptr()) } {
+        // `[[ZIG_EXPORT(nothrow)]]` — cppbind emits a safe `&JSGlobalObject`
+        // wrapper (reads `vm.m_exception` with trap check; same body as
+        // `RETURN_IF_EXCEPTION` in C++).
+        if crate::cpp::Bun__RETURN_IF_EXCEPTION(global) {
             Err(JsError::Thrown)
         } else {
             Ok(r)

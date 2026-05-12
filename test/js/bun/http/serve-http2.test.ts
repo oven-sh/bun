@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import nodetls from "node:tls";
 
-// Bun.serve({ h2: true }) attaches to the HTTP/1 TLS listener via ALPN:
+// Bun.serve({ http2: true }) attaches to the HTTP/1 TLS listener via ALPN:
 // the server offers "h2,http/1.1" and adopts sockets that negotiate "h2"
 // into the HTTP/2 child context. Every fetch here forces protocol: "h2"
 // so a silent fallback to HTTP/1.1 surfaces as a protocol mismatch (the
@@ -30,7 +30,7 @@ const deferred = Promise.withResolvers();
 const server = serve({
   port: 0,
   tls: ${JSON.stringify(tls)},
-  h2: true,
+  http2: true,
   routes: {
     "/api/:id": req => new Response("id=" + req.params.id, {
       headers: { "x-route": "api" },
@@ -147,7 +147,7 @@ async function withServer(body: (port: number, send: (cmd: string) => Promise<vo
   expect(exitCode).toBe(0);
 }
 
-describe("Bun.serve h2: true", () => {
+describe("Bun.serve http2: true", () => {
   test("simple GET over ALPN h2", async () => {
     await withServer(async port => {
       const res = await fetchH2(port, "/hello");
@@ -580,7 +580,7 @@ describe("Bun.serve h2: true", () => {
     // SSL_CTX. BoringSSL's sni_cb swaps ssl->ctx to it *before*
     // ssl_negotiate_alpn reads alpn_select_cb, so the ALPN callback
     // must be installed on that per-SNI ctx too — otherwise an SNI-
-    // routed connection silently falls back to http/1.1 and h2: true
+    // routed connection silently falls back to http/1.1 and http2: true
     // is a no-op. H3 already does this (us_quic_prepare_ssl_ctx on
     // each SNI entry).
     const sniFixture = `
@@ -588,7 +588,7 @@ describe("Bun.serve h2: true", () => {
       const server = serve({
         port: 0,
         tls: { ...${JSON.stringify(tls)}, serverName: "localhost" },
-        h2: true,
+        http2: true,
         fetch: () => new Response("sni-ok"),
       });
       console.log(server.port);
@@ -628,30 +628,30 @@ describe("Bun.serve h2: true", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("h2: true without tls throws", () => {
+  test("http2: true without tls throws", () => {
     expect(() =>
       Bun.serve({
         port: 0,
-        // @ts-expect-error h2 is new
-        h2: true,
+        // @ts-expect-error http2 is new
+        http2: true,
         fetch: () => new Response("x"),
       }),
     ).toThrow(/HTTP\/2 requires 'tls'/);
   });
 
-  test("h2: true with h1: false throws", () => {
-    // Without h3 the generic "Cannot disable h1 without enabling h3"
-    // fires first; with h3 we reach the h2-specific guard.
+  test("http2: true with http1: false throws", () => {
+    // Without http3 the generic "Cannot disable http1 without enabling
+    // http3" fires first; with http3 we reach the http2-specific guard.
     expect(() =>
       Bun.serve({
         port: 0,
         tls,
-        // @ts-expect-error h2 is new
-        h2: true,
-        h3: true,
-        h1: false,
+        // @ts-expect-error http2 is new
+        http2: true,
+        http3: true,
+        http1: false,
         fetch: () => new Response("x"),
       }),
-    ).toThrow(/h2 requires h1/);
+    ).toThrow(/http2 requires http1/);
   });
 });

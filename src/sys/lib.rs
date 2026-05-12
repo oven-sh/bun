@@ -4125,7 +4125,17 @@ pub mod c {
     pub use libc::stat as Stat;
     pub use libc::memcmp;
     #[cfg(unix)] pub use libc::fchmod;
-    #[cfg(unix)] pub use libc::{getuid, getgid, geteuid, getegid};
+    // `getuid`/`getgid`/`geteuid`/`getegid` take no args and read kernel
+    // process state — no preconditions, never fail. Declared locally as
+    // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
+    // callers need no per-site proof.
+    #[cfg(unix)]
+    unsafe extern "C" {
+        pub safe fn getuid() -> libc::uid_t;
+        pub safe fn getgid() -> libc::gid_t;
+        pub safe fn geteuid() -> libc::uid_t;
+        pub safe fn getegid() -> libc::gid_t;
+    }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
     pub use libc::{sysctlbyname, getloadavg, sockaddr_dl};
     #[cfg(unix)]
@@ -4246,8 +4256,9 @@ pub mod c {
     unsafe extern "C" {
         /// `extern mach_port_t mach_task_self_` — the task's send right,
         /// cached by libsystem at startup. `mach_task_self()` in C is a macro
-        /// that just reads this global.
-        static mach_task_self_: libc::mach_port_t;
+        /// that just reads this global. Immutable for the process lifetime →
+        /// `safe static` (no read precondition).
+        safe static mach_task_self_: libc::mach_port_t;
         /// `mach_port_t mach_host_self(void)` — host privileged port.
         pub safe fn mach_host_self() -> libc::mach_port_t;
         /// `uint32_t _dyld_image_count(void)`
@@ -4263,9 +4274,7 @@ pub mod c {
     #[cfg(target_os = "macos")]
     #[inline]
     pub fn mach_task_self() -> libc::mach_port_t {
-        // SAFETY: `mach_task_self_` is a plain immutable global initialized by
-        // libsystem before any user code runs; reading it is always safe.
-        unsafe { mach_task_self_ }
+        mach_task_self_
     }
     /// `_dyld_get_image_header(i)` — on 64-bit Darwin every loaded image is
     /// 64-bit, so present it as `*const mach_header_64` (Zig's std does the
@@ -8109,15 +8118,21 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 /// File { handle: Fd } }`; the buffering layer in Zig is the std-adapter, which
 /// we route to `QuietWriterAdapter` below.)
 #[inline]
-unsafe fn qw_fd(qw: *const bun_core::output::QuietWriter) -> Fd {
-    // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
-    let raw = unsafe { *qw.cast::<*mut ()>() };
+fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
+    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }` (asserted
+    // in bun_core::output); slot 0 carries fd-as-usize-as-ptr. Reading the
+    // first word through a same-align pointer cast of a live `&QuietWriter`
+    // is in-bounds and aligned.
+    let raw = unsafe { *core::ptr::from_ref(qw).cast::<*mut ()>() };
     Fd::from_native(raw as usize as _)
 }
 #[inline]
-unsafe fn qw_set_fd(qw: *mut bun_core::output::QuietWriter, fd: Fd) {
-    // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
-    unsafe { *qw.cast::<*mut ()>() = fd.native() as usize as *mut (); }
+fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
+    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }`; slot 0
+    // carries fd-as-usize-as-ptr. Writing the first word through a same-align
+    // pointer cast of a live `&mut QuietWriter` is in-bounds, aligned, and
+    // exclusively borrowed.
+    unsafe { *core::ptr::from_mut(qw).cast::<*mut ()>() = fd.native() as usize as *mut (); }
 }
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
@@ -8234,11 +8249,11 @@ bun_core::link_impl_OutputSink! {
             openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(Into::into),
         quiet_writer_from_fd(fd) => {
             let mut out = bun_core::output::QuietWriter::ZEROED;
-            qw_set_fd(&raw mut out, fd);
+            qw_set_fd(&mut out, fd);
             out
         },
         quiet_writer_adapt(qw, buf, len) => {
-            let fd = qw_fd(&raw const qw);
+            let fd = qw_fd(&qw);
             let concrete = SysQuietWriterAdapter {
                 writer: bun_core::io::Writer {
                     write_all: adapter_write_all,

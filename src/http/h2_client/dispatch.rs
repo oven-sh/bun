@@ -547,10 +547,8 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
     // PORT NOTE: reshaped for borrowck (was `defer .clearRetainingCapacity()`).
     let mut offset: usize = 0;
     while offset < session.orphan_header_block.len() {
-        // SAFETY: sole live borrow of the HPACK table; `orphan_header_block`
-        // is a disjoint field read-only here.
-        let hpack = unsafe { session.hpack() };
-        let result = match hpack.decode(&session.orphan_header_block[offset..]) {
+        // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
+        let result = match session.hpack.decode(&session.orphan_header_block[offset..]) {
             Ok(r) => r,
             Err(_) => {
                 session.fatal_error = Some(err!(HTTP2CompressionError));
@@ -583,10 +581,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
 
     let mut offset: usize = 0;
     while offset < stream.header_block.len() {
-        // SAFETY: sole live borrow of the HPACK table; `stream.header_block`
-        // is disjoint from the FFI allocation.
-        let hpack = unsafe { session.hpack() };
-        let result = match hpack.decode(&stream.header_block[offset..]) {
+        let result = match session.hpack.decode(&stream.header_block[offset..]) {
             Ok(r) => r,
             Err(_) => {
                 // The decoder has already committed earlier fields from this

@@ -2398,7 +2398,7 @@ declare module "bun" {
    */
   type TranspilerSourceMapOption = "none" | "inline" | "external" | "linked" | boolean;
 
-  interface TranspilerOptions<SM extends TranspilerSourceMapOption = "none"> {
+  interface TranspilerOptions<SM extends TranspilerSourceMapOption = TranspilerSourceMapOption> {
     /**
      * Replace key with value. Value must be a JSON string.
      * @example

@@ -146,6 +146,37 @@ const FILESINK_LIVE: u32 = 0xF11E_51A1; // "FileSink" alive
 #[cfg(windows)]
 const FILESINK_DEAD: u32 = 0xDEAD_51A1;
 
+/// #53265 probe v4: called from the C++ `JSFileSink` / `JSReadableFileSinkController`
+/// constructors immediately after `m_sinkPtr = sinkPtr` (see generate-jssink.ts).
+/// v3 showed magic=0x0 at GC-sweep finalize — i.e. `m_sinkPtr` was never (or is no
+/// longer) a `FileSink`. This moves the check to **store time** so the panic carries
+/// the *creation* backtrace, naming whoever passed the bad pointer to
+/// `FileSink__createObject` / `FileSink__assignToStream`. If this passes and v3's
+/// finalize check still fires, the corruption is a write-after-store (UAF onto a
+/// freed-then-reused slot) and we move to a ptr-registry probe.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn FileSink__assertLive(ptr: *const c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: probe-only — reads `magic` at its repr(Rust) offset. Worst case
+    // (non-FileSink ptr ≥ sizeof(FileSink) bytes from a page edge) is the very
+    // bug we're catching; the panic that follows is the intended outcome.
+    let magic = unsafe { (*ptr.cast::<FileSink>()).magic.get() };
+    if magic != FILESINK_LIVE {
+        let head: [u8; 64] = unsafe { core::ptr::read_unaligned(ptr.cast::<[u8; 64]>()) };
+        panic!(
+            "FileSink__assertLive: m_sinkPtr={:p} stored with bad magic {:#x} \
+             (LIVE={:#x} DEAD={:#x}); head[0..64]={:02x?}",
+            ptr, magic, FILESINK_LIVE, FILESINK_DEAD, head,
+        );
+    }
+}
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+pub extern "C" fn FileSink__assertLive(_ptr: *const c_void) {}
+
 pub mod testing_apis {
     use super::*;
 

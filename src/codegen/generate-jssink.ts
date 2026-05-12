@@ -117,12 +117,13 @@ function header() {
 
             uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                     
-            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                : Base(vm, structure)                                                                                                                                               
-            {                                                                                                                                                                       
+            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                : Base(vm, structure)
+            {
                 m_sinkPtr = sinkPtr;
                 m_onDestroy = onDestroy;
-            }                                                                                                                                                                       
+                ${name === "FileSink" ? "FileSink__assertLive(sinkPtr);" : ""}
+            }
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
         };
@@ -175,12 +176,13 @@ function header() {
 
                 uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                         
-                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                    : Base(vm, structure)                                                                                                                                               
-                {                                                                                                                                                                       
+                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                    : Base(vm, structure)
+                {
                     m_sinkPtr = sinkPtr;
                     m_onDestroy = onDestroy;
-                }                                                                                                                                                                       
+                    ${name === "FileSink" ? "FileSink__assertLive(sinkPtr);" : ""}
+                }
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
             };
@@ -204,6 +206,10 @@ JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
 #include "Sink.h"
 
 extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+// #53265 probe v4: panics with creation backtrace if sinkPtr->magic != LIVE.
+// Called from JSFileSink/JSReadableFileSinkController inline constructors below.
+// No-op on non-Windows (see FileSink.rs).
+extern "C" void FileSink__assertLive(const void* sinkPtr);
 
 namespace WebCore {
 using namespace JSC;
@@ -282,6 +288,9 @@ async function implementation() {
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" void Bun__onSinkDestroyed(uintptr_t destructor, void* sinkPtr);
+// #53265 probe v4: panics with creation backtrace if sinkPtr->magic != LIVE.
+// No-op on non-Windows (see FileSink.rs).
+extern "C" void FileSink__assertLive(const void* sinkPtr);
 
 namespace WebCore {
 using namespace JSC;

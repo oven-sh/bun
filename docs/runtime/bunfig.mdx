@@ -574,6 +574,21 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
+### `install.forceRegistry`
+
+Force **every** package to resolve through a single registry, overriding all other registry configuration on the machine — `install.registry`, `install.scopes`, `.npmrc`, `NPM_CONFIG_REGISTRY`, and the `--registry` flag.
+
+This is intended for centrally-managed devices: set it once in the global `~/.bunfig.toml` (or via the `BUN_CONFIG_FORCE_REGISTRY` environment variable) and `bun install` will always use that registry regardless of what any project checks in.
+
+```toml title="~/.bunfig.toml" icon="settings"
+[install]
+forceRegistry = "https://npm.corp.example.com/"
+# or with auth
+forceRegistry = { url = "https://npm.corp.example.com/", token = "$CORP_NPM_TOKEN" }
+```
+
+Once set in the global bunfig, a project-level `bunfig.toml` cannot change or unset it.
+
 ### `install.linkWorkspacePackages`
 
 To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.

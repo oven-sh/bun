@@ -2139,10 +2139,10 @@ impl RealFS {
                 }
             }
 
-            // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list`.
-            let file_contents: &[u8] =
-                unsafe { core::slice::from_raw_parts(file_contents_ptr, file_contents_len) };
-            if let Some(bom) = BOM::detect(file_contents) {
+            // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
+            // the read loop above); borrow the Vec directly so the slice ends before the
+            // `&mut shared_buffer.list` reborrow inside the BOM branch.
+            if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
                 debug!("Convert {} BOM", bom.tag_name());
                 // PORT NOTE: Zig passed `&shared_buffer.list` and the returned slice aliases it.
                 // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the

@@ -58,6 +58,16 @@ impl DirInfoRef {
         DirInfoRef(unsafe { NonNull::new_unchecked(p) })
     }
 
+    /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from
+    /// `BSSMapInner::at_index`/`put` is by construction a non-null slot in the
+    /// process-lifetime BSSMap singleton — exactly the [`from_raw`] contract —
+    /// and `NonNull::from(&mut _)` is itself safe. Centralizes the per-site
+    /// `from_raw(ptr::from_mut(d))` open-coding at every `at_index` call.
+    #[inline]
+    pub fn from_slot(slot: &mut DirInfo) -> Self {
+        DirInfoRef(NonNull::from(slot))
+    }
+
     /// Raw pointer to the underlying slot. Preserves mut-provenance from the
     /// BSSMap allocation site for the `dir_info_uncached` fill path.
     #[inline]
@@ -248,9 +258,7 @@ impl DirInfo {
     }
 
     pub fn get_parent(&self) -> Option<DirInfoRef> {
-        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
-        // `at_index` yields a slot ptr satisfying `DirInfoRef::from_raw`'s contract.
-        unsafe { (*hash_map_instance()).at_index(self.parent).map(|p| DirInfoRef::from_raw(std::ptr::from_mut(p))) }
+        ref_at_index(self.parent)
     }
 
     /// Handle to the enclosing browser-scope `DirInfo` slot. Frequently
@@ -258,9 +266,7 @@ impl DirInfo {
     /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
     /// reads through `DirInfoRef::deref` are sound.
     pub fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
-        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
-        // `at_index` yields a slot ptr satisfying `DirInfoRef::from_raw`'s contract.
-        unsafe { (*hash_map_instance()).at_index(self.enclosing_browser_scope).map(|p| DirInfoRef::from_raw(std::ptr::from_mut(p))) }
+        ref_at_index(self.enclosing_browser_scope)
     }
 }
 
@@ -291,6 +297,18 @@ pub fn hash_map_instance() -> *mut HashMap {
         Ok(_) => new.as_ptr(),
         Err(existing) => existing.unwrap().as_ptr(),
     }
+}
+
+/// Look up a `DirInfo` slot in the process-lifetime BSSMap singleton by index
+/// and wrap it as a [`DirInfoRef`]. Single `unsafe` deref site for
+/// `hash_map_instance()` index reads; `get_parent` /
+/// `get_enclosing_browser_scope` route through here so callers stay safe.
+#[inline]
+fn ref_at_index(index: Index) -> Option<DirInfoRef> {
+    // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap singleton
+    // (process-lifetime; never freed). Resolver mutex held by caller serializes
+    // mutation. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
+    unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
 bitflags::bitflags! {

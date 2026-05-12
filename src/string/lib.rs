@@ -41,6 +41,28 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
 pub use bun_alloc::{StringImpl, Tag};
 
+// ── Debug-only Rust-side WTF ref balance ───────────────────────────────────
+//
+// Tracks the *net* +1s the Rust side holds against `WTF::StringImpl`
+// refcounts: every Rust-visible creation (`BunString__from*` returns a +1)
+// and every explicit `.ref_()` increments; every `.deref()` decrements. If
+// Rust correctly pairs every create/ref with a deref (or hands ownership to
+// C++ via FFI without further touching the value), this stays bounded.
+// Linear growth per iteration of a leak test = forgotten `.deref()` on the
+// Rust side (the BunString-RAII hypothesis). C++-side leaks do NOT show up
+// here; use macOS `leaks` for that.
+//
+// Always compiled; one relaxed atomic add per ref op is below noise. Read
+// via `bun_string::rust_wtf_ref_balance()` → exposed as
+// `Bun.unsafe.heapStats().bunStringRefBalance`.
+pub static RUST_WTF_REF_BALANCE: core::sync::atomic::AtomicIsize =
+    core::sync::atomic::AtomicIsize::new(0);
+
+#[inline]
+pub fn rust_wtf_ref_balance() -> isize {
+    RUST_WTF_REF_BALANCE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct String(pub bun_alloc::String);
@@ -203,11 +225,11 @@ impl String {
         if s.is_empty() { return Self::EMPTY; }
         // BunString__fromBytes auto-detects all-ASCII → Latin1, else UTF-8.
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
-        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }
+        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }.track_create()
     }
     pub fn clone_latin1(s: &[u8]) -> Self {
         if s.is_empty() { return Self::EMPTY; }
-        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
+        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }.track_create()
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII (string.zig:207).
     pub fn clone_utf16(s: &[u16]) -> Self {
@@ -220,16 +242,17 @@ impl String {
                 BunString__fromUTF16(s.as_ptr(), s.len())
             }
         }
+        .track_create()
     }
     pub fn create_atom(s: &[u8]) -> Self {
-        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
+        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }.track_create()
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
     /// to atomize (string.zig:270).
     pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
         // SAFETY: bytes describes a valid slice.
         let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
-        if atom.0.tag == Tag::Dead { None } else { Some(atom) }
+        if atom.0.tag == Tag::Dead { None } else { Some(atom.track_create()) }
     }
     /// `bun.String.createAtomIfPossible` — atomized strings are interned in a
     /// thread-local table; falls back to a regular WTF copy if atomization
@@ -299,7 +322,7 @@ impl String {
             BunString__createExternal(bytes.as_ptr(), bytes.len(), is_latin1, ctx_erased, cb_erased)
         };
         debug_assert!(s.0.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
-        s
+        s.track_create()
     }
 
     /// Max `WTF::StringImpl` length (in characters, not bytes).
@@ -318,6 +341,7 @@ impl String {
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+            .track_create()
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string. Port collapses Zig's
@@ -337,7 +361,7 @@ impl String {
     /// `(dead, null)` if WTF allocation failed (string.zig:128 checks
     /// `tag == .Dead` before using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
-        let s = BunString__fromLatin1Unitialized(len);
+        let s = BunString__fromLatin1Unitialized(len).track_create();
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -353,7 +377,7 @@ impl String {
         (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
-        let s = BunString__fromUTF16Unitialized(len);
+        let s = BunString__fromUTF16Unitialized(len).track_create();
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -381,6 +405,7 @@ impl String {
         // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
         // via mimalloc (the global allocator).
         unsafe { BunString__createExternalGloballyAllocatedLatin1(bytes.as_mut_ptr(), bytes.len()) }
+            .track_create()
     }
 
     /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
@@ -394,6 +419,7 @@ impl String {
         let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
         // SAFETY: see `create_external_globally_allocated_latin1`.
         unsafe { BunString__createExternalGloballyAllocatedUTF16(bytes.as_mut_ptr(), bytes.len()) }
+            .track_create()
     }
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
@@ -472,10 +498,26 @@ impl String {
         if v > i32::MAX as i64 { None } else { Some(v as i32) }
     }
 
+    /// Funnel for newly-created WTF strings returned +1 from C++. Bumps
+    /// [`RUST_WTF_REF_BALANCE`] so leak tests can see how many +1 refs the
+    /// Rust side currently holds. Idempotent for non-WTF tags.
+    ///
+    /// `pub` so out-of-crate FFI ctors (e.g. `bun_jsc::bun_string_jsc::from_js`)
+    /// can funnel through it. **Do not** call on a `String` that wasn't just
+    /// returned +1 from C++ — that would double-count.
+    #[inline(always)]
+    pub fn track_create(self) -> Self {
+        if self.0.tag == Tag::WTFStringImpl {
+            RUST_WTF_REF_BALANCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        self
+    }
+
     /// `String.ref()` — increment WTF refcount; no-op for other tags.
     #[inline]
     pub fn ref_(&self) {
         if self.0.tag == Tag::WTFStringImpl {
+            RUST_WTF_REF_BALANCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.as_wtf().r#ref()
         }
     }
@@ -483,6 +525,7 @@ impl String {
     #[inline]
     pub fn deref(&self) {
         if self.0.tag == Tag::WTFStringImpl {
+            RUST_WTF_REF_BALANCE.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
             self.as_wtf().deref()
         }
     }

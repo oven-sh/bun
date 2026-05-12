@@ -13,6 +13,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
         ("gcAggressionLevel", __jsc_host_gc_aggression_level),
         ("arrayBufferToString", __jsc_host_array_buffer_to_string),
         ("mimallocDump", __jsc_host_dump_mimalloc),
+        ("heapStats", __jsc_host_heap_stats),
     ];
     for &(name, func) in FIELDS {
         object.put(
@@ -75,6 +76,66 @@ pub fn array_buffer_to_string(
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn dump_zone_malloc_stats();
+}
+
+/// `Bun.unsafe.heapStats()` — leak-instrumentation accessor for tests.
+///
+/// Returns `{ mimallocCommit, mimallocRss, mimallocPageFaults,
+/// bunStringRefBalance, liveArenaHeaps }`. All numbers are process-wide
+/// snapshots; the *per-iteration delta* of each is the leak signal:
+///
+/// - `bunStringRefBalance`: net +1 refs the Rust side currently holds against
+///   `WTF::StringImpl` (every `bun_string::String` create/ref minus every
+///   deref/transfer). Linear per-iter growth = forgotten `.deref()` on the
+///   Rust side. NOTE: a few uninstrumented FFI handoff paths (out-param writes
+///   to C++) make the *absolute* value drift, but the per-iteration delta on a
+///   tight loop is exact for that loop's code path.
+/// - `mimallocCommit`/`mimallocRss`: `mi_process_info()` totals — covers
+///   `bun.default_allocator`, `MimallocArena` (AstAlloc, transpile arena),
+///   and anything else routed through mimalloc. Does **not** include
+///   `WTF::fastMalloc` (bmalloc), so a BunString leak shows up only in
+///   `bunStringRefBalance` and process RSS, not here.
+/// - `liveArenaHeaps`: debug-only count of live `MimallocArena` heaps
+///   (`mi_heap_new` − `mi_heap_destroy`). 0 in release builds.
+#[bun_jsc::host_fn]
+fn heap_stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let mut elapsed = 0usize;
+    let mut user = 0usize;
+    let mut system = 0usize;
+    let mut current_rss = 0usize;
+    let mut peak_rss = 0usize;
+    let mut current_commit = 0usize;
+    let mut peak_commit = 0usize;
+    let mut page_faults = 0usize;
+    // SAFETY: all out-params are valid stack `usize` slots.
+    unsafe {
+        bun_alloc::mimalloc::mi_process_info(
+            &mut elapsed,
+            &mut user,
+            &mut system,
+            &mut current_rss,
+            &mut peak_rss,
+            &mut current_commit,
+            &mut peak_commit,
+            &mut page_faults,
+        );
+    }
+
+    let obj = JSValue::create_empty_object(global, 5);
+    obj.put(global, b"mimallocCommit", JSValue::js_number(current_commit as f64));
+    obj.put(global, b"mimallocRss", JSValue::js_number(current_rss as f64));
+    obj.put(global, b"mimallocPageFaults", JSValue::js_number(page_faults as f64));
+    obj.put(
+        global,
+        b"bunStringRefBalance",
+        JSValue::js_number(bun_string::rust_wtf_ref_balance() as f64),
+    );
+    obj.put(
+        global,
+        b"liveArenaHeaps",
+        JSValue::js_number(bun_alloc::live_arena_heaps() as f64),
+    );
+    Ok(obj)
 }
 
 #[bun_jsc::host_fn]

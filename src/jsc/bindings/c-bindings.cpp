@@ -182,14 +182,16 @@ extern "C" size_t Bun__memoryFootprint()
 {
     // smaps_rollup (Linux ≥4.14) is one read instead of walking every VMA.
     int fd;
-    do { fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC); }
-    while (fd == -1 && errno == EINTR);
+    do {
+        fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
     if (fd == -1) return 0;
 
     char buf[2048];
     ssize_t n;
-    do { n = read(fd, buf, sizeof(buf) - 1); }
-    while (n == -1 && errno == EINTR);
+    do {
+        n = read(fd, buf, sizeof(buf) - 1);
+    } while (n == -1 && errno == EINTR);
     close(fd);
     if (n <= 0) return 0;
     buf[n] = '\0';
@@ -199,7 +201,8 @@ extern "C" size_t Bun__memoryFootprint()
     const char* p = strstr(buf, "\nPss:");
     if (!p) return 0;
     p += sizeof("\nPss:") - 1;
-    while (*p == ' ' || *p == '\t') p++;
+    while (*p == ' ' || *p == '\t')
+        p++;
     size_t kb = static_cast<size_t>(strtoull(p, nullptr, 10));
     return kb * 1024;
 }

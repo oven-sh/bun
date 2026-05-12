@@ -289,4 +289,9 @@ extern "C" void WTF__releaseFastMallocFreeMemoryForThisThread()
     WTF::releaseFastMallocFreeMemoryForThisThread();
 }
 
+extern "C" void WTF__releaseFastMallocFreeMemory()
+{
+    WTF::releaseFastMallocFreeMemory();
+}
+
 }

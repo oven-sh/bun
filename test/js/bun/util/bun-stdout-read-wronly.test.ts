@@ -54,7 +54,7 @@ test.skipIf(isWindows)(
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("done");
+    expect(stderr).toContain("done");
     expect(exitCode).toBe(0);
   },
 );

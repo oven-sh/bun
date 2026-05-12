@@ -372,6 +372,21 @@ pub const ReadFile = struct {
         if (this.errno != null)
             return this.onFinish();
 
+        // A write-only fd (e.g. Bun.stdout when stdout is a pipe) will never
+        // become readable, so polling for readability below would wait
+        // forever. Fail now before allocating the read buffer.
+        if (this.could_block and Environment.isPosix) {
+            if (bun.sys.getFcntlFlags(fd).unwrap() catch null) |flags| {
+                if ((flags & (bun.O.RDWR | bun.O.WRONLY)) == bun.O.WRONLY) {
+                    const err = bun.sys.Error.fromCode(.BADF, .read).withFd(fd);
+                    this.errno = bun.errnoToZigErr(err.errno);
+                    this.system_error = err.toSystemError();
+                    this.onFinish();
+                    return;
+                }
+            }
+        }
+
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
         if (this.size == 0 and bun.isRegularFile(this.file_store.mode)) {
@@ -405,19 +420,6 @@ pub const ReadFile = struct {
         // readable.
         if (this.could_block) {
             if (bun.isReadable(fd) == .not_ready) {
-                // A write-only fd (e.g. Bun.stdout when stdout is a pipe) will
-                // never become readable. Fail now instead of waiting forever.
-                if (comptime Environment.isPosix) {
-                    if (bun.sys.getFcntlFlags(fd).unwrap() catch null) |flags| {
-                        if ((flags & (bun.O.RDWR | bun.O.WRONLY)) == bun.O.WRONLY) {
-                            const err = bun.sys.Error.fromCode(.BADF, .read).withFd(fd);
-                            this.errno = bun.errnoToZigErr(err.errno);
-                            this.system_error = err.toSystemError();
-                            this.onFinish();
-                            return;
-                        }
-                    }
-                }
                 this.waitForReadable();
                 return;
             }

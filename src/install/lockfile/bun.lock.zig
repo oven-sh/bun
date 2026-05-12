@@ -1322,10 +1322,22 @@ pub fn parseIntoBinaryLockfile(
                 const parent_hash = String.Builder.stringHash(parent_str);
                 const child_hash = String.Builder.stringHash(child_str);
                 const child_name = try string_buf.appendWithHash(child_str, child_hash);
+                const child_version_sliced = version.sliced(string_buf.bytes.items);
                 const child_dep: Dependency = .{
                     .name = child_name,
                     .name_hash = child_hash,
-                    .version = dep.version,
+                    .version = Dependency.parse(
+                        allocator,
+                        child_name,
+                        child_hash,
+                        child_version_sliced.slice,
+                        &child_version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        try log.addError(source, value.loc, "Invalid override version");
+                        return error.InvalidOverridesObject;
+                    },
                 };
                 const parent_name = try string_buf.append(parent_str);
                 try lockfile.overrides.scoped.put(allocator, .{

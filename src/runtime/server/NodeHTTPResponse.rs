@@ -1403,11 +1403,12 @@ impl NodeHTTPResponse {
             break 'brk None;
         };
 
-        let string_or_buffer: crate::node::StringOrBuffer = 'brk: {
-            if input_value.is_undefined_or_null() {
-                break 'brk crate::node::StringOrBuffer::EMPTY;
-            }
-
+        // Construct in place (Zig result-location semantics) — returning
+        // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
+        // `vmovups` stack copies per `res.end()`; the `_into` out-param form
+        // writes straight into this slot.
+        let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
+        if !input_value.is_undefined_or_null() {
             let mut encoding = crate::node::Encoding::Utf8;
             if !encoding_value.is_undefined_or_null() {
                 if !encoding_value.is_string() {
@@ -1428,22 +1429,19 @@ impl NodeHTTPResponse {
                 };
             }
 
-            let result = crate::node::StringOrBuffer::from_js_with_encoding(
+            if !crate::node::StringOrBuffer::from_js_with_encoding_into(
+                &mut string_or_buffer,
                 global_object,
                 input_value,
                 encoding,
-            )?;
-            match result {
-                Some(r) => break 'brk r,
-                None => {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"input",
-                        b"string or buffer",
-                        input_value,
-                    ));
-                }
+            )? {
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"input",
+                    b"string or buffer",
+                    input_value,
+                ));
             }
-        };
+        }
         // string_or_buffer drops at scope exit.
 
         if global_object.has_exception() {

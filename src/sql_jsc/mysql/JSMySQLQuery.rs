@@ -436,8 +436,8 @@ impl JSMySQLQuery {
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        // SAFETY (R-2): `JsCell::get_mut` projects `&mut MySQLQuery` from
-        // `&self`. `run_query` may run user JS (binding getters), which could
+        // R-2: `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
+        // body. `run_query` may run user JS (binding getters), which could
         // re-enter another host-fn on this `JSMySQLQuery`; that re-entrant call
         // would form a fresh `&Self` — sound, since the noalias attribute is
         // suppressed by the `UnsafeCell` in `JsCell`. A re-entrant `with_mut`
@@ -445,8 +445,9 @@ impl JSMySQLQuery {
         // such path and is not reachable from a binding getter in well-formed
         // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
         // `&mut self` UB structurally eliminated.
-        if let Err(err) = unsafe { self.query.get_mut() }
-            .run_query(connection, global_object, columns_value, binding_value)
+        if let Err(err) = self
+            .query
+            .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value))
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {

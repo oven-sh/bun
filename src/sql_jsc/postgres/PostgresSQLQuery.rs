@@ -577,20 +577,28 @@ impl PostgresSQLQuery {
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
             let signature_hash: u64 = hash(&signature.name);
             if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
-                // SAFETY: single-JS-thread; the `&mut` to `statements` is held
-                // only for the `get_or_put` call (no re-entry into JS until
-                // after `connection_entry_value` is captured as a raw ptr).
-                let entry = match unsafe { connection.statements.get_mut() }.get_or_put(signature_hash) {
-                    Ok(e) => e,
+                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
+                // the `get_or_put` call (single-JS-thread; no re-entry into JS
+                // until after the raw value-slot ptr is captured). Extract the
+                // raw slot ptr + existing value while the borrow is live so the
+                // remainder of this block needs no further `&mut` to the map.
+                let (entry_value_ptr, existing_stmt) = match connection.statements.with_mut(|s| {
+                    s.get_or_put(signature_hash).map(|e| {
+                        let existing = if e.found_existing { Some(*e.value_ptr) } else { None };
+                        (
+                            std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr),
+                            existing,
+                        )
+                    })
+                }) {
+                    Ok(v) => v,
                     Err(err) => {
                         drop(signature);
                         return Err(global_object.throw_error(err.into(), "failed to allocate statement"));
                     }
                 };
-                connection_entry_value = Some(std::ptr::from_mut::<*mut PostgresSQLStatement>(entry.value_ptr));
-                if entry.found_existing {
-                    // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
-                    let stmt_ptr: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
+                connection_entry_value = Some(entry_value_ptr);
+                if let Some(stmt_ptr) = existing_stmt {
                     this.statement.set(Some(stmt_ptr));
                     // Route the `&mut` through the audited `statement_mut()`
                     // accessor (just set above ⇒ `Some`); `stmt_ptr` is kept

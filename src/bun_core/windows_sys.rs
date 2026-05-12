@@ -102,14 +102,18 @@ pub struct PebView {
 /// `BeingDebugged`, …). Materializing a `&'static` to it would be UB under
 /// Rust's aliasing rules. Callers must read fields through raw-pointer deref.
 #[inline]
-pub unsafe fn peb() -> *const PebView {
+pub fn peb() -> *const PebView {
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: reading `gs:[0x60]` is the documented Windows-x64 ABI for the
+    // current thread's PEB pointer; no caller precondition.
     unsafe {
         let p: *const PebView;
         core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
         p
     }
     #[cfg(target_arch = "aarch64")]
+    // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
+    // pointer field. Both are valid for the calling thread's lifetime.
     unsafe {
         // TEB at x18; PEB at TEB+0x60.
         let teb: *const u8;

@@ -392,8 +392,10 @@ pub use bun_core::strings::{
 
 /// memmem — libc on posix, scalar fallback on windows.
 #[cfg(not(windows))]
-pub unsafe fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() { return Some(0); }
+    // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
+    // libc memmem only reads within those bounds.
     let p = unsafe {
         libc::memmem(
             haystack.as_ptr().cast(), haystack.len(),
@@ -736,8 +738,7 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     if str_len == 1 {
         return index_of_char_usize(self_, str[0]);
     }
-    // SAFETY: lengths validated above; memmem reads within bounds.
-    let i = unsafe { memmem(self_, str) }?;
+    let i = memmem(self_, str)?;
     debug_assert!(i < self_len);
     Some(i)
 }

@@ -59,6 +59,18 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
+    /// Consume an owned `IntrusiveRc<PipeReader>`, clear its `process` backref,
+    /// and release the ref (Zig: `pipe.detach()`). Centralises what was the
+    /// `into_raw()` + `unsafe { PipeReader::detach(raw) }` dance so the three
+    /// callers in `finalize` / `to_js` / `to_buffered_value` stay safe — the
+    /// owned `IntrusiveRc` already encodes the "live + one ref" invariant
+    /// `detach()` needs, and `RefPtr::deref` is the safe drop.
+    #[inline]
+    fn pipe_detach(pipe: IntrusiveRc<PipeReader>) {
+        Self::pipe_reader_mut(&pipe).process = None;
+        pipe.deref();
+    }
+
     pub fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
@@ -203,11 +215,7 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                // `into_raw` transfers our owned ref to the raw ptr; `detach` clears `process`
-                // and performs the matching `deref()` (Zig: `process = null; deref()`).
-                let raw = pipe.into_raw();
-                // SAFETY: `raw` is live and we own one ref (just leaked from IntrusiveRc).
-                unsafe { PipeReader::detach(raw) };
+                Self::pipe_detach(pipe);
             }
             Readable::Buffer(_) => {
                 // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.
@@ -229,11 +237,8 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let raw = pipe.into_raw();
-                // SAFETY: `raw` is live and we own one ref (just leaked from IntrusiveRc).
-                let result = unsafe { (*raw).to_js(global) };
-                // SAFETY: `raw` is still live; detach() performs the matching deref().
-                unsafe { PipeReader::detach(raw) };
+                let result = Self::pipe_reader_mut(&pipe).to_js(global);
+                Self::pipe_detach(pipe);
                 result
             }
             Readable::Buffer(_) => {
@@ -274,11 +279,8 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let raw = pipe.into_raw();
-                // SAFETY: `raw` is live and we own one ref (just leaked from IntrusiveRc).
-                let result = unsafe { (*raw).to_buffer(global) };
-                // SAFETY: `raw` is still live; detach() performs the matching deref().
-                unsafe { PipeReader::detach(raw) };
+                let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
+                Self::pipe_detach(pipe);
                 Ok(result)
             }
             Readable::Buffer(_) => {

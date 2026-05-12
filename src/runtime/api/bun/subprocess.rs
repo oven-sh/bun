@@ -492,12 +492,11 @@ impl Subprocess<'_> {
                     // centralised `pipe_sink` accessor suffices for `with_mut`.
                     Writable::pipe_sink(pipe).signal.with_mut(|s| s.clear());
                     *stdin = Writable::Ignore;
-                    // SAFETY: `Writable::Pipe` owns one intrusive ref (NonNull,
-                    // no Drop impl); release it explicitly now that the variant
-                    // has been overwritten. Ordered after the assignment so any
-                    // re-entrant `on_stdin_destroyed` from `deinit` observes
-                    // `.Ignore`.
-                    unsafe { FileSink::deref(pipe.as_ptr()) };
+                    // `Writable::Pipe` owns one intrusive ref; release it now
+                    // that the variant has been overwritten. Ordered after the
+                    // assignment so any re-entrant `on_stdin_destroyed` from
+                    // `deinit` observes `.Ignore`.
+                    Writable::pipe_release(pipe);
                 }
                 Writable::Buffer(buffer) => {
                     Writable::buffer_writer_mut(buffer).source.detach();

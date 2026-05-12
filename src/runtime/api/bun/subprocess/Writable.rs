@@ -57,6 +57,20 @@ impl<'a> Writable<'a> {
         unsafe { &mut *pipe.as_ptr() }
     }
 
+    /// Release one intrusive ref on a `FileSink` held by `Writable::Pipe`
+    /// (or freshly returned from `FileSink::create*`). Centralises the
+    /// `unsafe { FileSink::deref(ptr) }` so callers stay safe — same
+    /// invariant as [`pipe_sink`](Self::pipe_sink): the `NonNull` was
+    /// produced by `FileSink::create*` (heap-boxed, dealloc provenance) and
+    /// carries a +1 intrusive ref the caller is now discharging. Single
+    /// JS-mutator thread; the sink may be freed on return.
+    #[inline]
+    pub(in crate::api) fn pipe_release(pipe: NonNull<FileSink>) {
+        // SAFETY: see fn doc — +1-intrusive-ref'd heap allocation with
+        // dealloc provenance; `deref` decrements and may free.
+        unsafe { FileSink::deref(pipe.as_ptr()) };
+    }
+
     /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
     ///
     /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
@@ -147,8 +161,7 @@ impl<'a> Writable<'a> {
                 buffer.deref();
             }
             Writable::Pipe(pipe) => {
-                // SAFETY: pipe is live; deref may free it.
-                unsafe { FileSink::deref(pipe.as_ptr()) };
+                Self::pipe_release(pipe);
             }
             _ => {}
         }
@@ -188,15 +201,16 @@ impl<'a> Writable<'a> {
                         // FileSink's writer (mirrors Zig where `result.buffer`
                         // is a heap pointer the sink takes over).
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ptr = FileSink::create_with_pipe(evtloop, uv_pipe);
-                        // SAFETY: `create_with_pipe` returns a freshly-boxed non-null pointer.
-                        let pipe = unsafe { &mut *pipe_ptr };
+                        // `create_with_pipe` returns a freshly-boxed non-null pointer.
+                        let pipe_nn = NonNull::new(FileSink::create_with_pipe(evtloop, uv_pipe))
+                            .expect("FileSink::create_with_pipe returns non-null");
+                        let pipe_ptr = pipe_nn.as_ptr();
+                        let pipe = Self::pipe_sink_mut(&pipe_nn);
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
-                                // SAFETY: pipe was just created with refcount 1.
-                                unsafe { FileSink::deref(pipe_ptr) };
+                                Self::pipe_release(pipe_nn);
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global);
                                 }
@@ -204,7 +218,7 @@ impl<'a> Writable<'a> {
                             }
                         }
                         pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
-                        subprocess.weak_file_sink_stdin_ptr.set(NonNull::new(pipe_ptr));
+                        subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
                         subprocess.ref_();
                         subprocess.update_flags(|f| {
                             f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
@@ -216,8 +230,7 @@ impl<'a> Writable<'a> {
                             if let Some(err_val) = assign_result.to_error() {
                                 subprocess.weak_file_sink_stdin_ptr.set(None);
                                 subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                                // SAFETY: pipe is live; deref may free it.
-                                unsafe { FileSink::deref(pipe_ptr) };
+                                Self::pipe_release(pipe_nn);
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
                                 return Err(err!(JSError));
@@ -225,9 +238,7 @@ impl<'a> Writable<'a> {
                             *promise_for_stream = assign_result;
                         }
 
-                        return Ok(Writable::Pipe(
-                            NonNull::new(pipe_ptr).expect("FileSink::create_with_pipe returns non-null"),
-                        ));
+                        return Ok(Writable::Pipe(pipe_nn));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -286,15 +297,15 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let pipe_ptr = FileSink::create(evtloop, result.unwrap());
-                // SAFETY: `create` returns a freshly-boxed non-null pointer.
-                let pipe = unsafe { &mut *pipe_ptr };
+                // `create` returns a freshly-boxed non-null pointer.
+                let pipe_nn = NonNull::new(FileSink::create(evtloop, result.unwrap()))
+                    .expect("FileSink::create returns non-null");
+                let pipe = Self::pipe_sink_mut(&pipe_nn);
 
                 match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
-                        // SAFETY: pipe was just created with refcount 1.
-                        unsafe { FileSink::deref(pipe_ptr) };
+                        Self::pipe_release(pipe_nn);
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global);
                         }
@@ -312,7 +323,7 @@ impl<'a> Writable<'a> {
                     }
                 });
 
-                subprocess.weak_file_sink_stdin_ptr.set(NonNull::new(pipe_ptr));
+                subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
                 subprocess.ref_();
                 subprocess.update_flags(|f| {
                     f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
@@ -324,8 +335,7 @@ impl<'a> Writable<'a> {
                     if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                        // SAFETY: pipe is live; deref may free it.
-                        unsafe { FileSink::deref(pipe_ptr) };
+                        Self::pipe_release(pipe_nn);
                         subprocess.deref();
                         let _ = global.throw_value(err_val);
                         return Err(err!(JSError));
@@ -333,9 +343,7 @@ impl<'a> Writable<'a> {
                     *promise_for_stream = assign_result;
                 }
 
-                Ok(Writable::Pipe(
-                    NonNull::new(pipe_ptr).expect("FileSink::create returns non-null"),
-                ))
+                Ok(Writable::Pipe(pipe_nn))
             }
 
             Stdio::Blob(_) => {
@@ -469,8 +477,7 @@ impl<'a> Writable<'a> {
                     pipe.signal.with_mut(|s| s.clear());
                 }
 
-                // SAFETY: pipe is live; deref may free it.
-                unsafe { FileSink::deref(pipe_nn.as_ptr()) };
+                Self::pipe_release(pipe_nn);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);

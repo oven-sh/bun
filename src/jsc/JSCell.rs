@@ -119,7 +119,7 @@ unsafe impl<T> Sync for JsCell<T> {}
 unsafe impl<T> Send for JsCell<T> {}
 
 impl<T> JsCell<T> {
-    #[inline]
+    #[inline(always)]
     pub const fn new(value: T) -> Self {
         Self(core::cell::UnsafeCell::new(value))
     }
@@ -127,7 +127,7 @@ impl<T> JsCell<T> {
     /// Shared-reference read. Caller must not hold a live `get_mut()` borrow
     /// across this call (single-JS-thread reentrancy makes overlap rare but
     /// possible — keep borrows short).
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &T {
         // SAFETY: single-JS-thread invariant — see type docs.
@@ -149,7 +149,7 @@ impl<T> JsCell<T> {
     /// Prefer [`Self::with_mut`] when the mutation fits in a closure — its
     /// borrow cannot escape and the safety obligation is discharged at one
     /// audited site.
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn get_mut(&self) -> &mut T {
         // SAFETY: forwarded to caller — see fn-level contract.
@@ -162,7 +162,7 @@ impl<T> JsCell<T> {
     /// single-JS-thread model already forbids for the duration of a field
     /// mutation. This is the **safe** spelling of `get_mut`; use it whenever
     /// the mutation does not need to outlive a single expression.
-    #[inline]
+    #[inline(always)]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: single-JS-thread invariant (see type docs); the `&mut T`
         // is confined to `f`'s frame and cannot be stored or returned.
@@ -170,7 +170,7 @@ impl<T> JsCell<T> {
     }
 
     /// Overwrite the contained value.
-    #[inline]
+    #[inline(always)]
     pub fn set(&self, value: T) {
         // Route through the single audited `with_mut` site rather than
         // open-coding a second raw `*self.0.get() = …` write here.
@@ -178,7 +178,7 @@ impl<T> JsCell<T> {
     }
 
     /// Replace the contained value, returning the old one.
-    #[inline]
+    #[inline(always)]
     pub fn replace(&self, value: T) -> T {
         // Route through the single audited `with_mut` site; the `&mut T` is
         // closure-scoped so no aliasing obligation leaks to this fn.
@@ -187,27 +187,27 @@ impl<T> JsCell<T> {
 
     /// Raw pointer to the inner `T` — for FFI / `addr_of!` paths that must
     /// not form a reference.
-    #[inline]
+    #[inline(always)]
     pub const fn as_ptr(&self) -> *mut T {
         self.0.get()
     }
 
     /// Consume the cell and return the inner value.
-    #[inline]
+    #[inline(always)]
     pub fn into_inner(self) -> T {
         self.0.into_inner()
     }
 }
 
 impl<T: Default> Default for JsCell<T> {
-    #[inline]
+    #[inline(always)]
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 
 impl<T> From<T> for JsCell<T> {
-    #[inline]
+    #[inline(always)]
     fn from(value: T) -> Self {
         Self::new(value)
     }

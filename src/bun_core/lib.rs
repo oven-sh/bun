@@ -2767,8 +2767,9 @@ pub mod asan {
         // records the range in an internal table (LSAN root regions). Misuse
         // produces a controlled abort, not UB, so `safe fn` discharges the
         // link-time proof and callers need no `unsafe` block. The *logical*
-        // "you own this region" precondition stays on the `pub unsafe fn`
-        // wrappers below.
+        // "you own this region" precondition is advisory only — violating it
+        // trips an ASAN report (controlled abort), never language-level UB —
+        // so the public wrappers below are likewise safe `fn`s.
         safe fn __asan_poison_memory_region(ptr: *const c_void, size: usize);
         safe fn __asan_unpoison_memory_region(ptr: *const c_void, size: usize);
         safe fn __asan_address_is_poisoned(ptr: *const c_void) -> bool;
@@ -2778,14 +2779,14 @@ pub mod asan {
     }
 
     #[inline]
-    pub unsafe fn poison(ptr: *const u8, size: usize) {
+    pub fn poison(ptr: *const u8, size: usize) {
         #[cfg(bun_asan)]
         __asan_poison_memory_region(ptr.cast(), size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
     #[inline]
-    pub unsafe fn unpoison(ptr: *const u8, size: usize) {
+    pub fn unpoison(ptr: *const u8, size: usize) {
         #[cfg(bun_asan)]
         __asan_unpoison_memory_region(ptr.cast(), size);
         #[cfg(not(bun_asan))]
@@ -2793,13 +2794,11 @@ pub mod asan {
     }
     #[inline]
     pub fn poison_slice<T>(s: &[T]) {
-        // SAFETY: `s` describes a live region the caller owns.
-        unsafe { poison(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+        poison(s.as_ptr().cast(), core::mem::size_of_val(s))
     }
     #[inline]
     pub fn unpoison_slice<T>(s: &[T]) {
-        // SAFETY: `s` describes a live region the caller owns.
-        unsafe { unpoison(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+        unpoison(s.as_ptr().cast(), core::mem::size_of_val(s))
     }
     #[inline]
     pub fn assert_unpoisoned<T>(ptr: *const T) {

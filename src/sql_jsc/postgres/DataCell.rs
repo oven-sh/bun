@@ -799,15 +799,14 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
             // supports (int4/float4): [elem_size length prefix][elem_size value]
             // — same stride `slice()` walks in the Zig spec.
             let src_off = 20 + i * element_stride + (element_stride - elem_size);
-            // SAFETY: `bytes.len() >= 20 + array_len*element_stride` was
-            // validated above; `out` has `array_len*elem_size` bytes.
-            let val: Elem = unsafe {
-                core::ptr::read_unaligned(bytes.as_ptr().add(src_off).cast::<Elem>())
-            }
-            .wire_byte_swap();
-            unsafe {
-                core::ptr::write_unaligned(out.as_mut_ptr().add(i * elem_size).cast::<Elem>(), val);
-            }
+            // `bytes.len() >= 20 + array_len*element_stride` was validated
+            // above; `out` has `array_len*elem_size` bytes. The trait's
+            // `from_unaligned_ne_bytes`/`write_unaligned_ne_bytes` are safe
+            // `from_ne_bytes`/`to_ne_bytes` round-trips (bounds-checked), so
+            // the per-element POD cast needs no raw-pointer access.
+            let val: Elem =
+                Elem::from_unaligned_ne_bytes(&bytes[src_off..src_off + elem_size]).wire_byte_swap();
+            val.write_unaligned_ne_bytes(&mut out[i * elem_size..(i + 1) * elem_size]);
         }
         (Box::into_raw(out).cast::<u8>(), 1u8)
     };

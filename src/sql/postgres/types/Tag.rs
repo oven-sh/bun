@@ -330,21 +330,52 @@ impl Tag {
 /// with (`i32` / `f32`; see Zig `byteArrayType`). Used by
 /// `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array`. Replaces the old
 /// generic `byte_swap_same_size` `transmute_copy` shim with safe
-/// `to_bits`/`from_bits`.
+/// `to_bits`/`from_bits`, and the per-element `ptr::{read,write}_unaligned`
+/// casts with safe `from_ne_bytes`/`to_ne_bytes` slice round-trips.
 pub trait WireByteSwap: Copy {
     fn wire_byte_swap(self) -> Self;
+    /// Safe replacement for `ptr::read_unaligned(bytes.as_ptr().cast::<Self>())`:
+    /// `bytes.len()` must equal `size_of::<Self>()` (panics otherwise).
+    fn from_unaligned_ne_bytes(bytes: &[u8]) -> Self;
+    /// Safe replacement for `ptr::write_unaligned(out.as_mut_ptr().cast::<Self>(), self)`:
+    /// `out.len()` must equal `size_of::<Self>()` (panics otherwise).
+    fn write_unaligned_ne_bytes(self, out: &mut [u8]);
 }
 impl WireByteSwap for i32 {
     #[inline]
     fn wire_byte_swap(self) -> Self { self.swap_bytes() }
+    #[inline]
+    fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
+        Self::from_ne_bytes(b.try_into().expect("size_of::<i32>"))
+    }
+    #[inline]
+    fn write_unaligned_ne_bytes(self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_ne_bytes());
+    }
 }
 impl WireByteSwap for f32 {
     #[inline]
     fn wire_byte_swap(self) -> Self { f32::from_bits(self.to_bits().swap_bytes()) }
+    #[inline]
+    fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
+        Self::from_ne_bytes(b.try_into().expect("size_of::<f32>"))
+    }
+    #[inline]
+    fn write_unaligned_ne_bytes(self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_ne_bytes());
+    }
 }
 impl WireByteSwap for f64 {
     #[inline]
     fn wire_byte_swap(self) -> Self { f64::from_bits(self.to_bits().swap_bytes()) }
+    #[inline]
+    fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
+        Self::from_ne_bytes(b.try_into().expect("size_of::<f64>"))
+    }
+    #[inline]
+    fn write_unaligned_ne_bytes(self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_ne_bytes());
+    }
 }
 
 // ported from: src/sql/postgres/types/Tag.zig

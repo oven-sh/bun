@@ -2185,15 +2185,17 @@ impl PostgresSQLConnection {
                     protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put(i, b))
                 };
                 // PORT NOTE: Zig `defer { for (cells[0..putter.count]) |*cell| cell.deinit(); if (free_cells) free(cells); }`
-                // runs on ALL exits (decode error, to_js error, success). Capture raw pointers so
-                // the guard can read `putter.count` after decode/to_js mutate `putter` without
-                // tripping borrowck.
+                // runs on ALL exits (decode error, to_js error, success). `putter.count` is final
+                // after `decode` (the only writer is `Putter::put_impl`, and `to_js` does not
+                // touch it), so capture it by value — no raw-ptr read needed. `cells_ptr` stays
+                // raw because the guard must run after `putter.to_js(&mut self)` releases its
+                // borrow, which a `&mut [SQLDataCell]` capture would block.
                 let cells_ptr: *mut DataCell::SQLDataCell = putter.list.as_mut_ptr();
-                let count_ptr: *const usize = core::ptr::addr_of!(putter.count);
+                let count = putter.count;
                 scopeguard::defer! {
-                    // SAFETY: cells_ptr points into stack_buf/heap_cells and count_ptr into putter,
-                    // both declared earlier in this block and outlive this guard.
-                    let count = unsafe { *count_ptr };
+                    // SAFETY: cells_ptr points into stack_buf/heap_cells, both declared
+                    // earlier in this block and outliving this guard; `count` is the
+                    // post-decode element count and never exceeds the slice length.
                     for i in 0..count {
                         unsafe { (*cells_ptr.add(i)).deinit() };
                     }

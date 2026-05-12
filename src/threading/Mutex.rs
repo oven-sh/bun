@@ -205,6 +205,22 @@ unsafe impl Sync for WindowsImpl {}
 #[cfg(windows)]
 unsafe impl Send for WindowsImpl {}
 
+// `&UnsafeCell<SRWLOCK>` is ABI-identical to kernel32's `PSRWLOCK` (thin
+// non-null pointer to a `#[repr(C)]` word; `UnsafeCell` is
+// `#[repr(transparent)]`). The reference type encodes the only pointer-validity
+// precondition; acquire on an unowned lock blocks (recursive acquire deadlocks
+// — not UB), so `safe fn` discharges the link-time proof for the acquire pair.
+// `ReleaseSRWLockExclusive` keeps the raw-pointer `bun_sys` extern: MSDN
+// documents "results are undefined" when called without ownership (unlike
+// `os_unfair_lock_unlock`, which aborts), so that one retains its block.
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
+    // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
+    safe fn TryAcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>) -> u8;
+}
+
 #[cfg(windows)]
 impl WindowsImpl {
     pub const fn new() -> Self {
@@ -212,21 +228,16 @@ impl WindowsImpl {
     }
 
     fn try_lock(&self) -> bool {
-        // SAFETY: SRWLOCK is internally synchronized; pointer is valid for the call.
-        unsafe {
-            // Returns BOOLEAN (u8), not BOOL — compare against 0, not the
-            // i32 `FALSE` constant.
-            bun_sys::windows::kernel32::TryAcquireSRWLockExclusive(self.srwlock.get()) != 0
-        }
+        TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
 
     fn lock(&self) {
-        // SAFETY: SRWLOCK is internally synchronized; pointer is valid for the call.
-        unsafe { bun_sys::windows::kernel32::AcquireSRWLockExclusive(self.srwlock.get()) }
+        AcquireSRWLockExclusive(&self.srwlock)
     }
 
     fn unlock(&self) {
-        // SAFETY: caller acquired the lock on this thread; pointer is valid.
+        // SAFETY: caller acquired the lock on this thread (`Mutex::unlock`
+        // contract); releasing without ownership is documented UB on Windows.
         unsafe { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
     }
 }

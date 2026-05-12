@@ -628,8 +628,8 @@ pub fn exit(code: u32) -> ! {
     #[cfg(windows)]
     {
         Bun__onExit();
-        // SAFETY: ExitProcess never returns.
-        unsafe { crate::windows_sys::kernel32::ExitProcess(code) }
+        // `ExitProcess` is `safe fn` (no preconditions; never returns).
+        crate::windows_sys::kernel32::ExitProcess(code)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {

@@ -45,8 +45,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         };
         self.used.set(index);
         let ret = self.buffer[index].as_mut_ptr();
-        // SAFETY: `ret` points to `size_of::<T>` bytes within `buffer`.
-        unsafe { asan::unpoison(ret.cast(), size_of::<T>()) };
+        asan::unpoison(ret.cast(), size_of::<T>());
         Some(ret)
     }
 
@@ -82,8 +81,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
         let slot = NonNull::from(&mut self.buffer[index]);
-        // SAFETY: `slot` points to `size_of::<T>` bytes within `buffer`.
-        unsafe { asan::unpoison(slot.as_ptr().cast(), size_of::<T>()) };
+        asan::unpoison(slot.as_ptr().cast(), size_of::<T>());
         let owner = core::ptr::from_mut(self) as usize;
         // Tagged-pointer scheme requires the low bit clear for inline slots.
         // `HiveArray` is at least pointer-aligned via `IntegerBitSet`'s
@@ -103,8 +101,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
             return false;
         };
         debug_assert!(self.used.is_set(index as usize));
-        // SAFETY: `value` points to `size_of::<T>` bytes within `buffer`.
-        unsafe { asan::poison(value.cast(), size_of::<T>()) };
+        asan::poison(value.cast(), size_of::<T>());
         self.used.unset(index as usize);
         true
     }
@@ -166,10 +163,8 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
         // trivially-droppable residuals, so this is idempotent for them.
         // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
-        unsafe {
-            core::ptr::drop_in_place(value);
-            asan::poison(value.cast(), size_of::<T>());
-        }
+        unsafe { core::ptr::drop_in_place(value) };
+        asan::poison(value.cast(), size_of::<T>());
 
         self.used.unset(index as usize);
         true

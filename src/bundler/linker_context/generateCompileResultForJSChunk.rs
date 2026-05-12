@@ -29,13 +29,11 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
     #[cfg(feature = "show_crash_trace")]
-    // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above).
-    let _crash_guard = unsafe {
-        crate::linker_context_mod::crash_guard_for_part_range(
-            c_ptr,
-            chunk_ptr,
-            &part_range.part_range,
-        )
+    let _crash_guard = {
+        // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above);
+        // transient shared borrows for the crash-trace vtable only.
+        let (c, chunk) = unsafe { (&*c_ptr, &*chunk_ptr) };
+        crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
     #[cfg(feature = "show_crash_trace")]

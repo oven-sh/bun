@@ -5345,8 +5345,10 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
         bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
     }
 }
@@ -5356,8 +5358,10 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
         bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
     }
 }

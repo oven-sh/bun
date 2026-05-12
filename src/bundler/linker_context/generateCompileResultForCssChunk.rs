@@ -26,14 +26,12 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
 
     #[cfg(feature = "show_crash_trace")]
-    // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above).
     // RAII: `ActionGuard` restores the previous `CURRENT_ACTION` on drop.
-    let _prev_action_guard = unsafe {
-        crate::linker_context_mod::crash_guard_for_part_range(
-            c_ptr,
-            chunk_ptr,
-            &part_range.part_range,
-        )
+    let _prev_action_guard = {
+        // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above);
+        // transient shared borrows for the crash-trace vtable only.
+        let (c, chunk) = unsafe { (&*c_ptr, &*chunk_ptr) };
+        crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
     // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write

@@ -150,6 +150,18 @@ mod windows_impl {
 
     use bun_core::time::NS_PER_MS;
 
+    // `&UnsafeCell<CONDITION_VARIABLE>` is ABI-identical to kernel32's
+    // `PCONDITION_VARIABLE` (thin non-null pointer; `UnsafeCell` is
+    // `#[repr(transparent)]`). Waking with no waiters is a documented no-op —
+    // no state precondition — so `safe fn` discharges the link-time proof for
+    // the wake pair. `SleepConditionVariableSRW` retains its raw-pointer
+    // `kernel32::` form: it requires the SRW lock be held by the caller.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        safe fn WakeConditionVariable(cv: &core::cell::UnsafeCell<windows::CONDITION_VARIABLE>);
+        safe fn WakeAllConditionVariable(cv: &core::cell::UnsafeCell<windows::CONDITION_VARIABLE>);
+    }
+
     pub(super) struct WindowsImpl {
         condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,
     }
@@ -224,11 +236,9 @@ mod windows_impl {
         }
 
         pub(super) fn wake(&self, notify: Notify) {
-            // SAFETY: `condition` is an UnsafeCell-wrapped OS sync primitive; kernel32
-            // mutates it internally and provides its own synchronization.
             match notify {
-                Notify::One => unsafe { kernel32::WakeConditionVariable(self.condition.get()) },
-                Notify::All => unsafe { kernel32::WakeAllConditionVariable(self.condition.get()) },
+                Notify::One => WakeConditionVariable(&self.condition),
+                Notify::All => WakeAllConditionVariable(&self.condition),
             }
         }
     }

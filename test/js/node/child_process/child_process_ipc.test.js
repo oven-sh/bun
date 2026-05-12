@@ -35,9 +35,13 @@ test("process.send() returns false under IPC backpressure", async () => {
 
   expect(stdout).not.toContain("NEVER_BACKPRESSURED");
   // Child ran out of kernel buffer and process.send() returned false.
+  // `firstFalseAt > 1` is deliberately tight: `count` is pre-incremented,
+  // so the smallest value printed is 1 — a bogus "every send returns false"
+  // implementation would still satisfy `>= 1`. A real backpressure fix has
+  // to accept at least one message before signalling, so we require >= 2.
   const firstFalse = stdout.match(/firstFalseAt=(\d+)/);
   expect(firstFalse).not.toBeNull();
-  expect(Number(firstFalse[1])).toBeGreaterThan(0);
+  expect(Number(firstFalse[1])).toBeGreaterThan(1);
   // The drain callback (3rd arg to process.send) fired, which is the only
   // way the child could unref the channel and exit cleanly.
   expect(stdout).toContain("drained");

@@ -840,21 +840,33 @@ pub const SendQueue = struct {
         if (self.hasBufferedData()) return .backoff;
         return .success;
     }
-    /// True when bytes enqueued by `serializeAndSend` have not yet been handed
-    /// off to the kernel — either we're blocked on a handle ACK, or items are
-    /// queued in userspace beyond the one a uv_write may be carrying. Used to
-    /// signal IPC backpressure to callers.
+    /// Matches Node's `ChildProcess.send()` threshold — the channel is
+    /// considered backpressured only once queued userspace bytes exceed
+    /// `BACKPRESSURE_THRESHOLD_BYTES`. Handle-ACK waits are always backpressure
+    /// since no further data can be delivered until the receiver acks.
     ///
-    /// On POSIX `_write` drives `_onWriteComplete` inline, so by the time we
-    /// get here `write_in_progress` is always false: a non-empty queue means
-    /// the kernel pushed back on a partial write. On Windows `uv_write` is
-    /// always async, so the first queue item is in flight with libuv — that
-    /// is the Windows equivalent of a synchronously-accepted POSIX write and
-    /// not backpressure on its own. Items *behind* that one are what matters.
+    /// A byte threshold (rather than "queue non-empty") is what handles the
+    /// case where a transparent plumbing packet — e.g. the 5-byte advanced-
+    /// mode version header — is still mid-flight when the user's first send
+    /// runs on Windows. libuv's `uv_write` is always async, so on Windows the
+    /// version packet's write stays pending while the user's message enqueues
+    /// behind it; without a byte threshold every first `process.send()` would
+    /// report backpressure even though the kernel has absorbed everything.
     fn hasBufferedData(self: *const SendQueue) bool {
         if (self.waiting_for_ack != null) return true;
-        const in_flight: usize = if (self.write_in_progress) 1 else 0;
-        return self.queue.items.len > in_flight;
+        return self.bufferedBytes() > BACKPRESSURE_THRESHOLD_BYTES;
+    }
+    /// Bytes sitting in userspace that the kernel hasn't accepted yet. On
+    /// Windows an in-flight `uv_write` leaves the source item in place on
+    /// `queue[0]` with its cursor untouched until `_windowsOnWriteComplete`
+    /// fires, so iterating the queue and summing `list.items.len - cursor`
+    /// already covers the in-flight payload — no separate term needed.
+    fn bufferedBytes(self: *const SendQueue) usize {
+        var total: usize = 0;
+        for (self.queue.items) |*item| {
+            total += item.data.list.items.len - item.data.cursor;
+        }
+        return total;
     }
     fn debugLogMessageQueue(this: *SendQueue) void {
         if (!Environment.isDebug) return;
@@ -995,6 +1007,12 @@ pub const SendQueue = struct {
     }
 };
 const MAX_HANDLE_RETRANSMISSIONS = 3;
+/// Node's `internal/child_process.js` uses `writeQueueSize < 65536 * 2`
+/// (128 KiB) as the signal that `ChildProcess.send()` should return false.
+/// Match that threshold so producers see the same boundary, and so tiny
+/// plumbing packets (e.g. the advanced-mode version header) don't trip
+/// backpressure on the very first user send.
+const BACKPRESSURE_THRESHOLD_BYTES: usize = 64 * 1024 * 2;
 
 fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const ex = callframe.argumentsAsArray(1)[0];

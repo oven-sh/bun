@@ -121,28 +121,39 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ab)
     }
 
+    /// Exclusive borrow of the bump-arena `Scope` that `current_scope` points
+    /// at. Centralizes the `unsafe { &mut *self.current_scope }` deref so the
+    /// invariant is stated once.
+    ///
+    /// SAFETY (encapsulated): `current_scope` is set to a live `bump.alloc`
+    /// allocation in [`init`](Self::init) / [`push_scope`](Self::push_scope)
+    /// and is never null afterwards. All other copies of this pointer (in
+    /// `self.scopes` and child `Scope.parent` links) are stored as raw
+    /// pointers / `StoreRef`s and are never dereferenced while a `&mut self`
+    /// borrow is held, so the returned `&mut Scope` is unique for its lifetime.
+    #[inline]
+    pub fn current_scope_mut(&mut self) -> &mut Scope {
+        debug_assert!(!self.current_scope.is_null(), "AstBuilder.current_scope read before init()");
+        // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
+        // through `&mut self`.
+        unsafe { &mut *self.current_scope }
+    }
+
     // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
     pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
         self.scopes.reserve(1);
-        // SAFETY: `current_scope` is a live bump-arena allocation (set in `init`/`push_scope`)
-        // and is uniquely accessed here — other copies of this pointer (in `self.scopes`
-        // / child `parent` links) are raw and not dereferenced for the duration of this
-        // temporary `&mut`.
-        unsafe { &mut *self.current_scope }
-            .children
-            .ensure_unused_capacity(1);
+        self.current_scope_mut().children.ensure_unused_capacity(1);
         let scope: *mut Scope = self.bump.alloc(Scope {
             kind,
             label_ref: None,
             parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
             ..Default::default()
         });
-        // SAFETY: `current_scope` is a live bump-arena allocation and uniquely accessed
-        // here (the prior `&mut` temporary above has ended; `scope` points to a distinct
-        // fresh allocation). `scope` came from `bump.alloc`, so it is non-null.
-        unsafe { &mut *self.current_scope }
+        // `scope` came from `bump.alloc`, so it is non-null and distinct from
+        // `current_scope` (fresh allocation).
+        self.current_scope_mut()
             .children
-            .append_assume_capacity(unsafe { NonNull::new_unchecked(scope) }.into());
+            .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
         self.scopes.push(self.current_scope);
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         self.current_scope = scope;
@@ -161,10 +172,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
-        // SAFETY: `current_scope` is a live bump-arena allocation (set in `init`/`push_scope`)
-        // and uniquely accessed here — `self.symbols` / `self.declared_symbols` are
-        // disjoint from the arena `Scope`, and no other `&`/`&mut` to this `Scope` is live.
-        unsafe { &mut *self.current_scope }.generated.push(ref_);
+        self.current_scope_mut().generated.push(ref_);
         self.declared_symbols.append(DeclaredSymbol {
             ref_,
             is_top_level: self.scopes.is_empty()
@@ -448,9 +456,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             .mut_(1)
                             .symbol_uses
                             .put(temp_id, symbol::Use { count_estimate: 1 })?;
-                        // SAFETY: `current_scope` is a live bump-arena allocation.
                         VecExt::append(
-                            &mut unsafe { &mut *self.current_scope }.generated,
+                            &mut self.current_scope_mut().generated,
                             temp_id,
                         );
                         export_props.push(G::Property {

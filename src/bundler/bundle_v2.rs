@@ -772,12 +772,19 @@ pub mod api {
             safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
             #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
             safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
+            // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
+            // to Rust-registered native-plugin callbacks without dereferencing
+            // in `JSBundlerPlugin.cpp` itself (same posture as `matchOnLoad`
+            // above); `&Plugin`/`&BunString` discharge the only direct C++-side
+            // dereferences, and `should_continue_running` validity is upheld by
+            // the `&Cell<i32>` borrow in the safe wrapper — no caller-side
+            // precondition remains, so `safe fn`.
             #[link_name = "JSBundlerPlugin__callOnBeforeParsePlugins"]
-            fn JSBundlerPlugin__callOnBeforeParsePlugins(
-                this: *const Plugin,
+            safe fn JSBundlerPlugin__callOnBeforeParsePlugins(
+                this: &Plugin,
                 ctx: *mut core::ffi::c_void,
-                namespace: *const BunString,
-                path: *const BunString,
+                namespace: &BunString,
+                path: &BunString,
                 args: *mut core::ffi::c_void,
                 result: *mut core::ffi::c_void,
                 should_continue_running: *mut i32,
@@ -809,21 +816,18 @@ pub mod api {
                 result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
                 should_continue_running: &core::cell::Cell<i32>,
             ) -> i32 {
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
-                // JSBundlerPlugin.cpp `JSBundlerPlugin__callOnBeforeParsePlugins`.
-                // `Cell<i32>` is repr(transparent) over UnsafeCell<i32>; `as_ptr()`
-                // yields the `*mut i32` C++ expects.
-                unsafe {
-                    JSBundlerPlugin__callOnBeforeParsePlugins(
-                        self,
-                        ctx,
-                        namespace,
-                        path,
-                        args.cast(),
-                        result.cast(),
-                        should_continue_running.as_ptr(),
-                    )
-                }
+                // `Cell<i32>` is repr(transparent) over `UnsafeCell<i32>`;
+                // `.as_ptr()` yields the `*mut i32` C++ expects, kept valid
+                // for the duration of the call by the `&Cell` borrow.
+                JSBundlerPlugin__callOnBeforeParsePlugins(
+                    self,
+                    ctx,
+                    namespace,
+                    path,
+                    args.cast(),
+                    result.cast(),
+                    should_continue_running.as_ptr(),
+                )
             }
 
             pub fn has_any_matches(

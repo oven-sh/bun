@@ -446,14 +446,14 @@ impl Fs {
             // read and grow if the file changed under us (HMR save race).
             let mut bytes_read: usize = 0;
             loop {
-                // SAFETY: capacity reserved above; `read_all` writes initialized
-                // bytes and we set_len to exactly bytes_read+read_count.
+                debug_assert_eq!(shared.list.len(), bytes_read);
+                // SAFETY: `u8` has no invalid bit patterns, so viewing the
+                // spare-capacity `[MaybeUninit<u8>]` as `[u8]` is sound;
+                // `read_all` only writes (never reads) into this region and we
+                // `set_len` to exactly the byte count it reports as written.
                 let read_count = unsafe {
-                    let cap = shared.list.capacity();
-                    let dst = core::slice::from_raw_parts_mut(
-                        shared.list.as_mut_ptr().add(bytes_read),
-                        cap - bytes_read,
-                    );
+                    let spare = shared.list.spare_capacity_mut();
+                    let dst = &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]);
                     let n = file.read_all(dst).map_err(bun_core::Error::from)?;
                     shared.list.set_len(bytes_read + n);
                     n

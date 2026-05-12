@@ -1534,7 +1534,10 @@ pub mod js_bundler {
             build_result: JSValue,
             rejection: JSValue,
         ) -> JSValue;
-        safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> *mut JSGlobalObject;
+        // C++ returns the plugin's owning global (never null; plugin holds a
+        // strong ref), so the elided lifetime — output borrows `plugin` — is
+        // sound and discharges the deref obligation at the type level.
+        safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> &JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
         safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         safe fn JSBundlerPlugin__runSetupFunction(
@@ -1634,9 +1637,7 @@ pub mod js_bundler {
         }
 
         fn global_object(&self) -> &JSGlobalObject {
-            // SAFETY: returned global is non-null and outlives `self` (the
-            // plugin holds a strong ref to its global).
-            unsafe { &*JSBundlerPlugin__globalObject(self) }
+            JSBundlerPlugin__globalObject(self)
         }
 
         fn append_defer_promise(&mut self) -> JSValue {

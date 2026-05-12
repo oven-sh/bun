@@ -11,7 +11,7 @@
 use bun_paths::strings;
 use core::mem::{offset_of, size_of};
 
-use bun_core::{PathString, WStr};
+use bun_core::{PathString, RawSlice, WStr};
 use bun_sys::{self as sys, Fd, SystemErrno, Tag};
 
 // `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.
@@ -44,17 +44,19 @@ pub type Result = sys::Result<Option<IteratorResult>>;
 /// Fake PathString to have less `if (Environment.isWindows) ...`
 // TODO(port): lifetime — borrows iterator's internal `name_data` buffer; invalidated on next()
 pub struct IteratorResultWName {
-    data_ptr: *const u16,
-    data_len: usize, // len excludes trailing NUL; storage has NUL at [len]
+    // `RawSlice` invariant: the iterator's `name_data` outlives this result
+    // (streaming-iterator contract — invalidated on next `next()` call).
+    // len excludes trailing NUL; storage has NUL at [len].
+    data: RawSlice<u16>,
 }
 impl IteratorResultWName {
     pub fn slice(&self) -> &[u16] {
-        // SAFETY: points into iterator's name_data buffer, valid until next() is called again
-        unsafe { core::slice::from_raw_parts(self.data_ptr, self.data_len) }
+        self.data.slice()
     }
     pub fn slice_assume_z(&self) -> &WStr {
+        let s = self.data.slice();
         // SAFETY: name_data[len] == 0 was written by next()
-        unsafe { WStr::from_raw(self.data_ptr, self.data_len) }
+        unsafe { WStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 
@@ -514,10 +516,7 @@ mod platform {
             name_data[..len].copy_from_slice(dir_info_name);
             name_data[len] = 0;
             IteratorResultW {
-                name: IteratorResultWName {
-                    data_ptr: name_data.as_ptr(),
-                    data_len: len,
-                },
+                name: IteratorResultWName { data: RawSlice::new(&name_data[..len]) },
                 kind,
             }
         }

@@ -308,6 +308,10 @@ impl Node {
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
         let progress = unsafe { &mut *ctx_ptr };
+        // `timer` is `Copy` and write-once (set in `Progress::start` before any
+        // child node exists); read it through the live `&mut Progress` instead
+        // of a second raw `(*ctx_ptr).timer` deref later.
+        let timer = progress.timer;
         let _g = progress.update_mutex.lock();
         self.name = name;
         let self_ptr: *mut Node = self;
@@ -321,8 +325,8 @@ impl Node {
                     .recently_updated_child
                     .store(parent_ptr, Ordering::Release);
             }
-            // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-            if let Some(timer) = unsafe { (*ctx_ptr).timer } {
+            if let Some(timer) = timer {
+                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
                 unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }
@@ -336,6 +340,8 @@ impl Node {
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
         let progress = unsafe { &mut *ctx_ptr };
+        // See `set_name` — `timer` is write-once `Copy`; hoist the read.
+        let timer = progress.timer;
         let _g = progress.update_mutex.lock();
         self.unit = unit;
         let self_ptr: *mut Node = self;
@@ -349,8 +355,8 @@ impl Node {
                     .recently_updated_child
                     .store(parent_ptr, Ordering::Release);
             }
-            // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-            if let Some(timer) = unsafe { (*ctx_ptr).timer } {
+            if let Some(timer) = timer {
+                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
                 unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }

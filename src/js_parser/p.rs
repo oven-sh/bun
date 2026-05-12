@@ -7119,7 +7119,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-    ) -> Result<js_ast::Ast, bun_core::Error> {
+    ) -> Result<Box<js_ast::Ast>, bun_core::Error> {
         use crate::scan::scan_imports::ImportScanner;
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 
@@ -7550,7 +7550,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_records: Vec<ImportRecord> =
             self.import_records.move_to_baby_list(arena);
 
-        Ok(js_ast::Ast {
+        // PERF: box at the construction site so the ~1 KB `Ast` is written
+        // straight into the heap allocation and only the thin `Box` pointer is
+        // returned up the `_parse → parse → cache → transpiler` chain (see
+        // `js_parser::Result` PERF NOTE).
+        Ok(Box::new(js_ast::Ast {
             // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
             // Round-G: `Ast.runtime_imports` is now the real
             // `parser::Runtime::Imports`; moved out above (P is terminal after
@@ -7618,7 +7622,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             has_top_level_return: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
-        })
+        }))
     }
 
     pub fn compute_ts_enums_map(

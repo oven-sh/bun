@@ -215,10 +215,19 @@ use bun_ast::{Ref, Ast};
 
 // NOTE: shadows the prelude `Result` for this module — all error-union return
 // types in this file are spelled `core::result::Result<T, E>` to disambiguate.
+//
+// PERF NOTE: `bun_ast::Ast` is ~1 KB (40+ fields incl. Scope, NamedImports,
+// NamedExports, CharFreq, several HashMaps). Storing it inline made this enum
+// ~1 KB and forced a ~1 KB memmove at every layer of the return chain
+// `P::to_ast → _parse → parse → cache::JavaScript::parse → Transpiler::parse_*`
+// (Zig sidesteps this via result-location semantics; Rust does not). Boxing the
+// `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
+// the stack — one mimalloc-arena alloc per parsed module is far cheaper than
+// 4+ kilobyte memmoves. The other variants are already tiny.
 pub enum Result {
     AlreadyBundled(AlreadyBundled),
     Cached,
-    Ast(Ast),
+    Ast(Box<Ast>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -46,6 +46,19 @@ impl SslContextCacheEntry {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.ctx.as_ptr() }
     }
+
+    /// Release the strong intrusive ref the cache holds on `ctx` (taken at
+    /// insert in `connect`). Consumes the entry; `config_ref`'s `Drop` releases
+    /// the SSLConfig ref. Centralises the raw
+    /// `NewHttpContext::deref(entry.ctx.as_ptr())` open-coded at both eviction
+    /// paths so the set-once `NonNull` is dereferenced in one place.
+    fn release(self) {
+        // SAFETY: same INVARIANT as [`ctx_mut`] — `ctx` is a
+        // `heap::release`-boxed `NewHttpContext` on which the cache holds one
+        // strong ref; this `deref` is its sole release.
+        unsafe { NewHttpContext::<true>::deref(self.ctx.as_ptr()) };
+        // self.config_ref drops here (entry.config_ref.deinit()).
+    }
 }
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.time.ns_per_min
@@ -549,9 +562,7 @@ impl HttpThread {
             let entry_last_used = map.values()[i].last_used_ns;
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
                 let (_k, entry) = map.swap_remove_at(i);
-                // SAFETY: cache holds one strong ref taken at insert.
-                unsafe { NewHttpContext::<true>::deref(entry.ctx.as_ptr()) };
-                drop(entry.config_ref); // entry.config_ref.deinit()
+                entry.release();
             } else {
                 i += 1;
             }
@@ -956,9 +967,7 @@ fn evict_oldest_ssl_context() {
         }
     }
     let (_k, entry) = map.swap_remove_at(oldest_idx);
-    // SAFETY: cache holds one strong ref taken at insert.
-    unsafe { NewHttpContext::<true>::deref(entry.ctx.as_ptr()) };
-    drop(entry.config_ref); // entry.config_ref.deinit()
+    entry.release();
 }
 
 fn start_queued_task(http: *mut AsyncHttp) {

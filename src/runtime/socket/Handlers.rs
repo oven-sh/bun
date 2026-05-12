@@ -128,6 +128,19 @@ impl Handlers {
         Scope { handlers: this }
     }
 
+    /// Safe wrapper over [`enter`](Self::enter) for callers that already hold
+    /// a [`BackRef<Handlers>`](bun_ptr::BackRef) (i.e. every
+    /// `NewSocket::get_handlers()` site). The back-reference invariant
+    /// guarantees the pointee is live at call time, discharging `enter`'s
+    /// only precondition; JS-thread affinity is the same structural guarantee
+    /// every `BackRef<Handlers>` user already relies on (uws dispatch).
+    #[inline]
+    pub fn enter_ref(h: bun_ptr::BackRef<Self>) -> Scope {
+        // SAFETY: BackRef invariant — pointee live and at a stable address
+        // for the holder's lifetime, so `h.as_ptr()` is dereferenceable now.
+        unsafe { Self::enter(h.as_ptr()) }
+    }
+
     // corker: Corker = .{},
 
     // TODO(port): bun.JSTerminated!void — mapping to JsResult<()> (JsError::Terminated covers it)

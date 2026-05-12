@@ -566,12 +566,13 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_string`/`from_utf8` returns a heap-allocated URL we own.
-        let parsed_url_ref = unsafe { parsed_url.as_ref() };
         // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
         let _parsed_url_drop =
             scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        let parsed_url = parsed_url_ref;
+        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
+        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
+        // `NonNull::as_ref` site.
+        let parsed_url = bun_ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();

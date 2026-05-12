@@ -701,9 +701,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only; Scope holds its own
-        // raw-derived `&mut` (Handlers.rs).
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
         // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
@@ -763,8 +761,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -803,8 +800,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -927,8 +923,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let scope = Handlers::enter_ref(handlers);
         // PORT NOTE: `let _ = guard` would drop *immediately* (end of
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
@@ -1214,8 +1209,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
         let result = match callback.call(&global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1290,8 +1284,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1351,8 +1344,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1478,8 +1470,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1544,8 +1535,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { Handlers::enter(handlers.as_ptr()) };
+        let mut scope = Handlers::enter_ref(handlers);
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {

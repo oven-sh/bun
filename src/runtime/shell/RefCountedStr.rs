@@ -1,35 +1,29 @@
 use core::cell::Cell;
-use core::ptr;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
 pub struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
-    len: u32,
-    ptr: *const u8,
+    // PORT NOTE: Zig stored `[*]const u8` + `u32` len; Rust holds the owning
+    // `Box<[u8]>` directly so `byte_slice`/`free_str` need no raw-parts rebuild.
+    data: Box<[u8]>,
 }
 
 impl RefCountedStr {
     // PORT NOTE: Zig `init` takes a `[]const u8` whose backing storage was allocated
     // with `bun.default_allocator` and transfers ownership of it. In Rust we accept a
-    // `Box<[u8]>` (global mimalloc) and decompose it into raw ptr+len to match field layout.
+    // `Box<[u8]>` (global mimalloc) and store it directly.
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
-        let len = u32::try_from(slice.len()).expect("int cast");
-        let ptr = bun_core::heap::into_raw(slice).cast::<u8>().cast_const();
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
         bun_core::heap::into_raw(Box::new(RefCountedStr {
             refcount: Cell::new(1),
-            len,
-            ptr,
+            data: slice,
         }))
     }
 
     pub fn byte_slice(&self) -> &[u8] {
-        // SAFETY: `ptr` points to `len` bytes owned by this struct (set in `init`,
-        // freed only in `free_str` when refcount hits 0). `ffi::slice` tolerates
-        // the (null, 0) empty state.
-        unsafe { bun_core::ffi::slice(self.ptr, self.len as usize) }
+        &self.data
     }
 
     pub fn ref_(&self) {
@@ -66,19 +60,9 @@ impl RefCountedStr {
     }
 
     fn free_str(&mut self) {
-        if self.len == 0 {
-            return;
-        }
-        // SAFETY: `ptr`/`len` were produced from `Box::<[u8]>::into_raw` in `init`;
-        // reconstructing the Box here returns ownership to the global allocator.
-        unsafe {
-            drop(bun_core::heap::take(ptr::slice_from_raw_parts_mut(
-                self.ptr.cast_mut(),
-                self.len as usize,
-            )));
-        }
-        self.ptr = ptr::null();
-        self.len = 0;
+        // Dropping the old `Box<[u8]>` returns its allocation; an empty box
+        // owns no heap storage so the `len == 0` early-out is preserved.
+        self.data = Box::default();
     }
 }
 
@@ -86,8 +70,7 @@ impl Default for RefCountedStr {
     fn default() -> Self {
         Self {
             refcount: Cell::new(1),
-            len: 0,
-            ptr: ptr::null(),
+            data: Box::default(),
         }
     }
 }

@@ -808,8 +808,10 @@ impl All {
 
     /// Spec Timer.zig:175-177 — empty `uv_idle` callback. Its presence alone
     /// keeps `uv_run` from blocking in the poll phase; the body is a no-op.
+    /// No preconditions (the handle pointer is unused), so the fn is safe; the
+    /// safe fn item coerces into the `uv_idle_cb` fn-pointer slot.
     #[cfg(windows)]
-    unsafe extern "C" fn on_uv_idle_noop(_: *mut uv::uv_idle_t) {
+    extern "C" fn on_uv_idle_noop(_: *mut uv::uv_idle_t) {
         // prevent libuv from polling forever
     }
 

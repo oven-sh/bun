@@ -90,6 +90,7 @@ pub fn enqueue_dependency_with_main(
         install_peer,
         assign_resolution,
         None,
+        false,
     )
 }
 
@@ -493,6 +494,7 @@ pub fn enqueue_dependency_to_root(
             false,
             assign_root_resolution,
             Some(fail_root_resolution),
+            true,
         ) {
             return DependencyToEnqueue::Failure(err);
         }
@@ -647,6 +649,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // PERF(port): was comptime monomorphization (successFn/failFn) — profile in Phase B
     success_fn: SuccessFn,
     fail_fn: Option<FailFn>,
+    // Zig: `comptime if (successFn == assignRootResolution)`. The Zig check is a
+    // compile-time identity comparison; in Rust the two `SuccessFn` candidates
+    // (`assign_resolution` / `assign_root_resolution`) have byte-identical
+    // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
+    // folds them and a runtime fn-pointer address comparison is unsound. Thread
+    // an explicit flag instead.
+    is_root: bool,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     if dependency.behavior.is_optional_peer() {
@@ -1159,7 +1168,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             *manifest_entry_parse.value_ptr = TaskCallbackList::default();
                         }
 
-                        let ctx = if success_fn as usize == assign_root_resolution as usize {
+                        let ctx = if is_root {
                             TaskCallbackContext::RootDependency(id)
                         } else {
                             TaskCallbackContext::Dependency(id)
@@ -1191,7 +1200,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let alias = this.lockfile.str_detached(&dependency.name);
             let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
-            let ctx = if success_fn as usize == assign_root_resolution as usize {
+            let ctx = if is_root {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -1316,7 +1325,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            let ctx = if success_fn as usize == assign_root_resolution as usize {
+            let ctx = if is_root {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -1540,7 +1549,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            let ctx = if success_fn as usize == assign_root_resolution as usize {
+            let ctx = if is_root {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -2792,6 +2801,7 @@ impl PackageManager {
         install_peer: bool,
         success_fn: SuccessFn,
         fail_fn: Option<FailFn>,
+        is_root: bool,
     ) -> Result<(), bun_core::Error> {
         enqueue_dependency_with_main_and_success_fn(
             self,
@@ -2801,6 +2811,7 @@ impl PackageManager {
             install_peer,
             success_fn,
             fail_fn,
+            is_root,
         )
     }
 

@@ -382,6 +382,7 @@ impl PackageManager {
                     install_peer,
                     pm_resolution::assign_root_resolution,
                     Some(PackageManager::fail_root_resolution),
+                    true,
                 )?;
                 if let Some(ptr) = any_root {
                     let new_resolution_id =

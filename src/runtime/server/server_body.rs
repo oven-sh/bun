@@ -1813,11 +1813,12 @@ where
         // PORT NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
         // `NonNull` instead of the inherent `&FetchHeaders` getter.
-        if let Some(mut head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
+        if let Some(head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
             use jsc::HTTPHeaderName;
-            // SAFETY: `head` is a live, intrusively-refcounted C++ handle owned
-            // by `request.headers`; the FFI accessors only read.
-            let head = unsafe { head.as_mut() };
+            // `head` is a live, intrusively-refcounted C++ handle owned by
+            // `request.headers`. `FetchHeaders` is an opaque ZST FFI handle
+            // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
+            let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
                 sec_websocket_key_owned = key.to_slice_clone();
                 sec_websocket_key_str = ZigString::init(sec_websocket_key_owned.slice());
@@ -2828,9 +2829,9 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
-        // SAFETY: `jsc_vm` is the live JSC VM owned by the per-thread VirtualMachine.
-        unsafe { &*self.vm_ref().jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
+        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
+        // owned by the per-thread VirtualMachine.
+        self.vm_ref().jsc_vm().deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
         // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with

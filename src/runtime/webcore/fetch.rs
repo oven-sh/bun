@@ -160,9 +160,10 @@ struct FetchHeadersRef(Option<NonNull<FetchHeaders>>);
 impl Drop for FetchHeadersRef {
     fn drop(&mut self) {
         if let Some(fh) = self.0.take() {
-            // SAFETY: `fh` came from `FetchHeaders::create_from_js` which
-            // returns a +1-ref `NonNull<FetchHeaders>`.
-            unsafe { (*fh.as_ptr()).deref() };
+            // `fh` came from `FetchHeaders::create_from_js` which returns a
+            // +1-ref `NonNull<FetchHeaders>`. `FetchHeaders` is an opaque ZST
+            // FFI handle (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
+            bun_opaque::opaque_deref_mut(fh.as_ptr()).deref();
         }
     }
 }
@@ -1091,8 +1092,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(signal_) = options.get(global_this, "signal")? {
                 if !signal_.is_undefined() {
                     if let Some(signal__) = AbortSignal::from_js(signal_) {
-                        // SAFETY: from_js returns a live AbortSignal*; ref_ bumps refcount.
-                        break 'extract_signal NonNull::new(unsafe { (*signal__).ref_() });
+                        // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
+                        // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
+                        break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
                     }
                 }
             }
@@ -1117,8 +1119,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
 
                 if let Some(signal__) = AbortSignal::from_js(signal_) {
-                    // SAFETY: from_js returns a live AbortSignal*; ref_ bumps refcount.
-                    break 'extract_signal NonNull::new(unsafe { (*signal__).ref_() });
+                    // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
+                    // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
+                    break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
                 }
             }
         }
@@ -1232,8 +1235,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // SAFETY: cast returns a live FetchHeaders*.
-                            if unsafe { (*headers__.as_ptr()).is_empty() } {
+                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
                             }
                             break 'brk Some(headers__.as_ptr());
@@ -1268,8 +1271,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // SAFETY: cast returns a live FetchHeaders*.
-                            if unsafe { (*headers__.as_ptr()).is_empty() } {
+                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
                             }
                             break 'brk Some(headers__.as_ptr());
@@ -1300,9 +1303,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let result = if let Some(headers_) = fetch_headers {
-            // SAFETY: headers_ points to a live FetchHeaders (either JS-owned or
-            // refcounted via fetch_headers_to_deref above).
-            let headers_ref = unsafe { &mut *headers_ };
+            // `headers_` points to a live FetchHeaders (either JS-owned or
+            // refcounted via `fetch_headers_to_deref` above). `FetchHeaders` is
+            // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
+            let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
                 hostname = Some(hostname_.to_owned_slice_z());
             }
@@ -1728,12 +1732,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url.is_s3() {
-        // get ENV config
-        // SAFETY: `bun_vm()` returns the live thread-local VM pointer; `transpiler.env`
-        // is set during init and live for the VM lifetime.
-        let env_creds = s3_credentials_from_env(unsafe {
-            (*global_this.bun_vm().as_mut().transpiler.env).get_s3_credentials()
-        });
+        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
+        // process-singleton dotenv loader (set during init).
+        let env_creds = s3_credentials_from_env(
+            global_this.bun_vm().as_mut().transpiler.env_mut().get_s3_credentials(),
+        );
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,
             options: Default::default(),

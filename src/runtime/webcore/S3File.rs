@@ -306,12 +306,11 @@ fn construct_s3_file_internal_store(
     path: PathLike,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
-    // get credentials from env
-    // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
-    // and live for the VM lifetime.
-    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
-        (*global.bun_vm().as_mut().transpiler.env).get_s3_credentials()
-    });
+    // get credentials from env — `Transpiler::env_mut` is the safe accessor
+    // for the process-singleton dotenv loader (set during init).
+    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
+        global.bun_vm().as_mut().transpiler.env_mut().get_s3_credentials(),
+    );
     construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
 }
 
@@ -601,8 +600,9 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = global.bun_vm().as_mut().transpiler.env;
+        // `Transpiler::env_mut` is the safe accessor for the process-singleton
+        // dotenv loader (set during init).
+        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
@@ -610,7 +610,7 @@ impl S3BlobStatTask {
             // TODO(port): @ptrCast fn pointer — verify s3::stat callback signature matches
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
-            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
+            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -628,15 +628,16 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = global.bun_vm().as_mut().transpiler.env;
+        // `Transpiler::env_mut` is the safe accessor for the process-singleton
+        // dotenv loader (set during init).
+        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
-            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
+            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -654,15 +655,16 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = global.bun_vm().as_mut().transpiler.env;
+        // `Transpiler::env_mut` is the safe accessor for the process-singleton
+        // dotenv loader (set during init).
+        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
-            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
+            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)

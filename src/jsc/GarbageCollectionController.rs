@@ -102,8 +102,7 @@ impl GarbageCollectionController {
         #[cfg(debug_assertions)]
         {
             if env_var::BUN_TRACK_LAST_FN_NAME.get().unwrap_or(false) {
-                // SAFETY: vm.event_loop() returns the live event loop owned by `vm`.
-                unsafe { (*vm.event_loop()).debug.track_last_fn_name = true };
+                vm.event_loop_mut().debug.track_last_fn_name = true;
             }
         }
 

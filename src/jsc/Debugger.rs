@@ -393,11 +393,14 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
-        // SAFETY: `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()`. All subsequent accesses route through safe
-        // `&VirtualMachine` accessors which form short-lived `&mut`s under the
-        // single-JS-thread invariant.
-        let this: &VirtualMachine = unsafe { &*this };
+        // `this` is the live per-thread VM; same allocation as
+        // `VirtualMachine::get()` — route through the safe thread-local
+        // accessor instead of open-coding the backref deref. All subsequent
+        // accesses form short-lived `&mut`s under the single-JS-thread
+        // invariant via safe `&VirtualMachine` accessors.
+        debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
+        let _ = this; // release: param otherwise unused
+        let this: &VirtualMachine = VirtualMachine::get();
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
@@ -575,10 +578,12 @@ impl Debugger {
         // `#[unsafe(no_mangle)]` already prevents the linker from stripping
         // these exported symbols, so the keep-alive references are unnecessary.
 
-        // SAFETY: `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()`. Safe accessors below form short-lived
-        // `&mut`s under the single-JS-thread invariant.
-        let this_ref: &VirtualMachine = unsafe { &*this };
+        // `this` is the live per-thread VM; same allocation as
+        // `VirtualMachine::get()` — route through the safe thread-local
+        // accessor. Safe accessors below form short-lived `&mut`s under the
+        // single-JS-thread invariant.
+        debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
+        let this_ref: &VirtualMachine = VirtualMachine::get();
         let dbg = this_ref
             .debugger_mut()
             .expect("Debugger::create: vm.debugger is None");

@@ -782,8 +782,11 @@ impl WebWorker {
             return;
         }
 
-        // SAFETY: start_vm published vm under vm_lock; non-null here.
-        let global = unsafe { &*vm_ptr }.global;
+        // `start_vm()` published `vm_ptr` under `vm_lock` AND installed it as
+        // this thread's per-thread VM (`VirtualMachine::init` → `VMHolder`), so
+        // the safe thread-local accessor returns the same allocation.
+        debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+        let global = VirtualMachine::get().global();
         // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
         // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
         // unwind cannot walk Zig frames (no unwind tables), so glibc falls
@@ -805,9 +808,7 @@ impl WebWorker {
         // `shutdown()` destroys the `JSC::VM`, and a live `&T` to freed
         // memory is UB under Rust's validity rules even when never
         // dereferenced. The raw FFI call has no such reference to leak.
-        // SAFETY: `global` is the live worker global published in start_vm;
-        // `vm()` returns the valid `JSC::VM` it was created with.
-        JSC__VM__getAPILock(unsafe { &*global }.vm());
+        JSC__VM__getAPILock(global.vm());
         self.spin();
     }
 
@@ -1014,10 +1015,12 @@ impl WebWorker {
         // `&mut` per call (the `JsCell` escape hatch — provenance from the
         // thread-local `*mut`).
         let vm_ptr: *mut VirtualMachine = self.vm_ptr();
-        // SAFETY: vm published in start_vm under vm_lock; non-null and live
-        // for the worker thread's duration. This IS the worker thread's
-        // per-thread VM (set by `VirtualMachine::init` → `VMHolder`).
-        let vm: &VirtualMachine = unsafe { &*vm_ptr };
+        // vm published in `start_vm` under `vm_lock`; non-null and live for the
+        // worker thread's duration. This IS the worker thread's per-thread VM
+        // (set by `VirtualMachine::init` → `VMHolder`), so the safe
+        // thread-local accessor returns the same allocation.
+        debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+        let vm: &VirtualMachine = VirtualMachine::get();
         debug_assert!(self.status.get() == Status::Start);
         self.set_status(Status::Starting);
 
@@ -1396,10 +1399,10 @@ fn on_unhandled_rejection(
 
     let mut array: Vec<u8> = Vec::new();
 
-    let worker = vm.worker.expect("Assertion failure: no worker").cast::<WebWorker>();
-    // SAFETY: vm.worker is a valid *const WebWorker owned by C++ while vm
-    // lives. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
-    let worker = unsafe { &*worker };
+    // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
+    // heap `WebWorker` owned by C++ that outlives `vm`. `&WebWorker` (not
+    // `&mut`) — see worker-thread `&self` note.
+    let worker = vm.worker_ref().expect("Assertion failure: no worker");
 
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,

@@ -1071,6 +1071,17 @@ pub mod command {
         }
     }
 
+    pub fn tag_table<const CMD: Tag>() -> &'static clap::ConvertedTable {
+        match CMD {
+            Tag::AutoCommand => arguments::AUTO_TABLE,
+            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_TABLE,
+            Tag::BuildCommand => arguments::BUILD_TABLE,
+            Tag::TestCommand => arguments::TEST_TABLE,
+            Tag::BunxCommand => arguments::RUN_TABLE,
+            _ => arguments::BASE_RUNTIME_TRANSPILER_TABLE,
+        }
+    }
+
     pub fn tag_print_help<const CMD: Tag>(show_all_flags: bool) {
         match CMD {
             // the output of --help uses the following syntax highlighting

@@ -96,8 +96,16 @@ impl Scope {
         name: &[u8],
         hash_value: u64,
     ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
-        let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
-        self.members.get_or_put_context_adapted(name, hashed)
+        let _ = hash_value; // PERF(port): see `StringHashMap::get_adapted` note.
+        // SAFETY: `name` is always a slice into either the source-file contents
+        // or the lexer string-table (the only producers of identifier text in
+        // the parser). Both outlive the `AstAlloc` arena that owns this
+        // `Scope`, so storing the slice by reference (Zig's
+        // `StringHashMapUnmanaged` semantics) is sound — the map is freed by
+        // the same arena reset that would invalidate the source/string-table.
+        // This avoids one `mi_heap_malloc` per declared identifier per scope,
+        // which profiling showed as the parser's hottest slow-path allocation.
+        unsafe { self.members.get_or_put_borrowed(name) }
     }
 
     pub fn reset(&mut self) {

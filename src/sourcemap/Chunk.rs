@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use bun_str::{strings, MutableString};
 use bun_ast::{Loc, Source};
 use bun_paths::{fs::FileSystem, PathBuffer};
@@ -158,12 +157,12 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
         self.ctx.append_line_separator()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn append(
         &mut self,
         current_state: SourceMapState,
@@ -232,6 +231,13 @@ impl SourceMapFormatCtx for VLQSourceMap {
         }
     }
 
+    // PERF: `#[inline(always)]` — fat-LTO/CGU=1 was *not* inlining this trait
+    // method into `add_source_mapping` (objdump showed 3× `call` per mapping;
+    // 11.77% of `append` samples on the `push %rbp` prologue). Zig's
+    // `Chunk.zig:107` wrapper is `pub inline fn` and the whole chain folds
+    // into `addSourceMapping`. Forcing it leaves only the 64-mapping
+    // `flush_window` out-of-line.
+    #[inline(always)]
     fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
         if let Some(b) = &mut self.internal {
             b.append_line_separator();
@@ -241,6 +247,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         Ok(())
     }
 
+    #[inline(always)]
     fn append(
         &mut self,
         current_state: SourceMapState,
@@ -305,10 +312,15 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub prev_loc: Loc,
     pub has_prev_state: bool,
 
-    // TODO(port): lifetime — borrowed view into `line_offset_tables`' byte_offset
-    // column (a `MultiArrayList` slice). Using `&'static` placeholder in Phase A
-    // to avoid a struct lifetime param; Phase B should derive this on demand or
-    // thread `'a`.
+    /// Cached `line_offset_tables.items(.byte_offset_to_start_of_line)`.
+    ///
+    /// Borrows heap storage owned by `line_offset_tables` (a `ManuallyDrop`
+    /// `MultiArrayList` that is never resized/dropped while the builder is
+    /// live), so the pointer is stable across moves of `Self`. `&'static` is a
+    /// lifetime erasure of that self-borrow — threading a real `'a` would
+    /// infect every `Printer<'a, …>` instantiation for a field that's only
+    /// ever read in `add_source_mapping`. Populated lazily on the first
+    /// mapping (Zig caches it eagerly in `Printer.init`, js_printer.zig:5459).
     pub line_offset_table_byte_offset_list: &'static [u32],
 
     // This is a workaround for a bug in the popular "source-map" library:
@@ -464,10 +476,12 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         self.last_generated_update = output.len() as u32;
     }
 
+    #[inline(always)]
     pub fn append_mapping(&mut self, current_state: SourceMapState) {
         self.append_mapping_without_remapping(current_state);
     }
 
+    #[inline(always)]
     pub fn append_mapping_without_remapping(&mut self, current_state: SourceMapState) {
         self.source_map
             .append(current_state, self.prev_state)
@@ -499,33 +513,46 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             return;
         }
 
-        // Derive the byte-offset column on demand from `line_offset_tables` instead of
-        // relying on the cached `line_offset_table_byte_offset_list` (which can't borrow
-        // `line_offset_tables` without a struct lifetime param — see field comment).
-        //
+        // PERF: cache the `byte_offset_to_start_of_line` column once. The
+        // backing storage is heap-owned by `self.line_offset_tables` (a
+        // `ManuallyDrop<MultiArrayList>` that is never resized or dropped for
+        // the builder's lifetime — see field doc), so the slice stays valid
+        // across moves of `self`. Zig caches this in `Printer.init`
+        // (js_printer.zig:5459, "costs 1ms according to Instruments"); we
+        // lazy-init here on the first mapping to keep the fix self-contained.
+        if self.line_offset_table_byte_offset_list.len() != list.len() {
+            let col = list.items::<"byte_offset_to_start_of_line", u32>();
+            // SAFETY: lifetime widened to `'static` per the invariant above —
+            // `line_offset_tables` outlives every `add_source_mapping` call and
+            // is never reallocated. Same shape as Zig's cached `[]const u32`.
+            self.line_offset_table_byte_offset_list =
+                unsafe { core::slice::from_raw_parts(col.as_ptr(), col.len()) };
+        }
+        let byte_offsets = self.line_offset_table_byte_offset_list;
+
         // The printer emits mappings in (mostly) source order, so the previous
         // call's `original_line` is the right answer or one/two lines before
         // it >95% of the time. Seed `find_line_with_hint` with it; the
         // fallback is the same binary search as before.
-        let original_line = {
-            use crate::line_offset_table::LineOffsetTableColumns as _;
-            LineOffsetTable::find_line_with_hint(
-                list.items_byte_offset_to_start_of_line(),
-                loc,
-                self.prev_state.original_line as u32,
-            )
-        };
-        let line = list.get(usize::try_from(original_line.max(0)).expect("int cast"));
+        let original_line = LineOffsetTable::find_line_with_hint(
+            byte_offsets,
+            loc,
+            self.prev_state.original_line as u32,
+        );
+        let idx = original_line.max(0) as usize;
 
-        // Use the line to compute the column
-        let mut original_column =
-            loc.start - i32::try_from(line.byte_offset_to_start_of_line).expect("int cast");
-        if line.columns_for_non_ascii.slice().len() > 0
-            && original_column >= i32::try_from(line.byte_offset_to_first_non_ascii).expect("int cast")
+        // PERF: read the three columns directly instead of `list.get(idx)`.
+        // `MultiArrayList::get` builds a 272-byte `Slice` (`[*mut u8; 32]` +
+        // len/cap) and then gathers *every* field via `ptr::read`; for the
+        // hot per-token path that dominated `add_source_mapping`. Each
+        // `items::<>` is a single `base + CONST*cap` pointer add.
+        let mut original_column = loc.start - byte_offsets[idx] as i32;
         {
-            original_column = line.columns_for_non_ascii.slice()
-                [(u32::try_from(original_column).expect("int cast") - line.byte_offset_to_first_non_ascii)
-                    as usize];
+            let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
+            let cols = &list.items::<"columns_for_non_ascii", Vec<i32>>()[idx];
+            if !cols.is_empty() && original_column >= first_non_ascii as i32 {
+                original_column = cols[(original_column as u32 - first_non_ascii) as usize];
+            }
         }
 
         self.update_generated_line_and_column(output);

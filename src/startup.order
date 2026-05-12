@@ -1,0 +1,56 @@
+# lld --symbol-ordering-file
+#
+# Hot-startup symbol order for `bun <file>` / `bun run` / `bun --version`.
+# lld clusters listed symbols at the front of `.text`, packing all
+# init-array-reachable + CLI-dispatch code into ~2 contiguous 64 KB
+# fault-around windows instead of being interleaved with cold
+# bun_install / bun_bundler / bun_css code in fat-LTO emission order.
+#
+# Unknown symbols are silently ignored (paired with
+# -Wl,--no-warn-symbol-ordering in flags.ts) so monomorphisation-hash
+# changes in mangled names degrade gracefully. Regenerate when convenient:
+#   perf record -e cycles:u -- ./build/release/bun index.ts
+#   perf script -F sym | awk 'NF{print $1}' | sort -u > src/startup.order
+#
+# Order: .init_array targets -> libc/mimalloc init -> main -> Rust CLI
+# entry -> arg parse -> run-command -> JSC VM init.
+
+# .init_array targets
+frame_dummy
+__cpu_indicator_init
+_ZL17mi_process_attachv
+_GLOBAL__sub_I_eh_alloc.cc
+_GLOBAL__sub_I.00090_globals_io.cc
+_GLOBAL__sub_I_cxx11_locale_inst.cc
+_GLOBAL__sub_I_cxx11_wlocale_inst.cc
+_RNvNvNtNtNtNtCs7QmvgyBSXbk_3std3sys4args4unix3imp15ARGV_INIT_ARRAY12init_wrapper
+
+# mimalloc fast path (touched before Rust main)
+_ZL20mi_process_init_oncev
+_ZL18mi_heap_init_theapPK9mi_heap_s
+mi_thread_init
+mi_malloc
+mi_free
+
+# entry
+main
+_RNvNtCsgYa7AclpnEC_17bun_crash_handler5draft4init
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli3cli5start
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli7command5start
+
+# arg parsing
+_RNvMNtCsb0WKtEr3BuM_8bun_clap8comptimeNtB2_14ConvertedTable4find
+_RINvCsb0WKtEr3BuM_8bun_clap5parseNtB2_4HelpECsdUGwqtdHSXW_11bun_runtime
+
+# run-command path
+_RNvMs1_NtNtCsdUGwqtdHSXW_11bun_runtime3cli11run_commandNtB5_10RunCommand21configure_env_for_run
+_RNvMs2_NtNtCsdUGwqtdHSXW_11bun_runtime3cli11run_commandNtB5_3Run5start
+_RNvMs5_NtCskhmXvD1ZcCf_11bun_bundler10transpilerNtB5_10Transpiler4init
+
+# package.json / bunfig parse on the run path
+_RINvMNtCs9pAEmGfItTi_11bun_parsers4jsonINtB3_14JSONLikeParserKb1_KBY_KBY_Kb0_KB1a_KBY_KB1a_KB1a_E10parse_exprKB1a_KBY_ECs80cdV7GHFNQ_10bun_bunfig
+_RINvMNtCs9pAEmGfItTi_11bun_parsers4jsonINtB3_14JSONLikeParserKb1_KBY_KBY_Kb0_KB1a_KBY_KB1a_KB1a_E10parse_exprKB1a_KBY_ECsdUGwqtdHSXW_11bun_runtime
+_RINvMNtCs9pAEmGfItTi_11bun_parsers4jsonINtB3_14JSONLikeParserKb1_KBY_KBY_Kb0_KB1a_KBY_KB1a_KB1a_E10parse_exprKB1a_KBY_ECsk4gaR2HbfPt_12bun_resolver
+
+# VM teardown (always reached)
+_RNvMs8_NtCsiqc2UDhDWK9_7bun_jsc15virtual_machineNtB5_14VirtualMachine7on_exit

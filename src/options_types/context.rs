@@ -52,6 +52,23 @@ pub struct ContextData {
 }
 
 impl Default for ContextData {
+    // ── Startup .text page-fault reduction ───────────────────────────────
+    // `--version` perf showed `ContextData::default` (1 638 B) plus its
+    // out-of-line callees (`TransformOptions` / `DebugOptions` / `TestOptions`
+    // / `BundlerOptions` / `RuntimeOptions` / `CodeCoverageOptions` /
+    // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
+    // r-xp pages — each nested `Default` impl landed in its own CGU, so the
+    // single call from `write_context_no_parse` faulted in ~40 KB of scattered
+    // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
+    //
+    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
+    // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
+    // (validity invariant — null is immediate UB regardless of len). Instead,
+    // every `Default` impl in this module is `#[inline(always)]` so the entire
+    // recursive chain folds into the one `write_context_no_parse` call site
+    // and lives on a single contiguous page. This removes the per-type callees
+    // from the startup fault set without violating any niche invariants.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             start_time: 0,
@@ -220,6 +237,8 @@ pub struct BundlerOptions {
 }
 
 impl Default for BundlerOptions {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             outdir: Box::default(),
@@ -338,6 +357,8 @@ pub struct DebugOptions {
 }
 
 impl Default for DebugOptions {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
@@ -454,6 +475,8 @@ impl TestOptions {
 }
 
 impl Default for TestOptions {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             // 5 * std.time.ms_per_s
@@ -499,6 +522,7 @@ pub enum Debugger {
 }
 
 impl Default for Debugger {
+    #[inline(always)]
     fn default() -> Self {
         Debugger::Unspecified
     }
@@ -549,6 +573,8 @@ pub struct CpuProf {
 }
 
 impl Default for CpuProf {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             enabled: false,
@@ -570,6 +596,8 @@ pub struct HeapProf {
 }
 
 impl Default for RuntimeOptions {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             smol: false,

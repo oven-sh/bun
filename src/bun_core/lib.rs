@@ -548,7 +548,7 @@ pub use env as Environment;
 pub use feature_flags as FeatureFlags;
 /// Process start time in nanoseconds. Written once during single-threaded
 /// startup (`main`/`Cli::start`) and read freely thereafter.
-static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
+static START_TIME: Once<i128> = Once::new();
 #[inline]
 pub fn start_time() -> i128 {
     START_TIME.get().copied().unwrap_or(0)
@@ -1714,7 +1714,7 @@ pub mod ffi {
     }
 
     #[cfg(unix)]
-    static UTSNAME: std::sync::OnceLock<libc::utsname> = std::sync::OnceLock::new();
+    static UTSNAME: crate::Once<libc::utsname> = crate::Once::new();
 
     /// Process-lifetime cached `uname(2)` result. Several callers
     /// (analytics version probe, crash-handler, kernel-version checks) read

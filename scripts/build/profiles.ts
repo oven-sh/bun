@@ -99,6 +99,24 @@ export const profiles = {
     lto: false,
   },
 
+  /**
+   * Bench-till-green profile. Must match the official release binary's
+   * codegen so PORT-vs-SYS comparisons are apples-to-apples: lto=true so
+   * the `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic`
+   * under `-flto=full -fwhole-program-vtables`) is selected and cross-TU
+   * inlining runs. Without this the non-LTO WebKit .a (native ELF, PIC)
+   * lands ~555 KB of C++ vtables in `.data.rel.ro` instead of `.rodata`,
+   * .eh_frame is retained (+962 KB), and JSC slow-paths
+   * (CallFrame::setCurrentVPC, Dependency::loadAndFence) stay outlined —
+   * the bench suite then reports a ~6-8% time / ~1 MB RSS "regression"
+   * that is pure binary layout, not src/ code.
+   */
+  btg: {
+    buildType: "Release",
+    webkit: "prebuilt",
+    lto: true,
+  },
+
   /** Release with local WebKit. */
   "release-local": {
     buildType: "Release",

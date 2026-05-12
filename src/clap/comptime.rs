@@ -32,12 +32,13 @@ use crate::{Names, Param, ParseOptions, Values};
 //     `&'static ConvertedTable` — the Rust analogue of the Zig comptime
 //     `converted_params` const baked into the generated type.
 //
-//   * For the existing `clap::parse(&'static [Param<Id>], …)` API (callers
-//     have not yet been migrated to the type-level form), `ConvertedTable`
-//     is built once per *unique* static slice and interned in a tiny
-//     ptr-keyed registry, so repeat parses are alloc-free and `find_param`
-//     resolves long names by hashed binary search / shorts by direct index
-//     instead of the O(n) scan.
+//   * Every per-subcommand table in `runtime/cli/Arguments.rs` is now a
+//     `pub static *_TABLE: &ConvertedTable = comptime_table!(*_PARAMS)`, and
+//     `Arguments::parse` enters via `clap::parse_with_table`, so the startup
+//     hot path (`bun --version`, `bun run …`) never touches the heap-backed
+//     `for_params` / `build` / `Mutex` registry below. That path is retained
+//     only for the cold non-startup callers (`bun create`, `bun install`)
+//     that still pass a raw `&'static [Param<Id>]`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `const fn` byte-slice equality (slice `==` is not `const` on stable).
@@ -187,6 +188,60 @@ pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize 
     panic!("clap: no such parameter");
 }
 
+/// Count `--long` names + aliases. `const fn` so [`comptime_table!`] can size
+/// the rodata long-name index array.
+pub const fn count_long_entries<Id>(params: &[Param<Id>]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < params.len() {
+        if params[i].names.long.is_some() {
+            n += 1;
+        }
+        n += params[i].names.long_aliases.len();
+        i += 1;
+    }
+    n
+}
+
+/// Build the sorted-by-hash long-name → param-index lookup at compile time.
+/// `M` must equal [`count_long_entries`]`(params)`. Index `i` corresponds 1:1
+/// with `convert_params_array(params)[i]` (both preserve input order). Uses
+/// insertion sort — `M` is bounded by the number of CLI flags (~120) and this
+/// runs at const-eval, never at runtime.
+pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [LongEntry; M] {
+    let mut out = [LongEntry { hash: 0, idx: 0 }; M];
+    let mut w = 0;
+    let mut i = 0;
+    while i < params.len() {
+        let n = &params[i].names;
+        if let Some(l) = n.long {
+            out[w] = LongEntry { hash: fnv1a64(l), idx: i as u16 };
+            w += 1;
+        }
+        let mut a = 0;
+        while a < n.long_aliases.len() {
+            out[w] = LongEntry { hash: fnv1a64(n.long_aliases[a]), idx: i as u16 };
+            w += 1;
+            a += 1;
+        }
+        i += 1;
+    }
+    assert!(w == M, "build_long_index: M != count_long_entries()");
+    // `slice::sort_unstable_by_key` is not `const`; insertion sort is.
+    let mut j = 1;
+    while j < M {
+        let key = out[j];
+        let mut k = j;
+        while k > 0 && out[k - 1].hash > key.hash {
+            out[k] = out[k - 1];
+            k -= 1;
+        }
+        out[k] = key;
+        j += 1;
+    }
+    out
+}
+
 /// `[i16; 128]` ASCII → index into `converted`. `-1` = no such short.
 pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
     let mut idx = [-1i16; 128];
@@ -234,39 +289,43 @@ pub struct ConvertedTable {
     pub n_flags: usize,
     pub n_single: usize,
     pub n_multi: usize,
-    /// Sorted by `hash`; binary-searched in `find`. Empty for `from_const`
-    /// tables (those use [`find_param_index`] at the call site instead).
+    /// Sorted by `hash`; binary-searched in `find`. Populated by both the
+    /// const-eval path ([`build_long_index`] via `comptime_table!`) and the
+    /// runtime fallback path (`build`).
     long_index: &'static [LongEntry],
     short_index: [i16; 128],
 }
 
 impl ConvertedTable {
-    /// Build a table entirely at compile time. `long_index` is left empty —
-    /// the intended lookup path for const tables is [`find_param_index`]
-    /// folded inside `const { }`, not the runtime `find`. (Runtime `find`
-    /// still works; it falls back to the const-fn linear scan.)
+    /// Build a table entirely at compile time. All four arguments come from
+    /// the `const fn`s above via [`comptime_table!`](crate::comptime_table),
+    /// so the converted param array, category counts, sorted long-name hash
+    /// index, and short-name direct index all land in rodata — full Zig
+    /// `ComptimeClap` parity with zero runtime work.
     pub const fn from_const(
         converted: &'static [Param<usize>],
         n_flags: usize,
         n_single: usize,
         n_multi: usize,
+        long_index: &'static [LongEntry],
     ) -> Self {
         Self {
             converted,
             n_flags,
             n_single,
             n_multi,
-            long_index: &[],
+            long_index,
             short_index: build_short_index(converted),
         }
     }
 
     /// Look up (or build + intern) the converted table for a `'static` param
-    /// slice. The registry is keyed by `(ptr, len)`, so each `static …_PARAMS`
-    /// table in the binary converts at most once per process; the leaked
-    /// allocations are bounded by the number of distinct subcommand tables
-    /// (< 16) and live for the process lifetime — same as Zig's comptime
-    /// `converted_params`, which also lives in rodata forever.
+    /// slice. **Cold path** — the startup hot set (`Arguments::parse`) goes
+    /// through [`comptime_table!`](crate::comptime_table) +
+    /// [`ComptimeClap::parse_with_table`] and never reaches this. Kept for the
+    /// handful of non-startup callers (`bun create`, `bun install`) that still
+    /// hand a raw `&'static [Param<Id>]` to `clap::parse`.
+    #[cold]
     pub fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
         let key = (params.as_ptr() as usize, params.len());
         {
@@ -344,8 +403,9 @@ impl ConvertedTable {
     }
 
     /// Runtime name resolution. O(1) for shorts, O(log n) for longs (with a
-    /// final byte-compare to reject hash collisions). Falls back to the
-    /// const-fn linear scan when `long_index` is empty (const-built tables).
+    /// final byte-compare to reject hash collisions). Const-built tables now
+    /// carry a rodata `long_index` too, so the linear-scan fallback is only
+    /// reachable from a hand-rolled `from_const(.., &[])`.
     #[inline]
     fn find(&self, name: &[u8]) -> &'static Param<usize> {
         if name.len() == 2 && name[0] == b'-' {

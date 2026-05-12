@@ -367,11 +367,9 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub static RESOLVE_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
-        std::sync::OnceLock::new();
+    pub static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
     #[cfg(debug_assertions)]
-    pub static PRINT_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
-        std::sync::OnceLock::new();
+    pub static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {

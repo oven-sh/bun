@@ -905,9 +905,15 @@ pub mod command {
     }
     pub use create_context_data as init;
 
-    /// Full subcommand dispatch. Body gated: every arm calls into a sibling
-    /// `*_command.rs` that is itself still gated, plus `bun_bun_js::Run`,
-    /// `StandaloneModuleGraph`, etc.
+    /// Full subcommand dispatch.
+    ///
+    /// Kept deliberately tiny: every arm is a single call into a
+    /// `#[cold] #[inline(never)]` helper so this compiles to a <1-page jump
+    /// table. Previously this was a single 20 KB function and the
+    /// `AutoCommand` arm body (the `bun --version` / `bun foo.js` hot path)
+    /// sat at byte offset +0x142d behind ~5 KB of inlined standalone-graph
+    /// setup and per-tag bodies — see perf sample 0x3d628fd. With the bodies
+    /// out-lined, `start` is just `which()` + a `match` of tail calls.
     pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
@@ -937,77 +943,9 @@ pub mod command {
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
-                // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
-                // backing storage is process-static (owned by the executable image).
-                let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
-                let mut offset_for_passthrough: usize = 0;
-
-                let ctx: &mut ContextData = 'brk: {
-                    // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
-                    // before `Cli.start`, which populates `bun_options_argc` from
-                    // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
-                    // init to `bun_core::argv()`'s lazy `Once`, so force that init
-                    // now — otherwise `bun_options_argc()` reads 0 here and the
-                    // standalone executable silently drops `BUN_OPTIONS` flags.
-                    let original_argv_len = bun::argv().len();
-                    let bun_options_argc = bun::bun_options_argc();
-                    if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                        let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
-                        if !graph.compile_exec_argv.is_empty() {
-                            bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
-                        }
-
-                        // Store the full argv including user arguments
-                        let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
-                        let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
-
-                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
-                        let num_parsed_options = num_exec_argv_options + bun_options_argc;
-                        offset_for_passthrough = if full_argv.len() > 1 {
-                            1 + num_parsed_options
-                        } else {
-                            0
-                        };
-
-                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
-                        // This prevents user arguments like --version/--help from being intercepted
-                        // by Bun's argument parser (they should be passed through to user code).
-                        // SAFETY: single-threaded startup; `full_argv` is process-static.
-                        unsafe {
-                            bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                        }
-
-                        // Handle actual options to parse.
-                        let result = init(Tag::AutoCommand, log)?;
-
-                        // Restore full argv so passthrough calculation works correctly
-                        // SAFETY: single-threaded startup.
-                        unsafe { bun::set_argv(full_argv) };
-
-                        break 'brk result;
-                    }
-
-                    // If no compile_exec_argv, skip executable name if present
-                    offset_for_passthrough = 1.min(bun::argv().len());
-
-                    break 'brk write_context_no_parse(log);
-                };
-
-                ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
-                use bun_options_types::global_cache::GlobalCache;
-                if ctx.debug.global_cache == GlobalCache::auto {
-                    ctx.debug.global_cache = GlobalCache::disable;
-                }
-
-                ctx.passthrough = bun::argv()
-                    .iter()
-                    .skip(offset_for_passthrough)
-                    .map(|a| a.to_vec().into_boxed_slice())
-                    .collect();
-
-                let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
-                super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
-                return Ok(());
+                // Never taken for a plain `bun` binary; ~2 KB of argv-splice
+                // and ctx-setup code lives behind this cold call.
+                return boot_standalone(graph, log);
             }
         }
 
@@ -1049,218 +987,330 @@ pub mod command {
         // `bun <bin> --version` by intercepting the flag meant for `<bin>`.
 
         match tag {
-            Tag::HelpCommand => return HelpCommand::exec(),
-            Tag::ReservedCommand => return ReservedCommand::exec(),
-            Tag::DiscordCommand => return super::discord_command::DiscordCommand::exec(),
-            Tag::InitCommand => {
-                // InitCommand parses its own argv (no Context); Zig:
-                //   .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..])
-                let argv = argv_zslice();
-                return super::init_command::InitCommand::exec(
-                    &argv[2.min(argv.len())..],
-                );
-            }
-            Tag::InstallCompletionsCommand => {
-                // Minimal port of the non-interactive path: detect $SHELL and
-                // dump the embedded completion script to stdout. Full install
-                // (bunx symlink, fpath/XDG dir search, profile patching) needs
-                // `install_completions_command.rs` un-gated.
-                for a in bun::argv().iter().skip(2) {
-                    if matches!(a, b"--help" | b"-h") {
-                        tag_print_help(Tag::InstallCompletionsCommand, true);
-                        Global::exit(0);
-                    }
-                }
-                use super::shell_completions::ShellCompletionsExt as _;
-                let shell = bun_core::env_var::SHELL::platform_get()
-                    .map(super::shell_completions::Shell::from_env)
-                    .unwrap_or_default();
-                if matches!(shell, super::shell_completions::Shell::Unknown) {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash."
-                    );
-                    Output::note("To manually output completions, run 'bun getcompletes'");
-                    Output::flush();
-                    Global::exit(1);
-                }
-                // `Output::writer()` returns the process-global writer; no raw
-                // deref needed (was `*mut` in an earlier port pass).
-                let writer = Output::writer();
-                let _ = writer.write_all(shell.completions());
-                Output::flush();
-                // TODO(b2-blocked): tty path → write into shell completions dir
-                // (InstallCompletionsCommand::exec).
-                Global::exit(0);
-            }
-            Tag::PackageManagerCommand => {
-                let ctx = init(Tag::PackageManagerCommand, log)?;
-                return super::package_manager_command::PackageManagerCommand::exec(ctx);
-            }
-            Tag::RunAsNodeCommand => {
-                let ctx = init(tag, log)?;
-                return run_command::RunCommand::exec_as_if_node(ctx);
-            }
-            Tag::AutoCommand | Tag::RunCommand => {
-                // PORT NOTE: Zig's AutoCommand arm swallows
-                // `error.MissingEntryPoint` from `Command.init` and prints
-                // help. `bun_core::Error` has no variant table yet (B-1 stub
-                // — `err!()` collapses to `Error::TODO`), so a name-match
-                // would alias every error. Propagate for now; the empty-
-                // positionals fallthrough below covers the common "no args"
-                // help path anyway.
-                // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
-                // once `bun_core::Error` interns names.
-                let ctx = init(tag, log)?;
-                ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+            Tag::AutoCommand | Tag::RunCommand => exec_auto_or_run(tag, log),
+            Tag::HelpCommand => HelpCommand::exec(),
+            Tag::ReservedCommand => ReservedCommand::exec(),
+            Tag::DiscordCommand => super::discord_command::DiscordCommand::exec(),
+            Tag::InitCommand => exec_init(),
+            Tag::InstallCompletionsCommand => exec_install_completions(),
+            Tag::PackageManagerCommand => exec_pm(log),
+            Tag::RunAsNodeCommand => exec_run_as_node(log),
+            Tag::InfoCommand => bun_info(log),
+            Tag::BuildCommand => exec_build(log),
+            Tag::InstallCommand => exec_install(log),
+            Tag::AddCommand => exec_add(log),
+            Tag::UpdateCommand => exec_update(log),
+            Tag::PatchCommand => exec_patch(log),
+            Tag::PatchCommitCommand => exec_patch_commit(log),
+            Tag::OutdatedCommand => exec_outdated(log),
+            Tag::UpdateInteractiveCommand => exec_update_interactive(log),
+            Tag::PublishCommand => exec_publish(log),
+            Tag::AuditCommand => exec_audit(log),
+            Tag::WhyCommand => exec_why(log),
+            Tag::BunxCommand => exec_bunx(log),
+            Tag::ReplCommand => exec_repl(log),
+            Tag::RemoveCommand => exec_remove(log),
+            Tag::LinkCommand => exec_link(log),
+            Tag::UnlinkCommand => exec_unlink(log),
+            Tag::TestCommand => exec_test(log),
+            Tag::GetCompletionsCommand => bun_getcompletes(log),
+            Tag::CreateCommand => bun_create(log),
+            Tag::UpgradeCommand => exec_upgrade(log),
+            Tag::ExecCommand => exec_exec(log),
+            Tag::FuzzilliCommand => exec_fuzzilli(log),
+        }
+    }
 
-                if ctx.parallel || ctx.sequential {
-                    // Result<Infallible, _>: if this returns at all, it's Err.
-                    let Err(err) = super::multi_run::run(ctx);
-                    pretty_errorln!("<r><red>error<r>: {}", err.name());
-                    Global::exit(1);
-                }
+    // ─── out-lined `start` arm bodies ───────────────────────────────────────
+    // Every per-tag body lives in its own `#[cold] #[inline(never)]` fn so
+    // `start` itself stays a jump table. The `Auto/Run` arm is the hot path
+    // (`bun foo.js`, `bun --version`), so it gets `#[inline(never)]` only —
+    // no `#[cold]` — to avoid pessimising branch weights / section placement.
 
-                if !ctx.filters.is_empty() || ctx.workspaces {
-                    // Result<Infallible, _>: if this returns at all, it's Err.
-                    let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
-                    pretty_errorln!("<r><red>error<r>: {}", err.name());
-                    Global::exit(1);
+    type CmdResult = Result<(), bun_core::Error>;
+
+    /// `bun build --compile` standalone-executable boot. Never taken for a
+    /// plain `bun` binary; out-lined so the ~2 KB of argv-splice / ctx-setup
+    /// code is not decoded on the `bun --version` path.
+    #[cold]
+    #[inline(never)]
+    fn boot_standalone(
+        graph: *mut bun_standalone_graph::Graph,
+        log: &mut bun_ast::Log,
+    ) -> CmdResult {
+        // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
+        // backing storage is process-static (owned by the executable image).
+        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        let mut offset_for_passthrough: usize = 0;
+
+        let ctx: &mut ContextData = 'brk: {
+            // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
+            // before `Cli.start`, which populates `bun_options_argc` from
+            // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
+            // init to `bun_core::argv()`'s lazy `Once`, so force that init
+            // now — otherwise `bun_options_argc()` reads 0 here and the
+            // standalone executable silently drops `BUN_OPTIONS` flags.
+            let original_argv_len = bun::argv().len();
+            let bun_options_argc = bun::bun_options_argc();
+            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+                let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
+                if !graph.compile_exec_argv.is_empty() {
+                    bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
                 }
 
-                if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-                    return run_command::RunCommand::exec_eval(ctx);
-                }
+                // Store the full argv including user arguments
+                let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
+                let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
-                if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
-                    let extension = bun_paths::extension(&ctx.args.entry_points[0]);
-                    if extension == b".lockb" {
-                        return bun_lockb(ctx);
-                    }
-                }
-
-                if !ctx.positionals.is_empty() {
-                    let cfg = run_command::ExecCfg {
-                        bin_dirs_only: tag == Tag::AutoCommand,
-                        log_errors: tag != Tag::AutoCommand
-                            || !ctx.runtime_options.if_present,
-                        allow_fast_run_for_extensions: tag == Tag::AutoCommand,
-                    };
-                    if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
-                        return Ok(());
-                    }
-                    if tag == Tag::RunCommand {
-                        Global::exit(1);
-                    }
-                    return Ok(());
-                }
-
-                if tag == Tag::AutoCommand {
-                    Output::flush();
-                    return HelpCommand::exec();
-                }
-                return Ok(());
-            }
-            Tag::InfoCommand => {
-                return bun_info(log);
-            }
-            Tag::BuildCommand => {
-                let ctx = init(Tag::BuildCommand, log)?;
-                super::build_command::BuildCommand::exec(ctx, None)?;
-            }
-            Tag::InstallCommand => {
-                let ctx = init(Tag::InstallCommand, log)?;
-                return super::install_command::InstallCommand::exec(ctx);
-            }
-            Tag::AddCommand => {
-                let ctx = init(Tag::AddCommand, log)?;
-                return super::add_command::AddCommand::exec(ctx);
-            }
-            Tag::UpdateCommand => {
-                let ctx = init(Tag::UpdateCommand, log)?;
-                return super::update_command::UpdateCommand::exec(ctx);
-            }
-            Tag::PatchCommand => {
-                let ctx = init(Tag::PatchCommand, log)?;
-                return super::patch_command::PatchCommand::exec(ctx);
-            }
-            Tag::PatchCommitCommand => {
-                let ctx = init(Tag::PatchCommitCommand, log)?;
-                return super::patch_commit_command::PatchCommitCommand::exec(ctx);
-            }
-            Tag::OutdatedCommand => {
-                let ctx = init(Tag::OutdatedCommand, log)?;
-                return super::outdated_command::OutdatedCommand::exec(ctx);
-            }
-            Tag::UpdateInteractiveCommand => {
-                let ctx = init(Tag::UpdateInteractiveCommand, log)?;
-                return super::update_interactive_command::UpdateInteractiveCommand::exec(ctx);
-            }
-            Tag::PublishCommand => {
-                let ctx = init(Tag::PublishCommand, log)?;
-                return super::publish_command::PublishCommand::exec(ctx);
-            }
-            Tag::AuditCommand => {
-                let ctx = init(Tag::AuditCommand, log)?;
-                super::audit_command::AuditCommand::exec(ctx)?;
-            }
-            Tag::WhyCommand => {
-                let ctx = init(Tag::WhyCommand, log)?;
-                return super::why_command::WhyCommand::exec(ctx);
-            }
-            Tag::BunxCommand => {
-                let ctx = init(Tag::BunxCommand, log)?;
-                let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) { 0 } else { 1 };
-                let argv = argv_zslice();
-                return super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..]);
-            }
-            Tag::ReplCommand => {
-                // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
-                let ctx = init(Tag::RunCommand, log)?;
-                return super::repl_command::ReplCommand::exec(ctx);
-            }
-            Tag::RemoveCommand => {
-                let ctx = init(Tag::RemoveCommand, log)?;
-                return super::remove_command::RemoveCommand::exec(ctx);
-            }
-            Tag::LinkCommand => {
-                let ctx = init(Tag::LinkCommand, log)?;
-                return super::link_command::LinkCommand::exec(ctx);
-            }
-            Tag::UnlinkCommand => {
-                let ctx = init(Tag::UnlinkCommand, log)?;
-                return super::unlink_command::UnlinkCommand::exec(ctx);
-            }
-            Tag::TestCommand => {
-                let ctx = init(Tag::TestCommand, log)?;
-                return super::test_command::TestCommand::exec(ctx);
-            }
-            Tag::GetCompletionsCommand => {
-                return bun_getcompletes(log);
-            }
-            Tag::CreateCommand => {
-                return bun_create(log);
-            }
-            Tag::UpgradeCommand => {
-                let ctx = init(Tag::UpgradeCommand, log)?;
-                return super::upgrade_command::UpgradeCommand::exec(ctx);
-            }
-            Tag::ExecCommand => {
-                let ctx = init(Tag::ExecCommand, log)?;
-                if ctx.positionals.len() > 1 {
-                    super::exec_command::ExecCommand::exec(ctx)?;
+                // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                let num_parsed_options = num_exec_argv_options + bun_options_argc;
+                offset_for_passthrough = if full_argv.len() > 1 {
+                    1 + num_parsed_options
                 } else {
-                    tag_print_help(Tag::ExecCommand, true);
+                    0
+                };
+
+                // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
+                // This prevents user arguments like --version/--help from being intercepted
+                // by Bun's argument parser (they should be passed through to user code).
+                // SAFETY: single-threaded startup; `full_argv` is process-static.
+                unsafe {
+                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
                 }
+
+                // Handle actual options to parse.
+                let result = init(Tag::AutoCommand, log)?;
+
+                // Restore full argv so passthrough calculation works correctly
+                // SAFETY: single-threaded startup.
+                unsafe { bun::set_argv(full_argv) };
+
+                break 'brk result;
             }
-            Tag::FuzzilliCommand => {
-                if bun_core::Environment::ENABLE_FUZZILLI {
-                    let ctx = init(Tag::FuzzilliCommand, log)?;
-                    return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
-                }
-                return Err(bun_core::err!("UnrecognizedCommand"));
+
+            // If no compile_exec_argv, skip executable name if present
+            offset_for_passthrough = 1.min(bun::argv().len());
+
+            break 'brk write_context_no_parse(log);
+        };
+
+        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        use bun_options_types::global_cache::GlobalCache;
+        if ctx.debug.global_cache == GlobalCache::auto {
+            ctx.debug.global_cache = GlobalCache::disable;
+        }
+
+        ctx.passthrough = bun::argv()
+            .iter()
+            .skip(offset_for_passthrough)
+            .map(|a| a.to_vec().into_boxed_slice())
+            .collect();
+
+        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
+        Ok(())
+    }
+
+    /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
+    /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
+    #[inline(never)]
+    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+        // PORT NOTE: Zig's AutoCommand arm swallows
+        // `error.MissingEntryPoint` from `Command.init` and prints
+        // help. `bun_core::Error` has no variant table yet (B-1 stub
+        // — `err!()` collapses to `Error::TODO`), so a name-match
+        // would alias every error. Propagate for now; the empty-
+        // positionals fallthrough below covers the common "no args"
+        // help path anyway.
+        // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
+        // once `bun_core::Error` interns names.
+        let ctx = init(tag, log)?;
+        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+
+        if ctx.parallel || ctx.sequential {
+            // Result<Infallible, _>: if this returns at all, it's Err.
+            let Err(err) = super::multi_run::run(ctx);
+            pretty_errorln!("<r><red>error<r>: {}", err.name());
+            Global::exit(1);
+        }
+
+        if !ctx.filters.is_empty() || ctx.workspaces {
+            // Result<Infallible, _>: if this returns at all, it's Err.
+            let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
+            pretty_errorln!("<r><red>error<r>: {}", err.name());
+            Global::exit(1);
+        }
+
+        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+            return run_command::RunCommand::exec_eval(ctx);
+        }
+
+        if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
+            let extension = bun_paths::extension(&ctx.args.entry_points[0]);
+            if extension == b".lockb" {
+                return bun_lockb(ctx);
             }
         }
+
+        if !ctx.positionals.is_empty() {
+            let cfg = run_command::ExecCfg {
+                bin_dirs_only: tag == Tag::AutoCommand,
+                log_errors: tag != Tag::AutoCommand
+                    || !ctx.runtime_options.if_present,
+                allow_fast_run_for_extensions: tag == Tag::AutoCommand,
+            };
+            if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
+                return Ok(());
+            }
+            if tag == Tag::RunCommand {
+                Global::exit(1);
+            }
+            return Ok(());
+        }
+
+        if tag == Tag::AutoCommand {
+            Output::flush();
+            return HelpCommand::exec();
+        }
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_init() -> CmdResult {
+        // InitCommand parses its own argv (no Context); Zig:
+        //   .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..])
+        let argv = argv_zslice();
+        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_install_completions() -> CmdResult {
+        // Minimal port of the non-interactive path: detect $SHELL and
+        // dump the embedded completion script to stdout. Full install
+        // (bunx symlink, fpath/XDG dir search, profile patching) needs
+        // `install_completions_command.rs` un-gated.
+        for a in bun::argv().iter().skip(2) {
+            if matches!(a, b"--help" | b"-h") {
+                tag_print_help(Tag::InstallCompletionsCommand, true);
+                Global::exit(0);
+            }
+        }
+        use super::shell_completions::ShellCompletionsExt as _;
+        let shell = bun_core::env_var::SHELL::platform_get()
+            .map(super::shell_completions::Shell::from_env)
+            .unwrap_or_default();
+        if matches!(shell, super::shell_completions::Shell::Unknown) {
+            pretty_errorln!(
+                "<r><red>error<r>: Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash."
+            );
+            Output::note("To manually output completions, run 'bun getcompletes'");
+            Output::flush();
+            Global::exit(1);
+        }
+        // `Output::writer()` returns the process-global writer; no raw
+        // deref needed (was `*mut` in an earlier port pass).
+        let writer = Output::writer();
+        let _ = writer.write_all(shell.completions());
+        Output::flush();
+        // TODO(b2-blocked): tty path → write into shell completions dir
+        // (InstallCompletionsCommand::exec).
+        Global::exit(0);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::RunAsNodeCommand, log)?;
+        run_command::RunCommand::exec_as_if_node(ctx)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::BunxCommand, log)?;
+        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) { 0 } else { 1 };
+        let argv = argv_zslice();
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+        // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
+        let ctx = init(Tag::RunCommand, log)?;
+        super::repl_command::ReplCommand::exec(ctx)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::BuildCommand, log)?;
+        super::build_command::BuildCommand::exec(ctx, None)?;
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::AuditCommand, log)?;
+        super::audit_command::AuditCommand::exec(ctx)?;
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::ExecCommand, log)?;
+        if ctx.positionals.len() > 1 {
+            super::exec_command::ExecCommand::exec(ctx)?;
+        } else {
+            tag_print_help(Tag::ExecCommand, true);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+        if bun_core::Environment::ENABLE_FUZZILLI {
+            let ctx = init(Tag::FuzzilliCommand, log)?;
+            return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
+        }
+        Err(bun_core::err!("UnrecognizedCommand"))
+    }
+
+    /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
+    /// for the trivial `init + exec` arms.
+    macro_rules! cold_exec {
+        ($( $name:ident => ($tag:ident, $($path:tt)+) ),* $(,)?) => {
+            $(
+                #[cold]
+                #[inline(never)]
+                fn $name(log: &mut bun_ast::Log) -> CmdResult {
+                    let ctx = init(Tag::$tag, log)?;
+                    $($path)+(ctx)
+                }
+            )*
+        };
+    }
+    cold_exec! {
+        exec_pm                 => (PackageManagerCommand, super::package_manager_command::PackageManagerCommand::exec),
+        exec_install            => (InstallCommand,        super::install_command::InstallCommand::exec),
+        exec_add                => (AddCommand,            super::add_command::AddCommand::exec),
+        exec_update             => (UpdateCommand,         super::update_command::UpdateCommand::exec),
+        exec_patch              => (PatchCommand,          super::patch_command::PatchCommand::exec),
+        exec_patch_commit       => (PatchCommitCommand,    super::patch_commit_command::PatchCommitCommand::exec),
+        exec_outdated           => (OutdatedCommand,       super::outdated_command::OutdatedCommand::exec),
+        exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
+        exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
+        exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
+        exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
+        exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
+        exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
+        exec_test               => (TestCommand,           super::test_command::TestCommand::exec),
+        exec_upgrade            => (UpgradeCommand,        super::upgrade_command::UpgradeCommand::exec),
     }
 
     // ─── helper fns hoisted from `Command.start` (kept out of `start` to keep
@@ -1283,6 +1333,8 @@ pub mod command {
         b"build", b"completions", b"help",
     ];
 
+    #[cold]
+    #[inline(never)]
     fn bun_getcompletes(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
@@ -1372,6 +1424,8 @@ pub mod command {
         Ok(())
     }
 
+    #[cold]
+    #[inline(never)]
     fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
@@ -1498,6 +1552,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
+    #[cold]
+    #[inline(never)]
     fn bun_lockb(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         use bun_install::lockfile::{Printer, PrinterFormat};
 
@@ -1525,6 +1581,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
         Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 
+    #[cold]
+    #[inline(never)]
     fn bun_info(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
@@ -1888,14 +1946,24 @@ pub use command as Command;
 
 #[cold]
 pub fn print_version_and_exit() -> ! {
-    Output::pretty(format_args!("{}\n", Global::package_json_version));
+    // The version string is plain ASCII (no `<tag>` markup), so bypass
+    // `Output::pretty(format_args!(..))` — that path renders the `Arguments`
+    // into a heap `String`, then runs the runtime `<tag>` rewriter into a
+    // second `Vec<u8>`, all to print a ~10-byte constant. Write the bytes
+    // straight to the buffered stdout writer instead.
+    let w = Output::writer();
+    let _ = w.write_all(Global::package_json_version.as_bytes());
+    let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
 }
 
 #[cold]
 pub fn print_revision_and_exit() -> ! {
-    Output::pretty(format_args!("{}\n", Global::package_json_version_with_revision));
+    // See `print_version_and_exit` — plain bytes, no `<tag>` rewrite needed.
+    let w = Output::writer();
+    let _ = w.write_all(Global::package_json_version_with_revision.as_bytes());
+    let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
 }

@@ -1553,7 +1553,7 @@ pub struct RuntimeHooks {
     /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
     /// `vm.global` / `vm.jsc_vm` are populated (spec VirtualMachine.zig:1313+);
     /// returns the opaque per-VM runtime state pointer (or null).
-    pub init_runtime_state: unsafe fn(vm: *mut VirtualMachine, opts: &InitOptions) -> RuntimeState,
+    pub init_runtime_state: unsafe fn(vm: *mut VirtualMachine, opts: &mut InitOptions) -> RuntimeState,
     /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
     /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
     /// pointer `init_runtime_state` returned (or null). The high tier
@@ -1892,7 +1892,7 @@ impl VirtualMachine {
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
     /// not name those types directly. The hook receives the boxed VM after the
     /// JSC-tier fields are populated and finishes the rest.
-    pub fn init(opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
+    pub fn init(mut opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
         jsc::mark_binding();
 
         // Spec VirtualMachine.zig:1234 — `opts.log orelse allocator.create(Log)`.
@@ -2052,7 +2052,7 @@ impl VirtualMachine {
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
             // `&mut VirtualMachine` is held live across the hook call — the
             // hook body itself dereferences `vm`.
-            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &opts) };
+            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts) };
         }
 
         // JSGlobalObject creation. Spec JSGlobalObject.zig:875 — the wrapper

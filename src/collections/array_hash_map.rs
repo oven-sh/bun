@@ -330,9 +330,13 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     index: Option<hashbrown::HashTable<u32>>,
     ctx: C,
     // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
-    // guard around operations that may invalidate entry pointers.
+    // guard around operations that may invalidate entry pointers. `AtomicBool`
+    // (not `Cell<bool>`) so the field doesn't strip `Sync` off the map in
+    // debug builds — a debug-only diagnostic must not change the type's
+    // auto-trait surface vs release (callers store maps in `static LazyLock`,
+    // e.g. `bundler::options::DEFAULT_LOADERS_BUN`).
     #[cfg(debug_assertions)]
-    pointer_stability: core::cell::Cell<bool>,
+    pointer_stability: core::sync::atomic::AtomicBool,
 }
 
 impl<K, V, C: Default, A: MapAllocator> Default for ArrayHashMap<K, V, C, A> {
@@ -351,7 +355,7 @@ impl<K: Clone, V: Clone, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             index: self.index.clone(),
             ctx: C::default(),
             #[cfg(debug_assertions)]
-            pointer_stability: core::cell::Cell::new(false),
+            pointer_stability: core::sync::atomic::AtomicBool::new(false),
         })
     }
 }
@@ -365,7 +369,7 @@ impl<K, V, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             index: None,
             ctx: C::default(),
             #[cfg(debug_assertions)]
-            pointer_stability: core::cell::Cell::new(false),
+            pointer_stability: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -535,15 +539,19 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn lock_pointers(&self) {
         #[cfg(debug_assertions)]
         {
-            debug_assert!(!self.pointer_stability.get(), "ArrayHashMap pointers already locked");
-            self.pointer_stability.set(true);
+            use core::sync::atomic::Ordering::Relaxed;
+            debug_assert!(
+                !self.pointer_stability.load(Relaxed),
+                "ArrayHashMap pointers already locked",
+            );
+            self.pointer_stability.store(true, Relaxed);
         }
     }
 
     #[inline]
     pub fn unlock_pointers(&self) {
         #[cfg(debug_assertions)]
-        self.pointer_stability.set(false);
+        self.pointer_stability.store(false, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── slice access ──────────────────────────────────────────────────────
@@ -1456,6 +1464,19 @@ impl<A: Allocator> From<Box<[u8], A>> for StringHashMapKey<A> {
     }
 }
 
+impl<A: Allocator> From<&'static [u8]> for StringHashMapKey<A> {
+    /// Zero-copy: the slice is stored by reference. This is the conversion
+    /// `hashbrown::VacantEntryRef::insert` calls on miss in the
+    /// [`StringHashMap::put_borrowed`] / [`StringHashMap::get_or_put_borrowed`]
+    /// fast paths, so it must NOT allocate (the `'static` here is the
+    /// caller-asserted lifetime erasure, not a literal program-lifetime
+    /// requirement — see those methods' safety docs).
+    #[inline]
+    fn from(s: &'static [u8]) -> Self {
+        Self::Static(s)
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringHashMap<V, A> {
     fn default() -> Self {
         Self {
@@ -1561,6 +1582,31 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
+    /// Insert `value` under `key` **without copying the key bytes** — the
+    /// arena-lifetime twin of [`put_static_key`]. Zig's
+    /// `StringHashMapUnmanaged.put` stores the caller's `[]const u8` slice by
+    /// value; the safe Rust [`put`] heap-boxes it instead, which profiling
+    /// flagged as the dominant `_mi_malloc_generic` caller in the parser
+    /// (`Scope::members` takes one box per declared identifier per scope).
+    /// This entry point restores the Zig zero-copy behaviour for callers whose
+    /// key bytes already live in an arena that outlives the map.
+    ///
+    /// # Safety
+    /// The bytes behind `key` must remain alive and unmoved for as long as the
+    /// resulting entry stays in `self` (i.e. until the entry is removed or the
+    /// map is dropped/reset). For the parser this is satisfied because keys
+    /// point into source text or the lexer string-table, both of which outlive
+    /// the `AstAlloc` arena that owns the `Scope` holding this map.
+    #[inline]
+    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+        // SAFETY: caller contract above. Erase the borrow's lifetime so it can
+        // be stored as `Static` without a heap copy; the map never inspects the
+        // lifetime, only the (ptr, len) pair.
+        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        self.inner.insert(StringHashMapKey::Static(key), value);
+        Ok(())
+    }
+
     /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
     /// OOM surfaces as `Err` instead of aborting (matches Zig `put` returning
     /// `error.OutOfMemory`); callers can roll back side effects on failure.
@@ -1646,6 +1692,41 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                 value_ptr: o.into_mut(),
             },
             HbEntry::Vacant(v) => StringHashMapGetOrPut {
+                found_existing: false,
+                value_ptr: v.insert(V::default()),
+            },
+        }
+    }
+
+    /// Zero-allocation `getOrPut` — the arena-lifetime twin of
+    /// [`get_or_put`]/[`get_or_put_context_adapted`]. Looks up `key` and on
+    /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
+    /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
+    /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
+    /// uses to turn the lifetime-erased slice into a `Static` key.
+    ///
+    /// This is the hot path for `Scope::members` (one call per declared
+    /// identifier in `declare_symbol_maybe_generated` / scope hoisting), where
+    /// the previous owning shape was the parser's single largest
+    /// `mi_heap_malloc` source.
+    ///
+    /// # Safety
+    /// Same contract as [`put_borrowed`]: the bytes behind `key` must outlive
+    /// the entry's residency in `self`.
+    #[inline]
+    pub unsafe fn get_or_put_borrowed(
+        &mut self,
+        key: &[u8],
+    ) -> StringHashMapGetOrPut<'_, V> {
+        use hashbrown::hash_map::EntryRef;
+        // SAFETY: caller contract above; see `put_borrowed`.
+        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        match self.inner.entry_ref(key) {
+            EntryRef::Occupied(o) => StringHashMapGetOrPut {
+                found_existing: true,
+                value_ptr: o.into_mut(),
+            },
+            EntryRef::Vacant(v) => StringHashMapGetOrPut {
                 found_existing: false,
                 value_ptr: v.insert(V::default()),
             },

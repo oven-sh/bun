@@ -216,7 +216,7 @@ unsafe fn ssl_ctx_cache_get_or_create(
 /// `vm.jsc_vm` already populated by `bun_jsc::VirtualMachine::init`.
 unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
-    opts: &InitOptions,
+    opts: &mut InitOptions,
 ) -> OpaqueRuntimeState {
     // PORT NOTE: do NOT form `&mut *vm` here — the caller
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
@@ -243,7 +243,14 @@ unsafe fn init_runtime_state(
         ssl_ctx_cache: Default::default(),
         editor_context: Default::default(),
         entry_point: ServerEntryPoint::default(),
-        transpiler_arena: Box::new(bun_alloc::Arena::new()),
+        // Zig parity: spec VirtualMachine.zig:1241 threads
+        // `bun.default_allocator` (= global mimalloc) into `Transpiler.init`;
+        // a fresh `mi_heap_new()` here is a SECOND heap interleaved with
+        // `AstAlloc` in the hot parser loop, thrashing mimalloc's per-thread
+        // `theap` cache. `borrowing_default()` wraps `mi_heap_main()` so
+        // `Transpiler`-level allocations use the same heap as the global
+        // allocator (no `_mi_heap_theap_get_or_init` ping-pong).
+        transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -274,7 +281,15 @@ unsafe fn init_runtime_state(
     // not replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
         use bun_options_types::schema::api;
-        let mut args = opts.transform_options.clone();
+        // Move (not clone) the caller's `TransformOptions` into the
+        // `Transpiler::init` call. `InitOptions` is consumed once per VM and
+        // the only post-hook reader of `transform_options` is the
+        // `preserve_symlinks` line below, which reads from the moved-out
+        // value before the move. Avoids deep-cloning `loaders`/
+        // `entry_points`/`define` (Vec<Box<[u8]>>) on every VM init —
+        // measurable on `bun -e ''` startup.
+        let mut args = core::mem::take(&mut opts.transform_options);
+        let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
         args.resolve = Some(api::ResolveMode::Lazy);
@@ -316,8 +331,7 @@ unsafe fn init_runtime_state(
                     // Spec VirtualMachine.zig:1291 — propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
-                    t.resolver.opts.preserve_symlinks =
-                        opts.transform_options.preserve_symlinks.unwrap_or(false);
+                    t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
@@ -1917,7 +1931,19 @@ fn transpile_source_code_inner(
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };
             // Spec :122 — `Transpiler::reset_store`.
-            unsafe { (*jsc_vm).transpiler.reset_store() };
+            // PERF: inline only the block-store half of `reset_store()` and
+            // SKIP `store_ast_alloc_heap::reset()`. We bind `AST_HEAP` to
+            // `arena.heap_ptr()` below so `AstAlloc` and the parser scratch
+            // share ONE `mi_heap_t*` for this transpile (43% of `heap_malloc`
+            // calls in build/create-vue hit the slow path because they
+            // alternated between the side-arena heap and `arena`'s heap,
+            // thrashing `_mi_theap_cached`). The two have identical lifetime —
+            // both reclaimed at the give-back `arena.reset_retain_with_limit`
+            // — so unifying is semantically equivalent and also drops the
+            // per-file `mi_heap_destroy`/`mi_heap_new` pair the side-arena
+            // reset paid.
+            bun_ast::Expr::data_store_reset();
+            bun_ast::Stmt::data_store_reset();
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
@@ -1935,12 +1961,24 @@ fn transpile_source_code_inner(
                 (*jsc_vm).module_loader.transpile_source_code_arena.take()
             }
             .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+            // PERF: route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
+            // `reset_store` note above). `_ast_scope.enter()` already nulled
+            // `AST_HEAP`; this rebinds it to the heap that the parser scratch
+            // and printer arena allocations also use, so mimalloc's
+            // `_mi_theap_cached` stays pinned for the whole transpile.
+            bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
             let mut give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
             // scopeguard so `?`-early-returns still run it.
             let mut arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
+                    // `AST_HEAP` was bound to `arena.heap_ptr()` for this
+                    // transpile; clear it before `reset()` (which is
+                    // `mi_heap_destroy` + `mi_heap_new`) so it never dangles.
+                    // `_ast_scope.exit()` (drops after this guard) restores
+                    // the surrounding scope's heap regardless.
+                    bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
                     // on the same thread, before the hook returns).
                     let slot = unsafe {
@@ -1986,7 +2024,23 @@ fn transpile_source_code_inner(
                                 // than a bump-pointer reset (each fresh
                                 // `mi_heap`'s first alloc pays
                                 // `mi_arena_pages_alloc` → bitmap memset).
-                                arena.reset_retain_with_limit(8 * 1024 * 1024);
+                                //
+                                // PORT NOTE (RSS): 2 MB, not the spec's 8 MB.
+                                // Zig's `retain_with_limit` is a bump-pointer
+                                // rewind whose retained chunk is mostly
+                                // untouched after reset; `MimallocArena`
+                                // retains a live `mi_heap` whose pages stay
+                                // committed (mimalloc never decommits inside
+                                // a live heap, and `AstAlloc::deallocate` is
+                                // a no-op so nothing is freed until this trip-
+                                // wire). With `AstAlloc` now routed into this
+                                // heap too (see `set_thread_heap` above), the
+                                // 8 MB ceiling carried an extra ~6 MB anon-rw
+                                // resident at mid-run on lint/create-vite.
+                                // 2 MB matches the `parse_arena` slot's limit
+                                // (commit bfe6056b1e8e) and bounds committed
+                                // RSS to ~one mimalloc segment between resets.
+                                arena.reset_retain_with_limit(2 * 1024 * 1024);
                             }
                         }
                         *slot = Some(arena);
@@ -2574,22 +2628,41 @@ fn transpile_source_code_inner(
                     // `package_json_type_module` so the C++ loader applies the
                     // correct evaluation context on cache hits.
                     let tag = if is_commonjs_module && source.path.is_file() {
-                        // SAFETY: per fn contract — `transpiler.resolver` is a
-                        // value field of the VM; `read_dir_info` is re-entrant
-                        // on the JS thread and returns a stable cache slot.
-                        let pkg = match unsafe {
-                            (*jsc_vm)
-                                .transpiler
-                                .resolver
-                                .read_dir_info(source.path.name.dir)
-                        } {
-                            Ok(Some(dir_info)) => {
-                                dir_info
-                                    .package_json()
-                                    .or(dir_info.enclosing_package_json)
-                            }
-                            _ => None,
-                        };
+                        // Spec ModuleLoader.zig:449 — `package_json orelse
+                        // readDirInfo(dir)`: prefer the watcher's already-
+                        // resolved `PackageJSON` (free under `--watch`/`--hot`)
+                        // and only fall back to the resolver dir-info walk
+                        // when the watcher had nothing for `hash`. The
+                        // unconditional `read_dir_info` cost +9.6% instructions
+                        // on the cache-hit path for a 222 KB CJS file.
+                        //
+                        // SAFETY: `bun_watcher::PackageJSON` is the opaque
+                        // forward-decl of `bun_resolver::package_json::
+                        // PackageJSON` (same layout, see the cast at the
+                        // `:561-592` arm below); `package_json` is a
+                        // VM-lifetime backref into the resolver cache.
+                        let pkg = package_json
+                            .map(|p| unsafe {
+                                &*core::ptr::from_ref(p)
+                                    .cast::<bun_resolver::package_json::PackageJSON>()
+                            })
+                            .or_else(|| {
+                                // SAFETY: per fn contract — `transpiler.
+                                // resolver` is a value field of the VM;
+                                // `read_dir_info` is re-entrant on the JS
+                                // thread and returns a stable cache slot.
+                                match unsafe {
+                                    (*jsc_vm)
+                                        .transpiler
+                                        .resolver
+                                        .read_dir_info(source.path.name.dir)
+                                } {
+                                    Ok(Some(dir_info)) => dir_info
+                                        .package_json()
+                                        .or(dir_info.enclosing_package_json),
+                                    _ => None,
+                                }
+                            });
                         if pkg
                             .map(|p| p.module_type == ModuleType::Esm)
                             .unwrap_or(false)

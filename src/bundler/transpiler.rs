@@ -2220,69 +2220,24 @@ impl<'a> Transpiler<'a> {
         // above), so the seam is gone. Spec: zig:663 — EsmAscii arm only.
 
 
-        let require_ref = ast.require_ref;
-        let import_meta_ref = ast.import_meta_ref;
-        let wrapper_ref = ast.wrapper_ref;
         let exports_kind = ast.exports_kind;
 
+        // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
+        // `__gated_printer::Printer<W,A,B,C,D,E>` instantiation tree (~35 kB of
+        // .text per leaf method, 109 fns total). For `bun run` only the
+        // `EsmAscii + is_bun=true` arm executes, but rustc lays the Cjs / Esm /
+        // `is_bun=false` trees out adjacent in .text, so the live variant
+        // shares 64 kB faultaround windows with ~888 kB of dead code. Hoist the
+        // three cold arms behind `#[cold] #[inline(never)]` thunks so their
+        // instantiation trees land in `.text.unlikely` instead.
         match format {
-            js_printer::Format::Cjs => js_printer::print_common_js::<W, false, ENABLE_SOURCE_MAP>(
-                writer,
-                // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
-                // the Rust port (for `binary_expression_stack` arena). Zig
-                // threaded `opts.arena`; here `self.arena` IS the
-                // per-transpiler `bun_alloc::Arena = bumpalo::Bump`.
-                self.arena,
-                &ast,
-                symbols,
-                source,
-                js_printer::Options {
-                    bundling: false,
-                    runtime_imports: ast.runtime_imports.clone(),
-                    require_ref: Some(require_ref),
-                    css_import_behavior: self.options.css_import_behavior(),
-                    source_map_handler: source_map_context,
-                    minify_whitespace: self.options.minify_whitespace,
-                    minify_syntax: self.options.minify_syntax,
-                    minify_identifiers: self.options.minify_identifiers,
-                    transform_only: self.options.transform_only,
-                    print_dce_annotations: self.options.emit_dce_annotations,
-                    runtime_transpiler_cache,
-                    hmr_ref: wrapper_ref,
-                    mangled_props: None,
-                    ..Default::default()
-                },
+            js_printer::Format::Cjs => self.print_cjs_cold::<W, ENABLE_SOURCE_MAP>(
+                writer, &ast, symbols, source, source_map_context, runtime_transpiler_cache,
             ),
 
-            js_printer::Format::Esm => {
-                let opts = js_printer::Options {
-                    bundling: false,
-                    runtime_imports: ast.runtime_imports.clone(),
-                    require_ref: Some(require_ref),
-                    css_import_behavior: self.options.css_import_behavior(),
-                    source_map_handler: source_map_context,
-                    minify_whitespace: self.options.minify_whitespace,
-                    minify_syntax: self.options.minify_syntax,
-                    minify_identifiers: self.options.minify_identifiers,
-                    transform_only: self.options.transform_only,
-                    import_meta_ref,
-                    print_dce_annotations: self.options.emit_dce_annotations,
-                    runtime_transpiler_cache,
-                    hmr_ref: wrapper_ref,
-                    mangled_props: None,
-                    ..Default::default()
-                };
-                js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
-                    writer,
-                    // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
-                    // `binary_expression_stack` arena) — same as the Cjs arm.
-                    self.arena,
-                    &ast,
-                    symbols,
-                    source,
-                    opts,
-                )
-            }
+            js_printer::Format::Esm => self.print_esm_cold::<W, ENABLE_SOURCE_MAP>(
+                writer, &ast, symbols, source, source_map_context, runtime_transpiler_cache,
+            ),
 
             js_printer::Format::EsmAscii => {
                 // PORT NOTE: `switch (target.isBun()) { inline else => |is_bun| ... }`
@@ -2295,7 +2250,7 @@ impl<'a> Transpiler<'a> {
                         runtime_transpiler_cache, module_info,
                     )
                 } else {
-                    self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
+                    self.print_ast_esm_ascii_not_bun_cold::<W, ENABLE_SOURCE_MAP>(
                         writer, ast, symbols, source, source_map_context, exports_kind,
                         runtime_transpiler_cache, module_info,
                     )
@@ -2305,6 +2260,127 @@ impl<'a> Transpiler<'a> {
             // Spec transpiler.zig:672 `else => unreachable`.
             js_printer::Format::CjsAscii => unreachable!(),
         }
+    }
+
+    // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
+    // verbatim from the former `Format::Cjs` match arm; `#[cold]` moves the
+    // `print_common_js::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn print_cjs_cold<W, const ENABLE_SOURCE_MAP: bool>(
+        &mut self,
+        writer: W,
+        ast: &bun_ast::Ast,
+        symbols: bun_ast::symbol::Map,
+        source: &bun_ast::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        js_printer::print_common_js::<W, false, ENABLE_SOURCE_MAP>(
+            writer,
+            // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
+            // the Rust port (for `binary_expression_stack` arena). Zig
+            // threaded `opts.arena`; here `self.arena` IS the
+            // per-transpiler `bun_alloc::Arena = bumpalo::Bump`.
+            self.arena,
+            ast,
+            symbols,
+            source,
+            js_printer::Options {
+                bundling: false,
+                runtime_imports: ast.runtime_imports.clone(),
+                require_ref: Some(ast.require_ref),
+                css_import_behavior: self.options.css_import_behavior(),
+                source_map_handler: source_map_context,
+                minify_whitespace: self.options.minify_whitespace,
+                minify_syntax: self.options.minify_syntax,
+                minify_identifiers: self.options.minify_identifiers,
+                transform_only: self.options.transform_only,
+                print_dce_annotations: self.options.emit_dce_annotations,
+                runtime_transpiler_cache,
+                hmr_ref: ast.wrapper_ref,
+                mangled_props: None,
+                ..Default::default()
+            },
+        )
+    }
+
+    // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
+    // verbatim from the former `Format::Esm` match arm; `#[cold]` moves the
+    // `print_ast::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn print_esm_cold<W, const ENABLE_SOURCE_MAP: bool>(
+        &mut self,
+        writer: W,
+        ast: &bun_ast::Ast,
+        symbols: bun_ast::symbol::Map,
+        source: &bun_ast::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        let opts = js_printer::Options {
+            bundling: false,
+            runtime_imports: ast.runtime_imports.clone(),
+            require_ref: Some(ast.require_ref),
+            css_import_behavior: self.options.css_import_behavior(),
+            source_map_handler: source_map_context,
+            minify_whitespace: self.options.minify_whitespace,
+            minify_syntax: self.options.minify_syntax,
+            minify_identifiers: self.options.minify_identifiers,
+            transform_only: self.options.transform_only,
+            import_meta_ref: ast.import_meta_ref,
+            print_dce_annotations: self.options.emit_dce_annotations,
+            runtime_transpiler_cache,
+            hmr_ref: ast.wrapper_ref,
+            mangled_props: None,
+            ..Default::default()
+        };
+        js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
+            writer,
+            // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
+            // `binary_expression_stack` arena) — same as the Cjs arm.
+            self.arena,
+            ast,
+            symbols,
+            source,
+            opts,
+        )
+    }
+
+    // PERF: cold thunk — see `print_with_source_map_maybe` comment. Wraps the
+    // `IS_BUN=false` instantiation so its Printer<…> tree (which `bun run`
+    // never executes) is laid out in `.text.unlikely` instead of interleaved
+    // with the hot `IS_BUN=true` tree.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn print_ast_esm_ascii_not_bun_cold<W, const ENABLE_SOURCE_MAP: bool>(
+        &mut self,
+        writer: W,
+        ast: bun_ast::Ast,
+        symbols: bun_ast::symbol::Map,
+        source: &bun_ast::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        exports_kind: bun_ast::ExportsKind,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
+            writer, ast, symbols, source, source_map_context, exports_kind,
+            runtime_transpiler_cache, module_info,
+        )
     }
 
     // PORT NOTE: hoisted from `inline else => |is_bun|` arm of

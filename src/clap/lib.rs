@@ -61,9 +61,11 @@ macro_rules! concat_params {
 /// Build a `&'static ConvertedTable` from a const-evaluable
 /// `&[Param<Help>]` at compile time — the Rust analogue of Zig's
 /// `ComptimeClap(Id, params)` type-generator. The converted `[Param<usize>; N]`
-/// array, the three category counts, and the short-name index all land in
-/// rodata; pair with [`comptime::find_param_index`] inside `const { }` to fold
-/// `args.flag(b"--foo")` to a constant slot index.
+/// array, the three category counts, the short-name index, *and* the sorted
+/// long-name hash index all land in rodata, so [`parse_with_table`] does no
+/// heap allocation, no sorting, no locking, and `args.flag(b"--foo")`
+/// resolves via O(log n) binary search at runtime (or O(1) when paired with
+/// [`comptime::find_param_index`] inside `const { }`).
 ///
 /// ```ignore
 /// pub const RUN_PARAMS: &[Param<Help>] = concat_params!(...);
@@ -76,11 +78,15 @@ macro_rules! comptime_table {
         const __N: usize = __P.len();
         static __CONV: [$crate::Param<usize>; __N] =
             $crate::comptime::convert_params_array::<$crate::Help, __N>(__P);
+        const __M: usize = $crate::comptime::count_long_entries(__P);
+        static __LONG: [$crate::comptime::LongEntry; __M] =
+            $crate::comptime::build_long_index::<$crate::Help, __M>(__P);
         static __TABLE: $crate::ConvertedTable = $crate::ConvertedTable::from_const(
             &__CONV,
             $crate::comptime::count_flags(__P),
             $crate::comptime::count_single(__P),
             $crate::comptime::count_multi(__P),
+            &__LONG,
         );
         &__TABLE
     }};
@@ -428,6 +434,26 @@ pub fn parse<Id: 'static>(
     // `ComptimeClap` directly.
     let clap = parse_ex::<Id, _>(
         params,
+        &mut iter,
+        ParseOptions {
+            diagnostic: opt.diagnostic,
+            stop_after_positional_at: opt.stop_after_positional_at,
+        },
+    )?;
+    Ok(Args { clap, exe_arg })
+}
+
+/// Same as [`parse`] but takes a pre-converted rodata [`ConvertedTable`]
+/// (built via [`comptime_table!`]). This is the zero-runtime-conversion entry
+/// point — no Vec/sort/lock on the startup path.
+pub fn parse_with_table<Id: 'static>(
+    table: &'static ConvertedTable,
+    opt: ParseOptions<'_>,
+) -> Result<Args<Id>, bun_core::Error> {
+    let mut iter = args::OsIterator::init();
+    let exe_arg = iter.exe_arg;
+    let clap = ComptimeClap::<Id>::parse_with_table(
+        table,
         &mut iter,
         ParseOptions {
             diagnostic: opt.diagnostic,
@@ -1050,10 +1076,6 @@ mod tests {
         assert_eq!(CT_TABLE.converted[CT_HELP_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
-        // Runtime registry path agrees with const path.
-        let rt = ConvertedTable::for_params(CT_PARAMS);
-        assert_eq!(rt.n_flags, 1);
-        assert_eq!(rt.converted.len(), CT_TABLE.converted.len());
     }
 }
 

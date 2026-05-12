@@ -78,31 +78,21 @@ where
 //   fn JSONLikeParser(comptime opts: JSONOptions) type   — wrapper
 //   fn JSONLikeParser_(comptime ...8 bools...) type      — "hack fixes using LLDB"
 //
-// In Rust the wrapper collapses: stable Rust cannot use a struct as a const
-// generic param (adt_const_params is unstable), so we expose the 8-bool form
-// directly as the canonical type. Each instantiation site below spells out the
-// flags. // TODO(port): if adt_const_params stabilizes, switch to
-// `<const OPTS: js_lexer::JSONOptions>`.
+// The Rust port collapses both into a *single* concrete type carrying
+// `JSONOptions` at runtime. The earlier port mirrored Zig's comptime layer
+// with 8 struct-level `const bool` generics plus 2 more on `parse_expr`; that
+// gave a 2^10 monomorphization surface (6+ live combos in-tree, more once
+// downstream crates pick their own), each re-emitted in every crate that
+// touched a new combo. The body is I/O-bound on lexer reads and the option
+// branches are perfectly predicted, so a runtime `opts` field costs nothing
+// measurable while letting `parse_expr` be `#[inline(never)]` and emitted
+// exactly once in `bun_parsers`. (benches: startup/npm-script.)
+//
+// `crate::json_lexer::Lexer` already carries a runtime `JSONOptions` (the JSON
+// token loop is small enough that comptime specialisation bought nothing), so
+// the parser simply reuses the same struct.
 
-// PORT NOTE: Zig's `js_lexer.NewLexer(opts)` returned a comptime-specialised
-// type. The cycle-break `crate::json_lexer::Lexer` keeps a *runtime*
-// `JSONOptions` instead (the JSON token loop is small enough that the
-// specialisation buys nothing here), so the const-generic flags on
-// `JSONLikeParser` are flattened back into a runtime struct via `OPTS` below
-// and the lexer field is the single concrete `Lexer<'a, 'bump>`.
-
-pub struct JSONLikeParser<
-    'a,
-    'bump,
-    const IS_JSON: bool,
-    const ALLOW_COMMENTS: bool,
-    const ALLOW_TRAILING_COMMAS: bool,
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-    const JSON_WARN_DUPLICATE_KEYS: bool,
-    const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
-> {
+pub struct JSONLikeParser<'a, 'bump> {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
     // PORT NOTE — Stacked Borrows: the Zig spec stores a second `*logger.Log`
     // here (json.zig:103). In Rust that would alias the lexer's `*mut Log`; a
@@ -112,61 +102,29 @@ pub struct JSONLikeParser<
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
     pub stack_check: StackCheck,
+    /// Runtime parse options. Replaces the former 8 struct-level const-bool
+    /// generics; see module note above for why this is a runtime field.
+    pub opts: js_lexer::JSONOptions,
 }
 
-impl<
-        'a,
-        'bump,
-        const IS_JSON: bool,
-        const ALLOW_COMMENTS: bool,
-        const ALLOW_TRAILING_COMMAS: bool,
-        const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-        const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-        const JSON_WARN_DUPLICATE_KEYS: bool,
-        const WAS_ORIGINALLY_MACRO: bool,
-        const GUESS_INDENTATION: bool,
-    >
-    JSONLikeParser<
-        'a,
-        'bump,
-        IS_JSON,
-        ALLOW_COMMENTS,
-        ALLOW_TRAILING_COMMAS,
-        IGNORE_LEADING_ESCAPE_SEQUENCES,
-        IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        JSON_WARN_DUPLICATE_KEYS,
-        WAS_ORIGINALLY_MACRO,
-        GUESS_INDENTATION,
-    >
+impl<'a, 'bump> JSONLikeParser<'a, 'bump>
 where
     // `json_lexer::Lexer` requires `'bump: 'a` (escape-decoded identifiers
     // are bump-alloc'd but stored in `&'a` fields).
     'bump: 'a,
 {
-    /// Runtime `JSONOptions` reconstructed from the 8 const-generic flags —
-    /// `crate::json_lexer::Lexer` carries the options at runtime (see struct
-    /// note above).
-    const OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
-        is_json: IS_JSON,
-        allow_comments: ALLOW_COMMENTS,
-        allow_trailing_commas: ALLOW_TRAILING_COMMAS,
-        ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
-        ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-        was_originally_macro: WAS_ORIGINALLY_MACRO,
-        guess_indentation: GUESS_INDENTATION,
-    };
-
     pub fn init(
+        opts: js_lexer::JSONOptions,
         bump: &'bump Bump,
         source_: &'a bun_ast::Source,
         log: &'a mut bun_ast::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
-        Self::init_with_list_allocator(bump, bump, source_, log)
+        Self::init_with_list_allocator(opts, bump, bump, source_, log)
     }
 
     pub fn init_with_list_allocator(
+        opts: js_lexer::JSONOptions,
         bump: &'bump Bump,
         list_bump: &'bump Bump,
         source_: &'a bun_ast::Source,
@@ -179,10 +137,11 @@ where
         // map to whatever the typed-arena store assertion becomes in bun_js_parser.
 
         Ok(Self {
-            lexer: js_lexer::Lexer::init(log, source_, bump, Self::OPTS)?,
+            lexer: js_lexer::Lexer::init(log, source_, bump, opts)?,
             bump,
             list_bump,
             stack_check: StackCheck::init(),
+            opts,
         })
     }
 
@@ -191,8 +150,19 @@ where
         self.lexer.source
     }
 
-    pub fn parse_expr<const MAYBE_AUTO_QUOTE: bool, const FORCE_UTF8: bool>(
+    /// Recursive-descent JSON expression parser.
+    ///
+    /// `#[inline(never)]` + no const generics: this is the hot body that the
+    /// old 10-const-bool surface monomorphized N ways across downstream
+    /// crates. One copy lives in `bun_parsers`; callers link to it.
+    /// `maybe_auto_quote` / `force_utf8` are runtime — both branches are
+    /// perfectly predicted (set once per top-level call, constant across the
+    /// recursion).
+    #[inline(never)]
+    pub fn parse_expr(
         &mut self,
+        maybe_auto_quote: bool,
+        force_utf8: bool,
     ) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.
@@ -216,7 +186,7 @@ where
             }
             T::TStringLiteral => {
                 let mut str: E::String = self.lexer.to_e_string()?;
-                if FORCE_UTF8 {
+                if force_utf8 {
                     str.to_utf8(self.bump).expect("unreachable");
                 }
 
@@ -258,7 +228,7 @@ where
                         }
                     }
 
-                    let item = self.parse_expr::<false, FORCE_UTF8>()?;
+                    let item = self.parse_expr(false, force_utf8)?;
                     exprs.push(item); // PERF(port): Zig used `catch unreachable` (OOM crash)
                 }
 
@@ -270,7 +240,7 @@ where
                     E::Array {
                         items: ExprNodeList::move_from_list(exprs),
                         is_single_line,
-                        was_originally_macro: WAS_ORIGINALLY_MACRO,
+                        was_originally_macro: self.opts.was_originally_macro,
                         ..Default::default()
                     },
                     loc,
@@ -284,17 +254,16 @@ where
                 // errdefer properties.deinit() — dropped automatically on `?`.
 
                 // PORT NOTE: reshaped for borrowck — Zig used `void`/`*Node` when
-                // JSON_WARN_DUPLICATE_KEYS is false; Rust uses Option to keep one code path.
-                let mut duplicates: Option<hash_map_pool::HashMap> = if JSON_WARN_DUPLICATE_KEYS {
+                // json_warn_duplicate_keys is false; Rust uses Option to keep one code path.
+                let warn_dup = self.opts.json_warn_duplicate_keys;
+                let mut duplicates: Option<hash_map_pool::HashMap> = if warn_dup {
                     Some(hash_map_pool::get())
                 } else {
                     None
                 };
                 let mut duplicates_guard = scopeguard::guard(&mut duplicates, |d| {
-                    if JSON_WARN_DUPLICATE_KEYS {
-                        if let Some(map) = d.take() {
-                            hash_map_pool::release(map);
-                        }
+                    if let Some(map) = d.take() {
+                        hash_map_pool::release(map);
                     }
                 });
                 // PORT NOTE: Zig `defer` — scopeguard runs on both success and error paths.
@@ -312,7 +281,7 @@ where
                         }
                     }
 
-                    let str = if FORCE_UTF8 {
+                    let str = if force_utf8 {
                         self.lexer.to_utf8_e_string()?
                     } else {
                         self.lexer.to_e_string()?
@@ -325,14 +294,9 @@ where
                     let key = new_expr(str.shallow_clone(), key_range.loc);
                     self.lexer.expect(T::TStringLiteral)?;
 
-                    if JSON_WARN_DUPLICATE_KEYS {
+                    if let Some(dup_map) = duplicates_guard.as_mut() {
                         let hash_key = str.hash();
-                        // SAFETY-NOTE: duplicates is Some when JSON_WARN_DUPLICATE_KEYS.
-                        let dup = duplicates_guard
-                            .as_mut()
-                            .unwrap()
-                            .insert(hash_key, ())
-                            .is_some();
+                        let dup = dup_map.insert(hash_key, ()).is_some();
 
                         // Warn about duplicate keys
                         if dup {
@@ -354,7 +318,7 @@ where
                     }
 
                     self.lexer.expect(T::TColon)?;
-                    let value = self.parse_expr::<false, FORCE_UTF8>()?;
+                    let value = self.parse_expr(false, force_utf8)?;
                     properties.push(G::Property {
                         key: Some(key),
                         value: Some(value),
@@ -373,14 +337,14 @@ where
                     E::Object {
                         properties: G::PropertyList::move_from_list(properties),
                         is_single_line,
-                        was_originally_macro: WAS_ORIGINALLY_MACRO,
+                        was_originally_macro: self.opts.was_originally_macro,
                         ..Default::default()
                     },
                     loc,
                 ))
             }
             _ => {
-                if MAYBE_AUTO_QUOTE {
+                if maybe_auto_quote {
                     // PORT NOTE: borrowck — capture `source` (a `&'a Source`,
                     // Copy) and the lexer's `*mut Log` before reassigning
                     // `self.lexer`. The new lexer is built over the *same* raw
@@ -395,10 +359,10 @@ where
                         unsafe { &mut *log_ptr },
                         source,
                         self.bump,
-                        Self::OPTS,
+                        self.opts,
                     )?;
                     self.lexer.parse_string_literal(0)?;
-                    return self.parse_expr::<false, FORCE_UTF8>();
+                    return self.parse_expr(false, force_utf8);
                 }
 
                 self.lexer.unexpected()?;
@@ -413,7 +377,7 @@ where
         self.lexer.expect(T::TComma)?;
 
         if self.lexer.token == closer {
-            if !ALLOW_TRAILING_COMMAS {
+            if !self.opts.allow_trailing_commas {
                 let source = self.lexer.source;
                 self.lexer
                     .log_mut()
@@ -825,35 +789,51 @@ pub fn to_ast<Ty: ToAst + ?Sized>(bump: &Bump, value: &Ty) -> Result<Expr, bun_c
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Parser type aliases
+// Parser option presets
 // ──────────────────────────────────────────────────────────────────────────
 //
-// TODO(port): verify js_lexer::JSONOptions field defaults. The aliases below
-// assume all-false defaults except where the Zig literal sets a field. (The Zig
-// `JSONParserForMacro` explicitly setting `json_warn_duplicate_keys = false`
-// suggests the default may be `true` — adjust JSONParser/DotEnvJSONParser/
-// TSConfigParser if so.)
-
-// JSONLikeParser<'a,'bump, IS_JSON, ALLOW_COMMENTS, ALLOW_TRAILING_COMMAS,
-//   IGNORE_LEADING_ESC, IGNORE_TRAILING_ESC, JSON_WARN_DUP_KEYS,
-//   WAS_ORIGINALLY_MACRO, GUESS_INDENTATION>
-
+// Zig spelt these as distinct `JSONLikeParser(.{...})` *types*. With the
+// const-generic surface collapsed (see `JSONLikeParser` note), they become
+// plain `JSONOptions` constants fed to the one concrete parser.
+//
 // Spec lexer.zig:50 — `json_warn_duplicate_keys: bool = true` is the DEFAULT;
-// json.zig:647-655/734 do not override it for these four parsers.
-type JSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, false, false, false, false, true, false, false>;
+// json.zig:647-655/734 do not override it for the first four presets.
 
-type DotEnvJSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, false, true, true, true, true, false, false>;
+const JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+    is_json: true,
+    ..js_lexer::JSONOptions::DEFAULT
+};
 
-type TSConfigParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, true, true, false, false, true, false, false>;
+const DOTENV_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+    is_json: true,
+    allow_trailing_commas: true,
+    ignore_leading_escape_sequences: true,
+    ignore_trailing_escape_sequences: true,
+    ..js_lexer::JSONOptions::DEFAULT
+};
 
-type JSONParserForMacro<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, true, true, false, false, false, true, false>;
+const TSCONFIG_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+    is_json: true,
+    allow_comments: true,
+    allow_trailing_commas: true,
+    ..js_lexer::JSONOptions::DEFAULT
+};
 
-type PackageJSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, true, true, false, false, true, false, false>;
+const MACRO_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+    is_json: true,
+    allow_comments: true,
+    allow_trailing_commas: true,
+    json_warn_duplicate_keys: false,
+    was_originally_macro: true,
+    ..js_lexer::JSONOptions::DEFAULT
+};
+
+const PACKAGE_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+    is_json: true,
+    allow_comments: true,
+    allow_trailing_commas: true,
+    ..js_lexer::JSONOptions::DEFAULT
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -889,13 +869,19 @@ fn empty_array_data() -> js_ast::expr::Data {
 /// Parse JSON
 /// This leaves UTF-16 strings as UTF-16 strings
 /// The JavaScript Printer will handle escaping strings if necessary
+//
+// `FORCE_UTF8` stays a const generic at the *public* boundary so existing
+// call sites (`json::parse::<true>(…)`) keep compiling, but the body is a
+// trivial forward into the single non-generic `parse_expr`. The wrapper
+// monomorphizes to a few instructions; no large body is duplicated.
+#[inline]
 pub fn parse<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
     // TODO(port): narrow error set
-    let mut parser = JSONParser::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -914,7 +900,7 @@ pub fn parse<const FORCE_UTF8: bool>(
         _ => {}
     }
 
-    parser.parse_expr::<false, FORCE_UTF8>()
+    parser.parse_expr(false, FORCE_UTF8)
 }
 
 /// Parse Package JSON
@@ -948,10 +934,10 @@ pub fn parse_package_json_utf8(
         _ => {}
     }
 
-    let mut parser = PackageJSONParser::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(PACKAGE_JSON_OPTS, bump, source, log)?;
     debug_assert!(!parser.source().contents.is_empty());
 
-    parser.parse_expr::<false, true>()
+    parser.parse_expr(false, true)
 }
 
 pub struct JsonResult {
@@ -965,9 +951,13 @@ impl Default for JsonResult {
     }
 }
 
-// TODO(port): Zig signature takes `comptime opts: js_lexer.JSONOptions`. Stable
-// Rust cannot use a struct const-generic; callers must spell out the 8 bools.
-// Provide a thin wrapper per call site, or wait for adt_const_params.
+// Zig signature takes `comptime opts: js_lexer.JSONOptions`. The 8-bool
+// const-generic spelling is kept *only* as a back-compat shim for existing
+// call sites in downstream crates; it immediately reifies the flags into a
+// runtime `JSONOptions` and forwards to the single non-generic body below.
+// Each monomorphized shim is a handful of instructions — the heavy
+// `parse_expr` body is shared.
+#[inline]
 pub fn parse_package_json_utf8_with_opts<
     const IS_JSON: bool,
     const ALLOW_COMMENTS: bool,
@@ -978,6 +968,31 @@ pub fn parse_package_json_utf8_with_opts<
     const WAS_ORIGINALLY_MACRO: bool,
     const GUESS_INDENTATION: bool,
 >(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> Result<JsonResult, bun_core::Error> {
+    parse_package_json_utf8_with_opts_rt(
+        js_lexer::JSONOptions {
+            is_json: IS_JSON,
+            allow_comments: ALLOW_COMMENTS,
+            allow_trailing_commas: ALLOW_TRAILING_COMMAS,
+            ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
+            ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
+            json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
+            was_originally_macro: WAS_ORIGINALLY_MACRO,
+            guess_indentation: GUESS_INDENTATION,
+        },
+        source,
+        log,
+        bump,
+    )
+}
+
+/// Runtime-options entry point. Prefer this over the const-generic shim above
+/// for new code.
+pub fn parse_package_json_utf8_with_opts_rt(
+    opts: js_lexer::JSONOptions,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
@@ -1015,23 +1030,14 @@ pub fn parse_package_json_utf8_with_opts<
         _ => {}
     }
 
-    let mut parser = JSONLikeParser::<
-        IS_JSON,
-        ALLOW_COMMENTS,
-        ALLOW_TRAILING_COMMAS,
-        IGNORE_LEADING_ESCAPE_SEQUENCES,
-        IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        JSON_WARN_DUPLICATE_KEYS,
-        WAS_ORIGINALLY_MACRO,
-        GUESS_INDENTATION,
-    >::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(opts, bump, source, log)?;
     debug_assert!(!parser.source().contents.is_empty());
 
-    let root = parser.parse_expr::<false, true>()?;
+    let root = parser.parse_expr(false, true)?;
 
     Ok(JsonResult {
         root,
-        indentation: if GUESS_INDENTATION {
+        indentation: if opts.guess_indentation {
             parser.lexer.indent_info.guess
         } else {
             Indentation::default()
@@ -1053,6 +1059,7 @@ pub fn parse_utf8(
     parse_utf8_impl::<false>(source, log, bump)
 }
 
+#[inline]
 pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -1079,10 +1086,10 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
         _ => {}
     }
 
-    let mut parser = JSONParser::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
     debug_assert!(!parser.source().contents.is_empty());
 
-    let result = parser.parse_expr::<false, true>()?;
+    let result = parser.parse_expr(false, true)?;
     if CHECK_LEN {
         if parser.lexer.end >= source.contents.len() {
             return Ok(result);
@@ -1117,9 +1124,9 @@ pub fn parse_for_macro(
         _ => {}
     }
 
-    let mut parser = JSONParserForMacro::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(MACRO_JSON_OPTS, bump, source, log)?;
 
-    parser.parse_expr::<false, false>()
+    parser.parse_expr(false, false)
 }
 
 pub struct JSONParseResult {
@@ -1173,8 +1180,8 @@ pub fn parse_for_bundling(
 
     // NOTE: Zig passes `source.*` (by value) here, unlike every other call site.
     // TODO(port): verify whether JSONParser::init wants by-ref or by-value source.
-    let mut parser = JSONParser::init(bump, source, log)?;
-    let result = parser.parse_expr::<false, true>()?;
+    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
+    let result = parser.parse_expr(false, true)?;
     Ok(JSONParseResult {
         tag: if !LEXER_DEBUGGER_WORKAROUND && parser.lexer.is_ascii_only {
             JSONParseResultTag::Ascii
@@ -1211,10 +1218,10 @@ pub fn parse_env_json(
         _ => {}
     }
 
-    let mut parser = DotEnvJSONParser::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(DOTENV_JSON_OPTS, bump, source, log)?;
 
     match source.contents[0] {
-        b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => parser.parse_expr::<false, false>(),
+        b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => parser.parse_expr(false, false),
         _ => match parser.lexer.token {
             T::TTrue => Ok(Expr {
                 loc: bun_ast::Loc { start: 0 },
@@ -1236,13 +1243,14 @@ pub fn parse_env_json(
                     });
                 }
 
-                parser.parse_expr::<true, false>()
+                parser.parse_expr(true, false)
             }
-            _ => parser.parse_expr::<true, false>(),
+            _ => parser.parse_expr(true, false),
         },
     }
 }
 
+#[inline]
 pub fn parse_ts_config<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -1267,9 +1275,9 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
         _ => {}
     }
 
-    let mut parser = TSConfigParser::init(bump, source, log)?;
+    let mut parser = JSONLikeParser::init(TSCONFIG_OPTS, bump, source, log)?;
 
-    parser.parse_expr::<false, FORCE_UTF8>()
+    parser.parse_expr(false, FORCE_UTF8)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

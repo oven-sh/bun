@@ -703,7 +703,7 @@ pub enum ColorDepth {
     C16m,
 }
 
-static LAZY_COLOR_DEPTH: std::sync::OnceLock<ColorDepth> = std::sync::OnceLock::new();
+static LAZY_COLOR_DEPTH: crate::Once<ColorDepth> = crate::Once::new();
 
 fn compute_color_depth() -> ColorDepth {
     if let Some(depth) = Source::get_force_color_depth() {
@@ -824,10 +824,8 @@ pub static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE
 pub static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
-pub static STDERR_DESCRIPTOR_TYPE: std::sync::OnceLock<OutputStreamDescriptor> =
-    std::sync::OnceLock::new();
-pub static STDOUT_DESCRIPTOR_TYPE: std::sync::OnceLock<OutputStreamDescriptor> =
-    std::sync::OnceLock::new();
+pub static STDERR_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
+pub static STDOUT_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
 
 /// Downstream alias (Zig: `Output.OutputStreamDescriptor`). Several call sites
 /// refer to it as `Output::DescriptorType` for brevity.

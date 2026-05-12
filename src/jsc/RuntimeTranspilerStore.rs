@@ -229,6 +229,35 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
+    /// In-place constructor. Writes the bookkeeping fields directly at `out`
+    /// and leaves the inline `[MaybeUninit<TranspilerJob>; 64]` hive buffer
+    /// uninitialized — its bytes are never read until `used.set()` claims a
+    /// slot, so any bit pattern is valid.
+    ///
+    /// PERF(port): `out.write(Self::init())` materialises a stack temporary
+    /// of `size_of::<Self>()` (≈ 64 × `size_of::<TranspilerJob>()`) and
+    /// `memcpy`s it; rustc cannot elide the copy through the `MaybeUninit`
+    /// payload. Zig's `Store.init()` left `buffer` `undefined` and only
+    /// zeroed the bitset — this restores that.
+    ///
+    /// # Safety
+    /// `out` must be valid for writes and properly aligned. On return,
+    /// `*out` is fully initialized.
+    pub unsafe fn init_in_place(out: *mut Self) {
+        use core::ptr::addr_of_mut;
+        // SAFETY: per fn contract; each `addr_of_mut!` projects a valid
+        // in-bounds field place without forming an intermediate reference.
+        unsafe {
+            addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
+            // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
+            // intentionally left untouched (uninit is a valid value).
+            addr_of_mut!((*out).store.hive.used)
+                .write(bun_collections::IntegerBitSet::init_empty());
+            addr_of_mut!((*out).enabled).write(true);
+            addr_of_mut!((*out).queue).write(Queue::new());
+        }
+    }
+
     pub fn run_from_js_thread(
         &mut self,
         event_loop: *mut EventLoop,
@@ -976,6 +1005,11 @@ impl TranspilerJob {
                 tag: this_tag,
                 ..Default::default()
             });
+            // Precompute the WTF::StringImpl hash on the worker thread so the JS thread
+            // doesn't pay `hashSlowCase` over the (potentially multi-MB) cached output on
+            // first use. The cache-miss and already_bundled branches already do this; the
+            // warm-cache path was the only one that didn't (Zig parity — also omitted there).
+            self.resolved_source.as_mut().source_code.ensure_hash();
 
             return;
         }

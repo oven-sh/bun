@@ -108,9 +108,9 @@ pub type ParamType = clap::Param<clap::Help>;
 // `Param<Help>` literal, and `concat_params!` is a const-fn slice concat, so
 // every table — leaf and combined — lands in rodata with zero runtime init.
 //
-// Tables that feed into another `concat_params!` must be `const` (const-eval
-// cannot read `static`s); top-level tables that are only consumed are `static`
-// so the linker emits exactly one copy.
+// All tables are `const` (const-eval cannot read `static`s) so they can feed
+// both `concat_params!` and `comptime_table!`. The single rodata copy of each
+// is the `static __CONV` / `static __TABLE` inside `comptime_table!` below.
 
 // Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
@@ -244,7 +244,7 @@ pub const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     AUTO_OR_RUN_PARAMS,
 );
-pub static AUTO_PARAMS: &[ParamType] =
+pub const AUTO_PARAMS: &[ParamType] =
     concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 pub const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -254,10 +254,10 @@ pub const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     AUTO_OR_RUN_PARAMS,
 );
-pub static RUN_PARAMS: &[ParamType] =
+pub const RUN_PARAMS: &[ParamType] =
     concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
-pub static BUNX_COMMANDS: &[ParamType] = concat_params!(
+pub const BUNX_COMMANDS: &[ParamType] = concat_params!(
     &[parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)")],
     AUTO_ONLY_PARAMS,
 );
@@ -333,7 +333,7 @@ pub const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     maybe_bake_debug_params!(),
 );
-pub static BUILD_PARAMS: &[ParamType] =
+pub const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
@@ -367,13 +367,41 @@ pub const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."),
     parse_param!("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."),
 ];
-pub static TEST_PARAMS: &[ParamType] =
+pub const TEST_PARAMS: &[ParamType] =
     concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 /// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
 /// runtime_params_ ++ transpiler_params_`).
-pub static BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
+pub const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
+
+// ─── pre-converted tables (rodata) ───────────────────────────────────────────
+// Zig built these at comptime as part of the `ComptimeClap(Id, params)` type.
+// `comptime_table!` converts `*_PARAMS` → `[Param<usize>; N]` + category counts
+// + short-index entirely at const-eval, so `parse_with_table` does zero runtime
+// conversion / allocation / sorting / locking. perf: `ConvertedTable::build` +
+// quicksort + RawVec::grow was 8.7 % of `bun --version` userland samples.
+pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
+pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS);
+pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS);
+pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS);
+pub static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
+    clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS);
+
+/// Per-tag pre-converted clap table (rodata, built at compile time via
+/// `comptime_table!`). This is what `parse` consumes so the startup path never
+/// hits `ConvertedTable::build`'s alloc/sort/lock.
+#[inline]
+pub fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
+    match cmd {
+        CommandTag::AutoCommand => AUTO_TABLE,
+        CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
+        CommandTag::BuildCommand => BUILD_TABLE,
+        CommandTag::TestCommand => TEST_TABLE,
+        CommandTag::BunxCommand => RUN_TABLE,
+        _ => BASE_RUNTIME_TRANSPILER_TABLE,
+    }
+}
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 // `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
@@ -421,10 +449,10 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 // PERF(port): was comptime monomorphization — profile in Phase B.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
-    let params_to_parse = command::tag_params(cmd);
+    let table = tag_table(cmd);
 
-    let args = match clap::parse::<clap::Help>(
-        params_to_parse,
+    let args = match clap::parse_with_table::<clap::Help>(
+        table,
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
             stop_after_positional_at: match cmd {

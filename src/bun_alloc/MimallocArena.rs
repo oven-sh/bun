@@ -83,6 +83,26 @@ fn debug_thread_stamp() -> u64 {
 /// free + realloc — the thing `bumpalo::Bump` cannot do.
 pub struct MimallocArena {
     heap: NonNull<mimalloc::Heap>,
+    /// Cached `mi_theap_t*` for `heap` on the owning thread, or null until the
+    /// first allocation resolves it via [`mimalloc::mi_heap_theap`]. Every
+    /// `mi_heap_malloc*` entry point internally re-resolves `heap → theap` via
+    /// `_mi_heap_theap` (TLS read of `__mi_theap_cached` + tag compare,
+    /// falling back to `_mi_heap_theap_get_or_init` when the cached theap
+    /// belongs to a *different* heap). The runtime-transpile arena interleaves
+    /// allocations with the AST `mi_heap` and the global default heap, so the
+    /// one-slot mimalloc cache thrashes — perf showed `_mi_theap_cached_set`
+    /// hitting its slow path ~134 k times on `bun build create-vue`. Caching
+    /// the theap here lets [`aligned_alloc`] call `mi_theap_malloc[_aligned]`
+    /// directly and skip the per-call lookup entirely.
+    ///
+    /// A `mi_theap_t` is per-(heap, OS-thread); the arena's allocation contract
+    /// is already single-thread (debug-asserted by [`assert_owning_thread`]),
+    /// so the cached value is stable for the arena's lifetime. Cleared in
+    /// [`reset`] (heap destroyed → theap dangling) and never populated for
+    /// [`borrowing_default`] (`mi_heap_main()` allocates on any thread, so a
+    /// per-thread theap cache would be wrong there — those calls fall back to
+    /// the `mi_heap_*` path that resolves the theap each time).
+    theap: Cell<*mut mimalloc::THeap>,
     /// `true` when `heap` came from `mi_heap_new()` and must be
     /// `mi_heap_destroy`ed on `Drop`/`reset()`. `false` when borrowing the
     /// process-wide `mi_heap_main()` (see [`Self::borrowing_default`]) — Drop
@@ -142,6 +162,9 @@ impl MimallocArena {
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
+            // Resolved lazily on first alloc — `mi_heap_new` may be called on
+            // a setup thread and the arena `Send`-moved before first use.
+            theap: Cell::new(core::ptr::null_mut()),
             owns: true,
             bytes_since_reset: Cell::new(0),
             #[cfg(debug_assertions)]
@@ -167,6 +190,11 @@ impl MimallocArena {
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
+            // Intentionally never populated — `mi_heap_main()` is allocated
+            // from on any thread, so a cached per-thread theap would be wrong.
+            // The null sentinel makes `aligned_alloc` fall back to the
+            // `mi_heap_*` path that resolves the correct theap each call.
+            theap: Cell::new(core::ptr::null_mut()),
             owns: false,
             // Unused for borrowed-default — `reset_retain_with_limit` debug-
             // asserts `owns` like `reset()` does.
@@ -247,6 +275,9 @@ impl MimallocArena {
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
+        // Old theap belonged to the destroyed heap; force re-resolve on next
+        // alloc (also picks up the new owning thread if `Send`-moved).
+        self.theap.set(core::ptr::null_mut());
         self.bytes_since_reset.set(0);
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
@@ -436,14 +467,58 @@ impl MimallocArena {
 
     // ── Zig vtable parity (alloc / resize / remap / free) ────────────────
 
-    /// Zig: `Borrowed.alignedAlloc` — uses `mi_heap_malloc_aligned` only when
-    /// `alignment > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`.
+    /// Resolve and cache this thread's `mi_theap_t*` for `self.heap`. Only
+    /// called for `owns == true` arenas (single-thread alloc contract); the
+    /// `borrowing_default()` path leaves `theap` null and never reaches here.
+    #[cold]
+    fn resolve_theap(&self) -> *mut mimalloc::THeap {
+        debug_assert!(self.owns);
+        // SAFETY: `self.heap` is a live `mi_heap_t*`; `mi_heap_theap` resolves
+        // (creating if necessary) the calling thread's theap for it.
+        let theap = unsafe { mimalloc::mi_heap_theap(self.heap_ptr()) };
+        self.theap.set(theap);
+        theap
+    }
+
+    /// Zig: `Borrowed.alignedAlloc` — uses `mi_*_malloc_aligned` only when
+    /// `alignment > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_*_malloc`.
+    /// Dispatches through the cached [`theap`](Self::theap) to skip mimalloc's
+    /// per-call `heap → theap` TLS lookup; see the field doc for why that
+    /// lookup thrashes on the runtime-transpile arena.
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
         self.track_alloc(len);
-        // SAFETY: `self.heap_ptr()` is live.
-        unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
+        let mut theap = self.theap.get();
+        if theap.is_null() {
+            if !self.owns {
+                // `borrowing_default()` — any-thread alloc; cannot cache a
+                // per-thread theap. Fall back to the resolving entry point.
+                // SAFETY: `self.heap_ptr()` is live.
+                return unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) };
+            }
+            theap = self.resolve_theap();
+        }
+        // SAFETY: `theap` is the live theap for `self.heap` on this (owning)
+        // thread — invariant established by `resolve_theap` and maintained by
+        // `reset()` clearing the cache when the heap is destroyed.
+        let p = unsafe {
+            if mimalloc::must_use_aligned_alloc(align) {
+                mimalloc::mi_theap_malloc_aligned(theap, len, align)
+            } else {
+                mimalloc::mi_theap_malloc(theap, len)
+            }
+        };
+        #[cfg(debug_assertions)]
+        if !p.is_null() {
+            // SAFETY: `p` was just returned by mimalloc.
+            let usable = unsafe { mimalloc::mi_malloc_usable_size(p) };
+            debug_assert!(
+                usable >= len,
+                "mimalloc: allocated size is too small: {usable} < {len}"
+            );
+        }
+        p.cast()
     }
 
     /// Zig: `vtable_resize` — in-place expand/shrink, no relocation.

@@ -3254,7 +3254,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let value = *value;
                 let adjacent_kind = self.symbols[value.ref_.inner_index() as usize].kind;
                 if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
-                    scope.members.put(key, value)?;
+                    // SAFETY: `key` derefs to a slice into source text / the
+                    // lexer string-table (see `get_or_put_member_with_hash`),
+                    // both of which outlive every arena-backed `Scope`. Avoids
+                    // a per-argument `mi_heap_malloc` on every function body.
+                    unsafe { scope.members.put_borrowed(key, value)? };
                 }
             }
         }
@@ -4306,10 +4310,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
         // PORT NOTE: StringHashMap has no key_ptr (std::HashMap can't hand out &mut K).
-        // The key is already `name` (boxed copy) so the Zig `*entry.key_ptr = name` is a no-op here.
-        self.current_scope_mut()
-            .members
-            .put(name, js_ast::scope::Member { ref_, loc })?;
+        // Zig stored the `[]const u8` slice by value; do the same here instead of
+        // heap-boxing — `name: &'a [u8]` points into source text or the lexer
+        // string-table, both of which outlive the arena-owned `Scope`.
+        // SAFETY: see `Scope::get_or_put_member_with_hash` for the lifetime argument.
+        unsafe {
+            self.current_scope_mut()
+                .members
+                .put_borrowed(name, js_ast::scope::Member { ref_, loc })?;
+        }
         if IS_GENERATED {
             VecExt::append(&mut self.module_scope_mut().generated, ref_);
         }

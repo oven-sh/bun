@@ -28,8 +28,12 @@ mod array_buffer_sink_abi {
             destructor: usize,
         ) -> JSValue;
         pub(super) safe fn ArrayBufferSink__setDestroyCallback(value: JSValue, callback: usize);
-        pub(super) fn ArrayBufferSink__assignToStream(
-            global: *mut JSGlobalObject,
+        // `&JSGlobalObject` discharges the only deref'd-param precondition;
+        // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private,
+        // sole caller (`JsSinkAbi::assign_to_stream_extern`) forwards live
+        // pointers derived from `&mut T` / `&raw mut signal.ptr`.
+        pub(super) safe fn ArrayBufferSink__assignToStream(
+            global: &JSGlobalObject,
             stream: JSValue,
             ptr: *mut c_void,
             jsvalue_ptr: *mut *mut c_void,
@@ -60,11 +64,7 @@ impl JsSinkAbi for ArrayBufferSink {
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe {
-            array_buffer_sink_abi::ArrayBufferSink__assignToStream(global.as_ptr(), stream, ptr, jsvalue_ptr)
-        }
+        array_buffer_sink_abi::ArrayBufferSink__assignToStream(global, stream, ptr, jsvalue_ptr)
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         array_buffer_sink_abi::ArrayBufferSink__onClose(ptr, reason)
@@ -1109,8 +1109,11 @@ macro_rules! js_sink {
             // TODO(port): move to <area>_sys
             unsafe extern "C" {
                 #[link_name = concat!($abi_name, "__assignToStream")]
-                fn assign_to_stream_extern(
-                    global: *mut JSGlobalObject,
+                // `&JSGlobalObject` discharges the deref'd-param precondition;
+                // `ptr`/`jsvalue_ptr` are opaque — macro-private, sole caller
+                // is the `assign_to_stream` wrapper below.
+                safe fn assign_to_stream_extern(
+                    global: &JSGlobalObject,
                     stream: JSValue,
                     ptr: *mut c_void,
                     jsvalue_ptr: *mut *mut c_void,
@@ -1141,9 +1144,7 @@ macro_rules! js_sink {
                 ptr: *mut c_void,
                 jsvalue_ptr: *mut *mut c_void,
             ) -> JSValue {
-                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
-                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
-                unsafe { assign_to_stream_extern(global.as_ptr(), stream, ptr, jsvalue_ptr) }
+                assign_to_stream_extern(global, stream, ptr, jsvalue_ptr)
             }
 
             pub fn on_close(ptr: JSValue, reason: JSValue) {

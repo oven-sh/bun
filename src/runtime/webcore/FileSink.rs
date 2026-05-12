@@ -1163,8 +1163,11 @@ unsafe extern "C" {
     #[link_name = "FileSink__setDestroyCallback"]
     safe fn FileSink__setDestroyCallback(value: JSValue, callback: usize);
     #[link_name = "FileSink__assignToStream"]
-    fn FileSink__assignToStream(
-        global: *mut JSGlobalObject,
+    // `&JSGlobalObject` discharges the deref'd-param precondition;
+    // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private, sole
+    // caller (`JsSinkAbi::assign_to_stream_extern`) forwards live pointers.
+    safe fn FileSink__assignToStream(
+        global: &JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
@@ -1263,9 +1266,7 @@ impl crate::webcore::sink::JsSinkAbi for FileSink {
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe { FileSink__assignToStream(global.as_ptr(), stream, ptr, jsvalue_ptr) }
+        FileSink__assignToStream(global, stream, ptr, jsvalue_ptr)
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         FileSink__onClose(ptr, reason)

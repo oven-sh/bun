@@ -468,10 +468,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     macro_rules! parse_url_detached {
         ($slice:expr) => {{
             let s: &[u8] = $slice;
-            let (ptr, len) = (s.as_ptr(), s.len());
             // SAFETY: `s` points into a Vec that is immediately adopted as
             // `url_proxy_buffer` (or already is it); see PORT NOTE above.
-            ZigURL::parse(unsafe { core::slice::from_raw_parts(ptr, len) })
+            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
         }};
     }
     let mut url_type = URLType::Remote;
@@ -1789,20 +1788,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let url_len = url.href.len();
             // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
             // re-parsed URL; the slices stay valid for the buffer's lifetime.
-            let url_static = ZigURL::parse(unsafe {
-                core::slice::from_raw_parts(owned_buffer.as_ptr(), url_len)
-            });
+            let url_static =
+                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
             // SAFETY: see `url_static` SAFETY note above.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
-                Some(unsafe {
-                    core::slice::from_raw_parts(
-                        owned_buffer.as_ptr().add(url_len),
-                        owned_buffer.len() - url_len,
-                    )
-                })
+                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
             } else {
                 None
             };

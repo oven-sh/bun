@@ -15,7 +15,11 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{response, ReadableStream, Response};
 
 unsafe extern "C" {
-    fn JSC__Wasm__StreamingCompiler__addBytes(
+    // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
+    // the host; `bytes_ptr`/`bytes_len` are the ptr/len of a Rust `&[u8]`.
+    // Module-private with one call site below — no caller-side precondition
+    // remains.
+    safe fn JSC__Wasm__StreamingCompiler__addBytes(
         streaming_compiler: *mut c_void,
         bytes_ptr: *const u8,
         bytes_len: usize,
@@ -136,12 +140,9 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     // Push the blob contents into the streaming compiler by passing a pointer and
     // length, and return null to signify this has been done.
     let slice = any_blob.slice();
-    // SAFETY: FFI — `streaming_compiler` is a valid C++ StreamingCompiler* passed in by
-    // the caller; `slice.as_ptr()/len()` describe a buffer kept alive by `any_blob`
-    // until `detach()` (scopeguard) runs at end of scope.
-    unsafe {
-        JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.as_ptr(), slice.len());
-    }
+    // `slice` is kept alive by `any_blob` until `detach()` (scopeguard) runs
+    // at end of scope.
+    JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.as_ptr(), slice.len());
 
     Ok(JSValue::NULL)
 }

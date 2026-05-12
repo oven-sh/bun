@@ -825,11 +825,9 @@ impl Request {
                 // local). `ZigString::slice` ties the borrow to the local
                 // `content_type`; detach and re-anchor on `self` so the
                 // returned `&[u8]` outlives the temporary.
-                let s = content_type.slice();
-                let (ptr, len) = (s.as_ptr(), s.len());
-                // SAFETY: `ptr[..len]` points into `self.headers`' WTF storage,
+                // SAFETY: the bytes point into `self.headers`' WTF storage,
                 // which is held alive for the borrow `&self`.
-                return unsafe { core::slice::from_raw_parts(ptr, len) };
+                return unsafe { bun_ptr::detach_lifetime(content_type.slice()) };
             }
         }
 

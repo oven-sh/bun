@@ -1184,8 +1184,11 @@ mod http_sink_abi {
                     #[link_name = concat!($abi, "__setDestroyCallback")]
                     pub safe fn set_destroy_callback(v: JSValue, cb: usize);
                     #[link_name = concat!($abi, "__assignToStream")]
-                    pub fn assign_to_stream(
-                        g: *mut JSGlobalObject, s: JSValue, p: *mut c_void, jp: *mut *mut c_void,
+                    // `&JSGlobalObject` discharges the deref'd-param
+                    // precondition; `p`/`jp` are opaque — module-private, sole
+                    // caller is the `JsSinkAbi` impl below.
+                    pub safe fn assign_to_stream(
+                        g: &JSGlobalObject, s: JSValue, p: *mut c_void, jp: *mut *mut c_void,
                     ) -> JSValue;
                     #[link_name = concat!($abi, "__onClose")]
                     pub safe fn on_close(p: JSValue, r: JSValue);
@@ -1214,15 +1217,6 @@ macro_rules! http_sink_dispatch {
             http_sink_abi::http::$f($($arg),*)
         }
     };
-    (unsafe $f:ident($($arg:expr),*)) => {
-        if HTTP3 {
-            unsafe { http_sink_abi::h3::$f($($arg),*) }
-        } else if SSL {
-            unsafe { http_sink_abi::https::$f($($arg),*) }
-        } else {
-            unsafe { http_sink_abi::http::$f($($arg),*) }
-        }
-    };
 }
 
 impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
@@ -1247,9 +1241,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        http_sink_dispatch!(unsafe assign_to_stream(global.as_ptr(), stream, ptr, jsvalue_ptr))
+        http_sink_dispatch!(assign_to_stream(global, stream, ptr, jsvalue_ptr))
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         http_sink_dispatch!(on_close(ptr, reason))
@@ -2480,8 +2472,11 @@ unsafe extern "C" {
         destructor: usize,
     ) -> JSValue;
     safe fn NetworkSink__setDestroyCallback(value: JSValue, callback: usize);
-    fn NetworkSink__assignToStream(
-        global: *mut JSGlobalObject,
+    // `&JSGlobalObject` discharges the deref'd-param precondition;
+    // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private, sole
+    // caller (`JsSinkAbi::assign_to_stream_extern`) forwards live pointers.
+    safe fn NetworkSink__assignToStream(
+        global: &JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
@@ -2510,9 +2505,7 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe { NetworkSink__assignToStream(global.as_ptr(), stream, ptr, jsvalue_ptr) }
+        NetworkSink__assignToStream(global, stream, ptr, jsvalue_ptr)
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         NetworkSink__onClose(ptr, reason)

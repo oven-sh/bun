@@ -351,7 +351,7 @@ import path from "path";
 
     const bunfig = fs.readFileSync(path.join(temp, "bunfig.toml"), "utf8");
     expect(bunfig).toContain("[install]");
-    expect(bunfig).toContain("minimumReleaseAge");
+    expect(bunfig).toContain("minimumReleaseAge = 86400");
   }, 30_000);
 
   test("bun init does not overwrite existing bunfig.toml", async () => {
@@ -387,7 +387,7 @@ import path from "path";
 
       const bunfig = fs.readFileSync(path.join(temp, "bunfig.toml"), "utf8");
       expect(bunfig).toContain("[install]");
-      expect(bunfig).toContain("minimumReleaseAge");
+      expect(bunfig).toContain("minimumReleaseAge = 86400");
       expect(bunfig).toContain("[serve.static]");
     }, 30_000);
   }

@@ -381,6 +381,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
+    /// `bun run`, so keep the four `_scan_imports` monomorphizations out of
+    /// the hot `.text` between the lexer and the live `_parse` bodies.
+    #[cold]
     pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
             self._scan_imports::<true, JsxReact>(scan_pass)
@@ -393,6 +397,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cold]
     fn _scan_imports<const TS: bool, JX: JsxT>(
         &mut self,
         scan_pass: &'a mut ScanPassResult,

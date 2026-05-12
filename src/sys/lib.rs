@@ -136,7 +136,8 @@ pub use bun_core::FileKind as EntryKind;
 // This is copied from std.fs.Dir.Iterator. Differences:
 // - returns errors in `bun_sys::Result` (preserves errno + syscall tag)
 // - doesn't mark BADF as unreachable
-// - entry name is owned (`Name`) in OS-native encoding, NUL-terminated
+// - entry name (`Name`) is a lifetime-erased borrow into the iterator's inline
+//   `buf` on POSIX (Zig: `PathString`), owned `Vec` on Windows
 // - Windows uses the `.u16` path (`NewWrappedIterator(.u16)` in Zig)
 //
 // The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
@@ -149,44 +150,83 @@ pub mod dir_iterator {
     const BUF_SIZE: usize = 8192;
 
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
+    ///
+    /// Zig parity: `IteratorResult { name: PathString, kind }` — `name` is a
+    /// *borrow* into the iterator's internal `buf`. It is invalidated by the
+    /// next call to `next()` and by moving/dropping the iterator. Copy it out
+    /// (`.slice_u8().to_vec()` etc.) if you need it to outlive the iteration
+    /// step.
     pub struct IteratorResult {
         pub name: Name,
         pub kind: EntryKind,
     }
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
-    /// Backing storage is `[name..., 0]`; `slice()` excludes the trailing NUL.
     ///
-    /// On Windows the native encoding is UTF-16, but the Zig `.u8`
-    /// `NewWrappedIterator` (which `bun.glob` consumes) eagerly transcodes
-    /// `dir_info.FileName` to UTF-8 via `strings.fromWPath` and exposes the
-    /// result as `name.slice() : []const u8`. We mirror that here by caching
-    /// the UTF-8 form alongside the native u16 buffer so `slice_u8()` can
-    /// hand out a borrowed `&[u8]` on every platform.
+    /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
+    /// iterator's `getdents`/`getdirentries` buffer. The kernel writes
+    /// `d_name` NUL-terminated, so `as_zstr()` needs no copy. Same contract
+    /// as Zig's `PathString.init(name)` (dir_iterator.zig:225) — the slice is
+    /// only valid until the next `next()` call or until the iterator is
+    /// moved/dropped. No heap allocation per entry.
+    ///
+    /// **Windows**: `FILE_DIRECTORY_INFORMATION.FileName` is length-prefixed
+    /// (no NUL) and UTF-16; the Zig `.u8` `NewWrappedIterator` eagerly
+    /// transcodes via `strings.fromWPath` into an iterator-owned `name_data`
+    /// scratch buffer. Here we keep an owning `Vec` per entry (cold path —
+    /// the install hot loop is POSIX-only) so `slice_u8()` can hand out a
+    /// borrowed `&[u8]` on every platform.
+    #[cfg(not(windows))]
+    #[derive(Copy, Clone)]
+    pub struct Name {
+        /// Points at `d_name[0]` inside the iterator's `buf`; `ptr[len] == 0`.
+        ptr: core::ptr::NonNull<u8>,
+        len: usize,
+    }
+    #[cfg(not(windows))]
+    // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
+    // immutable kernel-filled data and the iterator is not shared across
+    // threads while a `Name` is outstanding.
+    unsafe impl Send for Name {}
+    #[cfg(not(windows))]
+    unsafe impl Sync for Name {}
+    #[cfg(windows)]
     pub struct Name {
         native: Vec<OSPathChar>,
-        #[cfg(windows)]
         utf8: Vec<u8>,
     }
     impl Name {
+        #[cfg(not(windows))]
+        #[inline]
+        fn borrow(s: &[u8]) -> Name {
+            // The kernel guarantees `s.as_ptr().add(s.len())` reads `0` (the
+            // dirent record's NUL terminator lies inside `reclen`).
+            debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
+            Name {
+                ptr: core::ptr::NonNull::from(s).cast(),
+                len: s.len(),
+            }
+        }
+        #[cfg(windows)]
         #[inline]
         fn from_slice(s: &[OSPathChar]) -> Name {
             let mut v = Vec::with_capacity(s.len() + 1);
             v.extend_from_slice(s);
             v.push(0);
-            #[cfg(windows)]
-            {
-                // Zig: `strings.fromWPath(self.name_data[0..], dir_info_name)` —
-                // "Trust that Windows gives us valid UTF-16LE".
-                let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
-                Name { native: v, utf8 }
-            }
-            #[cfg(not(windows))]
-            {
-                Name { native: v }
-            }
+            // Zig: `strings.fromWPath(self.name_data[0..], dir_info_name)` —
+            // "Trust that Windows gives us valid UTF-16LE".
+            let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
+            Name { native: v, utf8 }
         }
         /// Zig: `name.slice()` — borrow the name as `&[OSPathChar]` (no NUL).
+        #[cfg(not(windows))]
+        #[inline]
+        pub fn slice(&self) -> &[OSPathChar] {
+            // SAFETY: `borrow()` was given a live slice into the iterator's
+            // `buf`; caller honours the streaming-iterator contract.
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+        #[cfg(windows)]
         #[inline]
         pub fn slice(&self) -> &[OSPathChar] {
             &self.native[..self.native.len() - 1]
@@ -211,8 +251,9 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // `from_slice` pushed a trailing NUL.
-            bun_core::ZStr::from_slice_with_nul(&self.native)
+            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
+            // `borrow()` debug_assert.
+            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
         }
         #[cfg(windows)]
         #[inline]
@@ -224,8 +265,33 @@ pub mod dir_iterator {
 
     // 8-byte alignment matches `@alignOf(linux.dirent64)` / Darwin dirent /
     // FILE_DIRECTORY_INFORMATION's LONGLONG-boundary requirement.
+    //
+    // Zig: `buf: [8192]u8 align(...)` — *inline*, *uninitialised*. We mirror
+    // that with `MaybeUninit` to skip the 8 KiB `memset` per directory (perf:
+    // ~1.4K dirs/install → ~11 MB zalloc churn dropped) and store it inline in
+    // `State` so the per-dir heap allocation is gone too. The kernel fills
+    // `[0..rc]` before we read; we never index past `end_index`.
     #[repr(C, align(8))]
-    struct AlignedBuf([u8; BUF_SIZE]);
+    struct AlignedBuf(core::mem::MaybeUninit<[u8; BUF_SIZE]>);
+    impl AlignedBuf {
+        #[inline(always)]
+        const fn uninit() -> Self {
+            AlignedBuf(core::mem::MaybeUninit::uninit())
+        }
+        #[inline(always)]
+        fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr().cast()
+        }
+        /// View `[0..len]` as `&[u8]`.
+        ///
+        /// SAFETY: caller asserts the kernel (or an explicit write) has
+        /// initialized every byte in `[0..len]`.
+        #[inline(always)]
+        unsafe fn filled(&self, len: usize) -> &[u8] {
+            debug_assert!(len <= BUF_SIZE);
+            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
+        }
+    }
 
     /// `posix.DT.* → Entry.Kind` (Linux/Darwin/FreeBSD share the BSD `DT_*` values).
     #[cfg(unix)]
@@ -255,7 +321,7 @@ pub mod dir_iterator {
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     struct State {
-        buf: Box<AlignedBuf>,
+        buf: AlignedBuf,
         index: usize,
         end_index: usize,
     }
@@ -264,7 +330,7 @@ pub mod dir_iterator {
         #[inline]
         fn new() -> State {
             State {
-                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
             }
@@ -278,7 +344,7 @@ pub mod dir_iterator {
                     let rc = unsafe {
                         super::linux_syscall::getdents64(
                             dir.native(),
-                            self.buf.0.as_mut_ptr(),
+                            self.buf.as_mut_ptr(),
                             BUF_SIZE,
                         )
                     };
@@ -294,9 +360,9 @@ pub mod dir_iterator {
                 // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
                 //                         u8 d_type; char d_name[]; }
                 let base = self.index;
-                let buf = &self.buf.0;
-                // Kernel guarantees a complete record fits in [base..end_index);
-                // safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
+                // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
+                let buf = unsafe { self.buf.filled(self.end_index) };
                 let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
                 let d_type = buf[base + 18];
                 self.index = base + reclen;
@@ -315,7 +381,7 @@ pub mod dir_iterator {
                 }
 
                 return Ok(Some(IteratorResult {
-                    name: Name::from_slice(name),
+                    name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
                 }));
             }
@@ -325,7 +391,7 @@ pub mod dir_iterator {
     // ── macOS ────────────────────────────────────────────────────────────
     #[cfg(target_os = "macos")]
     struct State {
-        buf: Box<AlignedBuf>,
+        buf: AlignedBuf,
         seek: i64,
         index: usize,
         end_index: usize,
@@ -336,7 +402,7 @@ pub mod dir_iterator {
         #[inline]
         fn new() -> State {
             State {
-                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                buf: AlignedBuf::uninit(),
                 seek: 0,
                 index: 0,
                 end_index: 0,
@@ -369,13 +435,20 @@ pub mod dir_iterator {
                     self.received_eof = false;
                     // Always zero the bytes where the flag will be written so
                     // we don't confuse garbage with EOF.
-                    self.buf.0[BUF_SIZE - 4..].copy_from_slice(&[0, 0, 0, 0]);
+                    // SAFETY: writing into our own MaybeUninit buffer.
+                    unsafe {
+                        self.buf
+                            .as_mut_ptr()
+                            .add(BUF_SIZE - 4)
+                            .cast::<[u8; 4]>()
+                            .write([0, 0, 0, 0]);
+                    }
 
                     // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
                     let rc = unsafe {
                         __getdirentries64(
                             dir.native(),
-                            self.buf.0.as_mut_ptr(),
+                            self.buf.as_mut_ptr(),
                             BUF_SIZE,
                             &mut self.seek,
                         )
@@ -392,20 +465,26 @@ pub mod dir_iterator {
                     }
                     self.index = 0;
                     self.end_index = rc as usize;
-                    let flag = u32::from_ne_bytes(
-                        self.buf.0[BUF_SIZE - 4..]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    );
+                    // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
+                    // and the kernel may have overwritten it with the EOF flag —
+                    // either way the 4 bytes are initialized.
+                    let flag = unsafe {
+                        self.buf
+                            .as_mut_ptr()
+                            .add(BUF_SIZE - 4)
+                            .cast::<[u8; 4]>()
+                            .read()
+                    };
+                    let flag = u32::from_ne_bytes(flag);
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }
                 // Darwin `struct dirent` (64-bit ino):
                 //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
                 //   u8 d_type; char d_name[];
                 let base = self.index;
-                let buf = &self.buf.0;
-                // Kernel guarantees a complete record fits in [base..end_index);
-                // safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                // SAFETY: kernel filled `[0..end_index]`; each record fits in
+                // `[base..base+reclen) ⊆ [0..end_index)`.
+                let buf = unsafe { self.buf.filled(self.end_index) };
                 let d_ino = u64::from_ne_bytes(
                     buf[base..base + 8]
                         .try_into()
@@ -416,6 +495,7 @@ pub mod dir_iterator {
                 let d_type = buf[base + 20];
                 self.index = base + reclen;
 
+                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
                 let name = &buf[base + 21..base + 21 + namlen];
 
                 if name == b"." || name == b".." || d_ino == 0 {
@@ -423,7 +503,7 @@ pub mod dir_iterator {
                 }
 
                 return Ok(Some(IteratorResult {
-                    name: Name::from_slice(name),
+                    name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
                 }));
             }
@@ -433,7 +513,7 @@ pub mod dir_iterator {
     // ── FreeBSD ──────────────────────────────────────────────────────────
     #[cfg(target_os = "freebsd")]
     struct State {
-        buf: Box<AlignedBuf>,
+        buf: AlignedBuf,
         index: usize,
         end_index: usize,
     }
@@ -442,7 +522,7 @@ pub mod dir_iterator {
         #[inline]
         fn new() -> State {
             State {
-                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
             }
@@ -454,7 +534,7 @@ pub mod dir_iterator {
             loop {
                 if self.index >= self.end_index {
                     // SAFETY: buf is valid for BUF_SIZE bytes.
-                    let rc = unsafe { getdents(dir.native(), self.buf.0.as_mut_ptr(), BUF_SIZE) };
+                    let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
                     if rc < 0 {
                         let e = super::last_errno();
                         // FreeBSD reports ENOENT when iterating an unlinked
@@ -474,8 +554,9 @@ pub mod dir_iterator {
                 //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
                 //   u16 d_namlen; u16 pad1; char d_name[];
                 let base = self.index;
-                let buf = &self.buf.0;
-                // Safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                // SAFETY: kernel filled `[0..end_index]`; each record fits in
+                // `[base..base+reclen) ⊆ [0..end_index)`.
+                let buf = unsafe { self.buf.filled(self.end_index) };
                 let fileno = u64::from_ne_bytes(
                     buf[base..base + 8]
                         .try_into()
@@ -486,6 +567,7 @@ pub mod dir_iterator {
                 let namlen = u16::from_ne_bytes([buf[base + 20], buf[base + 21]]) as usize;
                 self.index = base + reclen;
 
+                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
                 let name = &buf[base + 24..base + 24 + namlen];
 
                 if name == b"." || name == b".." || fileno == 0 {
@@ -493,7 +575,7 @@ pub mod dir_iterator {
                 }
 
                 return Ok(Some(IteratorResult {
-                    name: Name::from_slice(name),
+                    name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
                 }));
             }
@@ -510,7 +592,7 @@ pub mod dir_iterator {
         // > NextEntryOffset value in each entry, except the last, falls on an
         // > 8-byte boundary.
         // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
-        buf: Box<AlignedBuf>,
+        buf: AlignedBuf,
         index: usize,
         end_index: usize,
         first: bool,
@@ -525,7 +607,7 @@ pub mod dir_iterator {
         #[inline]
         fn new() -> State {
             State {
-                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
                 first: true,
@@ -550,7 +632,8 @@ pub mod dir_iterator {
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to
                         // > zero, and the receiver MUST ignore them.
-                        self.buf.0.fill(0);
+                        // SAFETY: writing zeros into our own MaybeUninit buffer.
+                        unsafe { self.buf.as_mut_ptr().write_bytes(0, BUF_SIZE) };
                     }
                     let mut filter_us = w::UNICODE_STRING {
                         Length: 0,
@@ -575,7 +658,7 @@ pub mod dir_iterator {
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             &mut io,
-                            self.buf.0.as_mut_ptr().cast(),
+                            self.buf.as_mut_ptr().cast(),
                             BUF_SIZE as u32,
                             w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
                             0, // FALSE — return many entries per call
@@ -611,7 +694,11 @@ pub mod dir_iterator {
                 }
 
                 let entry_offset = self.index;
-                let buf = &self.buf.0;
+                // SAFETY: the `if self.first` branch zero-fills the whole 8 KiB
+                // before the first NtQueryDirectoryFile, and every subsequent
+                // call only overwrites a prefix — `[0..BUF_SIZE)` stays fully
+                // initialized for the iterator's lifetime once we reach here.
+                let buf = unsafe { self.buf.filled(BUF_SIZE) };
                 // While the official api docs guarantee FILE_DIRECTORY_INFORMATION
                 // to be aligned properly, this may not always be the case (e.g.
                 // due to faulty VM/Sandboxing tools) — read fields unaligned via
@@ -712,10 +799,12 @@ pub mod dir_iterator {
             }
         }
         /// Memory such as file names referenced in this returned entry becomes
-        /// invalid with subsequent calls to `next`, as well as when this `Dir`
-        /// is deinitialized.
-        // PORT NOTE: `Name` owns its buffer here (heap copy of d_name), so the
-        // Zig invalidation note is conservative; kept for API parity.
+        /// invalid with subsequent calls to `next`, as well as when this
+        /// iterator is moved or dropped.
+        ///
+        /// On POSIX `IteratorResult::name` is a lifetime-erased borrow into
+        /// this iterator's inline `buf` (Zig parity: `PathString.init(d_name)`).
+        /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)

@@ -19,14 +19,15 @@ use bun_str::{strings, MutableString};
 use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
-/// arena) or duped into the renamer's `bumpalo::Bump` arena. Per PORTING.md
-/// §Allocators (AST = bumpalo) these are typed as raw fat pointers; Phase B
-/// threads `'bump` and rewrites to `&'bump [u8]`.
-type NameStr = *const [u8];
+/// arena) or duped into the renamer's `bumpalo::Bump` arena. `StoreStr` is the
+/// arena-backed lifetime-erased slice wrapper that centralises the raw deref
+/// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
+/// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
+type NameStr = bun_ast::StoreStr;
 
 #[inline]
-fn name_str_empty() -> NameStr {
-    std::ptr::from_ref::<[u8]>(b"" as &[u8])
+const fn name_str_empty() -> NameStr {
+    bun_ast::StoreStr::EMPTY
 }
 
 /// Const array for `inline for (SlotNamespace.values)` translation. Skips
@@ -193,7 +194,7 @@ impl TinyString {
         } else {
             // Zig: `allocator.dupe(u8, input)` — allocate into the renamer arena.
             let duped: &[u8] = arena.alloc_slice_copy(input);
-            Ok(TinyString::String(std::ptr::from_ref::<[u8]>(duped)))
+            Ok(TinyString::String(bun_ast::StoreStr::new(duped)))
         }
     }
 
@@ -203,9 +204,9 @@ impl TinyString {
     pub fn slice(&mut self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
-            // SAFETY: `String` payload is arena-owned and outlives `self`
-            // (the arena lives on the owning renamer).
-            TinyString::String(s) => unsafe { &**s },
+            // `StoreStr::slice` centralises the arena-backed deref; the payload
+            // outlives `self` (the arena lives on the owning renamer).
+            TinyString::String(s) => s.slice(),
         }
     }
 }
@@ -639,7 +640,7 @@ impl NumberRenamer {
         // PERF(port): Zig reset stack-fallback FBA here; arena reset semantics differ
         let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
             UnusedName::Renamed(name) => name,
-            UnusedName::NoCollision => symbol.original_name.as_raw(),
+            UnusedName::NoCollision => symbol.original_name,
         };
         let new_len = inner.len().max(ref_.inner_index() as usize + 1);
         if inner.len() < new_len {
@@ -817,10 +818,11 @@ impl NumberRenamer {
 
         if renamed_list.len() > inner_index as usize {
             let renamed: NameStr = renamed_list[inner_index as usize];
-            if renamed.len() > 0 {
-                // SAFETY: `renamed` was allocated from `self.arena` (or borrows
-                // an AST-arena `original_name`); both outlive `self`.
-                return unsafe { &*renamed };
+            if renamed.raw_len() > 0 {
+                // `StoreStr::slice` centralises the deref; allocated from
+                // `self.arena` or borrows an AST-arena `original_name`, both
+                // of which outlive `self`.
+                return renamed.slice();
             }
         }
 
@@ -1008,7 +1010,7 @@ impl NumberScope {
 
         // Zig: `allocator.dupe(u8, name)` — allocate into the renamer arena.
         let duped: &[u8] = arena.alloc_slice_copy(name);
-        let name: NameStr = std::ptr::from_ref::<[u8]>(duped);
+        let name: NameStr = bun_ast::StoreStr::new(duped);
 
         self.name_counts
             .put_no_clobber(duped, 1)

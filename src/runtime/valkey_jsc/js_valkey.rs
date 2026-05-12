@@ -140,10 +140,10 @@ impl SubscriptionCtx {
         let parent_this = self.parent().this_value.get().try_get().expect("unreachable");
         let value_js =
             Js::subscription_callback_map_get_cached(parent_this).unwrap();
-        // SAFETY: `from_js` returns a non-null heap cell when the slot was set
-        // by `init()`; treated as `&mut` for the duration of the call (single
-        // JS thread).
-        unsafe { JSMap::from_js(value_js).unwrap().as_mut() }
+        // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        // `from_js` returns a non-null heap cell when the slot was set by
+        // `init()`; single JS thread.
+        JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
@@ -316,9 +316,8 @@ impl SubscriptionCtx {
             debug_assert!(callbacks.is_array());
         }
 
-        // SAFETY: callback runs on the JS thread; VM is alive for the duration.
-        let vm = VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop();
+        // Callback runs on the JS thread; VM is alive for the duration.
+        let vm = VirtualMachine::get();
         let _exit = vm.enter_event_loop_scope();
 
         // After we go through every single callback, we will have to update the poll ref.
@@ -334,8 +333,9 @@ impl SubscriptionCtx {
             if cfg!(debug_assertions) {
                 debug_assert!(callback.is_callable());
             }
-            // SAFETY: see above.
-            unsafe { (*event_loop).run_callback(callback, global_object, JSValue::UNDEFINED, args) };
+            // `event_loop_mut()` is the safe accessor for the VM-owned
+            // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
+            vm.event_loop_mut().run_callback(callback, global_object, JSValue::UNDEFINED, args);
         }
         Ok(())
     }
@@ -1305,8 +1305,9 @@ impl JSValkeyClient {
 
             if let Some(promise) = Js::connection_promise_get_cached(this_value) {
                 Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
-                // SAFETY: cached slot held a valid JSPromise; downcast is checked.
-                let js_promise = unsafe { &mut *promise.as_promise().unwrap() };
+                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
+                // safe deref. Cached slot held a valid JSPromise.
+                let js_promise = JSPromise::opaque_mut(promise.as_promise().unwrap());
                 if self.client.get().flags.connection_promise_returns_client {
                     debug!("Resolving connection promise with client instance");
                     js_promise.resolve(&global_object, this_value)?;
@@ -1433,8 +1434,9 @@ impl JSValkeyClient {
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
                 Js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
-                // SAFETY: cached slot held a valid JSPromise.
-                unsafe { &mut *promise.as_promise().unwrap() }
+                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
+                // safe deref. Cached slot held a valid JSPromise.
+                JSPromise::opaque_mut(promise.as_promise().unwrap())
                     .reject(&global_object, Ok(error_value))?;
             }
         }

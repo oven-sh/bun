@@ -3214,7 +3214,10 @@ pub struct DuplexUpgradeContext {
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
-    pub vm: *mut VirtualMachine,
+    /// JSC_BORROW: process-lifetime per-thread VM (immortal). Stored as
+    /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
+    /// through the safe `event_loop_mut()` accessor instead of a raw deref.
+    pub vm: &'static VirtualMachine,
     pub task: AnyTask,
     pub task_event: EventState,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
@@ -3442,15 +3445,13 @@ impl DuplexUpgradeContext {
         }
     }
 
-    /// Single `unsafe` site for the set-once `vm: *mut VirtualMachine` backref:
-    /// enqueue `self.task` on the owning VM's event loop. Both callers
-    /// (`deinit_in_next_tick` / `start_tls`) become safe.
+    /// Enqueue `self.task` on the owning VM's event loop. `vm` is the
+    /// process-lifetime per-thread singleton stored at construction
+    /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor
+    /// for the VM-owned event-loop self-pointer.
     #[inline]
     fn enqueue_self_task(&mut self) {
-        // SAFETY: `vm` is the per-thread singleton stored at construction
-        // (`js_upgrade_duplex_to_tls`); the VM outlives every
-        // `DuplexUpgradeContext`. Single JS thread — no aliasing `&mut VM`.
-        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
+        self.vm.event_loop_mut().enqueue_task(jsc::Task::init(&raw mut self.task));
     }
 
     fn deinit_in_next_tick(&mut self) {
@@ -3657,7 +3658,7 @@ pub fn js_upgrade_duplex_to_tls(
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
-        ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get_mut_ptr());
+        ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
         // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
         // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.

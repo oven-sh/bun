@@ -364,13 +364,14 @@ pub fn build_with_vm(
         return Err(bun_core::err!("JSError"));
     };
     let config_promise_ptr = config_promise.as_ptr();
-    // SAFETY: load_and_evaluate_module_ptr returned a non-null cell pointer owned
-    // by the JSC heap; unique &mut for `set_handled`/`unwrap` on this thread.
-    unsafe { (*config_promise_ptr).set_handled() };
+    // `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST handle —
+    // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
+    // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
+    jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
     vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
     let jsc_vm = vm.jsc_vm_mut();
-    // SAFETY: see above; promise cell is still live (rooted via the module loader).
-    let mut options = match unsafe { (*config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
+    // Promise cell is still live (rooted via the module loader).
+    let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             let default = BakeGetDefaultExportFromModule(

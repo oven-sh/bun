@@ -698,18 +698,17 @@ impl Builtin {
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
                 let idx = jsbuf.idx as usize;
-                let global = interp.global_this.get();
-                if global.is_null() || idx >= interp.jsobjs.len() {
+                // Safe accessor — single `unsafe` deref lives in
+                // `Interpreter::global_this_ref`.
+                let Some(global) = interp.global_this_ref().filter(|_| idx < interp.jsobjs.len())
+                else {
                     interp.throw(crate::shell::ShellErr::Custom(
                         b"Invalid JS object reference in shell"
                             .to_vec()
                             .into_boxed_slice(),
                     ));
                     return Some(Yield::failed());
-                }
-                // SAFETY: `global_this` is set by `create_shell_interpreter`
-                // and outlives the interpreter.
-                let global = unsafe { &*global };
+                };
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {

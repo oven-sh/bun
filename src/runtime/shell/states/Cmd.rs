@@ -693,13 +693,11 @@ impl Cmd {
 
         match redirect {
             ast::Redirect::JsBuf(val) => {
-                let global = interp.global_this.get();
-                if global.is_null() {
-                    panic!("JS values not allowed in this context");
-                }
-                // SAFETY: `global_this` was set by `create_shell_interpreter`
-                // and outlives the interpreter.
-                let global = unsafe { &*global };
+                // Safe accessor — single `unsafe` deref lives in
+                // `Interpreter::global_this_ref`.
+                let global = interp
+                    .global_this_ref()
+                    .expect("JS values not allowed in this context");
                 let idx = val.idx as usize;
                 if idx >= interp.jsobjs.len() {
                     return Err(global.throw(format_args!(

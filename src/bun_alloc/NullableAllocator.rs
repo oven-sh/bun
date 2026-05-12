@@ -1,7 +1,6 @@
 //! A nullable allocator the same size as `std.mem.Allocator`.
 
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
@@ -13,8 +12,9 @@ use crate::{Alignment, AllocatorVTable, StdAllocator};
 pub struct NullableAllocator {
     ptr: *mut c_void,
     // Utilize the null pointer optimization on the vtable instead of
-    // the regular `ptr` because `ptr` may be undefined.
-    vtable: Option<NonNull<AllocatorVTable>>,
+    // the regular `ptr` because `ptr` may be undefined. Stored as the
+    // `&'static` it was constructed from so `get()` is a safe field copy.
+    vtable: Option<&'static AllocatorVTable>,
 }
 
 impl Default for NullableAllocator {
@@ -49,7 +49,7 @@ impl NullableAllocator {
     #[inline]
     pub fn init(alloc: Option<StdAllocator>) -> NullableAllocator {
         match alloc {
-            Some(a) => Self { ptr: a.ptr, vtable: Some(NonNull::from(a.vtable)) },
+            Some(a) => Self { ptr: a.ptr, vtable: Some(a.vtable) },
             None => Self::default(),
         }
     }
@@ -67,9 +67,7 @@ impl NullableAllocator {
 
     #[inline]
     pub fn get(&self) -> Option<StdAllocator> {
-        let vt = self.vtable?;
-        // SAFETY: vtable was obtained from a `&'static AllocatorVTable` in `init`.
-        Some(StdAllocator { ptr: self.ptr, vtable: unsafe { &*vt.as_ptr() } })
+        Some(StdAllocator { ptr: self.ptr, vtable: self.vtable? })
     }
 
     pub fn free(&self, bytes: &[u8]) {

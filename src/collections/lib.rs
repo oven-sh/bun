@@ -45,7 +45,7 @@ pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
     AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,

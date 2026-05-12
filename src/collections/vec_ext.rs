@@ -106,6 +106,12 @@ pub trait VecExt<T>: Sized {
     fn shrink_and_free(&mut self, new_len: usize);
     fn clear_retaining_capacity(&mut self);
     fn clear_and_free(&mut self);
+    /// Drop the first `n` elements in place via `copy_within(n.., 0)` +
+    /// `truncate` (capacity retained). `n == 0` is a no-op; `n >= len`
+    /// degenerates to `clear()`. See [`bun_core::vec::drain_front`].
+    fn drain_front(&mut self, n: usize)
+    where
+        T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
     fn insert_slice(&mut self, index: usize, vals: &[T])
     where
@@ -386,6 +392,13 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn clear_and_free(&mut self) {
         *self = Vec::new_in(A::default());
+    }
+    #[inline]
+    fn drain_front(&mut self, n: usize)
+    where
+        T: Copy,
+    {
+        bun_core::vec::drain_front(self, n);
     }
     #[inline]
     fn ordered_remove(&mut self, index: usize) -> T {
@@ -699,5 +712,44 @@ impl OffsetByteList {
     pub fn clear_and_free(&mut self) {
         // Drop on the taken value frees `byte_list`; nothing is reused.
         drop(core::mem::take(self));
+    }
+}
+
+/// Bitwise-move every element of `src` to the **front** of `dst`, shifting
+/// `dst`'s existing contents right by `src.len()`. `src` is left empty
+/// (capacity retained). This is the mirror of std [`Vec::append`], which
+/// moves to the back.
+///
+/// Free function (not a `VecExt` method) so it is generic over *any*
+/// `A: Allocator` — the `VecExt` blanket impl carries an
+/// `A: Default + 'static` bound that `&'a MimallocArena` (i.e.
+/// [`bun_alloc::ArenaVec`]) does not satisfy. `src` and `dst` may use
+/// distinct allocators.
+///
+/// Ports the open-coded `reserve → ptr::copy(shift) → copy_nonoverlapping →
+/// set_len` pattern that translated Zig's `bun.copy`/`@memcpy` splice for
+/// non-`Copy` element types.
+pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mut Vec<T, B>) {
+    let src_len = src.len();
+    if src_len == 0 {
+        return;
+    }
+    let dst_len = dst.len();
+    dst.reserve(src_len);
+    // SAFETY: `reserve` guarantees capacity for `dst_len + src_len`. The shift
+    // memmove and the front copy together fully initialize `[0, dst_len+src_len)`.
+    // We commit `dst`'s new length only *after* `src` has been logically emptied
+    // so no element is ever owned by both vecs (no double-drop on unwind — and
+    // none of the ptr ops below can panic anyway).
+    unsafe {
+        let base = dst.as_mut_ptr();
+        // Shift existing `dst` elements right (overlapping → memmove).
+        core::ptr::copy(base, base.add(src_len), dst_len);
+        // `src` is a separate allocation → non-overlapping with `dst`'s buffer.
+        core::ptr::copy_nonoverlapping(src.as_ptr(), base, src_len);
+        // Elements were bitwise-moved out of `src`; relinquish ownership first…
+        src.set_len(0);
+        // …then claim it in `dst`.
+        dst.set_len(dst_len + src_len);
     }
 }

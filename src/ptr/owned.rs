@@ -280,6 +280,13 @@ pub fn alloc_slice<T: Clone>(count: usize, elem: T) -> Box<[T]> {
 }
 
 /// `Owned([]T).allocDupe(data)` → `Box::<[T]>::from(data)`
+///
+/// Shallow-copies `data` into a freshly heap-allocated boxed slice.
+/// For empty input this returns a zero-length `Box` with a dangling
+/// pointer and **no allocation** — identical to `Box::<[T]>::default()`,
+/// so callers MUST NOT add their own `is_empty()` guard (that pattern is
+/// a Zig-port artifact where the static `""` must not be freed — irrelevant
+/// in Rust where empty boxed slices are non-allocating).
 #[inline]
 pub fn alloc_dupe_slice<T: Clone>(data: &[T]) -> Box<[T]> {
     Box::<[T]>::from(data)

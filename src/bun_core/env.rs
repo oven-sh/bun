@@ -176,14 +176,15 @@ impl OperatingSystem {
         }
     }
 
-    /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npm_name(self) -> &'static [u8] {
+    /// npm package / release-archive name segment, `@oven/bun-{os}-{arch}`.
+    /// Differs from [`name_string`] only on Windows: `"windows"` vs `"win32"`.
+    pub const fn npm_name(self) -> &'static str {
         match self {
-            Self::Mac => b"darwin",
-            Self::Linux => b"linux",
-            Self::Freebsd => b"freebsd",
-            Self::Windows => b"windows",
-            Self::Wasm => b"wasm",
+            Self::Mac => "darwin",
+            Self::Linux => "linux",
+            Self::Freebsd => "freebsd",
+            Self::Windows => "windows",
+            Self::Wasm => "wasm",
         }
     }
 }
@@ -201,6 +202,13 @@ pub const OS: OperatingSystem = if IS_MAC {
 } else {
     panic!("Please add your OS to the OperatingSystem enum")
 };
+
+/// `process.platform`-style name for the host OS (`"win32"` on Windows).
+/// NB: Android targets resolve to `"linux"` here — for the user-facing
+/// `"android"` string see `bun_core::Global::os_name`.
+pub const OS_NAME_NODE: &str = OS.name_string();
+/// npm-package / release-archive segment for the host OS (`"windows"` on Windows).
+pub const OS_NAME_NPM: &str = OS.npm_name();
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]

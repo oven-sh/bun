@@ -1054,14 +1054,14 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
             _ => (false, s),
         };
         return match rest {
-            b if b.eq_ignore_ascii_case(b"inf") || b.eq_ignore_ascii_case(b"infinity") => {
+            b if strings::eql_any_case_insensitive_ascii(b, &[b"inf", b"infinity"]) => {
                 Some(if neg {
                     f64::NEG_INFINITY
                 } else {
                     f64::INFINITY
                 })
             }
-            b if b.eq_ignore_ascii_case(b"nan") => Some(f64::NAN),
+            b if strings::eql_case_insensitive_ascii_check_length(b, b"nan") => Some(f64::NAN),
             _ => None,
         };
     }
@@ -1318,10 +1318,9 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
-        if let Some(rel) =
-            crate::strings_impl::index_of_newline_or_non_ascii_or_ansi(&self_[offset..])
+        if let Some(i) = crate::strings::index_of_newline_or_non_ascii_or_ansi(self_, offset as u32)
         {
-            let i = offset + rel;
+            let i = i as usize;
             let byte = self_[i];
             if byte > 0x7F {
                 offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
@@ -2467,52 +2466,101 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// fastDigitCount
-// https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+// digit_count — unified decimal-width helper
+//
+// Replaces the former two-impl split:
+//   • fast_digit_count(u64)->u64  — Lemire 32-entry table; PANICKED on x ≥ 2³²
+//                                    (table OOB) despite its u64 signature.
+//   • count_int(i64)->usize       — /=10 loop, full i64 incl. MIN, +1 for '-'.
+// Zig has the same split (bun.fmt.fastDigitCount vs std.fmt.count("{d}",..));
+// unifying here improves on the original.
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn fast_digit_count(x: u64) -> u64 {
+/// Decimal digit count of an unsigned 64-bit integer — i.e. the byte length
+/// of its default `{}` rendering (`0 → 1`).
+///
+/// Values < 2³² use Lemire's branchless table
+/// (<https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/>);
+/// the rare ≥ 2³² tail falls back to a `/= 10` loop so the full `u64` range is
+/// covered (the old `fast_digit_count` panicked on table OOB there).
+#[inline]
+pub fn digit_count_u64(x: u64) -> usize {
     if x == 0 {
         return 1;
     }
+    if x < (1u64 << 32) {
+        const TABLE: [u64; 32] = [
+            4294967296, 8589934582, 8589934582, 8589934582, 12884901788, 12884901788,
+            12884901788, 17179868184, 17179868184, 17179868184, 21474826480, 21474826480,
+            21474826480, 21474826480, 25769703776, 25769703776, 25769703776, 30063771072,
+            30063771072, 30063771072, 34349738368, 34349738368, 34349738368, 34349738368,
+            38554705664, 38554705664, 38554705664, 41949672960, 41949672960, 41949672960,
+            42949672960, 42949672960,
+        ];
+        let log2 = 63 - x.leading_zeros() as usize;
+        return ((x + TABLE[log2]) >> 32) as usize;
+    }
+    let mut x = x;
+    let mut d = 0usize;
+    while x > 0 {
+        d += 1;
+        x /= 10;
+    }
+    d
+}
 
-    const TABLE: [u64; 32] = [
-        4294967296,
-        8589934582,
-        8589934582,
-        8589934582,
-        12884901788,
-        12884901788,
-        12884901788,
-        17179868184,
-        17179868184,
-        17179868184,
-        21474826480,
-        21474826480,
-        21474826480,
-        21474826480,
-        25769703776,
-        25769703776,
-        25769703776,
-        30063771072,
-        30063771072,
-        30063771072,
-        34349738368,
-        34349738368,
-        34349738368,
-        34349738368,
-        38554705664,
-        38554705664,
-        38554705664,
-        41949672960,
-        41949672960,
-        41949672960,
-        42949672960,
-        42949672960,
-    ];
-    // std.math.log2(x) for nonzero x == 63 - leading_zeros
-    let log2 = 63 - x.leading_zeros() as usize;
-    (x + TABLE[log2]) >> 32
+/// Decimal digit count of a signed 64-bit integer, including the leading `-`
+/// for negatives. Handles `i64::MIN` via `unsigned_abs`.
+#[inline]
+pub fn digit_count_i64(n: i64) -> usize {
+    (n < 0) as usize + digit_count_u64(n.unsigned_abs())
+}
+
+/// Polymorphic decimal-width helper — `digit_count(n)` returns the byte
+/// length of `n`'s default `{}` rendering for any primitive integer.
+///
+/// Dispatches via [`DigitCount`] to [`digit_count_u64`] / [`digit_count_i64`].
+/// Callers needing the old `u64` return type cast: `digit_count(x) as u64`.
+#[inline]
+pub fn digit_count<T: DigitCount>(n: T) -> usize {
+    n.digit_count()
+}
+
+/// Implemented for every primitive integer; routes to the appropriate
+/// signed/unsigned 64-bit kernel. Not meant to be implemented outside this
+/// module.
+pub trait DigitCount: Copy {
+    fn digit_count(self) -> usize;
+}
+macro_rules! impl_digit_count_unsigned {
+    ($($t:ty),+) => {$(
+        impl DigitCount for $t {
+            #[inline] fn digit_count(self) -> usize { digit_count_u64(self as u64) }
+        }
+    )+};
+}
+macro_rules! impl_digit_count_signed {
+    ($($t:ty),+) => {$(
+        impl DigitCount for $t {
+            #[inline] fn digit_count(self) -> usize { digit_count_i64(self as i64) }
+        }
+    )+};
+}
+impl_digit_count_unsigned!(u8, u16, u32, u64, usize);
+impl_digit_count_signed!(i8, i16, i32, i64, isize);
+
+#[deprecated(note = "use digit_count / digit_count_u64")]
+#[doc(hidden)]
+#[inline]
+pub fn fast_digit_count(x: u64) -> u64 {
+    digit_count_u64(x) as u64
+}
+
+#[deprecated(note = "use digit_count / digit_count_i64")]
+#[doc(hidden)]
+#[inline]
+pub fn count_int(n: i64) -> usize {
+    digit_count_i64(n)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2667,6 +2715,14 @@ pub fn hex_lower(bytes: &[u8]) -> HexBytes<'_, true> {
     HexBytes(bytes)
 }
 
+/// Ergonomic constructor for the uppercase `HexBytes` Display adapter — port of
+/// Zig `std.fmt.bytesToHex(.., .upper)` / the `{X}` format spec on `[]const u8`.
+/// Pairs with [`hex_lower`]; avoids turbofish at every caller.
+#[inline]
+pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
+    HexBytes(bytes)
+}
+
 pub const LOWER_HEX_TABLE: [u8; 16] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
 ];
@@ -2725,6 +2781,96 @@ pub const fn hex_digit_value_u32(c: u32) -> Option<u8> {
     } else {
         None
     }
+}
+
+/// Decode two ASCII hex digits into a single byte: `(hi << 4) | lo`.
+///
+/// Returns `None` if either byte is not `[0-9a-fA-F]`. Callers adapt the
+/// error channel exactly as for [`hex_digit_value`]: `.ok_or(..)?` for
+/// `Result`, `.unwrap()` when pre-validated, `?` in `Option` context.
+///
+/// Zig precedent: inner loop of `std.fmt.hexToBytes`.
+#[inline]
+pub const fn hex_pair_value(hi: u8, lo: u8) -> Option<u8> {
+    match (hex_digit_value(hi), hex_digit_value(lo)) {
+        (Some(h), Some(l)) => Some((h << 4) | l),
+        _ => None,
+    }
+}
+
+/// Parse exactly 4 ASCII hex digits from `input[..4]` into a `u16`.
+///
+/// Returns `None` if `input.len() < 4` or any of the first 4 bytes is not
+/// `[0-9A-Fa-f]`. Non-consuming — caller advances its cursor by 4 on `Some`.
+///
+/// This is the `\uHHHH` primitive for JSON/JS string-escape parsing. Surrogate
+/// handling (WTF-8 pass-through vs U+FFFD replace, consume-both vs leave-trail
+/// on a non-trail second unit) is intentionally **not** baked in: callers
+/// compose this with [`crate::strings::u16_is_lead`] /
+/// [`crate::strings::decode_surrogate_pair`] and apply their own policy, per
+/// the `strings` module note on caller-specific surrogate policy.
+#[inline]
+pub const fn parse_hex4(input: &[u8]) -> Option<u16> {
+    if input.len() < 4 {
+        return None;
+    }
+    match (hex_pair_value(input[0], input[1]), hex_pair_value(input[2], input[3])) {
+        (Some(hi), Some(lo)) => Some(((hi as u16) << 8) | lo as u16),
+        _ => None,
+    }
+}
+
+/// Consume a run of ASCII hex digits from the front of `input`, accumulating
+/// into a `u32` and stopping at the first non-hex byte, end of slice, or after
+/// `max_digits` (whichever comes first).
+///
+/// Returns `(value, digits_consumed)`. With `max_digits <= 8` the accumulator
+/// cannot overflow `u32`; callers passing larger caps are responsible for
+/// validating the digit count themselves.
+///
+/// This is the *prefix* primitive — it never fails. Callers needing exact-N
+/// semantics (e.g. `\uHHHH`) check `digits_consumed == N` afterward; callers
+/// needing a narrower result cast (`value as u8`, `value as i32`).
+///
+/// Zig precedent: none (each module hand-rolls); analogous to a bounded
+/// `std.fmt.parseInt(u32, prefix, 16)` that also reports how much it ate.
+#[inline]
+pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
+    let mut value: u32 = 0;
+    let mut n: usize = 0;
+    while n < max_digits && n < input.len() {
+        match hex_digit_value(input[n]) {
+            Some(d) => {
+                value = (value << 4) | d as u32;
+                n += 1;
+            }
+            None => break,
+        }
+    }
+    (value, n)
+}
+
+/// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
+/// byte reinterpretation. Mirrors Zig's `parseHexToInt` (DevServer.zig:961):
+/// `std.fmt.hexToBytes` into `[@sizeOf(T)]u8` then `@bitCast` — i.e. pairwise
+/// hex-decode then `from_ne_bytes`, **not** a big-endian numeric accumulator.
+/// `"0100000000000000"` → `1u64` on little-endian.
+///
+/// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
+/// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
+/// a stack array by a generic without `generic_const_exprs`.
+#[inline]
+pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
+    let n = core::mem::size_of::<T>();
+    debug_assert!(n <= 16);
+    if slice.len() != n * 2 {
+        return None;
+    }
+    let mut buf = [0u8; 16];
+    for i in 0..n {
+        buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
+    }
+    Some(bytemuck::pod_read_unaligned(&buf[..n]))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
@@ -2885,9 +3031,8 @@ pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
 
 /// `{:0N}` — zero-padded fixed-width decimal of a `u64` into `[u8; N]`.
 /// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Port of Zig
-/// `std.fmt.printInt(.., .{.width=N, .fill='0'})` and js_printer's
-/// `formatUnsignedIntegerBetween`. Caller guarantees `val < 10^N`; excess
-/// high digits are silently dropped (debug-asserted).
+/// `std.fmt.printInt(.., .{.width=N, .fill='0'})`. Caller guarantees
+/// `val < 10^N`; excess high digits are silently dropped (debug-asserted).
 #[inline(always)]
 pub fn itoa_padded<const N: usize>(mut val: u64) -> [u8; N] {
     debug_assert!(N == 0 || val < 10u64.saturating_pow(N as u32));
@@ -2979,13 +3124,7 @@ impl Default for FormatDurationData {
     }
 }
 
-const NS_PER_US: u64 = 1_000;
-use crate::time::NS_PER_MS;
-const NS_PER_S: u64 = 1_000_000_000;
-const NS_PER_MIN: u64 = 60 * NS_PER_S;
-const NS_PER_HOUR: u64 = 60 * NS_PER_MIN;
-const NS_PER_DAY: u64 = 24 * NS_PER_HOUR;
-const NS_PER_WEEK: u64 = 7 * NS_PER_DAY;
+use crate::time::{NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US, NS_PER_WEEK};
 
 /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
 fn format_duration_one_decimal(
@@ -3210,6 +3349,25 @@ pub fn itoa<T: ::itoa::Integer>(buf: &mut ItoaBuf, n: T) -> &[u8] {
     buf.format(n).as_bytes()
 }
 
+/// If `val` is exactly `10^e` for `e` in `4..=9`, return `Some(e)`; else `None`.
+///
+/// Used by `js_printer`'s non-negative-integer fast path to emit the
+/// minified-JS forms `1e4`..`1e9` (which are shorter than the full digit
+/// expansion). `e ≤ 3` is not shorter; `e ≥ 10` exceeds `u32::MAX` and is
+/// handled by the printer's f64 path.
+#[inline]
+pub const fn pow10_exp_1e4_to_1e9(val: u64) -> Option<u8> {
+    match val {
+        10_000 => Some(4),
+        100_000 => Some(5),
+        1_000_000 => Some(6),
+        10_000_000 => Some(7),
+        100_000_000 => Some(8),
+        1_000_000_000 => Some(9),
+        _ => None,
+    }
+}
+
 /// Port of `std.fmt.printInt(buf, value, 10, .lower, .{})`: format `value`
 /// into `buf` as base-10 ASCII and return the number of bytes written.
 /// Panics if `buf` is too small — callers size the buffer by the type's max
@@ -3249,24 +3407,6 @@ pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
     // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
     // wrote a NUL terminator at `s.len()`.
     unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
-}
-
-/// Decimal digit count of a signed integer, including the leading `-` for
-/// negatives. Complements `fast_digit_count` (which is unsigned-only and
-/// limited to the 32-bit Lemire table). Used by ConsoleObject width tracking.
-#[inline]
-pub fn count_int(n: i64) -> usize {
-    if n == 0 {
-        return 1;
-    }
-    let neg = (n < 0) as usize;
-    let mut x = n.unsigned_abs();
-    let mut d = 0usize;
-    while x > 0 {
-        d += 1;
-        x /= 10;
-    }
-    neg + d
 }
 
 /// Byte length of `n` formatted with the default `{}` Display — moral

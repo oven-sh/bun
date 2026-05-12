@@ -586,9 +586,7 @@ impl<V: fmt::Debug> fmt::Display for SortedEntry<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Zig: "(hash: {x}, value: {})" with {x} on mem.asBytes(&self.hash)
         write!(f, "(hash: ")?;
-        for b in &self.hash {
-            write!(f, "{:02x}", b)?;
-        }
+        write!(f, "{}", bun_core::fmt::hex_lower(&self.hash))?;
         write!(f, ", value: {:?})", self.value)
     }
 }

@@ -53,6 +53,20 @@ pub mod strings {
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
+
+/// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
+/// a path passes through a `node_modules` directory. Zig writes this inline at every
+/// site as `std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str` (comptime
+/// `++`); Rust has no comptime concat operator, so we name it once here.
+pub const NODE_MODULES_NEEDLE: &[u8] =
+    const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
+
+/// `node_modules<SEP>` — trailing-separator-only variant, used where the byte
+/// immediately before `node_modules` is not guaranteed to be a separator (start of
+/// a relative segment, or when the leading sep was already consumed).
+pub const NODE_MODULES_TRAILING: &[u8] =
+    const_format::concatcp!("node_modules", SEP_STR).as_bytes();
+
 pub const SEP_POSIX: u8 = b'/';
 pub const SEP_WINDOWS: u8 = b'\\';
 
@@ -188,15 +202,9 @@ macro_rules! os_path_literal {
     }};
 }
 
+#[inline]
 pub fn is_absolute(p: &[u8]) -> bool {
-    #[cfg(not(windows))]
-    {
-        p.first() == Some(&b'/')
-    }
-    #[cfg(windows)]
-    {
-        is_absolute_windows(p)
-    }
+    bun_core::path_sep::is_absolute_native(p)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1041,9 +1049,7 @@ pub mod fs {
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
             use bstr::ByteSlice;
-            const NEEDLE: &[u8] =
-                const_format::concatcp!(crate::SEP_STR, "node_modules", crate::SEP_STR).as_bytes();
-            self.name.dir.rfind(NEEDLE).is_some()
+            self.name.dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
         }
 
         /// Zig: `Path.isJSXFile`.

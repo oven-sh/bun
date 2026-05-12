@@ -21,6 +21,7 @@ pub mod ansi {
     pub const ITALIC: &str = "\x1b[3m";
     pub const UNDERLINE: &str = "\x1b[4m";
     pub const INVERT: &str = "\x1b[7m";
+    pub const STRIKETHROUGH: &str = "\x1b[9m";
     pub const BLACK: &str = "\x1b[30m";
     pub const RED: &str = "\x1b[31m";
     pub const GREEN: &str = "\x1b[32m";
@@ -32,6 +33,32 @@ pub mod ansi {
     pub const BRIGHT_WHITE: &str = "\x1b[97m";
     pub const BG_RED: &str = "\x1b[41m";
     pub const BG_GREEN: &str = "\x1b[42m";
+}
+
+/// Byte-slice views of [`ansi`] for callers that write into `&[u8]` buffers
+/// (md ANSI renderer, stack-frame colour codes). `str::as_bytes` is a `const
+/// fn`, so each constant is the *same* static storage as its `&str` twin —
+/// no second copy of the escape bytes is emitted.
+pub mod ansi_b {
+    use super::ansi;
+    pub const RESET: &[u8] = ansi::RESET.as_bytes();
+    pub const BOLD: &[u8] = ansi::BOLD.as_bytes();
+    pub const DIM: &[u8] = ansi::DIM.as_bytes();
+    pub const ITALIC: &[u8] = ansi::ITALIC.as_bytes();
+    pub const UNDERLINE: &[u8] = ansi::UNDERLINE.as_bytes();
+    pub const INVERT: &[u8] = ansi::INVERT.as_bytes();
+    pub const STRIKETHROUGH: &[u8] = ansi::STRIKETHROUGH.as_bytes();
+    pub const BLACK: &[u8] = ansi::BLACK.as_bytes();
+    pub const RED: &[u8] = ansi::RED.as_bytes();
+    pub const GREEN: &[u8] = ansi::GREEN.as_bytes();
+    pub const YELLOW: &[u8] = ansi::YELLOW.as_bytes();
+    pub const BLUE: &[u8] = ansi::BLUE.as_bytes();
+    pub const MAGENTA: &[u8] = ansi::MAGENTA.as_bytes();
+    pub const CYAN: &[u8] = ansi::CYAN.as_bytes();
+    pub const WHITE: &[u8] = ansi::WHITE.as_bytes();
+    pub const BRIGHT_WHITE: &[u8] = ansi::BRIGHT_WHITE.as_bytes();
+    pub const BG_RED: &[u8] = ansi::BG_RED.as_bytes();
+    pub const BG_GREEN: &[u8] = ansi::BG_GREEN.as_bytes();
 }
 
 /// `(tag, ansi_escape)` pairs. 14 entries — linear scan in [`color_for`] is

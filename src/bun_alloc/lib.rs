@@ -821,21 +821,25 @@ pub enum Tag {
     Empty = 4,
 }
 
-/// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`
-/// where `ptr` carries tag bits in the high byte (bit 63 = UTF-16, 62 = global,
-/// 61 = UTF-8, 60 = static). Untagging masks to the low 53 bits.
+// `ZigString` pointer-tag scheme (ZigString.zig:629) — single source of truth.
+// Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
+pub const ZS_STATIC_BIT: usize = 1usize << 60;
+pub const ZS_UTF8_BIT: usize = 1usize << 61;
+pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
+pub const ZS_16BIT_BIT: usize = 1usize << 63;
+pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
+
+/// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`.
 ///
-/// **STORAGE TWIN — not canonical.** The canonical, method-rich `ZigString`
-/// lives in `bun_core::ZigString` (identical `#[repr(C)] { *const u8, usize }`
-/// layout, same tag-bit scheme — guarded by a `const _ = assert!(size/align)`
-/// in `bun_string`). This copy exists so the T0 `bun_alloc::String` /
-/// `StringImpl` union can name the field type without an upward dep on
-/// `bun_string` (`bun_alloc` is the lowest tier). The handful of methods kept
-/// here are for `bun_alloc`'s internal use only (`WTFStringImplStruct::
-/// to_zig_string`, `String::eql_bytes`, the `Debug` impl). **Do not add new
-/// methods here** — add them to `bun_core::ZigString` and convert via
-/// `from_tagged_ptr` / `_unsafe_ptr_do_not_use`.
-#[doc(hidden)]
+/// **Canonical storage layout.** `bun_core::string::ZigString` is a
+/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
+/// source of truth) and adds the encoding-aware/allocating methods via
+/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
+/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
+/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
+/// them without an upward dep on `bun_core`. Higher-tier callers should name
+/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
+/// intended path.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ZigString {
@@ -858,16 +862,21 @@ impl ZigString {
         }
     }
 
-    /// Construct from an already-tagged pointer + length. Mirror of
-    /// `bun_core::ZigString::from_tagged_ptr` for field-by-field round-trips
-    /// (preferred over `transmute` so a future field reorder fails at compile
-    /// time, not at runtime).
+    /// Construct from an already-tagged pointer + length. `ptr` is stored
+    /// verbatim — tag bits are not touched.
     #[inline]
     pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
         ZigString {
             _unsafe_ptr_do_not_use: ptr,
             len,
         }
+    }
+
+    /// Raw tagged pointer (top-bit flags intact). Pair with
+    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
+    #[inline]
+    pub const fn tagged_ptr(&self) -> *const u8 {
+        self._unsafe_ptr_do_not_use
     }
 
     #[inline]
@@ -891,38 +900,60 @@ impl ZigString {
 
     #[inline]
     pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & (1usize << 63) != 0
+        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
     }
     #[inline]
     pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & (1usize << 61) != 0
+        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
     }
     #[inline]
     pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & (1usize << 62) != 0
+        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
+    }
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & ZS_STATIC_BIT != 0
     }
     #[inline]
     pub fn mark_utf16(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | (1usize << 63)) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
     }
     #[inline]
     pub fn mark_utf8(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | (1usize << 61)) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
+    }
+    #[inline]
+    pub fn mark_global(&mut self) {
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
+    }
+    #[inline]
+    pub fn mark_static(&mut self) {
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | ZS_STATIC_BIT) as *const u8;
     }
 
     /// Zig `untagged`: `@ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr))))`.
     #[inline]
     pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ((1usize << 53) - 1)) as *const u8
+        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
     }
 
     /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        debug_assert!(self.len == 0 || !self.is_16bit());
-        // SAFETY: ptr is valid for `len` bytes when not 16-bit; len capped to u32::MAX as in Zig.
+        if self.len == 0 {
+            return &[];
+        }
+        // ZigString.zig:637 — only panics when `len > 0 and is16Bit()`.
+        debug_assert!(
+            !self.is_16bit(),
+            "ZigString::slice() on UTF-16 string; use to_slice()"
+        );
+        // SAFETY: constructor stored a valid ptr/len; flag bits stripped. Zig
+        // caps at u32::MAX (ZigString.zig:642).
         unsafe {
             core::slice::from_raw_parts(
                 Self::untagged(self._unsafe_ptr_do_not_use),
@@ -934,8 +965,13 @@ impl ZigString {
     /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
     pub fn utf16_slice_aligned(&self) -> &[u16] {
-        debug_assert!(self.len == 0 || self.is_16bit());
-        // SAFETY: ptr is valid for `len` u16 units when 16-bit-tagged.
+        if self.len == 0 {
+            return &[];
+        }
+        // ZigString.zig:436 — only panics when `len > 0 and !is16Bit()`.
+        debug_assert!(self.is_16bit());
+        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
+        // for `self.len` u16 units; flag bits stripped by `untagged`.
         unsafe {
             core::slice::from_raw_parts(
                 Self::untagged(self._unsafe_ptr_do_not_use).cast::<u16>(),

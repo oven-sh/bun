@@ -11,10 +11,12 @@ use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, decode_wtf8_rune_t,
-    decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
+    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, codepoint_size,
+    contains_non_bmp_code_point, contains_non_bmp_code_point_or_is_invalid_identifier,
+    decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
+pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
 // B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
@@ -26,6 +28,7 @@ pub mod exact_size_matcher;
 // keeps them dead at runtime. PERF(port): swap to bun_highway in Phase B.
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
+pub use escape_html::{SCALAR_LENGTHS, html_escape_entity, xml_escape_entity};
 #[path = "immutable/grapheme.rs"]
 pub mod grapheme;
 #[path = "immutable/grapheme_tables.rs"]
@@ -227,85 +230,11 @@ pub mod visible_fallback {
 /// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
 /// in the gated `unicode_draft` module — un-gate after simdutf wiring.
 pub mod unicode {
-    use super::{CodePoint, U3Fast};
+    use super::CodePoint;
 
-    pub use crate::strings::wtf8_byte_sequence_length;
-    /// Same table; the Zig version distinguished only by 0-on-invalid intent
-    /// (which the body doesn't actually do — both return 1 for invalid).
-    #[inline]
-    pub const fn wtf8_byte_sequence_length_with_invalid(first: u8) -> u8 {
-        wtf8_byte_sequence_length(first)
-    }
+    pub use crate::strings::{wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid};
 
-    #[inline]
-    pub fn decode_wtf8_rune_t_multibyte<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
-    where
-        T: Copy
-            + From<u8>
-            + core::ops::Shl<u32, Output = T>
-            + core::ops::BitOr<Output = T>
-            + PartialOrd,
-    {
-        debug_assert!(len > 1);
-        let s1 = p[1];
-        if (s1 & 0xC0) != 0x80 {
-            return zero;
-        }
-        if len == 2 {
-            let cp = (T::from(p[0] & 0x1F) << 6) | T::from(s1 & 0x3F);
-            if cp < T::from(0x80) {
-                return zero;
-            }
-            return cp;
-        }
-        let s2 = p[2];
-        if (s2 & 0xC0) != 0x80 {
-            return zero;
-        }
-        if len == 3 {
-            let cp = (T::from(p[0] & 0x0F) << 12) | (T::from(s1 & 0x3F) << 6) | T::from(s2 & 0x3F);
-            // 0x800 doesn't fit u8; compare via known-safe construction
-            // (T is i32 or u32 in practice — see CodePointZero impls)
-            if cp < ((T::from(0x08) << 8) | T::from(0)) {
-                return zero;
-            }
-            return cp;
-        }
-        let s3 = p[3];
-        if (s3 & 0xC0) != 0x80 {
-            return zero;
-        }
-        let cp = (T::from(p[0] & 0x07) << 18)
-            | (T::from(s1 & 0x3F) << 12)
-            | (T::from(s2 & 0x3F) << 6)
-            | T::from(s3 & 0x3F);
-        // 0x10000..=0x10FFFF range check — only meaningful for i32/u32.
-        // Construct bounds via shifts to stay within From<u8>.
-        let lo = T::from(1) << 16; // 0x1_0000
-        let hi = (T::from(0x10) << 16) | (T::from(0xFF) << 8) | T::from(0xFF); // 0x10_FFFF
-        if cp < lo || cp > hi {
-            return zero;
-        }
-        cp
-    }
-
-    #[inline]
-    pub fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
-    where
-        T: Copy
-            + From<u8>
-            + core::ops::Shl<u32, Output = T>
-            + core::ops::BitOr<Output = T>
-            + PartialOrd,
-    {
-        if len == 0 {
-            return zero;
-        }
-        if len == 1 {
-            return T::from(p[0]);
-        }
-        decode_wtf8_rune_t_multibyte(p, len, zero)
-    }
+    pub use super::unicode_draft::{codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte};
 
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
     pub struct NewCodePointIterator<'a> {
@@ -417,6 +346,42 @@ pub mod unicode {
         }
     }
 
+    /// Zig: `unicode.zig:containsNonBmpCodePoint` — `true` iff `text` contains any
+    /// codepoint above U+FFFF (i.e. would need a UTF-16 surrogate pair).
+    pub fn contains_non_bmp_code_point(text: &[u8]) -> bool {
+        let iter = CodepointIterator::init(text);
+        let mut curs = Cursor::default();
+        while iter.next(&mut curs) {
+            if curs.c > 0xFFFF {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Zig: `unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier` — fused
+    /// "must I quote this import/export alias?" predicate for `js_printer`.
+    ///
+    /// Returns `true` if `text` is empty, OR any codepoint is non-BMP (>U+FFFF,
+    /// even if a valid identifier char), OR the codepoint sequence is not a
+    /// valid ECMAScript IdentifierName.
+    pub fn contains_non_bmp_code_point_or_is_invalid_identifier(text: &[u8]) -> bool {
+        let iter = CodepointIterator::init(text);
+        let mut curs = Cursor::default();
+        if !iter.next(&mut curs) {
+            return true;
+        }
+        if curs.c > 0xFFFF || !crate::string::lexer::is_identifier_start(curs.c as u32) {
+            return true;
+        }
+        while iter.next(&mut curs) {
+            if curs.c > 0xFFFF || !crate::string::lexer::is_identifier_continue(curs.c as u32) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// `toUTF16Literal` — port of `unicode.zig:toUTF16Literal` →
     /// `std.unicode.utf8ToUtf16LeStringLiteral`. Zig evaluated this at
     /// `comptime` into a `Holder.value` const yielding `[:0]const u16`; the
@@ -441,6 +406,147 @@ pub mod unicode {
         out
     }
 }
+
+/// Peek `n` WTF-8 codepoints from `bytes[at..]` and return the spanning slice
+/// `bytes[at..end]`. Codepoint width is `wtf8_byte_sequence_length_with_invalid`
+/// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
+/// returning the slice up to the last complete codepoint boundary.
+///
+/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek` (Zig:
+/// `js_lexer.zig:267`, `toml/lexer.zig:128`). Unlike the upstream Zig copies —
+/// whose `*const Self` stepper never advances and re-reads the first byte `n`
+/// times — this helper actually advances; the sole live caller passes ASCII so
+/// the fix is unobservable.
+#[inline]
+pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
+    let mut end = at;
+    for _ in 0..n {
+        if end >= bytes.len() {
+            break;
+        }
+        let cp_len = wtf8_byte_sequence_length_with_invalid(bytes[end]) as usize;
+        if end + cp_len > bytes.len() {
+            break;
+        }
+        end += cp_len;
+    }
+    &bytes[at..end]
+}
+
+/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
+///
+/// Zig: `js_parser/lexer.zig` `nextCodepointSlice` / `nextCodepoint` (and the
+/// byte-identical copy in `parsers/toml/lexer.zig`). The Rust port grew a
+/// third copy when `json_lexer.rs` was carved out of `js_parser` to break the
+/// `bun_js_parser ↔ bun_interchange` crate cycle; all three call the same
+/// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
+/// pair defined alongside this module, so the stepper belongs here.
+///
+/// NOT the same algorithm as [`CodepointIterator::next_codepoint`] — that one
+/// uses `utf8ByteSequenceLength` + `next_width` lookahead, has no `end`
+/// cursor, and does not advance-by-1 on U+FFFD.
+pub mod lexer_step {
+    use super::{
+        CodePoint, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte,
+        wtf8_byte_sequence_length_with_invalid,
+    };
+
+    /// `nextCodepointSlice` — slice of the next codepoint at `current`, or
+    /// `b""` on EOF / truncated trailing sequence.
+    #[inline]
+    pub fn next_codepoint_slice(contents: &[u8], current: usize) -> &[u8] {
+        if current >= contents.len() {
+            return b"";
+        }
+        let cp_len = wtf8_byte_sequence_length_with_invalid(contents[current]) as usize;
+        if cp_len + current <= contents.len() {
+            &contents[current..current + cp_len]
+        } else {
+            b""
+        }
+    }
+
+    /// `nextCodepoint` — decode the codepoint at `*current`, advance
+    /// `*current`, and write the pre-advance offset to `*end`. Returns `-1` on
+    /// EOF or a truncated trailing multibyte sequence.
+    ///
+    /// Split into an `#[inline(always)]` ASCII/EOF fast path plus an outlined
+    /// multibyte tail so the hot per-byte loop folds into every `step()` site
+    /// (matches Zig's per-byte `ptr[current]` increment).
+    #[inline(always)]
+    pub fn next_codepoint(contents: &[u8], current: &mut usize, end: &mut usize) -> CodePoint {
+        let len = contents.len();
+        if *current >= len {
+            *end = len;
+            return -1;
+        }
+        // SAFETY: `*current < len` was checked immediately above.
+        let first = unsafe { *contents.get_unchecked(*current) };
+        *end = *current;
+        if first < 0x80 {
+            *current += 1;
+            return first as CodePoint;
+        }
+        next_codepoint_multibyte(contents, current, first)
+    }
+
+    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
+    /// ASCII path stays small enough to inline into every `step()` site.
+    ///
+    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
+    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
+    /// into its sole caller, which then makes `next_codepoint` too large to
+    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
+    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
+    /// and survives LTO's IPO inliner.
+    #[cold]
+    #[inline(never)]
+    pub fn next_codepoint_multibyte(
+        contents: &[u8],
+        current: &mut usize,
+        first: u8,
+    ) -> CodePoint {
+        let len = contents.len();
+        let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
+        let avail = len - *current;
+
+        // Zig spec (lexer.zig nextCodepoint): `switch (slice.len) { 0 => -1, 1 => slice[0], else => decode }`
+        // where `slice` is empty when `cp_len + current > len` and `cp_len` bytes otherwise.
+        // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
+        // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
+        // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
+        // arm instead of silently emitting TEndOfFile mid-stream.
+        let code_point: CodePoint = if cp_len == 1 {
+            first as CodePoint
+        } else if avail < cp_len {
+            // truncated multibyte at EOF → Zig's empty-slice arm
+            -1
+        } else {
+            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
+            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
+            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
+            // never read.
+            let mut quad = [0u8; 4];
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    contents.as_ptr().add(*current),
+                    quad.as_mut_ptr(),
+                    cp_len,
+                );
+            }
+            decode_wtf8_rune_t_multibyte(&quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
+        };
+
+        *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
+            cp_len
+        } else {
+            1
+        };
+
+        code_point
+    }
+}
+
 /// Strip a leading UTF-8 BOM (`EF BB BF`) if present. Mirrors
 /// `bun.strings.withoutUTF8BOM` (immutable.zig:2332 → unicode.withoutUTF8BOM).
 #[inline]
@@ -3007,18 +3113,7 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
 // can link against `bun_core::strings::*` without un-gating the full drafts.
 // Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
 
-/// `strings.utf8ByteSequenceLength` — returns 0 for invalid lead bytes
-/// (unicode.zig:1509). NOT the same as the WTF-8 variant, which returns 1.
-#[inline]
-pub fn utf8_byte_sequence_length(first_byte: u8) -> u8 {
-    match first_byte {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        0xF0..=0xF7 => 4,
-        _ => 0,
-    }
-}
+pub use crate::strings_impl::utf8_byte_sequence_length;
 
 /// `std.mem.trimLeft(u8, str, chars)` — strip leading chars in `values_to_strip`.
 pub use crate::strings::trim_left;
@@ -3119,15 +3214,74 @@ pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool 
     }
 }
 
-/// `strings.convertUTF8toUTF16InBuffer` — best-effort UTF-8 → UTF-16LE into
-/// a caller-supplied buffer. Invalid UTF-8 is silently dropped (returns the
-/// written prefix). Port of `unicode.zig:convertUTF8toUTF16InBuffer`.
+/// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
+/// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
+/// UTF-8 falls back to a scalar WTF-8 decoder that emits U+FFFD for malformed
+/// bytes and passes unpaired surrogates through (so non-empty input never yields
+/// an empty slice — fixes #8197 / the TODO at unicode.zig:1537).
 pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a mut [u16] {
     if input.is_empty() {
         return &mut buf[..0];
     }
-    let result = simdutf::convert::utf8::to::utf16::le(input, buf);
-    &mut buf[..result]
+    let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
+    if r.is_successful() {
+        return &mut buf[..r.count];
+    }
+    // WTF-8 fallback (invalid byte → U+FFFD; lone surrogates pass through).
+    let mut written = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        let b = input[i];
+        if b < 0x80 {
+            buf[written] = b as u16;
+            written += 1;
+            i += 1;
+        } else {
+            let (cp, adv) = decode_wtf8_one(&input[i..]);
+            if cp <= 0xFFFF {
+                buf[written] = cp as u16;
+                written += 1;
+            } else {
+                let [hi, lo] = encode_surrogate_pair(cp);
+                buf[written] = hi;
+                buf[written + 1] = lo;
+                written += 2;
+            }
+            i += adv;
+        }
+    }
+    &mut buf[..written]
+}
+
+/// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
+/// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
+fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
+    let b0 = s[0] as u32;
+    if b0 < 0x80 {
+        return (b0, 1);
+    }
+    if b0 < 0xC0 || s.len() < 2 {
+        return (0xFFFD, 1);
+    }
+    let b1 = s[1] as u32;
+    if b0 < 0xE0 {
+        return (((b0 & 0x1F) << 6) | (b1 & 0x3F), 2);
+    }
+    if s.len() < 3 {
+        return (0xFFFD, 1);
+    }
+    let b2 = s[2] as u32;
+    if b0 < 0xF0 {
+        return (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F), 3);
+    }
+    if s.len() < 4 {
+        return (0xFFFD, 1);
+    }
+    let b3 = s[3] as u32;
+    (
+        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
+        4,
+    )
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto

@@ -428,10 +428,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
 }
 
 pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
-    // PERF(port): was comptime string concatenation
-    let needle: &'static [u8] =
-        const_format::concatcp!(crate::SEP_STR, "node_modules", crate::SEP_STR).as_bytes();
-    strings::index_of(path, needle).is_some()
+    strings::index_of(path, crate::NODE_MODULES_NEEDLE).is_some()
 }
 
 pub use crate::is_sep_any as char_is_any_slash;
@@ -481,17 +478,7 @@ pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
     strings::trim_left(this, &[crate::SEP])
 }
 
-#[inline(always)]
-pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
-    if slice.len() >= 2 {
-        // PERF(port): Zig bitcast slice[0..2] to u16 and compared against LE-encoded "./";
-        // direct 2-byte slice comparison compiles to the same thing.
-        if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
-            return &slice[2..];
-        }
-    }
-    slice
-}
+pub use bun_core::strings::remove_leading_dot_slash;
 
 // Copied from std, modified to accept input type — canonical impl lives in
 // `crate::{basename_posix, basename_windows}` (generic over `PathChar`);

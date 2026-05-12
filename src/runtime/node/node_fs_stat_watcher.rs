@@ -567,10 +567,10 @@ impl StatWatcher {
 
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
-            // SAFETY: `ctx` is live; called on the JS thread. `rare_data()` is
-            // `&mut self`, so go through the raw pointer (write provenance
-            // preserved — see `ctx` field doc).
-            unsafe { (*this_ref.ctx.as_ptr()).rare_data() }
+            // `as_mut()` routes through the thread-local `*mut VM` (write
+            // provenance) so `rare_data()`'s `&mut self` borrow is sound on
+            // the JS thread.
+            this_ref.ctx.as_mut().rare_data()
                 .remove_stat_watcher_for_isolation(this.cast::<c_void>());
         }
         this_ref.persistent.set(false);
@@ -879,10 +879,11 @@ impl StatWatcher {
             .this_value
             .set(JsRef::init_strong(js_this, &args.global_this));
         js::listener_set_cached(js_this, &args.global_this, args.listener);
-        // SAFETY: `vm` is the live per-thread VM.
-        if unsafe { (*vm).test_isolation_enabled } {
-            // SAFETY: `vm` is live; JS thread.
-            unsafe { (*vm).rare_data() }.add_stat_watcher_for_isolation(
+        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
+        if this_ref.ctx.test_isolation_enabled {
+            // `as_mut()` routes through the thread-local `*mut VM` (write
+            // provenance) so `rare_data()`'s `&mut self` borrow is sound.
+            this_ref.ctx.as_mut().rare_data().add_stat_watcher_for_isolation(
                 this_ptr.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
                 // (ptr, close-fn) so it can fire close without naming StatWatcher.

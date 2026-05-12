@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
 
 use bun_io::KeepAlive;
+use bun_ptr::BackRef;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
@@ -93,7 +94,10 @@ macro_rules! extern_crypto_job {
 
             #[repr(C)]
             pub struct Job {
-                vm: *mut VirtualMachine,
+                // BACKREF — per-thread VM singleton; outlives every Job.
+                // `BackRef<T>` is `repr(transparent)` over `NonNull<T>` so the
+                // C-ABI layout is unchanged from the prior `*mut`.
+                vm: BackRef<VirtualMachine>,
                 task: WorkPoolTask,
                 any_task: AnyTask,
                 poll: KeepAlive,
@@ -117,9 +121,8 @@ macro_rules! extern_crypto_job {
                         ctx: *mut Ctx,
                         callback: JSValue,
                     ) -> *mut Job {
-                        let vm = global.bun_vm_ptr();
                         let job = bun_core::heap::into_raw(Box::new(Job {
-                            vm,
+                            vm: BackRef::new(global.bun_vm()),
                             task: WorkPoolTask {
                                 node: Default::default(),
                                 callback: Self::run_task,
@@ -166,15 +169,15 @@ macro_rules! extern_crypto_job {
                         // SAFETY: job is live for the duration of the work-pool task.
                         let job = unsafe { &mut *job };
                         let vm = job.vm;
-                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`;
+                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`.
                         // `vm.global` is the VM's `*mut JSGlobalObject` field (mut provenance,
-                        // live for the VM lifetime) — no const→mut cast needed.
-                        unsafe { ctx_run_task(job.ctx, (*vm).global) };
+                        // live for the VM lifetime) read via `BackRef` Deref.
+                        unsafe { ctx_run_task(job.ctx, vm.global) };
                         // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-                        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
-                        unsafe {
-                            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-                        }
+                        // `event_loop_shared()` takes `&self` (BackRef Deref); the
+                        // queue itself is lock-free.
+                        vm.event_loop_shared()
+                            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
                     }
 
                     pub fn run_from_js(this: *mut Job) {
@@ -187,11 +190,10 @@ macro_rules! extern_crypto_job {
                         // SAFETY: `this` was boxed in `create`; we are on the JS thread.
                         let this = unsafe { &mut *this };
                         let vm = this.vm;
-                        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
-                        let global: &JSGlobalObject = unsafe { &*(*vm).global };
+                        // BackRef Deref — VM singleton outlives every Job.
+                        let global: &JSGlobalObject = vm.global();
 
-                        // SAFETY: see above.
-                        if unsafe { (*vm).is_shutting_down() } {
+                        if vm.is_shutting_down() {
                             return;
                         }
 
@@ -202,8 +204,8 @@ macro_rules! extern_crypto_job {
                         let ctx = this.ctx;
                         let res: JsResult<()> = jsc::from_js_host_call_generic(global, || {
                             // SAFETY: ctx is live until `deinit` below; `vm.global` is the VM's
-                            // `*mut JSGlobalObject` field (mut provenance) — no const→mut cast needed.
-                            unsafe { ctx_run_from_js(ctx, (*vm).global, callback) };
+                            // `*mut JSGlobalObject` field read via BackRef Deref.
+                            unsafe { ctx_run_from_js(ctx, vm.global, callback) };
                         });
                         if let Err(err) = res {
                             global.report_active_exception_as_unhandled(err);
@@ -287,7 +289,10 @@ pub trait CryptoJobCtx: Sized {
 // trait impls themselves remain gated.
 #[repr(C)]
 pub struct CryptoJob<Ctx> {
-    vm: *mut VirtualMachine,
+    // BACKREF — per-thread VM singleton; outlives every CryptoJob.
+    // `BackRef<T>` is `repr(transparent)` over `NonNull<T>` so the C-ABI layout
+    // is unchanged from the prior `*mut`.
+    vm: BackRef<VirtualMachine>,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -299,9 +304,8 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<*mut Self> {
         // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
         // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
-        let vm = global.bun_vm_ptr();
         let job = bun_core::heap::into_raw(Box::new(CryptoJob {
-            vm,
+            vm: BackRef::new(global.bun_vm()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
@@ -356,10 +360,9 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         job.ctx.run_task();
 
         // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
-        unsafe {
-            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-        }
+        // `event_loop_shared()` takes `&self` (BackRef Deref); queue is lock-free.
+        vm.event_loop_shared()
+            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }
 
     pub fn run_from_js(this: *mut Self) {
@@ -378,8 +381,8 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         let this_ref = unsafe { &mut *this };
         let vm = this_ref.vm;
 
-        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
-        if unsafe { (*vm).is_shutting_down() } {
+        // BackRef Deref — VM singleton outlives every CryptoJob.
+        if vm.is_shutting_down() {
             return;
         }
 
@@ -387,8 +390,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
             return;
         };
 
-        // SAFETY: `vm.global` is non-null while the VM lives.
-        this_ref.ctx.run_from_js(unsafe { &*(*vm).global }, callback);
+        this_ref.ctx.run_from_js(vm.global(), callback);
     }
 
     unsafe fn deinit(this: *mut Self) {
@@ -448,12 +450,10 @@ pub mod random {
         }
 
         fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-            let vm = global.bun_vm();
-            // SAFETY: `vm` is the singleton JS VM; `event_loop()` returns its live event loop.
-            unsafe {
-                (*(*vm).event_loop())
-                    .run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::NULL, self.value]);
-            }
+            // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor;
+            // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+            global.bun_vm().event_loop_mut()
+                .run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::NULL, self.value]);
         }
 
         fn deinit(&mut self) {

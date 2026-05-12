@@ -1656,11 +1656,7 @@ pub fn join(
     // here the `ZigStringSlice` RAII guards live inline in `owned` for the same
     // effect. ASCII-only inputs (the common case) borrow the WTF backing without
     // allocating; only non-ASCII triggers a transcode allocation.
-    //
-    // Single pass, like Zig: fill the ownership array and the `&[u8]` view in
-    // the same iteration. Pre-reserve so the inline/heap buffer never moves.
     let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
-    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(args_len);
 
     for (i, &path_ptr) in args.iter().enumerate() {
         // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
@@ -1678,24 +1674,15 @@ pub fn join(
         if path_zstr.len == 0 {
             continue;
         }
-        let zss = path_zstr.to_slice();
-        // SAFETY: `ZigStringSlice::slice()` yields a view whose backing storage
-        // is independent of the enum value's own address — `Static`/`WTF` carry
-        // a raw `(*const u8, len)` and `Owned` points at a heap `Vec` buffer —
-        // so moving `zss` into `owned` (and any later `owned.push` realloc)
-        // does not invalidate `(ptr, len)`. The bytes stay valid for as long as
-        // the guard lives in `owned`, which is anchored past the use of `paths`
-        // by the explicit `drop(owned)` below.
-        let s = zss.slice();
-        let (ptr, len) = (s.as_ptr(), s.len());
-        owned.push(zss);
-        paths.push(unsafe { core::slice::from_raw_parts(ptr, len) });
+        owned.push(path_zstr.to_slice());
     }
-    // Empty entries are skipped both here and inside `join_*_t`, matching Zig.
+    // Derive the `&[u8]` views in a second pass once `owned` is fully built —
+    // borrowck then sees `paths` as a plain reborrow of `owned` with no
+    // intervening mutation, so no raw-pointer detach is needed. Empty entries
+    // are skipped both here and inside `join_*_t`, matching Zig.
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(ZigStringSlice::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    let result = join_js_t::<u8>(global_object, pool, is_windows, &paths);
-    drop(owned); // ownership anchor for the raw views in `paths`
-    result
+    join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
 /// Based on Node v21.6.1 private helper normalizeString:

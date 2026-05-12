@@ -52,16 +52,23 @@ impl Dir {
     pub fn make_path(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
     }
-    /// `std.fs.Dir.makeOpenPath` — `makePath` then `openDir`.
+    /// `std.fs.Dir.makeOpenPath` — try `openDir` first; on ENOENT, `makePath`
+    /// then `openDir` (Zig: vendor/zig/lib/std/fs/Dir.zig `makeOpenPath`).
     pub fn make_open_path(
         &self,
         sub_path: &[u8],
         _opts: OpenDirOptions,
     ) -> core::result::Result<Dir, bun_core::Error> {
-        mkdir_recursive_at(self.fd, sub_path)?;
-        open_dir_at(self.fd, sub_path)
-            .map(Dir::from_fd)
-            .map_err(Into::into)
+        match open_dir_at(self.fd, sub_path) {
+            Ok(fd) => Ok(Dir::from_fd(fd)),
+            Err(e) if e.get_errno() == E::ENOENT => {
+                mkdir_recursive_at(self.fd, sub_path)?;
+                open_dir_at(self.fd, sub_path)
+                    .map(Dir::from_fd)
+                    .map_err(Into::into)
+            }
+            Err(e) => Err(e.into()),
+        }
     }
     /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port of Zig
     /// `std.fs.Dir.deleteTree` (stack-based depth-first walk; std/fs/Dir.zig).

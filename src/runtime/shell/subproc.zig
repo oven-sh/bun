@@ -957,29 +957,37 @@ pub const ShellSubprocess = struct {
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
 
-        if (stdin_assign_error != .zero) {
-            // assignToStream failed (e.g. a direct ReadableStream whose pull() threw
-            // synchronously). Return a shell error instead of panicking so the user
-            // sees the failure; tear down the child the same way other post-spawn
-            // start failures do.
-            stdin_assign_error.ensureStillAlive();
-            const global = event_loop.js.global;
-            const msg = blk: {
-                var str = stdin_assign_error.toBunString(global) catch break :blk bun.handleOom(bun.default_allocator.dupe(u8, "Failed to pipe ReadableStream to stdin"));
-                defer str.deref();
-                break :blk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to pipe ReadableStream to stdin: {f}", .{str}));
-            };
-            _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
-            subprocess.abortAfterFailedStart();
-            return .{ .err = .{ .custom = msg } };
-        }
-
         switch (subprocess.process.watch()) {
             .result => {},
             .err => {
                 notify_caller_process_already_exited.* = true;
                 spawn_args.lazy = false;
             },
+        }
+
+        if (stdin_assign_error != .zero) {
+            // assignToStream failed (e.g. a direct ReadableStream whose pull() threw
+            // synchronously). Return a shell error instead of panicking so the user
+            // sees the failure; tear down the child the same way other post-spawn
+            // start failures do. This check must run after watch() so tryKill() can
+            // actually signal the child on POSIX (kill() is a no-op while the poller
+            // is still .detached).
+            stdin_assign_error.ensureStillAlive();
+            const global = event_loop.js.global;
+            const msg = blk: {
+                var str = stdin_assign_error.toBunString(global) catch {
+                    // toBunString can throw (e.g. hostile Symbol.toPrimitive on the thrown
+                    // value); swallow that pending exception so it doesn't surface at an
+                    // unrelated throw-scope check.
+                    _ = global.tryTakeException();
+                    break :blk bun.handleOom(bun.default_allocator.dupe(u8, "Failed to pipe ReadableStream to stdin"));
+                };
+                defer str.deref();
+                break :blk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to pipe ReadableStream to stdin: {f}", .{str}));
+            };
+            _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
+            subprocess.abortAfterFailedStart();
+            return .{ .err = .{ .custom = msg } };
         }
 
         if (subprocess.stdin == .buffer) {
@@ -1065,6 +1073,12 @@ pub const ShellSubprocess = struct {
             const cmd = this.cmd_parent;
             if (cmd.exit_code == null) {
                 cmd.onExit(code);
+            } else if (this.stdin == .pipe and cmd.exec == .subproc and cmd.hasFinished()) {
+                // exit_code was already set (e.g. by a stdout/stderr write error) before
+                // the process exited; bufferedInputClose() above may have just satisfied
+                // the last condition for hasFinished(). Drive the Cmd forward so the
+                // await doesn't hang — onExit(code) won't be called since exit_code is set.
+                cmd.onExit(cmd.exit_code.?);
             }
         }
     }

@@ -38,7 +38,9 @@ async function run(workerBody: string) {
       stdout,
       stderr,
       exitCode,
-      error: `subprocess did not exit within ${SUBPROCESS_TIMEOUT}ms (signal ${proc.signalCode}, stdout=${JSON.stringify(stdout)})`,
+      error:
+        `subprocess did not exit within ${SUBPROCESS_TIMEOUT}ms ` +
+        `(signal ${proc.signalCode}, stdout=${JSON.stringify(stdout)}, stderr=${JSON.stringify(stderr)})`,
     };
   }
   return { stdout, stderr, exitCode, error: "" };

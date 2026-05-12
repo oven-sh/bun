@@ -5463,20 +5463,21 @@ impl VirtualMachine {
         // printGithubAnnotation(exception);`.
         struct DeferGhAnnotation {
             run: bool,
-            exception: *mut ZigException,
+            /// BACKREF — borrows the caller's stack-local `ZigException`, live
+            /// across this drop guard (declared after the `&mut` rebind so it
+            /// drops first).
+            exception: bun_ptr::BackRef<ZigException>,
         }
         impl Drop for DeferGhAnnotation {
             fn drop(&mut self) {
                 if self.run {
-                    // SAFETY: `exception` borrows the caller's stack-local
-                    // ZigException, live across this drop guard.
-                    VirtualMachine::print_github_annotation(unsafe { &*self.exception });
+                    VirtualMachine::print_github_annotation(self.exception.get());
                 }
             }
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: std::ptr::from_mut(exception),
+            exception: bun_ptr::BackRef::new_mut(exception),
         };
 
         // Runtime dispatch over `comptime allow_ansi_color` — `pretty_fmt!` is
@@ -5927,13 +5928,11 @@ impl VirtualMachine {
         for &err in &errors_to_append {
             // Circular-ref guard for cause chains.
             if formatter.map_node.is_none() {
-                // `data` is initialized because `Map::INIT` is `Some`.
                 let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
                     .expect("ObjectPool::get_node always returns a valid heap node");
-                unsafe { node.as_mut().data.assume_init_mut().clear() };
-                formatter.map = core::mem::take(unsafe {
-                    node.as_mut().data.assume_init_mut()
-                });
+                let data = console_object::formatter::visited::node_data_mut(&mut node);
+                data.clear();
+                formatter.map = core::mem::take(data);
                 formatter.map_node = Some(node);
             }
 

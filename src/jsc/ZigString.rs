@@ -167,9 +167,9 @@ mod _slice_struct {
 
     impl Drop for Slice {
         fn drop(&mut self) {
-            // SAFETY: ptr/len are kept in sync by all constructors.
-            self.allocator
-                .free(unsafe { slice::from_raw_parts(self.ptr, self.len as usize) });
+            // Reuse the safe accessor instead of re-deriving the slice from raw
+            // parts; `slice()` already encapsulates the ptr/len invariant.
+            self.allocator.free(self.slice());
         }
     }
 } // mod _slice_struct

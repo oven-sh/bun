@@ -37,22 +37,23 @@ bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 /// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
 /// `From<&JSGlobalObject>` impl makes construction safe at every call site.
 ///
-/// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via the
-/// raw pointer, matching `JSGlobalObject`'s own auto-traits (single JS thread).
+/// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
+/// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching
+/// `JSGlobalObject`'s own auto-traits (single JS thread).
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct GlobalRef(*const JSGlobalObject);
+pub struct GlobalRef(bun_ptr::BackRef<JSGlobalObject>);
 
 impl GlobalRef {
     #[inline(always)]
     pub fn new(global: &JSGlobalObject) -> Self {
-        Self(global)
+        Self(bun_ptr::BackRef::new(global))
     }
 
     /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
     #[inline(always)]
     pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0.cast_mut()
+        self.0.as_ptr()
     }
 }
 
@@ -60,10 +61,11 @@ impl core::ops::Deref for GlobalRef {
     type Target = JSGlobalObject;
     #[inline(always)]
     fn deref(&self) -> &JSGlobalObject {
-        // SAFETY: constructed only from a live `&JSGlobalObject`; the global is
-        // owned by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // Single `unsafe` for what was previously ~90 lifetime erasures to `'static`.
-        unsafe { &*self.0 }
+        // Constructed only from a live `&JSGlobalObject`; the global is owned
+        // by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
+        // `BackRef::get` encapsulates the single deref for what was previously
+        // ~90 lifetime erasures to `'static`.
+        self.0.get()
     }
 }
 

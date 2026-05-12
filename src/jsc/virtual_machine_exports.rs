@@ -150,7 +150,8 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
 }
 
 struct HandledPromiseContext {
-    global_this: *mut JSGlobalObject,
+    // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
+    global_this: crate::GlobalRef,
     // PORT NOTE: Zig stored a bare JSValue rooted via `.protect()`/`.unprotect()`.
     // PORTING.md forbids bare JSValue fields on heap-allocated structs; `Strong`
     // is the prescribed root type and its `Drop` releases the handle slot.
@@ -162,9 +163,7 @@ impl HandledPromiseContext {
         // SAFETY: `context` was produced by `heap::alloc` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
         let context = unsafe { bun_core::heap::take(context) };
-        // SAFETY: `global_this` was the live global at enqueue time; the VM is
-        // process-lifetime and the global outlives the event-loop tick.
-        let global = unsafe { &*context.global_this };
+        let global: &JSGlobalObject = &context.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global.bun_vm().as_mut().handled_promise(global, context.promise.get());
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
@@ -178,7 +177,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
     let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
-        global_this: global.as_ptr(),
+        global_this: global.into(),
         promise: Strong::create(promise_js, global),
     }));
     global.bun_vm().event_loop_mut().enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));

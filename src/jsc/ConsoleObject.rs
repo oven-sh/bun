@@ -853,9 +853,7 @@ impl<'a> TablePrinter<'a> {
                         .format::<ENABLE_ANSI_COLORS>(tag, writer, value, self.global_object);
                     if let Some(mut node) = value_formatter.map_node.take() {
                         self.value_formatter.map_node = None;
-                        // SAFETY: `node` came from `visited::Pool::get_node()`
-                        // (INIT = Some), so `data` is initialized.
-                        let data = unsafe { node.as_mut().data.assume_init_mut() };
+                        let data = formatter::visited::node_data_mut(&mut node);
                         if data.capacity() > 512 {
                             data.deinit();
                         } else {
@@ -1746,10 +1744,11 @@ pub mod formatter {
                 // ballooned, then return the node to the thread-local pool.
                 // Mirrors `Formatter.deinit` (ConsoleObject.zig:1016-1024).
                 let map = core::mem::take(&mut self.map);
-                // SAFETY: `node` came from `visited::Pool::get_node()` and is
-                // exclusively owned here; `data` is initialized (INIT = Some).
-                unsafe { node.as_mut().data = core::mem::MaybeUninit::new(map) };
-                let data = unsafe { node.as_mut().data.assume_init_mut() };
+                // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
+                // pooled slot already holds an (empty, post-`take`) `Map`;
+                // assigning over it drops that empty value and moves `map` in.
+                let data = visited::node_data_mut(&mut node);
+                *data = map;
                 if data.capacity() > 512 {
                     data.deinit();
                 } else {
@@ -1867,6 +1866,21 @@ pub mod formatter {
         // `threadsafe = true, max_count = 16`.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
+
+        /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
+        /// so every node returned by [`Pool::get_node`] carries an initialized
+        /// `data` payload, and the caller exclusively owns the node until
+        /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
+        /// `assume_init_mut()` pair so the four call sites in this file (and
+        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
+        /// don't each open-code two `unsafe` operations.
+        #[inline]
+        pub fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
+            // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
+            // every node from `Pool::get_node()`; the caller owns `node`
+            // exclusively until `Pool::release`, so forming `&mut` is sound.
+            unsafe { node.as_mut().data.assume_init_mut() }
+        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3274,13 +3288,11 @@ pub mod formatter {
             }
 
             if self.map_node.is_none() {
-                // `data` is initialized because `Map::INIT` is `Some`.
                 let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
                     .expect("ObjectPool::get_node always returns a valid heap node");
-                unsafe { node.as_mut().data.assume_init_mut().clear() };
-                self.map = core::mem::take(unsafe {
-                    node.as_mut().data.assume_init_mut()
-                });
+                let data = visited::node_data_mut(&mut node);
+                data.clear();
+                self.map = core::mem::take(data);
                 self.map_node = Some(node);
             }
 

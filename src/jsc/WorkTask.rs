@@ -38,7 +38,9 @@ pub trait WorkTaskContext: Sized {
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub task: WorkPoolTask,
-    pub event_loop: *const EventLoop,
+    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
+    /// `EventLoop`) outlives every task scheduled on it.
+    pub event_loop: BackRef<EventLoop>,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
@@ -62,7 +64,7 @@ impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
 impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         let vm = global_this.bun_vm().as_mut();
-        let event_loop = vm.event_loop();
+        let event_loop = BackRef::new(vm.event_loop_shared());
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,
@@ -129,10 +131,13 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
     pub fn on_finish(this: *mut Self) {
         // SAFETY: `this` is alive (called from `Context::run` on the thread pool).
-        let event_loop = unsafe { &*(*this).event_loop };
-        // SAFETY: `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address.
-        let task = std::ptr::from_mut(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) });
+        // `concurrent_task` is an intrusive field of `*this`; `from`
+        // re-initializes it in place and returns the same address. Passing
+        // `this` while holding `&mut *this` is sound because `from` only stores
+        // the pointer (does not dereference it).
+        let this_ref = unsafe { &mut *this };
+        let event_loop = this_ref.event_loop;
+        let task = std::ptr::from_mut(this_ref.concurrent_task.from(this, AutoDeinit::ManualDeinit));
         event_loop.enqueue_task_concurrent(task);
     }
 }

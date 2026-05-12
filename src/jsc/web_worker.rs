@@ -243,26 +243,27 @@ mod live_workers {
     pub(super) static MUTEX: Mutex = Mutex::new();
     // TODO(port): std.DoublyLinkedList — intrusive, nodes are `WebWorker.live_{next,prev}`
     // PORTING.md §Global mutable state: list head, every read/write is under
-    // `MUTEX` above. RacyCell so the slot itself is `Sync`; the mutex provides
-    // synchronization (Zig: plain `var head: ?*WebWorker`).
-    pub(super) static HEAD: bun_core::RacyCell<*mut WebWorker> =
-        bun_core::RacyCell::new(core::ptr::null_mut());
+    // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
+    // load/store (the mutex still provides the actual happens-before for the
+    // intrusive list walk; Zig: plain `var head: ?*WebWorker`).
+    pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
+        bun_core::AtomicCell::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
     /// `terminateAllAndWait` can futex-wait on it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn register(worker: *mut WebWorker) {
         MUTEX.lock();
+        let head = HEAD.load();
         // SAFETY: MUTEX held; `worker` is a valid heap allocation owned by C++.
         unsafe {
-            let head = HEAD.read();
             (*worker).live_prev.set(core::ptr::null_mut());
             (*worker).live_next.set(head);
             if !head.is_null() {
                 (*head).live_prev.set(worker);
             }
-            HEAD.write(worker);
         }
+        HEAD.store(worker);
         // fetch_add and wake MUST happen under MUTEX (matching the Zig
         // `defer mutex.unlock()` ordering) so that `terminate_all_and_wait`
         // can never observe the worker in the list while OUTSTANDING is still
@@ -290,7 +291,7 @@ mod live_workers {
             if !prev.is_null() {
                 (*prev).live_next.set(next);
             } else {
-                HEAD.write(next);
+                HEAD.store(next);
             }
             if !next.is_null() {
                 (*next).live_prev.set(prev);
@@ -340,8 +341,8 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
     let deadline_ns: u64 = timeout_ms * 1_000_000; // std.time.ns_per_ms
     loop {
         live_workers::MUTEX.lock();
-        // SAFETY: MUTEX held while walking the intrusive list.
-        let mut it = unsafe { live_workers::HEAD.read() };
+        // MUTEX held while walking the intrusive list; HEAD load is safe.
+        let mut it = live_workers::HEAD.load();
         while !it.is_null() {
             // SAFETY: worker valid while registered (removed only in shutdown()).
             let w = unsafe { &*it };

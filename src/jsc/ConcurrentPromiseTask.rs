@@ -8,6 +8,7 @@ use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsTerminated};
+use bun_ptr::BackRef;
 
 /// The `Context` type parameter for [`ConcurrentPromiseTask`] must implement this trait:
 /// - `run(&mut self)` — performs the work on the thread pool
@@ -34,7 +35,9 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context (matches Zig `Context.deinit()` → `bun.destroy`).
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
-    pub event_loop: *const EventLoop,
+    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
+    /// `EventLoop`) outlives every task scheduled on it.
+    pub event_loop: BackRef<EventLoop>,
     // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
@@ -59,9 +62,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     // Zig: `pub const new = bun.TrivialNew(@This());` — folded into `Box::new` below.
 
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
-        // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; the VM
-        // and its `EventLoop` outlive every task scheduled on it.
-        let event_loop = VirtualMachine::get().as_mut().event_loop();
+        // `VirtualMachine::get()` returns the JS-thread singleton; the VM and
+        // its `EventLoop` outlive every task scheduled on it.
+        let event_loop = BackRef::new(VirtualMachine::get().as_mut().event_loop_shared());
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,
@@ -106,15 +109,15 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     /// SAFETY: `this` is the live heap allocation from [`create_on_js_thread`],
     /// called from the thread-pool callback after `Context::run` completes.
     unsafe fn on_finish(this: *mut Self) {
-        // SAFETY: `event_loop` was captured from the JS-thread VM at create time
-        // and outlives this task.
-        let event_loop = unsafe { &*(*this).event_loop };
-        // SAFETY: `concurrent_task` is an intrusive field of `*this`; `from`
+        // SAFETY: `this` is the live heap allocation from `create_on_js_thread`.
+        // `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut concurrent_task` is sound because `from`
-        // only stores the pointer (does not dereference it).
+        // `this` while holding `&mut *this` is sound because `from` only stores
+        // the pointer (does not dereference it).
+        let this_ref = unsafe { &mut *this };
+        let event_loop = this_ref.event_loop;
         let task =
-            std::ptr::from_mut(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) });
+            std::ptr::from_mut(this_ref.concurrent_task.from(this, AutoDeinit::ManualDeinit));
         event_loop.enqueue_task_concurrent(task);
     }
 

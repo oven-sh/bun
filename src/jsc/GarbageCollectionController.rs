@@ -269,9 +269,10 @@ impl Drop for GarbageCollectionController {
 }
 
 pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
-    // SAFETY: timer ext data was set to *mut GarbageCollectionController in init()
-    let this: *mut GarbageCollectionController = unsafe { (*timer).as_() };
-    let this = unsafe { &mut *this };
+    // SAFETY: `timer` is the live uws timer whose ext data was set to
+    // `*mut GarbageCollectionController` in `init()`; the controller is a
+    // BACKREF that outlives the timer (deinit() closes the timer first).
+    let this = unsafe { &mut *(*timer).as_::<*mut GarbageCollectionController>() };
     if this.disabled {
         return;
     }
@@ -279,9 +280,10 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
 }
 
 pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
-    // SAFETY: timer ext data was set to *mut GarbageCollectionController in init()
-    let this: *mut GarbageCollectionController = unsafe { (*timer).as_() };
-    let this = unsafe { &mut *this };
+    // SAFETY: `timer` is the live uws timer whose ext data was set to
+    // `*mut GarbageCollectionController` in `init()`; the controller is a
+    // BACKREF that outlives the timer (deinit() closes the timer first).
+    let this = unsafe { &mut *(*timer).as_::<*mut GarbageCollectionController>() };
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.perform_gc();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;

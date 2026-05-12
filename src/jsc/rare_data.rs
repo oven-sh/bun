@@ -849,11 +849,11 @@ impl RareData {
         // accepted connection at process.exit() (the LSAN cluster on #29932
         // build 49245).
         let _ = self;
-        let loop_ = vm.uws_loop();
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // SAFETY: `uws_loop()` returns a live loop for the VM lifetime.
-            if !unsafe { (*loop_).close_all_groups() } {
+            // `uws_loop_mut()` is the centralised BACKREF accessor for the
+            // per-VM uSockets loop (live for the VM lifetime).
+            if !vm.uws_loop_mut().close_all_groups() {
                 break;
             }
             rounds += 1;
@@ -863,8 +863,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        // SAFETY: same as above.
-        unsafe { (*loop_).drain_closed_sockets() };
+        vm.uws_loop_mut().drain_closed_sockets();
     }
 }
 

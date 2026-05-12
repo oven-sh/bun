@@ -103,9 +103,12 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // `create_on_js_thread`; the WorkPool calls back with exactly that
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
-        let this = unsafe { Self::from_task_ptr(task) };
-        // SAFETY: `this` is alive for the duration of the thread-pool callback.
-        Context::run(unsafe { (*this).ctx }, this);
+        // `ctx` is read through the recovered backref in the same audited scope.
+        let (this, ctx) = unsafe {
+            let this = Self::from_task_ptr(task);
+            (this, (*this).ctx)
+        };
+        Context::run(ctx, this);
     }
 
     pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {

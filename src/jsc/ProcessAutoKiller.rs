@@ -33,15 +33,18 @@ impl ProcessAutoKiller {
     fn kill_processes(&mut self) -> u32 {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
-            // SAFETY: every key in `processes` was ref()'d on insert and is live
-            // until the matching deref() below.
-            let p: *mut Process = entry.key;
-            // SAFETY: key is live until the trailing `deref`.
-            if unsafe { !(*p).has_exited() } {
-                bun_core::scoped_log!(AutoKiller, "process.kill {}", unsafe { (*p).pid });
-                count += unsafe { (*p).kill(SignalCode::DEFAULT.0) }.is_ok() as u32;
+            {
+                // SAFETY: every key in `processes` was ref()'d on insert and is
+                // live until the matching deref() below; popped entry is
+                // exclusively owned for this scope so `&mut Process` is unaliased.
+                let p: &mut Process = unsafe { &mut *entry.key };
+                if !p.has_exited() {
+                    bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+                    count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
+                }
             }
-            unsafe { Process::deref(p) };
+            // SAFETY: key live until this releases the ref taken on insert.
+            unsafe { Process::deref(entry.key) };
         }
         count
     }

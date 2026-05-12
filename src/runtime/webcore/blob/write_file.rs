@@ -147,8 +147,10 @@ impl FileCloser for WriteFile {
         })
     }
 
-    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: task is &mut self.task (intrusive); recover parent.
+    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
+        // recover parent.
         let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
         this.close_after_io = false;
         WriteFile::update(this);
@@ -450,8 +452,10 @@ impl WriteFile {
         self.do_write_loop();
     }
 
-    unsafe fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: task points to WriteFile.task
+    fn do_write_loop_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
+        // recover parent.
         let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]

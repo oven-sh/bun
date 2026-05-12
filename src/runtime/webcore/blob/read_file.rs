@@ -250,8 +250,10 @@ impl FileCloser for ReadFile {
         })
     }
 
-    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: task is &mut self.task (intrusive); recover parent.
+    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
+        // recover parent.
         let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
         this.close_after_io = false;
         ReadFile::update(this);
@@ -712,8 +714,10 @@ impl ReadFile {
         self.do_read_loop();
     }
 
-    unsafe fn do_read_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: task points to ReadFile.task (intrusive field).
+    fn do_read_loop_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
+        // recover parent.
         let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
 
         this.update();
@@ -920,7 +924,7 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    unsafe fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
+    fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
 }

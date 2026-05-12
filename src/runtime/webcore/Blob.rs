@@ -6491,7 +6491,11 @@ pub trait FileCloser: Sized {
 
     /// Intrusive backref: concrete impl supplies its own
     /// container_of recovery (no default body).
-    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
+    ///
+    /// Stored in `WorkPoolTask::callback` (raw fn-pointer slot — safe `fn`
+    /// coerces). Never called directly; the impl guards its single
+    /// `container_of` deref locally, so a fn-level qualifier is redundant.
+    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
         // PORT NOTE: Zig nests `if (@hasField(This, "io_request")) { if (this.close_after_io) … }`.

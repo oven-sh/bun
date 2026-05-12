@@ -24,6 +24,7 @@ bun init my-app
  + .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
  + index.ts
  + tsconfig.json (for editor autocomplete)
+ + bunfig.toml
  + README.md
 ```
 
@@ -41,6 +42,7 @@ It creates:
 
 - a `package.json` file with a name that defaults to the current directory name
 - a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
+- a `bunfig.toml` file with [`minimumReleaseAge`](/pm/cli/install#minimum-release-age) enabled to protect against supply-chain attacks
 - an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
 

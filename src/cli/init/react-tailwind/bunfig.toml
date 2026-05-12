@@ -1,3 +1,8 @@
+[install]
+# Protect against supply-chain attacks by rejecting package
+# versions published in the last 86400 seconds (1 day).
+# https://bun.com/docs/pm/cli/install#minimum-release-age
+minimumReleaseAge = 86400
 
 [serve.static]
 plugins = ["bun-plugin-tailwind"]

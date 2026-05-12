@@ -38,6 +38,7 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
   }, 30_000);
 
   test("bun init with piped cli", async () => {
@@ -74,6 +75,7 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
   }, 30_000);
 
   test("bun init in folder", async () => {
@@ -99,6 +101,7 @@ import path from "path";
       ".gitignore",
       "README.md",
       "bun.lock",
+      "bunfig.toml",
       "index.ts",
       "node_modules",
       "package.json",
@@ -138,6 +141,7 @@ import path from "path";
       ".gitignore",
       "README.md",
       "bun.lock",
+      "bunfig.toml",
       "index.ts",
       "node_modules",
       "package.json",
@@ -161,6 +165,7 @@ import path from "path";
       ".gitignore",
       "README.md",
       "bun.lock",
+      "bunfig.toml",
       "index.ts",
       "node_modules",
       "package.json",
@@ -170,6 +175,7 @@ import path from "path";
     await Bun.write(path.join(temp, "mydir/index.ts"), "my edited index.ts");
     await Bun.write(path.join(temp, "mydir/README.md"), "my edited README.md");
     await Bun.write(path.join(temp, "mydir/.gitignore"), "my edited .gitignore");
+    await Bun.write(path.join(temp, "mydir/bunfig.toml"), "# my edited bunfig.toml");
     await Bun.write(
       path.join(temp, "mydir/package.json"),
       JSON.stringify({
@@ -196,6 +202,7 @@ import path from "path";
       ".gitignore",
       "README.md",
       "bun.lock",
+      "bunfig.toml",
       "index.ts",
       "node_modules",
       "package.json",
@@ -205,6 +212,7 @@ import path from "path";
     expect(await Bun.file(path.join(temp, "mydir/index.ts")).text()).toMatchInlineSnapshot(`"my edited index.ts"`);
     expect(await Bun.file(path.join(temp, "mydir/README.md")).text()).toMatchInlineSnapshot(`"my edited README.md"`);
     expect(await Bun.file(path.join(temp, "mydir/.gitignore")).text()).toMatchInlineSnapshot(`"my edited .gitignore"`);
+    expect(await Bun.file(path.join(temp, "mydir/bunfig.toml")).text()).toMatchInlineSnapshot(`"# my edited bunfig.toml"`);
     expect(await Bun.file(path.join(temp, "mydir/package.json")).json()).toMatchInlineSnapshot(`
     {
       "devDependencies": {
@@ -324,5 +332,61 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+    expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(false);
   });
+
+  test("bun init writes bunfig.toml with minimumReleaseAge", async () => {
+    const temp = tempDirWithFiles("bun-init-bunfig", {});
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    const bunfig = fs.readFileSync(path.join(temp, "bunfig.toml"), "utf8");
+    expect(bunfig).toContain("[install]");
+    expect(bunfig).toContain("minimumReleaseAge");
+  }, 30_000);
+
+  test("bun init does not overwrite existing bunfig.toml", async () => {
+    const temp = tempDirWithFiles("bun-init-bunfig-exists", {
+      "bunfig.toml": "# existing\n",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    const bunfig = fs.readFileSync(path.join(temp, "bunfig.toml"), "utf8");
+    expect(bunfig).toBe("# existing\n");
+  }, 30_000);
+
+  for (const flag of ["--react", "--react=tailwind", "--react=shadcn"]) {
+    test(`bun init ${flag} bunfig.toml has minimumReleaseAge`, async () => {
+      const temp = tempDirWithFiles(`bun-init-bunfig-${flag.replaceAll(/[^a-z]/g, "-")}`, {});
+
+      const { exited } = Bun.spawn({
+        cmd: [bunExe(), "init", flag],
+        cwd: temp,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: bunEnv,
+      });
+
+      expect(await exited).toBe(0);
+
+      const bunfig = fs.readFileSync(path.join(temp, "bunfig.toml"), "utf8");
+      expect(bunfig).toContain("[install]");
+      expect(bunfig).toContain("minimumReleaseAge");
+      expect(bunfig).toContain("[serve.static]");
+    }, 30_000);
+  }
 });

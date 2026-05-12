@@ -223,6 +223,7 @@ pub const InitCommand = struct {
         // "known" assets
         const @".gitignore" = @embedFile("init/gitignore.default");
         const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
+        const @"bunfig.toml" = @embedFile("init/bunfig.default.toml");
         const @"README.md" = @embedFile("init/README.default.md");
         const @"README2.md" = @embedFile("init/README2.default.md");
 
@@ -621,6 +622,7 @@ pub const InitCommand = struct {
             write_gitignore: bool,
             write_package_json: bool,
             write_tsconfig: bool,
+            write_bunfig: bool,
             write_readme: bool,
         };
 
@@ -628,10 +630,12 @@ pub const InitCommand = struct {
             .write_package_json = true,
             .write_tsconfig = true,
             .write_gitignore = !minimal,
+            .write_bunfig = !minimal,
             .write_readme = !minimal,
         };
 
         steps.write_gitignore = steps.write_gitignore and !existsZ(".gitignore");
+        steps.write_bunfig = steps.write_bunfig and !existsZ("bunfig.toml");
         steps.write_readme = steps.write_readme and !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
 
         steps.write_tsconfig = brk: {
@@ -820,6 +824,12 @@ pub const InitCommand = struct {
                             "jsconfig.json";
                         Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
                     }
+                }
+
+                if (steps.write_bunfig) {
+                    Assets.create("bunfig.toml", .{}) catch {
+                        // suppressed
+                    };
                 }
 
                 if (steps.write_readme) {

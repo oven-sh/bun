@@ -2992,8 +2992,10 @@ fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _
     unsafe { ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET)) };
 }
 
+// Body never dereferences the pointer; a safe `fn` item coerces to the
+// `WorkPoolTask::callback` field type at the assignment site.
 #[cold]
-unsafe fn shell_task_unset_callback(_: *mut WorkPoolTask) {
+fn shell_task_unset_callback(_: *mut WorkPoolTask) {
     debug_assert!(false, "ShellTask scheduled without schedule::<C>()");
 }
 

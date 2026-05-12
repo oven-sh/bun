@@ -346,11 +346,13 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
         Encoding::Base64 => {
             // input dropped at end of scope
             let to_len = bun_base64::encode_len(&input);
-            // TODO(port): Zig returned String.dead on OOM; Rust Vec aborts on OOM.
-            let mut to = vec![0u8; to_len];
-            let wrote = bun_base64::encode(&mut to, &input);
-            to.truncate(wrote);
-            create_external_globally_allocated_latin1(to)
+            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
+            if str.is_dead() {
+                return str;
+            }
+            let wrote = bun_base64::encode(chars, &input);
+            debug_assert_eq!(wrote, to_len);
+            str
         }
     }
 }
@@ -435,20 +437,24 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
 
         Encoding::Base64url => {
             let to_len = bun_base64::url_safe_encode_len(input);
-            // TODO(port): Zig returned String.dead on OOM; Rust Vec aborts on OOM.
-            let mut to = vec![0u8; to_len];
-            let wrote = bun_base64::encode_url_safe(&mut to, input);
-            to.truncate(wrote);
-            create_external_globally_allocated_latin1(to)
+            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
+            if str.is_dead() {
+                return str;
+            }
+            let wrote = bun_base64::encode_url_safe(chars, input);
+            debug_assert_eq!(wrote, to_len);
+            str
         }
 
         Encoding::Base64 => {
             let to_len = bun_base64::encode_len(input);
-            // TODO(port): Zig returned String.dead on OOM; Rust Vec aborts on OOM.
-            let mut to = vec![0u8; to_len];
-            let wrote = bun_base64::encode(&mut to, input);
-            to.truncate(wrote);
-            create_external_globally_allocated_latin1(to)
+            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
+            if str.is_dead() {
+                return str;
+            }
+            let wrote = bun_base64::encode(chars, input);
+            debug_assert_eq!(wrote, to_len);
+            str
         }
     }
 }

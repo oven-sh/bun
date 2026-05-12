@@ -188,13 +188,11 @@ macro_rules! w_lit {
         &__W as &'static [u16]
     }};
 }
-pub mod bun_str {
-    // Re-export under the path the shared source uses (`bun_core::w!`).
-    pub use crate::w_lit as w;
-}
 
 #[cfg(windows)]
 pub mod bun_core {
+    // Re-export under the path the shared source uses (`bun_core::w!`).
+    pub use crate::w_lit as w;
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
     /// interior-mutability cell with no synchronization. The shim is
     /// single-threaded (Zig built it `single_threaded = true`), so the

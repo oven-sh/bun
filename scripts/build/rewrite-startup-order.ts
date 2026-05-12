@@ -113,7 +113,21 @@ const r = spawnSync(nm, ["--defined-only", "-j", ...archives], {
   encoding: "utf8",
   maxBuffer: 256 * 1024 * 1024,
 });
-if (r.status !== 0) die(`${nm} failed: ${r.stderr || r.error?.message}`);
+// When cross-language LTO is on, the staticlib contains LLVM-bitcode members
+// alongside regular ELF object members. An older `llvm-nm` (e.g. clang 21)
+// can't read newer bitcode (e.g. rustc-LLVM 22 — "Unknown attribute kind"),
+// errors per-member, and exits 1 — but it STILL prints symbols for the
+// readable members on stdout. We only need symbol names for matching against
+// `startup.order`, and the bitcode-only members are precisely the codegen
+// units the *linker's* LTO will recompile (so their symbol layout is decided
+// at link time anyway). Tolerate the per-member errors as long as stdout has
+// content; CI's `link-only` mode has no rustup, so the `--nm=` it gets is the
+// system one (#53609, #53656, #53677).
+if (r.status !== 0 && r.stdout.length === 0) die(`${nm} failed: ${r.stderr || r.error?.message}`);
+if (r.status !== 0)
+  process.stderr.write(
+    `rewrite-startup-order: ${nm} exited ${r.status} (bitcode-major mismatch on LTO members — ignoring; got ${r.stdout.split("\n").length} symbols from readable members)\n`,
+  );
 const symtab = r.stdout;
 
 /** Every defined symbol name we've seen, verbatim. */

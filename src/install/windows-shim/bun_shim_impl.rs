@@ -84,14 +84,25 @@ mod nt {
 
     pub type Status = NTSTATUS;
 
-    /// undocumented
-    pub use w::ntdll::RtlExitUserProcess;
-
-    /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
-    pub use w::ntdll::NtClose;
-
     /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
     pub use w::ntdll::NtCreateFile;
+
+    // SAFETY: ntdll syscalls; signatures match WDK headers. Declared locally as
+    // `safe fn` (vs. re-exporting the `unsafe fn` from `w::ntdll`) because
+    // neither has memory-safety preconditions: all arguments are by-value,
+    // `HANDLE` is an opaque kernel token validated kernel-side (bad handle →
+    // `STATUS_INVALID_HANDLE`, not UB), and `RtlExitUserProcess` diverges
+    // (matches `ExitProcess`, already `safe fn` in `bun_windows_sys`). This
+    // freestanding `no_std` shim owns every handle it closes; no
+    // `OwnedHandle`-style I/O-safety invariant exists to violate.
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        /// undocumented
+        pub safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
+
+        /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
+        pub safe fn NtClose(Handle: HANDLE) -> Status;
+    }
 
     // TODO(port): move to <install>_sys (or bun_sys::windows::ntdll)
     // SAFETY: ntdll syscalls; signatures match WDK headers. Kept `unsafe fn`
@@ -139,16 +150,26 @@ mod k32 {
     pub use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
-    pub use w::kernel32::WaitForSingleObject;
     /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
     pub use w::kernel32::GetExitCodeProcess;
     /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
     pub use w::kernel32::GetConsoleMode;
-    /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
-    pub use w::kernel32::SetConsoleMode;
     /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
     pub use w::kernel32::SetHandleInformation;
+
+    // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
+    // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
+    // neither has memory-safety preconditions: `HANDLE` is opaque and
+    // validated kernel-side (bad handle → `WAIT_FAILED` / `FALSE` +
+    // `GetLastError`, not UB), `dwMilliseconds`/`dwMode` are by-value.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
+        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+
+        /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
+        pub safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+    }
 }
 
 macro_rules! debug {
@@ -365,8 +386,7 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     // SAFETY: console_handle is a valid handle (or invalid, in which case GetConsoleMode returns 0).
     if unsafe { k32::GetConsoleMode(console_handle, &mut mode) } != 0 {
         mode |= w::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-        // SAFETY: same handle as above.
-        let _ = unsafe { k32::SetConsoleMode(console_handle, mode) };
+        let _ = k32::SetConsoleMode(console_handle, mode);
     }
 
     let mut writer = NtWriter {
@@ -381,8 +401,7 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
         }
     }
 
-    // SAFETY: RtlExitUserProcess never returns.
-    unsafe { nt::RtlExitUserProcess(255) }
+    nt::RtlExitUserProcess(255)
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -737,7 +756,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             if left == 0 {
                 // Ownership contract: launcher consumes `metadata_handle` (see NtClose below).
                 // ReadWithoutLaunch returns to a live process, so close on error too.
-                let _ = unsafe { nt::NtClose(metadata_handle) };
+                let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
@@ -757,7 +776,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
             left -= 1;
             if left == 0 {
-                let _ = unsafe { nt::NtClose(metadata_handle) };
+                let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
@@ -823,13 +842,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             if DBG {
                 debug!("error reading: {}", rc.0);
             }
-            let _ = unsafe { nt::NtClose(metadata_handle) };
+            let _ = nt::NtClose(metadata_handle);
             return LauncherMode::fail(MODE, FailReason::CouldNotReadShim);
         }
     };
 
-    // SAFETY: handle was opened above (or passed in) and is closed exactly once here.
-    let _ = unsafe { nt::NtClose(metadata_handle) };
+    // Handle was opened above (or passed in) and is closed exactly once here.
+    let _ = nt::NtClose(metadata_handle);
 
     if DBG {
         let total = (((read_ptr as usize) - (buf1_u8 as usize)) + read_len) / 2;
@@ -1359,8 +1378,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 };
             }
 
-            // SAFETY: process.hProcess is a valid handle from CreateProcessW.
-            let _ = unsafe { k32::WaitForSingleObject(process.hProcess, w::INFINITE) };
+            let _ = k32::WaitForSingleObject(process.hProcess, w::INFINITE);
 
             let mut exit_code: DWORD = 255;
             // SAFETY: process.hProcess is valid; exit_code is a valid out-pointer.
@@ -1369,12 +1387,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 debug!("exit_code: {}", exit_code);
             }
 
-            // SAFETY: closing handles returned by CreateProcessW exactly once.
-            let _ = unsafe { nt::NtClose(process.hProcess) };
-            let _ = unsafe { nt::NtClose(process.hThread) };
+            // Closing handles returned by CreateProcessW exactly once.
+            let _ = nt::NtClose(process.hProcess);
+            let _ = nt::NtClose(process.hThread);
 
-            // SAFETY: RtlExitUserProcess never returns.
-            unsafe { nt::RtlExitUserProcess(exit_code) };
+            nt::RtlExitUserProcess(exit_code);
             // unreachable - RtlExitUserProcess does not return
         }
     }

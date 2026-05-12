@@ -135,7 +135,10 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
         // reinterpretation is sound regardless of the active variant.
         // `hooks::ResolutionValue` lives in `bun_install_types` and exposes no
         // tag-checked safe accessors, so the reverse direction cannot be
-        // expressed as a safe field copy from this crate.
+        // expressed as a safe field copy from this crate; `bytemuck::cast` is
+        // likewise blocked by orphan rules (foreign union × foreign trait) —
+        // collapsing this to a safe cast requires `Pod`/`Zeroable` impls on
+        // `ResolutionValue<I>` upstream in `bun_install_types`.
         value: unsafe {
             core::mem::transmute::<hooks::ResolutionValue<u64>, resolution::Value<u64>>(r.value)
         },

@@ -702,6 +702,7 @@ pub const LinkerContext = struct {
 
         const sources = c.parse_graph.input_files.items(.source);
         const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
+        const input_source_maps = c.parse_graph.input_files.items(.input_source_map);
 
         // Entries in `results` do not 1:1 map to source files, the mapping
         // is actually many to one, where a source file can have multiple chunks
@@ -710,53 +711,101 @@ pub const LinkerContext = struct {
         // This hashmap is going to map:
         //    `source_index` (per compilation) in a chunk
         //   -->
-        //    Which source index in the generated sourcemap, referred to
-        //    as the "mapping source index" within this function to be distinct.
+        //    Base source index in the generated sourcemap (inclusive). When
+        //    the input file did not carry an inline sourcemap, the chunk's
+        //    mappings all use that base. When the input file carried an
+        //    inline `//# sourceMappingURL=`, the chunk's mappings were
+        //    remapped through that inner map at print time and now span
+        //    `base .. base + inner.external_source_names.len - 1`.
         var source_id_map = std.AutoArrayHashMap(u32, i32).init(worker.allocator);
         defer source_id_map.deinit();
 
         const source_indices = results.items(.source_index);
+
+        // Helper — emit the outer source's quoted path, plus any inner
+        // source paths contributed by its `//# sourceMappingURL=` (one
+        // slot per inner source, in `external_source_names` order).
+        // `leading_comma` controls whether the first emitted path is
+        // prefixed with ", " (needed only when we've already emitted at
+        // least one path for this sources[] array).
+        //
+        // Layout matches the one the Builder assumes in `Chunk.zig`:
+        //   slot 0       → the intermediate input (this outer file)
+        //   slot 1..N    → inner `sources[i]` (chained)
+        const writeSourcesFor = struct {
+            fn call(
+                joiner: *StringJoiner,
+                alloc: std.mem.Allocator,
+                dir: []const u8,
+                outer_path: bun.fs.Path,
+                input_map: ?*bun.SourceMap.InputSourceMap,
+                leading_comma: bool,
+            ) !void {
+                // 1) the intermediate input.
+                var path = outer_path;
+                if (path.isFile()) {
+                    const rel_path = try bun.path.relativeAlloc(alloc, dir, path.text);
+                    path.pretty = rel_path;
+                }
+                {
+                    var quote_buf = try MutableString.init(alloc, path.pretty.len + ", ".len + 2);
+                    if (leading_comma) quote_buf.appendAssumeCapacity(", ");
+                    try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                    joiner.pushStatic(quote_buf.slice());
+                }
+
+                // 2) inner sources, if any.
+                if (input_map) |ism| {
+                    const base_dir = bun.path.dirname(outer_path.text, .auto);
+                    for (ism.map.external_source_names) |name| {
+                        // Resolve inner `sources[i]` relative to the dir
+                        // of the intermediate file it came from, then
+                        // make it relative to `dir` (the chunk's output
+                        // dir) for the emitted JSON. Absolute inner paths
+                        // stay absolute before relativization.
+                        const abs_path = if (bun.path.Platform.auto.isAbsolute(name))
+                            name
+                        else
+                            bun.path.joinAbsString(base_dir, &[_][]const u8{name}, .auto);
+                        const rel_path = try bun.path.relativeAlloc(alloc, dir, abs_path);
+
+                        var quote_buf = try MutableString.init(alloc, rel_path.len + ", ".len + 2);
+                        quote_buf.appendAssumeCapacity(", ");
+                        try js_printer.quoteForJSON(rel_path, &quote_buf, false);
+                        joiner.pushStatic(quote_buf.slice());
+                    }
+                }
+            }
+        }.call;
 
         j.pushStatic(
             \\{
             \\  "version": 3,
             \\  "sources": [
         );
+        var next_mapping_source_index: i32 = 0;
         if (source_indices.len > 0) {
-            {
-                const index = source_indices[0];
-                var path = sources[index].path;
-                try source_id_map.putNoClobber(index, 0);
-
-                if (path.isFile()) {
-                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
-                    path.pretty = rel_path;
-                }
-
-                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
-                j.pushStatic(quote_buf.slice()); // freed by arena
-            }
-
-            var next_mapping_source_index: i32 = 1;
-            for (source_indices[1..]) |index| {
+            for (source_indices, 0..) |index, chunk_i| {
                 const gop = try source_id_map.getOrPut(index);
                 if (gop.found_existing) continue;
 
                 gop.value_ptr.* = next_mapping_source_index;
-                next_mapping_source_index += 1;
+                // `1` for the intermediate input, plus one slot per inner
+                // source listed in its `sourceMappingURL`.
+                const expansion: i32 = 1 + if (input_source_maps[index]) |ism|
+                    @as(i32, @intCast(ism.map.external_source_names.len))
+                else
+                    0;
+                next_mapping_source_index += expansion;
 
-                var path = sources[index].path;
-
-                if (path.isFile()) {
-                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
-                    path.pretty = rel_path;
-                }
-
-                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
-                quote_buf.appendAssumeCapacity(", ");
-                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
-                j.pushStatic(quote_buf.slice()); // freed by arena
+                try writeSourcesFor(
+                    &j,
+                    worker.allocator,
+                    chunk_abs_dir,
+                    sources[index].path,
+                    input_source_maps[index],
+                    chunk_i > 0,
+                );
             }
         }
 
@@ -767,14 +816,30 @@ pub const LinkerContext = struct {
 
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
-            j.pushStatic("\n    ");
-            j.pushStatic(
-                quoted_source_map_contents[source_indices_for_contents[0]].get() orelse "",
-            );
-
-            for (source_indices_for_contents[1..]) |index| {
-                j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index].get() orelse "");
+            var emitted_contents: usize = 0;
+            for (source_indices_for_contents) |index| {
+                // Slot 0: the intermediate input file's contents (already
+                // JSON-quoted by `computeQuotedSourceContents`).
+                {
+                    const sep: []const u8 = if (emitted_contents == 0) "\n    " else ",\n    ";
+                    j.pushStatic(sep);
+                    j.pushStatic(quoted_source_map_contents[index].get() orelse "null");
+                    emitted_contents += 1;
+                }
+                // Slots 1..N: inner sources' contents, if any.
+                if (input_source_maps[index]) |ism| {
+                    for (ism.sources_content) |content| {
+                        j.pushStatic(",\n    ");
+                        if (content.len > 0) {
+                            var quote_buf = MutableString.initEmpty(worker.allocator);
+                            try js_printer.quoteForJSON(content, &quote_buf, false);
+                            j.pushStatic(quote_buf.slice());
+                        } else {
+                            j.pushStatic("null");
+                        }
+                        emitted_contents += 1;
+                    }
+                }
             }
         }
         j.pushStatic(
@@ -805,7 +870,12 @@ pub const LinkerContext = struct {
             try SourceMap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
-            prev_end_state.source_index = mapping_source_index;
+            // If the input carried an inline map, `chunk.end_state.source_index`
+            // is the inner source_index of the last mapping within the chunk
+            // (the Builder emits remapped absolute-within-chunk indices).
+            // Otherwise it's 0. Either way, the final absolute index is
+            // `mapping_source_index + chunk.end_state.source_index`.
+            prev_end_state.source_index = mapping_source_index + chunk.end_state.source_index;
             prev_column_offset = chunk.final_generated_column;
 
             if (prev_end_state.generated_line == 0) {
@@ -1360,6 +1430,7 @@ pub const LinkerContext = struct {
                 c,
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
+            .input_source_map = c.parse_graph.input_files.items(.input_source_map)[source_index.get()],
             .target = c.options.target,
 
             .hmr_ref = if (c.options.output_format == .internal_bake_dev)

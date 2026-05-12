@@ -78,6 +78,16 @@ pub const InputFile = struct {
     content_hash_for_additional_file: u64 = 0,
     flags: Flags = .{},
 
+    /// Populated when the input file carried a trailing
+    /// `//# sourceMappingURL=data:application/json;...` comment that we
+    /// were able to parse. Lets the linker chain the map through — sources
+    /// and mappings reference the authored origin (`.vue`, `.svelte`, `.ts`
+    /// that an upstream step compiled away) instead of the intermediate
+    /// `.js` the bundler ingested.
+    ///
+    /// Owned — freed on bundler teardown.
+    input_source_map: ?*bun.SourceMap.InputSourceMap = null,
+
     pub const Flags = packed struct(u8) {
         is_plugin_file: bool = false,
         /// Set when a barrel-eligible file has `export * from` this file.

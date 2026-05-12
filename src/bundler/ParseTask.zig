@@ -88,6 +88,14 @@ pub const Result = struct {
 
         /// The package name from package.json, used for barrel optimization.
         package_name: string = "",
+
+        /// Parsed trailing `//# sourceMappingURL=data:...` — lets the linker
+        /// chain the output sourcemap through an upstream compile step's
+        /// inline map so `sources[]` / `sourcesContent[]` and mappings
+        /// reference the authored source instead of the intermediate `.js`.
+        /// Ownership moves to `Graph.InputFile.input_source_map` on
+        /// consumption.
+        input_source_map: ?*bun.SourceMap.InputSourceMap = null,
     };
 
     pub const Error = struct {
@@ -1301,6 +1309,21 @@ fn runWithSourceCode(
 
     step.* = .resolve;
 
+    // Parse any inline `//# sourceMappingURL=data:...` the input carries.
+    // When present, the linker will chain its output map through it so
+    // `sources[]` / `sourcesContent[]` point at the authored source (e.g.
+    // the `.vue` / `.svelte` / `.ts` file that an upstream compile step
+    // turned into this intermediate `.js`) rather than at the intermediate.
+    // Gated on `source_map != .none` to avoid spending cycles on builds
+    // that won't emit a map anyway, and on `canHaveSourceMap` so we skip
+    // binary / asset loaders whose "contents" are not source code.
+    const input_source_map: ?*bun.SourceMap.InputSourceMap = if (transpiler.options.source_map != .none and
+        loader.canHaveSourceMap() and
+        source.contents.len > 0)
+        bun.SourceMap.InputSourceMap.parseFromSource(source.contents)
+    else
+        null;
+
     return .{
         .ast = ast,
         .source = source.*,
@@ -1316,6 +1339,8 @@ fn runWithSourceCode(
             unique_key_for_additional_file.content_hash
         else
             0,
+
+        .input_source_map = input_source_map,
     };
 }
 

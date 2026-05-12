@@ -3001,7 +3001,6 @@ pub mod __phase_a_body {
 use super::{is_package_path, is_package_path_not_absolute};
 
 use core::ptr::NonNull;
-use std::cell::RefCell;
 use std::io::Write as _;
 
 // ── Cross-crate type surface ──────────────────────────────────────────────
@@ -3736,31 +3735,40 @@ pub struct Bufs {
     pub win32_normalized_dir_info_cache: (),
 }
 // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_STORAGE: RefCell<Box<Bufs>> }`
-// and the `bufs!()` macro hands out `&mut` to a single field. This relies on the
-// caller never holding two `bufs!()` borrows simultaneously across the same field;
-// the Zig code already obeys that invariant.
+// In Rust we model it as a `thread_local! { static BUFS_PTR: Cell<*mut Bufs> }`
+// caching a leaked `Box<Bufs>` pointer (the Box is never freed in Zig either —
+// process-lifetime scratch storage). The `bufs!()` macro hands out `&mut` to a
+// single field. This relies on the caller never holding two `bufs!()` borrows
+// simultaneously across the same field; the Zig code already obeys that invariant.
 thread_local! {
-    static BUFS_STORAGE: RefCell<Option<Box<Bufs>>> = const { RefCell::new(None) };
+    static BUFS_PTR: core::cell::Cell<*mut Bufs> = const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
-#[inline]
+#[inline(always)]
 fn bufs_storage_get() -> *mut Bufs {
-    BUFS_STORAGE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        if borrow.is_none() {
-            // SAFETY: every field of `Bufs` is a byte/integer array
-            // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-            // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-            // no validity requirement, `()`), so EVERY bit-pattern — not just
-            // all-zero — is a valid `Bufs`. Zig left these `= undefined`; each
-            // field is scratch (write-then-read within a single resolve call,
-            // including `open_dirs` which is bounded by `open_dir_count`), so
-            // there is no need to pay for zero-filling ~100 KiB on first use.
-            *borrow = Some(unsafe { Box::<Bufs>::new_uninit().assume_init() });
-        }
-        &raw mut **borrow.as_mut().unwrap()
-    })
+    // Fast path: single TLS pointer load + null check. `LocalKey<Cell<T>>::get`
+    // (T: Copy) compiles to a plain `__tls_get_addr` + load with no
+    // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
+    let p = BUFS_PTR.get();
+    if !p.is_null() {
+        return p;
+    }
+    bufs_storage_init()
+}
+
+#[cold]
+fn bufs_storage_init() -> *mut Bufs {
+    // SAFETY: every field of `Bufs` is a byte/integer array
+    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
+    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
+    // no validity requirement, `()`), so EVERY bit-pattern — not just
+    // all-zero — is a valid `Bufs`. Zig left these `= undefined`; each
+    // field is scratch (write-then-read within a single resolve call,
+    // including `open_dirs` which is bounded by `open_dir_count`), so
+    // there is no need to pay for zero-filling ~100 KiB on first use.
+    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+    BUFS_PTR.set(p);
+    p
 }
 
 /// `bufs(.field)` → `bufs!(field)` returns `&mut <field type>`.

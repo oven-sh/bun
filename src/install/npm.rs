@@ -1192,11 +1192,20 @@ pub mod package_manifest {
                     Box::new(init)
                 }
 
-                pub unsafe fn run(task: *mut PoolTask) {
+                // Safe-fn: only ever invoked by `ThreadPool` via the `callback`
+                // fn-pointer with the `*mut PoolTask` we registered below
+                // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
+                // contract — not the Rust caller — guarantees `task` is live
+                // and points at `SaveTask.task`, so the precondition is
+                // discharged locally (matches `HardLinkWindowsInstallTask::
+                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
+                // coerces to the `unsafe fn(*mut Task)` field type.
+                pub fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
-                    // SAFETY: task points to SaveTask.task; allocated via heap::alloc in save_async.
+                    // SAFETY: thread-pool callback contract — `task` points to
+                    // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
                     let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
 
                     if let Err(err) = Serializer::save(

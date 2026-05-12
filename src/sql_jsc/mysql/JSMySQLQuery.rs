@@ -593,11 +593,11 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn vm_mut(&self) -> &mut VirtualMachine {
-        // SAFETY: vm outlives every JSMySQLQuery (owned by the runtime). The
-        // VM is interior-mutable on the C++/Zig side; the stored `BackRef`
-        // carries write provenance from `bun_vm_ptr()` so projecting `&mut`
-        // here mirrors the Zig spec's `*jsc.VirtualMachine`.
-        unsafe { &mut *self.vm.as_ptr() }
+        // The stored `BackRef` is the JS-thread singleton (see field docs).
+        // Route through the canonical safe `VirtualMachine::as_mut()` accessor
+        // (one audited unsafe in bun_jsc) instead of re-deriving `&mut` here;
+        // its `debug_assert!` verifies `self.vm` IS the thread-local VM.
+        self.vm.get().as_mut()
     }
     /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
     /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap

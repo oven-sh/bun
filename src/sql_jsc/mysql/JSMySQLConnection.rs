@@ -57,13 +57,13 @@ pub struct JSMySQLConnection {
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton. `BackRef` so the
-    // hot `vm()` deref is safe; constructed via `new_mut` (write provenance
-    // from `bun_vm().as_mut()`) so `vm_mut()`'s `&mut *as_ptr()` is sound.
+    // hot `vm()` deref is safe; `vm_mut()` routes through the canonical
+    // `VirtualMachine::as_mut()` accessor.
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
-    // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
-    // `JsCell::as_ptr()` from a `*mut JSMySQLConnection`; the inner protocol
+    // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
+    // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
     // struct's `get_js_connection()` recovers the embedding via
     // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
@@ -133,11 +133,12 @@ impl JSMySQLConnection {
     /// we never hold two `&mut` to it at once in this module.
     fn vm_mut(&self) -> &'static mut VirtualMachine {
         // Explicit `'static` so the return does not reborrow `*self` — callers
-        // pair this with `&mut self.timer` in the same expression.
-        // SAFETY: vm is a process-lifetime singleton (per docs/PORTING.md);
-        // `BackRef` was built via `new_mut` so `as_ptr()` carries write
-        // provenance.
-        unsafe { &mut *self.vm.as_ptr() }
+        // pair this with `&mut self.timer` in the same expression. The stored
+        // `BackRef` is the JS-thread singleton (see field docs); route through
+        // the canonical safe `VirtualMachine::as_mut()` accessor (one audited
+        // unsafe in bun_jsc) instead of re-deriving `&mut` here.
+        debug_assert!(core::ptr::eq(self.vm.as_ptr(), VirtualMachine::get_mut_ptr()));
+        VirtualMachine::get().as_mut()
     }
 
     /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe

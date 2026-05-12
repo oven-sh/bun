@@ -1,4 +1,5 @@
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_jsc::JsCell;
 use bun_ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use core::cell::Cell;
@@ -22,12 +23,14 @@ macro_rules! debug {
 type Queue = LinearFifo<*mut JSMySQLQuery, DynamicBuffer<*mut JSMySQLQuery>>;
 
 pub struct MySQLRequestQueue {
-    requests: Queue,
-
-    // Scalar state is `Cell`-wrapped so `advance()` can mutate via the
+    // All fields are interior-mutable so `advance()` can mutate via the
     // `ParentRef<Self>` backref (yields `&Self`) without per-site `unsafe`
     // raw-pointer writes. The queue is single-JS-thread (embedded inside the
-    // connection's `JsCell`), so `Cell`'s `!Sync` is fine.
+    // connection's `JsCell`), so `Cell`/`JsCell`'s `!Sync` story is fine.
+    // `requests` uses `JsCell` (closure-scoped `with_mut`) since `LinearFifo`
+    // mutators need `&mut Queue`.
+    requests: JsCell<Queue>,
+
     pipelined_requests: Cell<u32>,
     nonpipelinable_requests: Cell<u32>,
     // TODO: refactor to ENUM
@@ -99,64 +102,42 @@ impl MySQLRequestQueue {
     }
 
     /// PORT NOTE: takes only `connection` (the embedding `JSMySQLConnection`)
-    /// as a **raw pointer** and derives the queue pointer locally via
-    /// `addr_of_mut!((*connection).connection.queue)`. The queue is a field of
-    /// `*connection`, so any `&mut *connection` materialized for
-    /// `run()`/`on_error()` below covers the queue bytes. Deriving `this` from
-    /// the *same* raw root keeps both projections on one SharedRW provenance
-    /// tag: each `&mut *connection` becomes a child reborrow that is popped
-    /// (not invalidating `this`) when `(*this)` is next used — mirroring Zig's
-    /// freely-aliasing `*T` semantics. Passing `this` and `connection` as
-    /// sibling raw args from the caller would split provenance and is UB under
-    /// Stacked Borrows (the second `&mut self.…` at the call site pops the
-    /// first raw's tag).
+    /// as a **raw pointer** and derives the queue backref locally. The queue is
+    /// a field of `*connection` — but every `MySQLRequestQueue` field is
+    /// interior-mutable (`Cell` / `JsCell`), so a `ParentRef<Self>` (yields
+    /// `&Self` only) suffices for *all* access below; no `&mut Self` / raw
+    /// `(*this)` writes are needed. `run()` / `is_able_to_write()` re-read
+    /// queue scalars via `connection.can_execute_query()` etc., which is sound
+    /// for the same reason (shared-only reborrows of `Cell`-wrapped state).
     ///
     /// # Safety
-    /// - `connection` must be live for the duration of the call and carry
-    ///   provenance for the entire `JSMySQLConnection` allocation.
-    /// - `run()` / `is_able_to_write()` *do* read queue scalars
-    ///   (`is_ready_for_query`, `pipelined_requests`, …) via
-    ///   `connection.can_execute_query()` etc. — sound because the scalars are
-    ///   `Cell`-wrapped (interior mutability; no `&mut` needed).
+    /// `connection` must be non-null, live for the duration of the call, and
+    /// carry provenance for the entire `JSMySQLConnection` allocation.
     pub unsafe fn advance(connection: *mut MySQLConnection) {
-        // SAFETY: caller contract — `connection` has full-allocation
-        // provenance. R-2: the inner protocol struct is wrapped in
-        // `JsCell` (`UnsafeCell`); `as_ptr()` yields a `*mut` with write
-        // provenance for the inner bytes, and `addr_of_mut!` projects the
-        // embedded queue without an intermediate `&mut`.
-        let this: *mut Self =
-            unsafe { core::ptr::addr_of_mut!((*(*connection).connection.as_ptr()).queue) };
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
         // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
-        // The momentary `&JSMySQLConnection` from each `Deref` never overlaps a
-        // `(*this)` write under Stacked Borrows: `*this` lives inside the
-        // `JsCell` (`UnsafeCell`) field, whose interior carries SharedRW
-        // independent of the outer shared borrow.
         let conn_ref =
             ParentRef::from(NonNull::new(connection).expect("advance: connection non-null"));
-        // R-2: queue scalar reads/writes and `can_pipeline` go through a
-        // `ParentRef<Self>` (yields `&Self`); the scalars are `Cell`-wrapped so
-        // mutation needs no `&mut`. Only `requests.discard()` below still goes
-        // through the raw `this` (it needs `&mut Queue`).
-        let queue_ref: ParentRef<Self> =
-            ParentRef::from(NonNull::new(this).expect("queue field of non-null connection"));
+        // The inner protocol struct is wrapped in `JsCell` (`UnsafeCell`); its
+        // `.queue` field is reached via shared borrow and re-wrapped as a
+        // `ParentRef<Self>` so the borrow is detached from `conn_ref`'s
+        // momentary `Deref` lifetime. All queue mutation below goes through
+        // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
+        let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
-            // The two remaining `(*this).requests.discard(1)` derefs below form
-            // a fresh short-lived `&mut Queue` — neither overlaps a `queue_ref`
-            // shared borrow (each `Deref` is dropped before the raw write).
-            while queue_ref.requests.readable_length() > offset
+            while queue_ref.requests.get().readable_length() > offset
                 && conn_ref.is_able_to_write()
             {
-                let request: *mut JSMySQLQuery = queue_ref.requests.peek_item(offset);
+                let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(offset);
                 // Queue holds a ref on every request; pointer is non-null and
                 // live. `JSMySQLQuery` is a separate heap allocation — never
-                // aliases `*this` or `*connection`. R-2: `ParentRef` yields
+                // aliases the queue or `*connection`. R-2: `ParentRef` yields
                 // `&T` only — every method body is `&self` (interior mutability).
                 let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
 
@@ -167,7 +148,7 @@ impl MySQLRequestQueue {
                         continue;
                     }
                     debug!("isCompleted");
-                    unsafe { (*this).requests.discard(1) };
+                    queue_ref.requests.with_mut(|q| q.discard(1));
                     // SAFETY: queue held one ref; pointer is live until this deref.
                     unsafe { JSMySQLQuery::deref(request) };
                     continue;
@@ -192,20 +173,16 @@ impl MySQLRequestQueue {
                     continue;
                 }
 
-                // No `&mut *this` is live here (only the raw `this` and `req`,
-                // a disjoint heap alloc). `run()` *does* read queue scalars
+                // `run()` *does* read queue scalars
                 // (`can_execute_query`/`can_pipeline`/`can_prepare_query`),
-                // but only through `conn_ref`'s shared reborrow; because
-                // `this` was projected from the same `connection` raw via
-                // `addr_of_mut!`, the reborrow is a child tag that is popped
-                // when the `&` ends — the next `(*this)` access below remains
-                // valid.
+                // but only through `conn_ref`'s shared reborrow into the same
+                // `Cell`-wrapped fields — overlapping shared reads are sound.
                 if let Err(err) = req.run(conn_ref.get()) {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
                     if offset == 0 {
-                        unsafe { (*this).requests.discard(1) };
+                        queue_ref.requests.with_mut(|q| q.discard(1));
                         // SAFETY: queue held one ref; pointer is live until this deref.
                         unsafe { JSMySQLQuery::deref(request) };
                     }
@@ -215,16 +192,14 @@ impl MySQLRequestQueue {
                 if req.is_being_prepared() {
                     debug!("isBeingPrepared");
                     // R-2: `reset_connection_timeout` takes `&self`; touches
-                    // timer state outside the queue, and no `(*this)` access
-                    // overlaps the shared borrow's lifetime.
+                    // timer state outside the queue.
                     conn_ref.reset_connection_timeout();
                     queue_ref.is_ready_for_query.set(false);
                     queue_ref.waiting_to_prepare.set(true);
                     break 'advance;
                 } else if req.is_running() {
                     // R-2: `reset_connection_timeout` takes `&self`; touches
-                    // timer state outside the queue, and no `(*this)` access
-                    // overlaps the shared borrow's lifetime.
+                    // timer state outside the queue.
                     conn_ref.reset_connection_timeout();
                     debug!("isRunning after run");
                     queue_ref.is_ready_for_query.set(false);
@@ -234,9 +209,7 @@ impl MySQLRequestQueue {
                             .pipelined_requests
                             .set(queue_ref.pipelined_requests.get() + 1);
                         // `can_pipeline` takes `&self` + `&MySQLConnection`;
-                        // both shared reborrows are children of the same raw
-                        // tag (`this` was projected from `connection`), so
-                        // overlapping shared reads are sound.
+                        // both are shared reborrows — overlapping reads are sound.
                         if queue_ref.can_pipeline(conn_ref.get()) {
                             debug!("pipelined requests");
                             offset += 1;
@@ -254,24 +227,18 @@ impl MySQLRequestQueue {
         }
 
         // Zig: defer { while ... } — runs at function exit.
-        // SAFETY: caller contract; `'advance` block is finished, so no `conn_ref`
-        // / `req.run()` path re-derives `&MySQLConnection` (and thus the queue
-        // bytes) for the remainder of the function — a single `&mut Self` is
-        // exclusive here. `req` below points at a separate heap allocation that
-        // never aliases `*this`.
-        let queue = unsafe { &mut *this };
-        while queue.requests.readable_length() > 0 {
-            let request: *mut JSMySQLQuery = queue.requests.peek_item(0);
+        while queue_ref.requests.get().readable_length() > 0 {
+            let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(0);
             // Queue holds a ref on every request (taken in `add()`), so the
             // pointer is non-null and live. Separate heap allocation — never
-            // aliases `*this`. R-2: `ParentRef` yields `&T` only; every method
+            // aliases the queue. R-2: `ParentRef` yields `&T` only; every method
             // body reached below is `&self` (interior mutability).
             let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
             // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             if req.is_completed() {
                 debug!("isCompleted discard after advance");
-                queue.requests.discard(1);
+                queue_ref.requests.with_mut(|q| q.discard(1));
                 // SAFETY: queue held one ref; pointer is live until this deref.
                 unsafe { JSMySQLQuery::deref(request) };
                 continue;
@@ -282,7 +249,7 @@ impl MySQLRequestQueue {
 
     pub fn init() -> Self {
         Self {
-            requests: Queue::init(),
+            requests: JsCell::new(Queue::init()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             waiting_to_prepare: Cell::new(false),
@@ -291,7 +258,7 @@ impl MySQLRequestQueue {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.requests.readable_length() == 0
+        self.requests.get().readable_length() == 0
     }
 
     pub fn add(&mut self, request: *mut JSMySQLQuery) {
@@ -313,16 +280,17 @@ impl MySQLRequestQueue {
             }
         }
         req.ref_();
-        self.requests.write_item(request).expect("OOM");
+        self.requests.with_mut(|q| q.write_item(request)).expect("OOM");
     }
 
     #[inline]
     pub fn current(&self) -> Option<*mut JSMySQLQuery> {
-        if self.requests.readable_length() == 0 {
+        let q = self.requests.get();
+        if q.readable_length() == 0 {
             return None;
         }
 
-        Some(self.requests.peek_item(0))
+        Some(q.peek_item(0))
     }
 
     /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here
@@ -346,7 +314,7 @@ impl MySQLRequestQueue {
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue
         // into a local first so the re-entrant call sees an empty queue instead of
         // deref()'ing + discard()'ing the same requests out from under us.
-        let mut requests = core::mem::replace(&mut self.requests, Queue::init());
+        let mut requests = self.requests.replace(Queue::init());
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);
         self.waiting_to_prepare.set(false);
@@ -377,7 +345,7 @@ impl Drop for MySQLRequestQueue {
         // PORT NOTE: reshaped for borrowck — Zig iterates readableSlice(0) while
         // discard(1)'ing, which in Rust would overlap & / &mut borrows on
         // self.requests. read_item() peeks+discards in one &mut call.
-        while let Some(request) = self.requests.read_item() {
+        while let Some(request) = self.requests.with_mut(|q| q.read_item()) {
             // Queue held a ref on every request; pointer is non-null and live
             // until `deref()`. R-2: `ParentRef` yields `&T` only.
             let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));

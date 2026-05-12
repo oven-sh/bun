@@ -171,29 +171,12 @@ pub struct TypedArray {
     pub type_: JSType, // `type` is a Rust keyword
 }
 
-impl TypedArray {
-    pub fn slice(&mut self) -> &mut [u8] {
-        if self.ptr.is_null() {
-            return &mut [];
-        }
-        // SAFETY: ptr is non-null and valid for `len` bytes.
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
-    }
-
-    pub fn byte_slice(&mut self) -> &mut [u8] {
-        if self.head_ptr.is_null() {
-            return &mut [];
-        }
-        // SAFETY: head_ptr is non-null and valid for `byte_len` bytes when
-        // `free_value != 0` (the only path that reaches this via `deinit`).
-        // Zig's spec uses `self.len`, but `len` is the *element* count
-        // (consumed by SQLClient.cpp as the typed-array length); for any
-        // element wider than u8 that under-reports the allocation size.
-        // Mimalloc's `free` ignores size so Zig got away with it; Rust's
-        // `Box::<[u8]>::from_raw` layout must match the allocation.
-        unsafe { slice::from_raw_parts_mut(self.head_ptr, self.byte_len as usize) }
-    }
-}
+// PORT NOTE: Zig's `slice()`/`byteSlice()` accessors are intentionally not
+// ported as `&mut [u8]` getters. `len` is the typed-array *element* count
+// (consumed by SQLClient.cpp), not a byte length, so a `&mut [u8; len]` view
+// would be wrong for elements wider than u8; and the only Rust caller of
+// `byteSlice()` was `deinit`, which now builds the fat pointer with the safe
+// `ptr::slice_from_raw_parts_mut` directly (no intermediate `&mut` reference).
 
 impl SQLDataCell {
     // PORT NOTE: kept as an explicit method, not `impl Drop` — this type is
@@ -249,16 +232,27 @@ impl SQLDataCell {
             }
             Tag::TypedArray => {
                 // SAFETY: tag == TypedArray ⇒ `typed_array` is active.
-                let ta = unsafe { &mut self.value.typed_array };
-                let bs = ta.byte_slice();
-                if !bs.is_empty() {
+                let ta = unsafe { self.value.typed_array };
+                if !ta.head_ptr.is_null() && ta.byte_len != 0 {
+                    // Build the fat pointer with the safe
+                    // `ptr::slice_from_raw_parts_mut` (no `&mut` reference
+                    // materialized); only `Box::from_raw` is unsafe.
+                    // Zig's spec uses `self.len`, but `len` is the *element*
+                    // count (consumed by SQLClient.cpp as the typed-array
+                    // length); for any element wider than u8 that under-reports
+                    // the allocation size. Mimalloc's `free` ignores size so
+                    // Zig got away with it; Rust's `Box::<[u8]>::from_raw`
+                    // layout must match the allocation, hence `byte_len`.
                     // SAFETY: head_ptr was allocated via the global allocator
                     // when free_value != 0.
                     // TODO(port): LIFETIMES.tsv marks this BORROW (free_value=0
                     // at all call sites) — this branch may be dead; preserved
                     // to match Zig.
                     unsafe {
-                        drop(Box::<[u8]>::from_raw(std::ptr::from_mut::<[u8]>(bs)))
+                        drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
+                            ta.head_ptr,
+                            ta.byte_len as usize,
+                        )))
                     };
                 }
             }

@@ -33,7 +33,10 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
     safe fn WebCore__AbortSignal__abortReason(arg0: &AbortSignal) -> JSValue;
-    fn WebCore__AbortSignal__addListener(
+    // safe: `arg1` is an opaque round-trip pointer C++ stores into the listener
+    // entry and forwards to `arg_fn2` on abort (never dereferenced as Rust
+    // data) — same contract as `cleanNativeBindings` / `queueMicrotaskCallback`.
+    safe fn WebCore__AbortSignal__addListener(
         arg0: &AbortSignal,
         arg1: *mut c_void,
         arg_fn2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
@@ -91,8 +94,11 @@ impl AbortSignal {
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
     ) -> &AbortSignal {
-        // SAFETY: self is a live WebCore::AbortSignal; addListener returns self.
-        unsafe { &*WebCore__AbortSignal__addListener(self, ctx, Some(callback)) }
+        // C++ `addListener` returns `this` — discard the round-trip pointer and
+        // hand back the borrow we already hold instead of re-deriving it from
+        // the raw FFI return.
+        let _ = WebCore__AbortSignal__addListener(self, ctx, Some(callback));
+        self
     }
 
     pub fn clean_native_bindings(&self, ctx: *mut c_void) {

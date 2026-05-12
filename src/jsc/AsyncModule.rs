@@ -239,17 +239,13 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            // SAFETY: C ABI — all pointers are valid for the call; `errorable`
-            // / `specifier` / `referrer` outlive the FFI body.
-            unsafe {
-                Bun__onFulfillAsyncModule(
-                    global_this,
-                    promise,
-                    &raw mut errorable,
-                    &raw mut specifier,
-                    &raw mut referrer,
-                )
-            }
+            Bun__onFulfillAsyncModule(
+                global_this,
+                promise,
+                &mut errorable,
+                &mut specifier,
+                &mut referrer,
+            )
         })
     }
 }
@@ -261,13 +257,18 @@ impl AsyncModule {
 // bun.default_allocator.free(this.expr_blocks);
 
 // TODO(port): move to <area>_sys
+//
+// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+// ABI-identical to non-null `*const`); `ErrorableResolvedSource`/`BunString`
+// are `#[repr(C)]` payloads whose `&mut` is exclusive for the call. C++ reads
+// from / writes through these in-place; no caller-side raw-pointer precondition.
 unsafe extern "C" {
-    fn Bun__onFulfillAsyncModule(
-        global_object: *const JSGlobalObject,
+    safe fn Bun__onFulfillAsyncModule(
+        global_object: &JSGlobalObject,
         promise_value: JSValue,
-        res: *mut ErrorableResolvedSource,
-        specifier: *mut BunString,
-        referrer: *mut BunString,
+        res: &mut ErrorableResolvedSource,
+        specifier: &mut BunString,
+        referrer: &mut BunString,
     );
 }
 
@@ -775,13 +776,13 @@ impl AsyncModule {
 
         let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
         let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        let _ = jsc::from_js_host_call_generic(global_this, || unsafe {
+        let _ = jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
-                &raw mut errorable,
-                &raw mut spec,
-                &raw mut ref_,
+                &mut errorable,
+                &mut spec,
+                &mut ref_,
             )
         });
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.

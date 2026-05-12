@@ -11,7 +11,9 @@ bun_opaque::opaque_ffi! {
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn JSC__JSBigInt__fromJS(value: JSValue) -> *mut JSBigInt;
+    // safe: `JSValue` is a by-value tagged i64; returns a nullable GC-cell
+    // pointer the caller checks before deref.
+    safe fn JSC__JSBigInt__fromJS(value: JSValue) -> *mut JSBigInt;
     safe fn JSC__JSBigInt__orderDouble(this: &JSBigInt, num: f64) -> i8;
     safe fn JSC__JSBigInt__orderUint64(this: &JSBigInt, num: u64) -> i8;
     safe fn JSC__JSBigInt__orderInt64(this: &JSBigInt, num: i64) -> i8;
@@ -49,11 +51,14 @@ impl BigIntOrderable for i64 {
 
 impl JSBigInt {
     pub fn from_js(value: JSValue) -> Option<&'static JSBigInt> {
-        // SAFETY: FFI call; returned pointer (if non-null) points to a GC-owned
-        // JSBigInt cell. Lifetime is tied to GC, not Rust — caller must keep
-        // `value` alive (stack-scanned) for as long as the returned ref is used.
+        // Returned pointer (if non-null) points to a GC-owned JSBigInt cell.
+        // Lifetime is tied to GC, not Rust — caller must keep `value` alive
+        // (stack-scanned) for as long as the returned ref is used. `JSBigInt`
+        // is an opaque ZST handle so the deref is the centralised `opaque_ref`
+        // proof.
         // TODO(port): lifetime — model as `&'a JSBigInt` tied to a stack guard?
-        unsafe { JSC__JSBigInt__fromJS(value).as_ref() }
+        let p = JSC__JSBigInt__fromJS(value);
+        (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
     }
 
     pub fn order<T: BigIntOrderable>(&self, num: T) -> Ordering {

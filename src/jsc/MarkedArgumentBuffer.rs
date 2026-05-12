@@ -12,7 +12,10 @@ bun_opaque::opaque_ffi! {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
-    fn MarkedArgumentBuffer__run(
+    // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
+    // (never dereferenced as Rust data) — same contract as
+    // `JSC__VM__holdAPILock` / `JSC__JSGlobalObject__queueMicrotaskCallback`.
+    safe fn MarkedArgumentBuffer__run(
         ctx: *mut c_void,
         f: extern "C" fn(ctx: *mut c_void, args: *mut c_void),
     );
@@ -45,18 +48,20 @@ impl MarkedArgumentBuffer {
         ctx: &mut T,
         func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer),
     ) {
-        // SAFETY: mirrors Zig `@ptrCast` of both ctx and func — `MarkedArgumentBuffer__run`
+        // Mirrors Zig `@ptrCast` of both ctx and func — `MarkedArgumentBuffer__run`
         // round-trips `ctx` opaquely back to `func`, and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
-        unsafe {
-            MarkedArgumentBuffer__run(
-                std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
+        MarkedArgumentBuffer__run(
+            std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
+            // SAFETY: both fn-pointer signatures are `extern "C"` with two
+            // thin-pointer params; ABI-identical modulo pointee type.
+            unsafe {
                 bun_ptr::cast_fn_ptr::<
                     extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
-                >(func),
-            )
-        }
+                >(func)
+            },
+        )
     }
 }
 

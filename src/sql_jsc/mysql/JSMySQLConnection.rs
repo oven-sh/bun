@@ -3,6 +3,7 @@ use core::ffi::c_void;
 
 use bun_boringssl_sys as boringssl;
 use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
+use bun_ptr::BackRef;
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
@@ -55,8 +56,10 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
-    // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton
-    vm: *mut VirtualMachine,
+    // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton. `BackRef` so the
+    // hot `vm()` deref is safe; constructed via `new_mut` (write provenance
+    // from `bun_vm().as_mut()`) so `vm_mut()`'s `&mut *as_ptr()` is sound.
+    vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
     // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
@@ -157,28 +160,27 @@ impl JSMySQLConnection {
         DerefOnDrop(this)
     }
 
-    /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
-    /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
-    /// we never hold two `&mut` to it at once in this module.
-    ///
-    /// SAFETY: `self.vm()` is `&'static`; the cast reborrows the same singleton
-    /// the JS thread already owns. Do not call while another `&mut VirtualMachine`
-    /// is live in this frame.
+    /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
+    /// connection. Safe `Deref` via [`BackRef`] — the VM strictly outlives
+    /// every connection it creates (process-lifetime singleton).
     #[inline]
-    fn vm(&self) -> &'static VirtualMachine {
-        // SAFETY: process-lifetime singleton.
-        unsafe { &*self.vm }
+    fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
     }
     #[inline]
     fn vm_ptr(&self) -> *mut VirtualMachine {
-        self.vm
+        self.vm.as_ptr()
     }
+    /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
+    /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
+    /// we never hold two `&mut` to it at once in this module.
     fn vm_mut(&self) -> &'static mut VirtualMachine {
         // Explicit `'static` so the return does not reborrow `*self` — callers
         // pair this with `&mut self.timer` in the same expression.
         // SAFETY: vm is a process-lifetime singleton (per docs/PORTING.md);
-        // stored as *mut to preserve write provenance.
-        unsafe { &mut *self.vm }
+        // `BackRef` was built via `new_mut` so `as_ptr()` carries write
+        // provenance.
+        unsafe { &mut *self.vm.as_ptr() }
     }
 
     /// `bun_io::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
@@ -642,7 +644,7 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm,
+            vm: BackRef::new_mut(vm),
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,

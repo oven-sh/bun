@@ -536,12 +536,10 @@ pub fn compute_chunks(
     let mut unique_key_builder =
         bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
     // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
-    // every `chunk.unique_key` is a slice into it. Mirror that: capture the stable
-    // base pointer now (the builder never reallocates after `init_capacity`), hand
-    // out `&'static [u8]` BACKREF slices during the loop, then transfer ownership
-    // of the single allocation into `this.unique_key_buf` afterwards.
-    // SAFETY: `chunks` is non-empty (early return above) so `cap > 0` and `ptr` is set.
-    let unique_key_base: *const u8 = unique_key_builder.ptr.unwrap().as_ptr();
+    // every `chunk.unique_key` is a slice into it. Mirror that: the builder never
+    // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
+    // that we detach to `&'static [u8]` (BACKREF) and transfer ownership of the
+    // single allocation into `this.unique_key_buf` afterwards.
     let prefix_len = chunk::UNIQUE_KEY_PREFIX_LEN;
 
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
@@ -556,26 +554,22 @@ pub fn compute_chunks(
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
         // last 8 numbers of the key are the chunk index.
-        let start = unique_key_builder.len;
-        let written = unique_key_builder
-            .fmt(format_args!(
-                "{}",
-                chunk::UniqueKey {
-                    prefix: unique_key,
-                    kind: chunk::QueryKind::Chunk,
-                    index: chunk_id as u32,
-                },
-            ))
-            .len();
-        debug_assert_eq!(written, chunk::UNIQUE_KEY_LEN);
-        // SAFETY: `unique_key_base` points into the builder's fixed-capacity heap
+        let written = unique_key_builder.fmt(format_args!(
+            "{}",
+            chunk::UniqueKey {
+                prefix: unique_key,
+                kind: chunk::QueryKind::Chunk,
+                index: chunk_id as u32,
+            },
+        ));
+        debug_assert_eq!(written.len(), chunk::UNIQUE_KEY_LEN);
+        // SAFETY: `written` borrows the builder's fixed-capacity heap
         // allocation; ownership of that allocation is transferred to
         // `this.unique_key_buf` after this loop, which outlives every `Chunk` for
         // the link step (BACKREF — same as `final_rel_path`). On any `?` error
         // before the transfer, `sorted_chunks` is dropped alongside the builder,
         // so no dangling slice escapes.
-        chunk.unique_key =
-            unsafe { core::slice::from_raw_parts(unique_key_base.add(start), written) };
+        chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }

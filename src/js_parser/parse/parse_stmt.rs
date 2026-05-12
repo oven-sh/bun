@@ -183,9 +183,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
-        // PORT NOTE: raw *mut into arena-allocated S::If — borrowck cannot express the
-        // back-reference into the previous iteration's allocation. Arena keeps nodes alive.
-        let mut current_if: Option<*mut S::If> = None;
+        // PORT NOTE: `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
+        // into the previous iteration's `S::If` allocation — borrowck cannot
+        // express the cross-iteration back-reference, but the arena keeps every
+        // node alive for `'a`.
+        let mut current_if: Option<js_ast::StoreRef<S::If>> = None;
 
         loop {
             p.lexer.next()?;
@@ -214,15 +216,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // Link to previous if statement's else branch
-            if let Some(prev_if) = current_if {
-                // SAFETY: prev_if points into arena-allocated S::If from prior iteration; arena outlives this fn.
-                unsafe { (*prev_if).no = Some(if_stmt); }
+            if let Some(mut prev_if) = current_if {
+                // `StoreRef` `DerefMut` — arena-allocated S::If from prior iteration.
+                prev_if.no = Some(if_stmt);
             }
 
             // Set current if for next iteration. The S::If was just allocated via Stmt::alloc;
-            // recover its arena pointer through the StmtData payload.
+            // recover its arena handle through the StmtData payload.
             current_if = match if_stmt.data {
-                js_ast::StmtData::SIf(mut s_if) => Some(&raw mut *s_if),
+                js_ast::StmtData::SIf(s_if) => Some(s_if),
                 _ => unreachable!(),
             };
 
@@ -238,10 +240,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     lexical_decl: LexicalDecl::AllowFnInsideIf,
                     ..Default::default()
                 };
-                // SAFETY: current_if was set just above in this iteration; arena keeps it alive.
-                unsafe {
-                    (*current_if.unwrap()).no = Some(p.parse_stmt(&mut stmt_opts)?);
-                }
+                // current_if was set just above in this iteration; `StoreRef` `DerefMut`.
+                let no = p.parse_stmt(&mut stmt_opts)?;
+                let mut cur = current_if.unwrap();
+                cur.no = Some(no);
                 return Ok(root_if.unwrap());
             }
 

@@ -169,9 +169,9 @@ pub fn generate_code_for_lazy_export(
                 ) {
                     let _ = self.arena;
                     let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
-                    // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
+                    // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] =
-                        unsafe { &*syms.at(css_ref.inner_index() as usize).original_name };
+                        syms.at(css_ref.inner_index() as usize).original_name.slice();
                     let loc = ast.local_scope.get_adapted(name, SliceBoxAdapter).unwrap().loc;
 
                     // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
@@ -233,8 +233,7 @@ pub fn generate_code_for_lazy_export(
                                             continue;
                                         };
                                         for name in compose.names.slice() {
-                                            // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                            let name_v = unsafe { &*name.v };
+                                            let name_v = name.v();
                                             let Some(other_name_entry) =
                                                 other_file.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                             else {
@@ -264,8 +263,7 @@ pub fn generate_code_for_lazy_export(
                                     // In this example `foo` is global and won't be rewritten to a locally scoped
                                     // name, so we can just add it as a string.
                                     for name in compose.names.slice() {
-                                        // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                        let name_v = unsafe { &*name.v };
+                                        let name_v = name.v();
                                         self.parts.push(E::TemplatePart {
                                             value: Expr::init(
                                                 E::String::init(name_v),
@@ -281,8 +279,7 @@ pub fn generate_code_for_lazy_export(
                                 None => {
                                     // it is from the current file
                                     for name in compose.names.slice() {
-                                        // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                        let name_v = unsafe { &*name.v };
+                                        let name_v = name.v();
                                         let Some(name_entry) =
                                             ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                         else {
@@ -378,9 +375,9 @@ pub fn generate_code_for_lazy_export(
                     );
                 }
 
-                // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
+                // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                 let key: &[u8] =
-                    unsafe { &*symbols.at(ref_.inner_index() as usize).original_name };
+                    symbols.at(ref_.inner_index() as usize).original_name.slice();
                 exports.put(arena, key, value)?;
             }
 

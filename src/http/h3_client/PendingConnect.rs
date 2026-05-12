@@ -133,9 +133,9 @@ impl PendingConnect {
             let cl = unsafe { (*stream).client };
             s.detach(stream);
             if let Some(cl) = cl {
-                // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled stream.client
-                // but `cl` is alive (ownership stays with the caller's request lifecycle).
-                unsafe { (*cl.as_ptr()).fail_from_h2(err) };
+                // HTTPClient outlives its h3 Stream; detach() nulled stream.client
+                // but `cl` is alive — `client_mut` centralises this backref upgrade.
+                super::client_session::client_mut(cl).fail_from_h2(err);
             }
         }
         // Zig .monotonic == LLVM monotonic == Rust Relaxed

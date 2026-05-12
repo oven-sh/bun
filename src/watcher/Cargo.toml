@@ -18,6 +18,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
+bun_ptr.workspace = true
 bun_collections.workspace = true
 bun_paths.workspace = true
 bun_string.workspace = true

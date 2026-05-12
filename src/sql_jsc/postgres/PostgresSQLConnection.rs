@@ -121,7 +121,10 @@ pub struct PostgresSQLConnection {
     // Read-only back-reference to the JS global; the VM/global strictly outlives
     // every connection it creates. Only ever borrowed via `global()`.
     pub global_object: BackRef<JSGlobalObject>,
-    pub vm: *mut VirtualMachine,
+    // JSC_BORROW: process-lifetime singleton. `BackRef` so `vm()` is a safe
+    // deref; constructed via `new_mut` (write provenance from `&mut *vm_ptr`)
+    // so `vm_mut()`'s `&mut *as_ptr()` is sound.
+    pub vm: BackRef<VirtualMachine>,
     pub statements: JsCell<PreparedStatementsMap>,
     pub prepared_statement_id: Cell<u64>,
     pub pending_activity_count: AtomicU32,
@@ -232,15 +235,13 @@ impl PostgresSQLConnection {
         self.global_object.get()
     }
     /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
-    /// connection. JSC_BORROW — the VM strictly outlives every connection it
-    /// creates, so projecting `&'static` is sound. The borrow does not overlap
-    /// any of `self`'s own bytes (`self.vm` is a raw pointer into a disjoint
-    /// allocation), so it does not conflict with `&self`/`JsCell` projections.
+    /// connection. Safe `Deref` via [`BackRef`] — JSC_BORROW: the VM strictly
+    /// outlives every connection it creates. The borrow does not overlap any of
+    /// `self`'s own bytes (`self.vm` points into a disjoint allocation), so it
+    /// does not conflict with `&self`/`JsCell` projections.
     #[inline]
-    fn vm(&self) -> &'static VirtualMachine {
-        // SAFETY: process-lifetime singleton (set once in `call()` from
-        // `VirtualMachine::get_mut_ptr()`); never null, never freed.
-        unsafe { &*self.vm }
+    fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
     }
 
     /// `&mut VirtualMachine` for the few `vm.timer()` / `vm.sql_state()` callers
@@ -250,11 +251,12 @@ impl PostgresSQLConnection {
     /// `self.timer.with_mut(|t| ...)` in the same expression.
     #[inline]
     fn vm_mut(&self) -> &'static mut VirtualMachine {
-        // SAFETY: process-lifetime singleton; stored as `*mut` to preserve write
-        // provenance from `VirtualMachine::get_mut_ptr()`. Caller must not hold
-        // another live `&mut VirtualMachine` (single-threaded event-loop affinity
-        // makes this trivially true at every call site below).
-        unsafe { &mut *self.vm }
+        // SAFETY: process-lifetime singleton; `BackRef` was built via `new_mut`
+        // so `as_ptr()` carries write provenance from `&mut *vm_ptr`. Caller
+        // must not hold another live `&mut VirtualMachine` (single-threaded
+        // event-loop affinity makes this trivially true at every call site
+        // below).
+        unsafe { &mut *self.vm.as_ptr() }
     }
 
     /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
@@ -474,7 +476,7 @@ impl PostgresSQLConnection {
         // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
         // while `postgres_group` also wants `&VirtualMachine`; route through a
         // raw pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut VirtualMachine = self.vm;
+        let vm_ptr: *mut VirtualMachine = self.vm.as_ptr();
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // produce overlapping `&mut` (rare_data accesses a disjoint field).
         let tls_group: *mut bun_uws::SocketGroup =
@@ -1210,11 +1212,11 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         nonpipelinable_requests: Cell::new(0),
         poll_ref: JsCell::new(KeepAlive::default()),
         global_object: BackRef::new(global_object),
-        // `VirtualMachine::get()` returns the singleton `*mut` with full write provenance
-        // (same pointer as `global_object.bun_vm()`, asserted in debug builds). Avoids
-        // deriving `*mut` from the `&VirtualMachine` above, which would make `vm()`'s
-        // `&mut *self.vm` UB.
-        vm: VirtualMachine::get_mut_ptr(),
+        // `vm` is the `&mut VirtualMachine` derived from `sql_vm_ptr()` above
+        // (full write provenance — same singleton as `global_object.bun_vm()`).
+        // `BackRef::new_mut` captures the `NonNull` so `vm_mut()` can later
+        // project `&mut *as_ptr()` without UB.
+        vm: BackRef::new_mut(vm),
         statements: JsCell::new(PreparedStatementsMap::default()),
         prepared_statement_id: Cell::new(0),
         pending_activity_count: AtomicU32::new(0),

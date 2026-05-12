@@ -632,14 +632,15 @@ impl IoRequestLoop {
                 }
             }
 
-            let mut events: [core::mem::MaybeUninit<EventType>; 256] =
-                [const { core::mem::MaybeUninit::uninit() }; 256];
+            // Zero-initialised (`epoll_event: Zeroable`) so the post-wait
+            // `&events[..rc]` is a safe slice into an initialised array.
+            let mut events: [EventType; 256] = [bun_core::ffi::zeroed(); 256];
 
             // SAFETY: valid epoll fd; events buffer length matches.
             let rc = unsafe {
                 libc::epoll_wait(
                     self.pollfd().native(),
-                    events.as_mut_ptr().cast(),
+                    events.as_mut_ptr(),
                     c_int::try_from(events.len()).expect("int cast"),
                     i32::MAX,
                 )
@@ -653,9 +654,7 @@ impl IoRequestLoop {
 
             self.update_now();
 
-            // SAFETY: kernel wrote `rc` valid events into the buffer.
-            let current_events: &[linux::epoll_event] =
-                unsafe { core::slice::from_raw_parts(events.as_ptr().cast(), rc as usize) };
+            let current_events = &events[..rc as usize];
             if rc != 0 {
                 log!("epoll_wait({}) = {}", self.pollfd(), rc);
             }
@@ -807,11 +806,11 @@ impl IoRequestLoop {
 
             let rc_len = usize::try_from(rc).expect("int cast");
             debug_assert!(rc_len <= capacity);
-            // SAFETY: kernel wrote `rc` valid events into the buffer.
-            let current_events: &[KEvent] =
-                unsafe { core::slice::from_raw_parts(events_list.as_ptr(), rc_len) };
+            // SAFETY: kernel wrote `rc_len` valid `KEvent`s into the Vec's
+            // capacity (passed as `nevents` above); `rc_len <= capacity`.
+            unsafe { events_list.set_len(rc_len) };
 
-            for event in current_events {
+            for event in &events_list {
                 Poll::on_update_kqueue(*event);
             }
         }
@@ -1441,29 +1440,48 @@ impl FilePollRef {
                 .expect("FilePoll::init returns a fresh hive slot"),
         )
     }
+    /// Single nonnull-asref accessor for the hive slot.
+    ///
+    /// Type invariant (encapsulated `unsafe`): `self.0` was produced by
+    /// `FilePoll::init` (a fresh hive slot) and remains live until the owner
+    /// calls `deinit_force_unregister`. The event loop is single-threaded, so
+    /// no concurrent `&mut` alias exists; the only re-entrancy hazard (a poll
+    /// callback touching its own slot) is structurally avoided by every
+    /// wrapper below being a leaf accessor that does not dispatch user code.
+    /// All wrapper methods are already safe `pub fn` — this private accessor
+    /// merely collapses their N identical `unsafe { self.0.as_mut() }` blocks
+    /// into one without widening the safe-API surface.
+    #[inline]
+    fn inner(self) -> &'static mut FilePoll {
+        // SAFETY: type invariant — see doc comment above.
+        unsafe { &mut *self.0.as_ptr() }
+    }
     /// SAFETY: caller must not hold another live `&mut` to this slot (the event
     /// loop is single-threaded, so the only hazard is re-entrancy through a
     /// poll callback that touches the same slot).
     #[inline]
     pub unsafe fn get(self) -> &'static mut FilePoll {
-        unsafe { &mut *self.0.as_ptr() }
+        self.inner()
     }
     #[inline]
     pub fn as_ptr(self) -> *mut FilePoll { self.0.as_ptr() }
     #[inline]
-    pub fn fd(self) -> Fd { unsafe { self.get() }.fd }
+    pub fn fd(self) -> Fd { self.inner().fd }
     #[inline]
-    pub fn set_owner(self, owner: Owner) { unsafe { self.get() }.owner = owner; }
+    pub fn set_owner(self, owner: Owner) { self.inner().owner = owner; }
     #[inline]
-    pub fn deinit_force_unregister(self) { unsafe { self.get() }.deinit_force_unregister(); }
+    pub fn deinit_force_unregister(self) { self.inner().deinit_force_unregister(); }
     #[inline]
     pub fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
+        // SAFETY: `loop_` is the process-global uWS loop pointer (`Loop::get()`),
+        // live for the program; single-threaded access.
+        let loop_ = unsafe { &mut *loop_ };
         #[cfg(not(windows))]
-        { unsafe { self.get().unregister(&mut *loop_, force) } }
+        { self.inner().unregister(loop_, force) }
         #[cfg(windows)]
         {
             let _ = force;
-            if unsafe { self.get().unregister(&mut *loop_) } {
+            if self.inner().unregister(loop_) {
                 Ok(())
             } else {
                 Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::TODO))
@@ -1482,7 +1500,10 @@ impl FilePollRef {
             FilePollKind::Writable => PollFlags::Writable,
         };
         #[cfg(not(windows))]
-        { unsafe { self.get().register_with_fd(&mut *loop_, flag, OneShotFlag::Dispatch, fd) } }
+        {
+            // SAFETY: `loop_` is the process-global uWS loop (`Loop::get()`).
+            self.inner().register_with_fd(unsafe { &mut *loop_ }, flag, OneShotFlag::Dispatch, fd)
+        }
         #[cfg(windows)]
         {
             let _ = (loop_, flag, fd);
@@ -1490,26 +1511,26 @@ impl FilePollRef {
         }
     }
     #[inline]
-    pub fn has_flag(self, f: FilePollFlag) -> bool { unsafe { self.get() }.flags.contains(f) }
+    pub fn has_flag(self, f: FilePollFlag) -> bool { self.inner().flags.contains(f) }
     #[inline]
-    pub fn set_flag(self, f: FilePollFlag) { unsafe { self.get() }.flags.insert(f); }
+    pub fn set_flag(self, f: FilePollFlag) { self.inner().flags.insert(f); }
     #[inline]
     pub fn file_type(self) -> crate::pipes::FileType {
         #[cfg(not(windows))]
-        { unsafe { self.get() }.file_type() }
+        { self.inner().file_type() }
         #[cfg(windows)]
         { crate::pipes::FileType::File }
     }
     #[inline]
-    pub fn is_registered(self) -> bool { unsafe { self.get() }.is_registered() }
+    pub fn is_registered(self) -> bool { self.inner().is_registered() }
     #[inline]
-    pub fn is_watching(self) -> bool { unsafe { self.get() }.is_watching() }
+    pub fn is_watching(self) -> bool { self.inner().is_watching() }
     #[inline]
-    pub fn is_active(self) -> bool { unsafe { self.get() }.is_active() }
+    pub fn is_active(self) -> bool { self.inner().is_active() }
     #[inline]
     pub fn can_enable_keeping_process_alive(self) -> bool {
         #[cfg(not(windows))]
-        { unsafe { self.get() }.can_enable_keeping_process_alive() }
+        { self.inner().can_enable_keeping_process_alive() }
         #[cfg(windows)]
         {
             // Zig spec: `canEnableKeepingProcessAlive` is POSIX-only (posix_event_loop.zig:656-658);
@@ -1522,11 +1543,11 @@ impl FilePollRef {
     }
     #[inline]
     pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
-        unsafe { self.get() }.enable_keeping_process_alive(ev);
+        self.inner().enable_keeping_process_alive(ev);
     }
     #[inline]
     pub fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
-        unsafe { self.get() }.disable_keeping_process_alive(ev);
+        self.inner().disable_keeping_process_alive(ev);
     }
     #[inline]
     pub fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {

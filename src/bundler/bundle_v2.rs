@@ -1174,16 +1174,20 @@ pub mod api {
                 // PORT NOTE: reshaped for borrowck — capture the erased self
                 // pointer before borrowing fields immutably for the FFI call.
                 let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                // SAFETY: `bv2` is a valid backref; `plugins` is Some.
-                unsafe {
-                    (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_resolve(
+                // SAFETY: `bv2` is a valid backref set by `init`; the plugin
+                // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
+                // returned by `plugins_mut()` does not alias the
+                // `&self.import_record.*` borrows below.
+                unsafe { &mut *self.bv2 }
+                    .plugins_mut()
+                    .expect("plugins")
+                    .match_on_resolve(
                         &self.import_record.specifier,
                         &self.import_record.namespace,
                         &self.import_record.source_file,
                         self_ptr,
                         kind,
                     );
-                }
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
@@ -1313,16 +1317,20 @@ pub mod api {
                 // PORT NOTE: reshaped for borrowck — capture the erased self
                 // pointer before borrowing fields immutably for the FFI call.
                 let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                // SAFETY: `bv2` is a valid backref; `plugins` is Some.
-                unsafe {
-                    (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_load(
+                // SAFETY: `bv2` is a valid backref set by `init`; the plugin
+                // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
+                // returned by `plugins_mut()` does not alias the
+                // `&self.path` / `&self.namespace` borrows below.
+                unsafe { &mut *self.bv2 }
+                    .plugins_mut()
+                    .expect("plugins")
+                    .match_on_load(
                         &self.path,
                         &self.namespace,
                         self_ptr,
                         default_loader,
                         is_server_side,
                     );
-                }
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
@@ -3358,12 +3366,9 @@ impl<'a> BundleV2<'a> {
         // overlapping `&mut`. (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &raw mut *this;
-            let ep_len = (*bundle_ptr).graph.entry_points.len();
-            // `Graph::entry_points` is `Vec<bun_ast::Index>`; `link()` takes
-            // `&[crate::Index]` (= bun_options_types). Both are `#[repr(transparent)]`
-            // `u32` newtypes (see ast/base.rs:52 / BundleEnums.rs:659), so a ptr cast
-            // is layout-identical.
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
+            // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
+            // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
+            let ep = (*bundle_ptr).graph.entry_points.as_slice();
             // Spec passes `this.graph.server_component_boundaries` by value-copy
             // (Zig struct copy), leaving the original intact for
             // `StaticRouteVisitor` (generateChunksInParallel) to read via
@@ -3373,12 +3378,7 @@ impl<'a> BundleV2<'a> {
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             // Project `.linker` via `bundle_ptr` (not `this.linker`) so no
             // second `Box::deref_mut` retag invalidates `ep`/`scbs` (SB).
-            (*bundle_ptr).linker.link(
-                bundle_ptr,
-                core::slice::from_raw_parts(ep, ep_len),
-                scbs,
-                &mut reachable_files,
-            )?
+            (*bundle_ptr).linker.link(bundle_ptr, ep, scbs, &mut reachable_files)?
         };
         this.dump_pool_stats("link");
 
@@ -3526,20 +3526,13 @@ impl<'a> BundleV2<'a> {
         // from `this.linker`.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &raw mut *this;
-            let ep_len = (*bundle_ptr).graph.entry_points.len();
-            // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
+            let ep = (*bundle_ptr).graph.entry_points.as_slice();
             // Spec: value-copy (original preserved for `StaticRouteVisitor`).
             // Borrow — do NOT `take` (see `generate_from_cli`).
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
             // retag invalidates `ep`/`scbs` (SB hygiene).
-            (*bundle_ptr).linker.link(
-                bundle_ptr,
-                core::slice::from_raw_parts(ep, ep_len),
-                scbs,
-                &mut reachable_files,
-            )?
+            (*bundle_ptr).linker.link(bundle_ptr, ep, scbs, &mut reachable_files)?
         };
 
         if chunks.is_empty() {
@@ -3820,7 +3813,7 @@ impl<'a> BundleV2<'a> {
                     *contents = std::borrow::Cow::Owned(code.source_code.into());
                     // SAFETY: `Cow::Owned` heap data is address-stable across
                     // SoA column moves; `input_files` outlives all ParseTasks.
-                    unsafe { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) }
+                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(contents.as_ref()) }
                 } else {
                     this.free_list.push(code.source_code);
                     // SAFETY: `free_list` is append-only until
@@ -3828,7 +3821,7 @@ impl<'a> BundleV2<'a> {
                     // complete); the boxed slice is heap-stable.
                     let last = this.free_list.last().unwrap();
                     let s: &'static [u8] =
-                        unsafe { core::slice::from_raw_parts(last.as_ptr(), last.len()) };
+                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(last) };
                     this.graph.input_files.items_source_mut()
                         [load.source_index.get() as usize]
                         .contents = std::borrow::Cow::Borrowed(s);
@@ -4339,21 +4332,14 @@ impl<'a> BundleV2<'a> {
         // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = self;
-            let ep_len = (*bundle_ptr).graph.entry_points.len();
-            // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
+            let ep = (*bundle_ptr).graph.entry_points.as_slice();
             // Spec: value-copy (original preserved for `StaticRouteVisitor`).
             // Borrow — do NOT `take` (see `generate_from_cli`).
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             let mut reachable_files = reachable_files;
             // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
             // retag invalidates `ep`/`scbs` (SB hygiene).
-            (*bundle_ptr).linker.link(
-                bundle_ptr,
-                core::slice::from_raw_parts(ep, ep_len),
-                scbs,
-                &mut reachable_files,
-            )?
+            (*bundle_ptr).linker.link(bundle_ptr, ep, scbs, &mut reachable_files)?
         };
 
         if self.transpiler.log().errors > 0 {
@@ -4669,19 +4655,12 @@ impl<'a> BundleV2<'a> {
         // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
         unsafe {
             let bundle_ptr: *mut BundleV2 = self;
-            let ep_len = (*bundle_ptr).graph.entry_points.len();
-            // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
+            let ep = (*bundle_ptr).graph.entry_points.as_slice();
             // Spec: value-copy (original preserved). Borrow — do NOT `take`.
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
             // retag invalidates `ep`/`scbs` (SB hygiene).
-            (*bundle_ptr).linker.load(
-                bundle_ptr,
-                core::slice::from_raw_parts(ep, ep_len),
-                scbs,
-                js_reachable_files,
-            ).map_err(|_| AllocError)?;
+            (*bundle_ptr).linker.load(bundle_ptr, ep, scbs, js_reachable_files).map_err(|_| AllocError)?;
         }
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -4880,12 +4859,8 @@ impl<'a> BundleV2<'a> {
             self.free_list.push(maybe_decoded.into_boxed_slice());
             // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
             // (after all ParseTasks have completed); the `Box<[u8]>` is heap-stable.
-            let decoded: &'static [u8] = unsafe {
-                core::slice::from_raw_parts(
-                    self.free_list.last().unwrap().as_ptr(),
-                    self.free_list.last().unwrap().len(),
-                )
-            };
+            let decoded: &'static [u8] =
+                unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(self.free_list.last().unwrap()) };
             parse.contents_or_fd = parse_task::ContentsOrFd::Contents(decoded);
             parse.loader = Some(match data_url.decode_mime_type().category {
                 bun_http_types::MimeType::Category::Javascript => Loader::Js,

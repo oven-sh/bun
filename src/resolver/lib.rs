@@ -659,10 +659,12 @@ pub mod fs {
     /// Port of `FileSystem.Entry` in `fs.zig`.
     // PORT NOTE: `cache` / `need_stat` are lazily populated by `Entry::kind` /
     // `Entry::symlink` while callers hold a shared `&Entry` (Zig used a freely-
-    // aliasing-mutable `*Entry`). Wrapped in `UnsafeCell` / `Cell` so writing
-    // through `&self` is sound — `RealFS.entries_mutex` serializes access.
+    // aliasing-mutable `*Entry`). `EntryCache` is `Copy`, so `Cell` gives us
+    // safe `.get()/.set()` through `&self` — `RealFS.entries_mutex` serializes
+    // access across threads (Entry is `!Sync` via `Cell`, which matches Zig's
+    // external-locking discipline).
     pub struct Entry {
-        pub cache: core::cell::UnsafeCell<EntryCache>,
+        pub cache: core::cell::Cell<EntryCache>,
         // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide
         // says Box<[u8]>, but this points into DirnameStore (a &'static BSSList).
         pub dir: &'static [u8],
@@ -675,26 +677,41 @@ pub mod fs {
     }
 
     impl Entry {
-        /// Shared accessor for the lazily-populated stat cache.
+        /// Snapshot of the lazily-populated stat cache. `EntryCache` is `Copy`
+        /// (3 word-sized fields), so by-value return is free and avoids the
+        /// `&self → &interior` aliasing hazard the old `UnsafeCell` accessor had.
         #[inline(always)]
-        pub fn cache(&self) -> &EntryCache {
-            // SAFETY: ARENA — Entry slots live in the EntryStore singleton; reads are
-            // serialized via `RealFS.entries_mutex` so no concurrent writer aliases this.
-            unsafe { &*self.cache.get() }
+        pub fn cache(&self) -> EntryCache {
+            self.cache.get()
         }
 
-        /// Mutable accessor for the lazily-populated stat cache (interior mutability).
-        ///
-        /// # Safety
-        /// Caller must hold `RealFS.entries_mutex` and must not let the returned
-        /// `&mut EntryCache` overlap any other live `&EntryCache` / `&mut EntryCache`
-        /// (or `&mut Entry`) for this slot. A safe `&self → &mut` API would permit
-        /// `let a = e.cache_mut(); let b = e.cache_mut();` (aliased-&mut UB,
-        /// PORTING.md §Forbidden); the `unsafe` marker forces per-site proof.
+        /// Overwrite the whole cache (interior mutability via `Cell`).
         #[inline(always)]
-        pub unsafe fn cache_mut(&self) -> &mut EntryCache {
-            // SAFETY: upheld by caller — see fn doc.
-            unsafe { &mut *self.cache.get() }
+        pub fn set_cache(&self, c: EntryCache) {
+            self.cache.set(c);
+        }
+
+        /// Update a single cache field. Read-modify-write is fine: callers hold
+        /// `RealFS.entries_mutex` so no torn writes; `EntryCache` is `Copy`.
+        #[inline(always)]
+        pub fn set_cache_fd(&self, fd: Fd) {
+            let mut c = self.cache.get();
+            c.fd = fd;
+            self.cache.set(c);
+        }
+
+        #[inline(always)]
+        pub fn set_cache_kind(&self, kind: EntryKind) {
+            let mut c = self.cache.get();
+            c.kind = kind;
+            self.cache.set(c);
+        }
+
+        #[inline(always)]
+        pub fn set_cache_symlink(&self, symlink: PathString) {
+            let mut c = self.cache.get();
+            c.symlink = symlink;
+            self.cache.set(c);
         }
 
         #[inline]
@@ -722,7 +739,7 @@ pub mod fs {
         // aliasing-mutable) and `*Fs.FileSystem.RealFS` (raw). `fs` is `*mut` so the
         // call site does not require a second exclusive `&mut RealFS` borrow while a
         // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
-        // lazily-populated `need_stat` / `cache` goes through `Cell` / `UnsafeCell`.
+        // lazily-populated `need_stat` / `cache` goes through `Cell`.
         pub fn kind(&self, fs: *mut Implementation, store_fd: bool) -> EntryKind {
             if self.need_stat.get() {
                 self.need_stat.set(false);
@@ -730,8 +747,7 @@ pub mod fs {
                 // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
                 // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
                 match unsafe { &mut *fs }.kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    // SAFETY: see `cache_mut()` — `entries_mutex` serializes access.
-                    Ok(c) => unsafe { *self.cache.get() = c },
+                    Ok(c) => self.cache.set(c),
                     Err(_) => return self.cache().kind,
                 }
             }
@@ -746,8 +762,7 @@ pub mod fs {
                 // was scanned and the time it was read
                 // SAFETY: see `Entry::kind` PORT NOTE.
                 match unsafe { &mut *fs }.kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    // SAFETY: see `cache_mut()` — `entries_mutex` serializes access.
-                    Ok(c) => unsafe { *self.cache.get() = c },
+                    Ok(c) => self.cache.set(c),
                     Err(_) => return b"",
                 }
             }
@@ -762,7 +777,7 @@ pub mod fs {
     impl Clone for Entry {
         fn clone(&self) -> Self {
             Self {
-                cache: core::cell::UnsafeCell::new(*self.cache()),
+                cache: core::cell::Cell::new(self.cache.get()),
                 dir: self.dir,
                 base_: strings::StringOrTinyString::init(self.base_.slice()),
                 base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
@@ -911,8 +926,8 @@ pub mod fs {
         /// # Safety (encapsulated)
         /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
         /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
-        /// only mutable state (`cache`) is behind `UnsafeCell`, so interior
-        /// writes via `cache_mut()` do not alias this `&Entry`. The
+        /// only mutable state (`cache`) is behind `Cell`, so interior
+        /// writes via `set_cache*()` do not alias this `&Entry`. The
         /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
         /// looked up from.
         #[inline(always)]
@@ -1055,11 +1070,8 @@ pub mod fs {
                         if Some(existing.cache().kind) != found_kind {
                             // if found_kind is null, we have set need_stat above, so we
                             // store an arbitrary kind
-                            // SAFETY: `existing.mutex` held (locked above); sole writer.
-                            unsafe { existing.cache_mut() }.kind = found_kind.unwrap_or(EntryKind::File);
-
-                            // SAFETY: `existing.mutex` held; sole writer.
-                            unsafe { existing.cache_mut() }.symlink = PathString::EMPTY;
+                            existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
+                            existing.set_cache_symlink(PathString::EMPTY);
                         }
                         break 'brk existing_ptr;
                     }
@@ -1085,7 +1097,7 @@ pub mod fs {
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
                     need_stat: core::cell::Cell::new(found_kind.is_none()),
-                    cache: core::cell::UnsafeCell::new(EntryCache {
+                    cache: core::cell::Cell::new(EntryCache {
                         symlink: PathString::EMPTY,
                         // if found_kind is null, we have set need_stat above, so we
                         // store an arbitrary kind
@@ -2225,22 +2237,25 @@ pub mod dir_entry_accessor {
     }
 
     pub struct DirEntryNameWrapper {
-        // BACKREF: raw fat pointer into a `Box<[u8]>` key owned by
+        // BACKREF: borrowed slice into a `Box<[u8]>` key owned by
         // `DirEntry.data: HashMap`. Valid only while the parent `DirEntry`
-        // is live and not regenerated by `read_directory`. Stored raw (not
-        // `&'static [u8]`) per PORTING.md §Forbidden — the key is individually
-        // heap-allocated by the HashMap, not a BSS-arena slice, so minting a
-        // `'static` borrow via `from_raw_parts` would be a lifetime lie.
+        // is live and not regenerated by `read_directory`. Stored as
+        // [`bun_ptr::RawSlice`] (not `&'static [u8]`) per PORTING.md
+        // §Forbidden — the key is individually heap-allocated by the HashMap,
+        // not a BSS-arena slice, so minting a `'static` borrow via
+        // `from_raw_parts` would be a lifetime lie. `RawSlice` encapsulates
+        // the outlives-holder invariant so `slice()` is safe.
         // Mirrors Zig `IterResult.NameWrapper.value: []const u8` (no lifetime).
-        pub value: *const [u8],
+        pub value: bun_ptr::RawSlice<u8>,
     }
 
     impl DirEntryNameWrapper {
+        #[inline]
         pub fn slice(&self) -> &[u8] {
-            // SAFETY: BACKREF — see field comment. The GlobWalker consumes
+            // BACKREF — see field comment. The GlobWalker consumes
             // `name_slice()` before advancing the iterator or reopening the
             // directory, so the pointee `Box<[u8]>` is still alive here.
-            unsafe { &*self.value }
+            self.value.slice()
         }
     }
 
@@ -2272,15 +2287,14 @@ pub mod dir_entry_accessor {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
                 };
-                // BACKREF: take a raw fat pointer to the HashMap key's bytes
+                // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
                 // until the next `read_directory` regeneration; `name_slice()`
                 // re-narrows the lifetime so it never escapes the iter result.
                 // Mirrors Zig `nextval.key_ptr.*`.
-                let name: *const [u8] = &raw const **key;
                 Ok(Some(DirEntryIterResult {
-                    name: DirEntryNameWrapper { value: name },
+                    name: DirEntryNameWrapper { value: bun_ptr::RawSlice::new(&**key) },
                     kind: fskind,
                 }))
             } else {
@@ -5380,9 +5394,7 @@ impl<'a> Resolver<'a> {
                             // panic on EACCES/EMFILE/ELOOP here.
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
                                 .map_err(Into::<bun_core::Error>::into)?;
-                            // SAFETY: `entries_mutex` held by resolver mutex; no other live
-                            // borrow of this Entry's cache for the duration of this write.
-                            unsafe { (*query.entry).cache_mut() }.fd = file;
+                            query.entry().set_cache_fd(file);
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
@@ -5395,12 +5407,11 @@ impl<'a> Resolver<'a> {
                             if need_close {
                                 // SAFETY: ARENA — Entry lives in the BSSMap singleton; guard
                                 // runs before the slot is reused (resolver mutex held).
-                                let e = unsafe { &mut *entry_ptr };
-                                if e.cache().fd.is_valid() {
-                                    // SAFETY: guard runs under resolver mutex; `e` is the sole
-                                    // live borrow of this Entry slot at drop time.
-                                    unsafe { e.cache_mut() }.fd.close();
-                                    unsafe { e.cache_mut() }.fd = FD::INVALID;
+                                let e = unsafe { &*entry_ptr };
+                                let fd = e.cache().fd;
+                                if fd.is_valid() {
+                                    fd.close();
+                                    e.set_cache_fd(FD::INVALID);
                                 }
                             }
                         }
@@ -5413,8 +5424,7 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        // SAFETY: `entries_mutex` held by resolver mutex; sole writer.
-                        unsafe { (*query.entry).cache_mut() }.symlink = PathString::init(symlink);
+                        query.entry().set_cache_symlink(PathString::init(symlink));
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = query.entry().cache().fd;
                         }
@@ -6728,8 +6738,7 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
-            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) }));
+            return Ok(dc.at_index(dir_cache_info_result.index).map(DirInfoRef::from_slot));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -7346,8 +7355,7 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self.dir_cache_mut().get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
-            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
-            return Ok(self.dir_cache_mut().at_index(top_result.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) }));
+            return Ok(self.dir_cache_mut().at_index(top_result.index).map(DirInfoRef::from_slot));
         }
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
@@ -7355,17 +7363,12 @@ impl<'a> Resolver<'a> {
         let mut i: i32 = 1;
         let input_path_len = input_path.len();
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
-        // SAFETY: threadlocal buffer outlives this fn; len + 1 ≤ MAX_PATH_BYTES (PathBuffer
-        // always has the +1 sentinel slot). The slice spans one byte past the copied
-        // path so the NUL-splice/restore at `input_path_len` (queue index 0, processed
-        // last in the open-dir loop below) writes through `path`'s own provenance.
-        // Narrowing to exactly `input_path_len` would make that write one-past-end of
-        // the slice tag — UB under Stacked Borrows even though the underlying buffer
-        // is larger (Zig's `path.ptr[len]` carries full-buffer provenance; Rust's
-        // `from_raw_parts_mut` does not).
-        let path: &mut [u8] = unsafe {
-            core::slice::from_raw_parts_mut(dir_info_uncached_path_buf.as_mut_ptr(), input_path_len + 1)
-        };
+        // The slice spans one byte past the copied path so the NUL-splice/restore at
+        // `input_path_len` (queue index 0, processed last in the open-dir loop below)
+        // writes through `path`'s own provenance. `input_path_len + 1 ≤ MAX_PATH_BYTES + 1`
+        // (checked above) and `PathBuffer` always carries the +1 sentinel slot, so the
+        // safe slice is in-bounds and the threadlocal buffer outlives this fn.
+        let path: &mut [u8] = &mut dir_info_uncached_path_buf[..input_path_len + 1];
 
         bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
@@ -7767,8 +7770,7 @@ impl<'a> Resolver<'a> {
             let dc = self.dir_cache_mut();
             let dir_info_ptr: *mut DirInfo::DirInfo =
                 dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) });
+            let parent_dir_ptr = dc.at_index(top_parent.index).map(DirInfoRef::from_slot);
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -8318,13 +8320,15 @@ impl<'a> Resolver<'a> {
     ) -> Option<MatchResult> {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
         let mut path = path_;
+        // Hoisted to fn-body scope so the immutable reborrow taken below can outlive
+        // the `if` block without lifetime erasure; the field is not touched again in
+        // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
+        let path_buf = bufs!(remap_path_trailing_slash);
         if !strings::ends_with_char(path_, SEP) {
-            let path_buf = bufs!(remap_path_trailing_slash);
             path_buf[..path.len()].copy_from_slice(path);
             path_buf[path.len()] = SEP;
             path_buf[path.len() + 1] = 0;
-            // SAFETY: threadlocal buf
-            path = unsafe { core::slice::from_raw_parts(path_buf.as_ptr(), path.len() + 1) };
+            path = &path_buf[..path.len() + 1];
         }
 
         if self.care_about_browser_field {
@@ -9014,8 +9018,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
                         let entries_fd = unsafe { &*entries_ptr }.fd;
                         if entries_fd.is_valid() && !lookup.entry().cache().fd.is_valid() && self.store_fd {
-                            // SAFETY: `entries_mutex` held by caller; sole writer.
-                            unsafe { (*lookup.entry).cache_mut() }.fd = entries_fd;
+                            lookup.entry().set_cache_fd(entries_fd);
                         }
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
@@ -9042,8 +9045,7 @@ impl<'a> Resolver<'a> {
                                 write!(&mut buf, "Resolved symlink \"{}\" to \"{}\"", bstr::BStr::new(path), bstr::BStr::new(symlink)).ok();
                                 logs.add_note(buf);
                             }
-                            // SAFETY: `entries_mutex` held by caller; sole writer.
-                            unsafe { (*lookup.entry).cache_mut() }.symlink = PathString::init(symlink);
+                            lookup.entry().set_cache_symlink(PathString::init(symlink));
                             info.abs_real_path = symlink;
                         }
                     }

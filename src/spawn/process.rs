@@ -585,15 +585,12 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
-            match &mut self.poller {
-                Poller::Fd(poll) => {
-                    // SAFETY: poll is a live hive slot; deinit returns it to the Store.
-                    unsafe { (*poll.as_ptr()).deinit() };
-                }
-                Poller::WaiterThread(waiter) => {
-                    waiter.disable();
-                }
-                Poller::Detached => {}
+            // Route the `Fd` arm through the centralized `fd_poll_mut()`
+            // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
+            if let Some(poll) = self.poller.fd_poll_mut() {
+                poll.deinit();
+            } else if let Poller::WaiterThread(waiter) = &mut self.poller {
+                waiter.disable();
             }
             self.poller = Poller::Detached;
         }
@@ -839,16 +836,12 @@ impl PollerPosix {
     /// performs the same teardown explicitly. A `Drop` impl would double-free
     /// the hive slot on those reassignments. Called only from `Process` drop.
     pub fn deinit(&mut self) {
-        match self {
-            PollerPosix::Fd(poll) => {
-                // SAFETY: poll is a live hive-allocated `FilePoll` slot, exclusive on
-                // the event-loop thread; `deinit()` returns it to the hive store.
-                unsafe { (*poll.as_ptr()).deinit() };
-            }
-            PollerPosix::WaiterThread(w) => {
-                w.disable();
-            }
-            PollerPosix::Detached => {}
+        // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
+        // instead of open-coding the `NonNull` deref here.
+        if let Some(poll) = self.fd_poll_mut() {
+            poll.deinit();
+        } else if let PollerPosix::WaiterThread(w) = self {
+            w.disable();
         }
     }
 

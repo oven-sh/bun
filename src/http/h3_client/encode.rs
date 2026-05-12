@@ -22,11 +22,11 @@ pub fn write_request(
     stream: &mut Stream,
     qs: &mut quic::Stream,
 ) -> Result<(), bun_core::Error> {
-    let Some(mut client_ptr) = stream.client else {
+    let Some(client_ptr) = stream.client else {
         return Err(err!(Aborted));
     };
-    // SAFETY: stream.client is a live backref while the stream is attached.
-    let client: &mut HTTPClient = unsafe { client_ptr.as_mut() };
+    // `stream.client` is a live backref while attached — see `client_mut` doc.
+    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
     // PORT NOTE: reshaped for borrowck — `build_request` returns a `Request<'_>`
     // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
@@ -147,21 +147,20 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
     }
-    let Some(mut client_ptr) = stream.client else {
+    let Some(client_ptr) = stream.client else {
         return;
     };
-    // SAFETY: stream.client is a live backref while the stream is attached.
-    let client: &mut HTTPClient = unsafe { client_ptr.as_mut() };
+    // `stream.client` is a live backref while attached — see `client_mut` doc.
+    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
 
     if stream.is_streaming_body {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
-        let Some(mut sb) = body.buffer else {
+        let ended = body.ended;
+        let Some(sb) = body.buffer_mut() else {
             return;
         };
-        // SAFETY: ThreadSafeStreamBuffer is intrusive-refcounted; this side holds a ref.
-        let sb = unsafe { sb.as_mut() };
         let buffer = sb.acquire();
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
@@ -177,7 +176,7 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         if drained {
             buffer.reset();
         }
-        if drained && body.ended {
+        if drained && ended {
             stream.request_body_done = true;
             qs.shutdown();
             client.state.request_stage = HTTPStage::Done;

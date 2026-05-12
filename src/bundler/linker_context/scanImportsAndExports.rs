@@ -1418,8 +1418,7 @@ mod __css_validation {
                     continue;
                 };
                 for name in compose.names.slice() {
-                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                    let name_v = unsafe { &*name.v };
+                    let name_v = name.v();
                     if !other_css_ast
                         .local_scope
                         .contains_adapted(name_v, SliceBoxAdapter)
@@ -1605,8 +1604,7 @@ mod __css_validation {
                                     continue;
                                 };
                                 for name in compose.names.slice() {
-                                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                    let name_v = unsafe { &*name.v };
+                                    let name_v = name.v();
                                     let Some(other_name) =
                                         other_ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                     else {
@@ -1630,8 +1628,7 @@ mod __css_validation {
                         } else {
                             // inside this file
                             for name in compose.names.slice() {
-                                // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                let name_v = unsafe { &*name.v };
+                                let name_v = name.v();
                                 let Some(name_entry) =
                                     ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                 else {

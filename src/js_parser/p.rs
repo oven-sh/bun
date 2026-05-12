@@ -2781,7 +2781,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.module_scope_mut().recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
-        self.hoist_symbols(self.module_scope);
+        self.hoist_symbols(self.module_scope_ref());
 
         let mut generated_symbols_count: u32 = 3;
 
@@ -2912,15 +2912,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    fn hoist_symbols(&mut self, scope: *mut js_ast::Scope) {
-        // SAFETY: scope is arena-owned and valid for the parser 'a lifetime; the
-        // visit pass is single-threaded so no aliasing &mut is outstanding. Read
-        // the immutable bits we need (kind/parent/strict_mode/members snapshot)
-        // through a single shared borrow up front; the only later access to
-        // `*scope` is the `&mut (*scope).generated` push and the post-loop
-        // `children` walk, each re-derived from the raw pointer so no `&` is
-        // live across the `&mut`.
-        let scope_ref = unsafe { &*scope };
+    fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
+        // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
+        // scope is arena-owned and valid for the parser 'a lifetime; the visit
+        // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
+        // immutable bits (kind/parent/strict_mode/members snapshot) up front; the
+        // only later access is the `scope.generated` push (DerefMut, after the
+        // shared borrow is dropped) and the post-loop `children` walk.
+        let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
             // PORT NOTE: Zig captured `var symbols = p.symbols.items;` and asserted it
@@ -2942,8 +2941,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                     v
                 };
-                // `scope_ref` must not outlive the `&mut *scope` write inside the loop
-                // (Stacked Borrows): drop the shared borrow now and re-derive per use.
+                // `scope_ref` (shared borrow of the `StoreRef` local) must end
+                // before the `DerefMut` write to `scope.generated` inside the
+                // loop; NLL drops it at last use (the snapshot block above).
                 let _ = scope_ref;
 
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
@@ -3008,9 +3008,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                         let original_name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
                         let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
-                        // SAFETY: see top of fn — `scope` is arena-owned; no live & borrow of
-                        // `scope.generated` exists here (the members snapshot was taken by value).
-                        VecExt::append(&mut unsafe { &mut *scope }.generated, hoisted_ref);
+                        // No live `&` borrow of `scope` exists here (the members
+                        // snapshot was taken by value); `StoreRef` `DerefMut`.
+                        VecExt::append(&mut scope.generated, hoisted_ref);
                         self.hoisted_ref_for_sloppy_mode_block_fn.insert(value.ref_, hoisted_ref);
                         value.ref_ = hoisted_ref;
                         symbol_idx = hoisted_ref.inner_index() as usize;
@@ -3114,11 +3114,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; the
+            // `StoreRef` Deref — arena-owned, valid for parser 'a lifetime; the
             // recursive calls only touch descendant scopes.
-            let children = unsafe { &*scope }.children.slice();
+            let children = scope.children.slice();
             for child in children {
-                self.hoist_symbols(child.as_ptr());
+                self.hoist_symbols(*child);
             }
         }
     }
@@ -6906,17 +6906,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(ReactRefresh::is_hook_name(original_name));
         // PORT NOTE: Zig stores `?*?HookContext` (raw pointer to stack storage in
-        // the visiting fn frame). The Rust field is `Option<&'a mut Option<HookContext>>`;
-        // erase to a raw pointer immediately so we can call other `&mut self`
+        // the visiting fn frame). `ReactRefresh::hook_ctx_mut` centralises the
+        // raw-pointer deref and returns a borrow detached from `self` (the
+        // storage is on a caller stack frame), so we can call other `&mut self`
         // methods (generate_temp_ref_with_scope, declared_symbols.append) while
-        // holding the storage — exactly mirroring the Zig pointer flow.
-        let ctx_storage_ptr: *mut Option<crate::HookContext> = match self.react_refresh.hook_ctx_storage {
-            Some(s) => s.as_ptr(),
-            None => return, // not in a function, ignore this hook call.
+        // holding it — exactly mirroring the Zig pointer flow.
+        let Some(ctx_storage) = self.react_refresh.hook_ctx_mut() else {
+            return; // not in a function, ignore this hook call.
         };
-        // SAFETY: hook_ctx_storage points at stack storage in the visiting fn frame,
-        // disjoint from `self`; no aliasing &mut outstanding across the calls below.
-        let ctx_storage = unsafe { &mut *ctx_storage_ptr };
 
         // if this function has no hooks recorded, initialize a hook context
         // every function visit provides stack storage, which it will inspect at visit finish.
@@ -6936,8 +6933,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope.as_ptr());
-            // SAFETY: see ctx_storage_ptr note above; reborrow after &mut self calls.
-            let ctx_storage = unsafe { &mut *ctx_storage_ptr };
             *ctx_storage = Some(crate::HookContext {
                 hasher: Wyhash::init(0),
                 signature_cb,
@@ -6951,8 +6946,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .append(DeclaredSymbol { is_top_level: true, ref_: signature_cb })
                 .expect("oom");
         }
-        // SAFETY: see ctx_storage_ptr note above; reborrow for the rest of the body.
-        let ctx: &mut crate::HookContext = unsafe { &mut *ctx_storage_ptr }.as_mut().unwrap();
+        let ctx: &mut crate::HookContext = ctx_storage.as_mut().unwrap();
 
         ctx.hasher.update(original_name);
 

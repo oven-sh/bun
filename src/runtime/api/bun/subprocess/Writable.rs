@@ -130,8 +130,7 @@ impl<'a> Writable<'a> {
         // TODO(port): narrow error set
         Subprocess::assert_stdio_result(&result);
 
-        // SAFETY: `event_loop.global` is set before any subprocess work.
-        let global = unsafe { event_loop.global.unwrap().as_ref() };
+        let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to

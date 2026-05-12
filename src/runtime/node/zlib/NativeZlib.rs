@@ -53,9 +53,9 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 #[ref_count(destroy = Self::deinit)]
 pub struct NativeZlib {
     pub ref_count: Cell<u32>,
-    // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
-    // Read-only after construction — stays bare.
-    pub global_this: *mut JSGlobalObject,
+    // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+    // centralises the single unsafe deref so the trait impl is safe.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub stream: JsCell<Context>,
     pub write_result: Cell<Option<*mut u32>>,
     pub poll_ref: JsCell<CountedKeepAlive>,
@@ -102,11 +102,8 @@ impl NativeZlib {
         stream.mode = c::NodeMode::from_int(mode_int as u8);
         Ok(Box::new(Self {
             ref_count: Cell::new(1),
-            // SAFETY: JSGlobalObject is an opaque FFI handle with UnsafeCell interior;
-            // `as_ptr()` derives `*mut` via `UnsafeCell::get()` so the stored pointer
-            // carries write provenance (C++ mutates the global). The global outlives
-            // this m_ctx payload (JSC_BORROW backref).
-            global_this: global.as_ptr(),
+            // JSC_BORROW backref — the global outlives this m_ctx payload.
+            global_this: bun_ptr::BackRef::new(global),
             stream: JsCell::new(stream),
             write_result: Cell::new(None),
             poll_ref: JsCell::new(CountedKeepAlive::default()),

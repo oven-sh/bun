@@ -1402,7 +1402,7 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
         // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
         Ok(res) => Some(res.path_const().unwrap().text),
         Err(_) => {
-            unsafe { (*r.log).reset() };
+            r.log_mut().reset();
             None
         }
     }

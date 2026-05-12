@@ -880,26 +880,10 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // TODO(port): Zig checked that `ev.timer` was not the 0xAA undefined-memory pattern.
-            // Rust has no equivalent debug-undefined fill; this check is a no-op here. Kept as a
-            // structural marker for Phase B review.
-            // SAFETY: reading initialized bytes of `timer` for a debug sanity check.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(
-                    core::ptr::addr_of!(ev_ref.timer).cast::<u8>(),
-                    core::mem::size_of_val(&ev_ref.timer),
-                )
-            };
-            let mut all_aa = true;
-            for &b in bytes {
-                if b != 0xAA {
-                    all_aa = false;
-                    break;
-                }
-            }
-            if all_aa {
-                panic!("timer is undefined memory in watcherReleaseAndSubmitEvent");
-            }
+            // PORT NOTE: Zig asserted `ev.timer` was not the 0xAA debug-undefined
+            // fill pattern. Rust has no such fill (uninitialized memory is never
+            // observed through a typed place), so the byte-scan is dropped — it
+            // could not fire and reading struct padding is itself UB.
             ev_ref.debug_mutex.unlock();
         }
 

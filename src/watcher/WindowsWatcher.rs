@@ -6,6 +6,7 @@ use core::ptr;
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_paths::resolve_path::{is_parent_or_equal, ParentEqual};
 use bun_core::strings;
+use bun_ptr::{BackRef, RawSlice};
 use bun_threading::Mutex;
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 
@@ -67,9 +68,11 @@ pub enum Action {
 
 pub struct FileEvent {
     pub action: Action,
-    pub filename: *mut [u16],
-    // TODO(port): lifetime — Zig `[]u16` borrows DirWatcher.buf; raw slice ptr to avoid
-    // a struct lifetime param in Phase A. Callers in this file deref immediately.
+    // BACKREF: Zig `[]u16` borrows `DirWatcher.buf`. [`RawSlice`] (not a
+    // lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
+    // the buffer is live until the next `prepare()` — encapsulated by the
+    // `RawSlice` outlives-holder invariant so callers read via safe `.slice()`.
+    pub filename: RawSlice<u16>,
 }
 
 #[repr(C)]
@@ -148,13 +151,15 @@ impl DirWatcher {
 
 /// Iterates `FILE_NOTIFY_INFORMATION` records out of a `DirWatcher`'s buffer.
 ///
-/// PORT NOTE: holds a raw `*const DirWatcher` instead of a lifetime-carrying
+/// PORT NOTE: holds a [`BackRef<DirWatcher>`] instead of a lifetime-carrying
 /// `&'a DirWatcher` so `WindowsWatcher::next` does not keep `&mut Watcher.platform`
 /// borrowed across `watch_loop_cycle`'s inner loop (which mutates sibling
-/// fields). Safety invariant: the iterator is only advanced while the owning
-/// `DirWatcher` is alive and `prepare()` has not been re-called.
+/// fields). The `BackRef` invariant — pointee outlives holder — is upheld
+/// because the iterator is only advanced while the owning `DirWatcher` is
+/// alive and `prepare()` has not been re-called; safe `Deref` replaces the
+/// previously open-coded raw `(*self.watcher).buf` projection.
 pub struct EventIterator {
-    pub watcher: *const DirWatcher,
+    pub watcher: BackRef<DirWatcher>,
     pub offset: usize,
     pub has_next: bool,
 }
@@ -169,20 +174,26 @@ impl EventIterator {
         // `FileName: [WCHAR; 1]`, so `size_of` == 16. Use the field offset, not the struct
         // size, to locate the variable-length filename.
         let name_offset = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
-        // SAFETY: `self.watcher` points at a live DirWatcher whose `buf` was filled by
-        // ReadDirectoryChangesW with a sequence of FILE_NOTIFY_INFORMATION records;
-        // `offset` is advanced only by NextEntryOffset values returned by the kernel,
-        // so each cast targets a properly-aligned record header.
-        let buf_ptr = unsafe { (*self.watcher).buf.as_ptr() };
+        // `self.watcher` is a `BackRef<DirWatcher>` — pointee live until the
+        // next `prepare()` (see struct PORT NOTE) — so reading `buf` is safe.
+        let buf_ptr = self.watcher.buf.as_ptr();
+        // SAFETY: `buf` was filled by ReadDirectoryChangesW with a sequence of
+        // FILE_NOTIFY_INFORMATION records; `offset` is advanced only by
+        // NextEntryOffset values returned by the kernel, so each cast targets a
+        // properly-aligned record header.
         let info: &w::FILE_NOTIFY_INFORMATION =
             unsafe { &*(buf_ptr.add(self.offset).cast::<w::FILE_NOTIFY_INFORMATION>()) };
-        // SAFETY: the variable-length filename begins at the FileName field of the record.
-        let name_ptr: *mut u16 =
-            unsafe { buf_ptr.add(self.offset + name_offset).cast::<u16>() as *mut u16 };
-        let filename: *mut [u16] = core::ptr::slice_from_raw_parts_mut(
-            name_ptr,
-            (info.FileNameLength as usize) / size_of::<u16>(),
-        );
+        // SAFETY: the variable-length filename begins at the FileName field of
+        // the record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
+        // bytes which lie wholly inside `buf`. Wrap in `RawSlice` so callers
+        // re-borrow without an open-coded raw deref.
+        let filename: RawSlice<u16> = unsafe {
+            let name_ptr = buf_ptr.add(self.offset + name_offset).cast::<u16>();
+            RawSlice::new(core::slice::from_raw_parts(
+                name_ptr,
+                (info.FileNameLength as usize) / size_of::<u16>(),
+            ))
+        };
 
         // PORT NOTE: Zig `@enumFromInt` is safety-checked in debug; Rust `transmute`
         // into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
@@ -357,7 +368,7 @@ impl WindowsWatcher {
                     });
                 }
                 return Ok(Some(EventIterator {
-                    watcher: &self.watcher as *const DirWatcher,
+                    watcher: BackRef::new(&self.watcher),
                     offset: 0,
                     has_next: true,
                 }));
@@ -416,9 +427,10 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             this.watchlist.items_file_path().len()
         );
         while let Some(event) = iter.next() {
-            // SAFETY: event.filename points into this.platform.watcher.buf which is live for
-            // the duration of this iteration (no prepare() called until outer loop reiterates).
-            let filename: &[u16] = unsafe { &*event.filename };
+            // `event.filename` is a `RawSlice<u16>` into `this.platform.watcher.buf`,
+            // live for the duration of this iteration (no `prepare()` until the
+            // outer loop reiterates) — encapsulated by the `RawSlice` invariant.
+            let filename: &[u16] = event.filename.slice();
             let convert_res =
                 strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
             let eventpath_len = base_idx + convert_res.written as usize;
@@ -478,7 +490,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     // The callee never touches `platform.watcher`, so re-deriving the pointer
                     // here from the now-current `&mut Watcher` restores valid provenance. (Zig
                     // has no aliasing model so the spec at WindowsWatcher.zig:245 is sound.)
-                    iter.watcher = &this.platform.watcher as *const DirWatcher;
+                    iter.watcher = BackRef::new(&this.platform.watcher);
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }

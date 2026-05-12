@@ -89,10 +89,7 @@ impl ByteBlobLoader {
         let (offset, size) = blob.resolved_size();
         let (content_type, content_type_allocated) = 'brk: {
             if blob.content_type_was_set.get() {
-                // SAFETY: `Blob.content_type` is a `*const [u8]` pointing at either a
-                // `'static` literal or a heap allocation owned by `blob`; `blob` outlives
-                // this borrow and we immediately copy into an owned `Box<[u8]>`.
-                let ct = unsafe { &*blob.content_type.get() };
+                let ct = blob.content_type_slice();
                 if blob.content_type_allocated.get() {
                     break 'brk (Box::<[u8]>::from(ct), true);
                 }

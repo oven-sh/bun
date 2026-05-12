@@ -383,6 +383,21 @@ impl WatchChangedPaths {
     pub fn new(set: &'static mut StringSet) -> Self {
         Self(core::ptr::NonNull::from(set))
     }
+
+    /// Reborrow the wrapped `StringSet`. Single audited `unsafe` for the
+    /// set-once `NonNull` deref so the two callers below
+    /// (`record_changed_path`, `flush_changed_paths_for_reload`) are safe.
+    ///
+    /// Soundness: published exactly once via `OnceLock` before the watcher
+    /// thread starts; thereafter only the watcher thread reaches the callers,
+    /// so the `&mut` is exclusive. Lives in the process-lifetime CLI arena.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn get_mut(&self) -> &mut StringSet {
+        // SAFETY: see doc comment — single-writer (watcher thread) after
+        // init-once publish; allocation outlives the process.
+        unsafe { &mut *self.0.as_ptr() }
+    }
 }
 // SAFETY: published exactly once before the watcher thread starts; thereafter
 // only the watcher thread dereferences it (see module docs above). The
@@ -409,9 +424,7 @@ fn record_changed_path(path: &[u8]) {
     if path.is_empty() {
         return;
     }
-    // SAFETY: pointer set once by test_command before watcher thread starts;
-    // only the watcher thread reaches here.
-    bun_core::handle_oom(unsafe { (*set.0.as_ptr()).insert(path) });
+    bun_core::handle_oom(set.get_mut().insert(path));
 }
 
 /// Write the recorded changed paths to the trigger file so the next
@@ -433,8 +446,7 @@ fn flush_changed_paths_for_reload() {
         let Some(&dest) = WATCH_CHANGED_TRIGGER_FILE.get() else {
             return;
         };
-        // SAFETY: same single-writer invariant as above.
-        let set = unsafe { set.0.as_ref() };
+        let set = set.get_mut();
         if set.count() == 0 {
             return;
         }
@@ -1146,13 +1158,10 @@ where
                                             dir_ent.entries().get(changed_name)
                                         {
                                             // reset the file descriptor
-                                            // SAFETY: hot-reload runs on the JS thread holding
-                                            // the entries mutex; no other live &Entry alias.
-                                            unsafe {
-                                                (*(*file_ent.entry).cache.get()).fd = Fd::INVALID;
-                                                (*file_ent.entry).need_stat.set(true);
-                                                path_string = (*file_ent.entry).abs_path;
-                                            }
+                                            let ent = file_ent.entry();
+                                            ent.set_cache_fd(Fd::INVALID);
+                                            ent.need_stat.set(true);
+                                            path_string = ent.abs_path;
                                             file_hash =
                                                 Watcher::get_hash(path_string.slice());
                                             for (entry_id, hash) in

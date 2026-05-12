@@ -1136,19 +1136,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             heap: io_heap::IntrusiveField::default(),
         });
 
+        // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only
+        // reference. Wrap once as `ParentRef` so the read-only field accesses
+        // below go through safe `Deref` instead of three per-site raw-deref
+        // blocks. The shared borrow ends (NLL) before `spawn_next_script` takes
+        // the raw `*mut` for exclusive access.
+        let lss = unsafe { bun_ptr::ParentRef::<Self>::from_raw(lifecycle_subprocess) };
+
         if log_level.is_verbose() {
             Output::pretty_errorln(format_args!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
-                // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
-                bstr::BStr::new(unsafe { &(*lifecycle_subprocess).scripts.package_name }),
+                bstr::BStr::new(&lss.scripts.package_name),
             ));
         }
 
-        // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
-        unsafe { &*lifecycle_subprocess }.increment_pending_script_tasks();
+        lss.increment_pending_script_tasks();
 
-        // SAFETY: as above.
-        let first_index = unsafe { &(*lifecycle_subprocess).scripts }.first_index;
+        let first_index = lss.scripts.first_index;
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {

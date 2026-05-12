@@ -38,6 +38,17 @@ static INSTANCE: bun_core::RacyCell<Option<NonNull<ClientContext>>> =
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
+    /// Mutable access to the lsquic client engine.
+    ///
+    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
+    /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
+    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
+    #[inline]
+    fn qctx_mut(&mut self) -> &mut quic::Context {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.qctx.as_ptr() }
+    }
+
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub fn get() -> Option<NonNull<ClientContext>> {
@@ -110,10 +121,9 @@ impl ClientContext {
         // SAFETY: session is live (just pushed into registry).
         unsafe { (*session).enqueue(client) };
 
-        // SAFETY: qctx is the process-lifetime lsquic client engine.
-        let result = unsafe {
-            (*self.qctx.as_ptr()).connect(&host_z, port, &host_z, reject, session.cast::<c_void>())
-        };
+        let result = self
+            .qctx_mut()
+            .connect(&host_z, port, &host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
                 // SAFETY: session is live; qs is a fresh quic socket whose ext slot
@@ -136,8 +146,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // SAFETY: qctx is live for the process.
-                let l = unsafe { (*self.qctx.as_ptr()).r#loop() };
+                let l = self.qctx_mut().r#loop();
                 PendingConnect::register(session, pending, l.cast::<UwsLoop>());
             }
             ConnectResult::Err => {
@@ -173,8 +182,12 @@ impl ClientContext {
         let Some(this) = Self::get() else {
             return false;
         };
-        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-        for &s in unsafe { (*this.as_ptr()).sessions.iter() } {
+        // Leaked Box, process-lifetime; HTTP-thread only — `BackRef` (immortal
+        // referent) gives `&ClientContext` for the Vec iter. Each session is a
+        // disjoint heap allocation, and `ClientSession::abort_by_http_id` never
+        // calls back into `unregister`, so `sessions` is stable across the loop.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
             // SAFETY: registry only holds live sessions.
             if unsafe { (*s).abort_by_http_id(async_http_id) } {
                 return true;
@@ -187,8 +200,9 @@ impl ClientContext {
         let Some(this) = Self::get() else {
             return;
         };
-        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-        for &s in unsafe { (*this.as_ptr()).sessions.iter() } {
+        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
             // SAFETY: registry only holds live sessions.
             unsafe { (*s).stream_body_by_http_id(async_http_id, ended) };
         }

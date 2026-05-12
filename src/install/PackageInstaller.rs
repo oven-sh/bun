@@ -1286,7 +1286,6 @@ impl<'a> PackageInstaller<'a> {
         // SAFETY: BACKREF — none of these fields are dropped, moved, or resized while
         // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
         let node_modules_ptr: *const NodeModulesFolder = &raw const self.node_modules;
-        let lockfile_ptr: *const Lockfile = self.lockfile.cast_const();
         let mut installer = PackageInstall {
             progress: if self.manager().options.log_level.show_progress() {
                 Some(progress!(self))
@@ -1304,7 +1303,10 @@ impl<'a> PackageInstaller<'a> {
             }),
             package_version,
             node_modules: unsafe { &*node_modules_ptr },
-            lockfile: unsafe { &*lockfile_ptr },
+            // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,
+            // outlives `'a`); `lockfile()` centralises the raw deref so this
+            // site stays safe.
+            lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
             file_count: 0,
         };

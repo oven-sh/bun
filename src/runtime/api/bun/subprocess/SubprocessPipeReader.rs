@@ -38,8 +38,10 @@ pub struct PipeReader {
     // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     pub process: Option<ParentRef<Subprocess<'static>>>,
-    // TODO(port): lifetime — long-lived borrow of the VM's event loop
-    pub event_loop: NonNull<EventLoop>,
+    // Long-lived borrow of the VM's event loop. The VM (and its embedded
+    // `EventLoop`) outlives every PipeReader, so `BackRef` centralises the
+    // single unsafe deref behind a safe `Deref`/`get()`.
+    pub event_loop: bun_ptr::BackRef<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
@@ -126,7 +128,7 @@ impl PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
-            event_loop,
+            event_loop: event_loop.into(),
             event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
@@ -164,7 +166,7 @@ impl PipeReader {
     ) -> bun_sys::Result<()> {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop;
+        self.event_loop = event_loop.into();
         self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
@@ -361,15 +363,15 @@ impl PipeReader {
         }
     }
 
-    pub fn event_loop(&self) -> NonNull<EventLoop> {
-        self.event_loop
+    pub fn event_loop(&self) -> &EventLoop {
+        self.event_loop.get()
     }
 
     // TODO(port): `loop` is a Rust keyword; renamed to `loop_`. Callers (BufferedReader vtable) must match.
     pub fn loop_(&self) -> *mut AsyncLoop {
-        // SAFETY: event_loop is valid for the lifetime of this PipeReader; its
-        // `virtual_machine` backref is set by the time a PipeReader is created.
-        let vm = unsafe { self.event_loop.as_ref() }
+        // `event_loop.virtual_machine` is set by the time a PipeReader is created.
+        let vm = self
+            .event_loop
             .virtual_machine
             .expect("event_loop.virtual_machine");
         let uws = unsafe { vm.as_ref() }.uws_loop();

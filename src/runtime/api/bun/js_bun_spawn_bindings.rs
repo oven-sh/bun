@@ -479,13 +479,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
                     cwd_owned = Some(cwd_str.to_owned_slice_z());
-                    // SAFETY: cwd_owned outlives every read of `cwd` below.
-                    cwd = unsafe {
-                        core::slice::from_raw_parts(
-                            cwd_owned.as_ref().unwrap().as_bytes().as_ptr(),
-                            cwd_owned.as_ref().unwrap().len(),
-                        )
-                    };
+                    // `cwd_owned` is never mutated again, so this borrow is valid
+                    // for every read of `cwd` below.
+                    cwd = cwd_owned.as_ref().unwrap().as_bytes();
                 }
             }
         }

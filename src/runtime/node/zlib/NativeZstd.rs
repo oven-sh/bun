@@ -36,13 +36,9 @@ unsafe fn unset_task_callback(_: *mut WorkPoolTask) {
 pub struct NativeZstd {
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
     pub ref_count: Cell<u32>,
-    // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject; stored raw because the struct is the
-    // heap-allocated `m_ctx` payload of a .classes.ts wrapper (no lifetime param in Phase A).
-    // Stored `*const` (not `*mut`): provenance comes from a `&JSGlobalObject` host-fn arg and
-    // is only ever re-borrowed as `&JSGlobalObject` (see node_zlib_binding.rs). Casting that
-    // shared borrow to `*mut` would be UB if a `&mut` were later materialized from it.
-    // Read-only after construction — stays bare.
-    pub global_this: *const JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
+    // `BackRef` centralises the single unsafe deref so the trait impl is safe.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub stream: JsCell<Context>,
     // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
     pub write_result: Cell<Option<*mut u32>>,
@@ -94,9 +90,9 @@ impl NativeZstd {
         stream.mode = NodeMode::from_int(mode_int as u8);
         Ok(Box::new(Self {
             ref_count: Cell::new(1), // RefCount.init()
-            // SAFETY: JSC_BORROW — the JSGlobalObject outlives this payload (the C++ wrapper
-            // is owned by that global's heap). Stored as `*const` and only re-borrowed shared.
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global),
+            // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
+            // wrapper is owned by that global's heap).
+            global_this: bun_ptr::BackRef::new(global),
             stream: JsCell::new(stream),
             write_result: Cell::new(None),
             poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -462,7 +458,7 @@ impl bun_event_loop::Taskable for NativeZstd {
 impl CompressionStreamImpl for NativeZstd {
     type Stream = Context;
 
-    #[inline] fn global_this(&self) -> *mut JSGlobalObject { self.global_this.cast_mut() }
+    #[inline] fn global_this(&self) -> &JSGlobalObject { self.global_this.get() }
     #[inline] fn stream(&self) -> &JsCell<Self::Stream> { &self.stream }
     #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get() }
     #[inline] fn poll_ref(&self) -> &JsCell<CountedKeepAlive> { &self.poll_ref }

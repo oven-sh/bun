@@ -732,9 +732,7 @@ impl Response {
             init.headers = Some(HeadersRef::create_empty());
 
             if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                // SAFETY: Blob.content_type is always a valid (possibly empty) slice
-                // pointer (see Blob::default()/set_content_type contract).
-                let content_type = unsafe { &*blob.content_type.get() };
+                let content_type = blob.content_type_slice();
                 if !content_type.is_empty() {
                     init.headers
                         .as_mut()
@@ -762,8 +760,7 @@ impl Response {
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            // SAFETY: see note in get_or_create_headers.
-            let content_type = unsafe { &*blob.content_type.get() };
+            let content_type = blob.content_type_slice();
             if !content_type.is_empty() {
                 return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
             }
@@ -1297,9 +1294,7 @@ impl Response {
         // avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
             if let Some(headers) = init.headers.as_deref_mut() {
-                // SAFETY: see note in get_or_create_headers — `content_type`
-                // is a valid (possibly empty) slice pointer.
-                let content_type = unsafe { &*blob.content_type.get() };
+                let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(HTTPHeaderName::ContentType, content_type, global_this)?;
                 }

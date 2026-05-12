@@ -217,10 +217,6 @@ impl PostgresSQLStatement {
             i += 1;
         }
 
-        // SAFETY: every element in ids[0..i] (== ids[..]) was written above.
-        let ids: &mut [ExternColumnIdentifier] =
-            unsafe { core::slice::from_raw_parts_mut(ids.as_mut_ptr().cast(), ids.len()) };
-
         if non_duplicated_count > max_inline {
             // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
             // slot in [0..non_duplicated_count] was initialized in the loop above.
@@ -230,13 +226,16 @@ impl PostgresSQLStatement {
             self.cached_structure
                 .set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
+            // Every element in `ids[..]` was `.write()`n above; C++ reads them as
+            // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
+            // without materialising a typed slice (avoids an unsafe assume-init cast).
             self.cached_structure.set(
                 global_object,
                 Some(JSObject::create_structure(
                     global_object,
                     owner,
                     ids.len() as u32,
-                    ids.as_mut_ptr(),
+                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
                 )),
                 None,
             );

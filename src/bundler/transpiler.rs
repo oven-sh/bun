@@ -1407,10 +1407,8 @@ impl<'a> Transpiler<'a> {
                 // sound for the lifetime of `source.contents`' consumers, which
                 // never outlive the `ParseResult`. Phase B threads a real
                 // lifetime once `bun_ast::Source.contents` becomes `Cow`.
-                let contents: &'static [u8] = unsafe {
-                    let s = source_backing.as_slice();
-                    core::slice::from_raw_parts(s.as_ptr(), s.len())
-                };
+                let contents: &'static [u8] =
+                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
@@ -1458,10 +1456,8 @@ impl<'a> Transpiler<'a> {
             // and the only consumers are the parser/printer which run before
             // the result drops). `contents_is_recycled = true` records that
             // the bytes are externally-owned; Phase B threads `'bump`.
-            let contents: &'static [u8] = unsafe {
-                let s = source_backing.as_slice();
-                core::slice::from_raw_parts(s.as_ptr(), s.len())
-            };
+            let contents: &'static [u8] =
+                unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             match bun_ast::Source::init_recycled_file(bun_ast::PathContentsPair {
                 path: path.clone(),
                 contents,
@@ -2539,9 +2535,10 @@ impl<'a> Transpiler<'a> {
     ) -> Result<options::TransformResult, bun_core::Error> {
         let _ = self.enqueue_entry_points::<true>();
 
-        // SAFETY: `log` is the same `*mut Log` stored on `self.log`; caller
+        // `log` is the same `*mut Log` stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.
-        if unsafe { &*log }.level.at_least(bun_ast::Level::Debug) {
+        let _ = log;
+        if self.log().level.at_least(bun_ast::Level::Debug) {
             self.resolver.debug_logs = Some(resolver::DebugLogs::init()?);
         }
         self.options.transform_only = true;

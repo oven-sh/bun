@@ -222,17 +222,11 @@ impl StoreExt for Store {
                 match &file.pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
                         // PORT NOTE: Zig `writer.writeStruct(fd)` writes the raw
-                        // bytes of the FD wrapper. `bun_io::Write` has no
-                        // `write_struct`; shim it locally over the POD bytes.
-                        // SAFETY: `bun_sys::Fd` is a `#[repr(C)]`/transparent
-                        // integer wrapper — every bit pattern is valid `u8`.
-                        let bytes = unsafe {
-                            core::slice::from_raw_parts(
-                                std::ptr::from_ref::<bun_sys::Fd>(fd).cast::<u8>(),
-                                core::mem::size_of::<bun_sys::Fd>(),
-                            )
-                        };
-                        writer.write_all(bytes)?;
+                        // bytes of the FD wrapper. `bun_sys::Fd` is
+                        // `#[repr(transparent)]` over an integer (`i32` posix /
+                        // `u64` windows), so its native-endian byte image is
+                        // exactly the inner field's `to_ne_bytes()`.
+                        writer.write_all(&fd.0.to_ne_bytes())?;
                     }
                     PathOrFileDescriptor::Path(path) => {
                         let path_slice = path.slice();

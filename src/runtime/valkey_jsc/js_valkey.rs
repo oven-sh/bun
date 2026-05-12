@@ -4,6 +4,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_io::KeepAlive;
+use bun_ptr::BackRef;
 use bun_boringssl as boringssl;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
@@ -326,8 +327,10 @@ impl SubscriptionCtx {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        let parent_ptr = std::ptr::from_ref::<JSValkeyClient>(self.parent());
-        let _update = scopeguard::guard(parent_ptr, |p| unsafe { (*p).update_poll_ref() });
+        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
+        // safe even though intervening JS may re-enter `&self`.
+        let parent_br = BackRef::new(self.parent());
+        let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -1006,8 +1009,8 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
-        let self_ptr = self.as_ctx_ptr();
-        let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
+        let self_br = BackRef::new(self);
+        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
 
         if self.client.get().flags.needs_to_open_socket {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
@@ -1692,8 +1695,8 @@ impl JSValkeyClient {
             self.reset_connection_timeout();
         }
 
-        let self_ptr = self.as_ctx_ptr();
-        let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
+        let self_br = BackRef::new(self);
+        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
         self.client_mut().send(global_this, command)
     }
 
@@ -1878,9 +1881,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         );
         let handshake_success = success == 1;
         this.ref_();
-        let this_ptr = this.as_ctx_ptr();
-        let _d = deref_guard(this_ptr);
-        let _update = scopeguard::guard(this_ptr, |p| unsafe { (*p).update_poll_ref() });
+        let _d = deref_guard(this.as_ctx_ptr());
+        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
         let vm = this.client.get().vm;
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {
@@ -1986,8 +1988,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().flags.is_authenticated = false;
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
-        let this_ptr = this.as_ctx_ptr();
-        let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client_mut().close() });
+        let this_br = BackRef::new(this);
+        let _close = scopeguard::guard(this_br, |p| p.client_mut().close());
         narrow_terminated(this.client_mut().fail_with_js_value(&this.global_object, err_value))
     }
 

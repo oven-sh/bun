@@ -160,8 +160,9 @@ pub struct Property {
     pub kind: PropertyKind,
     pub flags: flags::PropertySet,
 
-    // TODO(port): Option<&'bump mut ClassStaticBlock> once 'bump threaded.
-    pub class_static_block: Option<core::ptr::NonNull<ClassStaticBlock>>,
+    // Arena-owned `?*ClassStaticBlock` (Zig). `StoreRef` centralises the
+    // raw-pointer deref so the accessors below stay safe.
+    pub class_static_block: Option<crate::StoreRef<ClassStaticBlock>>,
     pub ts_decorators: ExprNodeList,
     // Key is optional for spread
     pub key: Option<ExprNodeIndex>,
@@ -191,36 +192,31 @@ impl Default for Property {
 }
 
 impl Property {
-    /// Re-borrow `class_static_block` as `Option<&ClassStaticBlock>`. Same
-    /// `StoreRef` arena contract: the pointee is a bump allocation valid until
-    /// arena reset. Centralises the one `unsafe` so callers (printer/visitor/
-    /// can-be-removed analysis) don't repeat the raw-ptr deref.
+    /// Re-borrow `class_static_block` as `Option<&ClassStaticBlock>`. Routes
+    /// through `StoreRef::Deref` so callers (printer/visitor/can-be-removed
+    /// analysis) need no `unsafe`.
     #[inline]
-    pub fn class_static_block_ref<'a>(&self) -> Option<&'a ClassStaticBlock> {
-        // SAFETY: `class_static_block` is an arena-owned `*ClassStaticBlock`
-        // valid for the lifetime of the AST arena (Zig: `?*ClassStaticBlock`).
-        // No `&mut` alias is outstanding at any read site (single-threaded
-        // visitor/printer pass, same as `StoreRef::Deref`).
-        self.class_static_block.map(|p| unsafe { p.as_ref() })
+    pub fn class_static_block_ref(&self) -> Option<&ClassStaticBlock> {
+        self.class_static_block.as_deref()
     }
 
-    /// Mutable sibling of [`class_static_block_ref`]. Same `StoreRef::DerefMut`
-    /// contract: callers must not hold an overlapping `&`/`&mut` to the same
-    /// `ClassStaticBlock` (upheld by the single-threaded visitor pass).
+    /// Mutable sibling of [`class_static_block_ref`]. Routes through
+    /// `StoreRef::DerefMut` (same arena contract: callers must not hold an
+    /// overlapping `&`/`&mut` to the same `ClassStaticBlock` — upheld by the
+    /// single-threaded visitor pass).
     #[inline]
-    pub fn class_static_block_mut<'a>(&mut self) -> Option<&'a mut ClassStaticBlock> {
-        // SAFETY: see `class_static_block_ref`.
-        self.class_static_block.map(|mut p| unsafe { p.as_mut() })
+    pub fn class_static_block_mut(&mut self) -> Option<&mut ClassStaticBlock> {
+        self.class_static_block.as_deref_mut()
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Property, bun_alloc::AllocError> {
-        let mut class_static_block: Option<core::ptr::NonNull<ClassStaticBlock>> = None;
+        let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
                 stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
             });
-            class_static_block = Some(core::ptr::NonNull::from(new_block));
+            class_static_block = Some(crate::StoreRef::from_bump(new_block));
         }
         Ok(Property {
             initializer: match self.initializer {

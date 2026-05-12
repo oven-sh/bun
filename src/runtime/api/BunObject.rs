@@ -1131,6 +1131,29 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
 }
 
+/// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
+/// Replaces three separate `scopeguard::guard(_, |s| s.deref())` closures —
+/// each of which generated its own drop frame and landing pad — with one
+/// contiguous cleanup. Fields default to `BunString::empty()`, whose `deref()`
+/// is a single tag-compare no-op, so unused slots cost effectively nothing.
+struct ResolveDerefOnDrop {
+    query_string: BunString,
+    /// Only set when the specifier had a `file://` prefix and we allocated a
+    /// decoded copy. On the fast path the caller's `specifier` is borrowed
+    /// directly and this stays empty (no refcount traffic).
+    decoded_specifier: BunString,
+    result_value: BunString,
+}
+impl Drop for ResolveDerefOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        // LIFO relative to original declaration order.
+        self.result_value.deref();
+        self.decoded_specifier.deref();
+        self.query_string.deref();
+    }
+}
+
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
@@ -1139,21 +1162,28 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     is_user_require_resolve: bool,
 ) -> JsResult<JSValue> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
-    let mut query_string = scopeguard::guard(BunString::empty(), |s| s.deref());
-
-    let specifier_decoded = if specifier.has_prefix_comptime(b"file://") {
-        jsc::URL::path_from_file_url(specifier)
-    } else {
-        specifier.dupe_ref()
+    let mut owned = ResolveDerefOnDrop {
+        query_string: BunString::empty(),
+        decoded_specifier: BunString::empty(),
+        result_value: BunString::empty(),
     };
-    let specifier_decoded = scopeguard::guard(specifier_decoded, |s| s.deref());
+
+    // Fast path: no `file://` prefix → forward the caller-owned `specifier`
+    // by value without `dupe_ref()`/`deref()` refcount churn. Only the
+    // URL-decoded branch produces a string we must release.
+    let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
+        owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
+        owned.decoded_specifier
+    } else {
+        specifier
+    };
 
     VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         &mut errorable,
         ctx,
-        *specifier_decoded,
+        specifier_for_resolve,
         from,
-        Some(&mut *query_string),
+        Some(&mut owned.query_string),
         is_esm,
         is_user_require_resolve,
     )?;
@@ -1163,18 +1193,18 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
     }
     // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-    let result_value = scopeguard::guard(unsafe { errorable.result.value }, |s| s.deref());
+    owned.result_value = unsafe { errorable.result.value };
 
-    if !query_string.is_empty() {
+    if !owned.query_string.is_empty() {
         // PERF(port): was stack-fallback
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
-        let _ = write!(&mut arraylist, "{}{}", *result_value, *query_string);
+        let _ = write!(&mut arraylist, "{}{}", owned.result_value, owned.query_string);
 
         return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
     }
 
-    result_value.to_js(ctx)
+    owned.result_value.to_js(ctx)
 }
 
 #[bun_jsc::host_fn]

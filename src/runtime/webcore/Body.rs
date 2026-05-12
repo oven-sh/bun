@@ -22,8 +22,25 @@ use crate::webcore::sink::{self, ArrayBufferSink};
 use crate::jsc::HTTPHeaderName;
 use bun_jsc::{JsCell, StringJsc as _};
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
-use bun_str::{WTFStringImpl, WTFStringImplExt as _};
+use bun_str::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
+
+/// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
+/// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
+/// (and in `Blob::Any`, `Response::construct_json`).
+///
+/// # Safety (encapsulated)
+/// `Value::WTFStringImpl` always stores a non-null `*mut WTF::StringImpl`
+/// (constructed via `String::leak_wtf_impl()` / `r#ref()`); the body holds a
+/// +1 intrusive ref for as long as the variant is active, so the pointee is
+/// live for any borrow tied to `&s`. All `WTFStringImplStruct` methods take
+/// `&self` (refcount lives in a `Cell`), so a shared borrow suffices even for
+/// `r#ref()` / `deref()`.
+#[inline(always)]
+pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
+    // SAFETY: see fn doc — non-null, intrusive-refcounted, live while held.
+    unsafe { &**s }
+}
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
@@ -181,9 +198,7 @@ impl Body {
                 // global. Compute the size from the matched payload directly.
                 let size = match v {
                     Value::InternalBlob(b) => b.slice_const().len(),
-                    // SAFETY: `WTFStringImpl` newtype wraps a live `*const WTF::StringImpl`
-                    // (refcounted by JSC; held for the lifetime of this `Value`).
-                    Value::WTFStringImpl(s) => unsafe { (**s).utf8_byte_length() },
+                    Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length(),
                     _ => unreachable!(),
                 };
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -742,7 +757,7 @@ impl Value {
             Value::Used | Value::Empty => true,
             Value::InternalBlob(b) => b.slice_const().is_empty(),
             Value::Blob(b) => b.size.get() == 0,
-            Value::WTFStringImpl(s) => (unsafe { (**s).length() }) == 0,
+            Value::WTFStringImpl(s) => wtf_impl(s).length() == 0,
             Value::Error(_) | Value::Locked(_) => false,
         }
     }
@@ -753,9 +768,7 @@ impl Value {
     
     pub fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
-            // SAFETY: `str` is a non-null `*mut WTFStringImplStruct`; the pointee is a
-            // live WTF::StringImpl kept alive by the intrusive +1 we hold.
-            if let Some(bytes) = unsafe { (*str).to_utf8_if_needed() } {
+            if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
                 // Zig: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
                 // already heap-owned by the slice wrapper; transfer it (no copy).
                 *self = Value::InternalBlob(InternalBlob {
@@ -764,8 +777,7 @@ impl Value {
                 });
                 // Zig: `var str = this.WTFStringImpl; defer str.deref();` — release the
                 // +1 the body held now that we've replaced the variant.
-                // SAFETY: `str` is still valid; deref may free it.
-                unsafe { (*str).deref() };
+                wtf_impl(&str).deref();
             }
         }
 
@@ -789,7 +801,7 @@ impl Value {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => (unsafe { (**s).utf8_byte_length() }) as blob::SizeType,
+            Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
@@ -799,7 +811,7 @@ impl Value {
     pub fn fast_size(&self) -> blob::SizeType {
         match self {
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => unsafe { (**s).byte_slice() }.len() as blob::SizeType,
+            Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
@@ -809,7 +821,7 @@ impl Value {
     pub fn memory_cost(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
-            Value::WTFStringImpl(s) => unsafe { (**s).memory_cost() },
+            Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
             Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
@@ -819,7 +831,7 @@ impl Value {
     pub fn estimated_size(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
-            Value::WTFStringImpl(s) => unsafe { (**s).byte_slice() }.len(),
+            Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
             Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
@@ -1235,8 +1247,7 @@ impl Value {
             Value::Blob(b) => b.shared_view(),
             Value::InternalBlob(b) => b.slice_const(),
             Value::WTFStringImpl(s) => {
-                // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                let s = unsafe { &**s };
+                let s = wtf_impl(s);
                 if s.can_use_as_utf8() {
                     s.latin1_slice()
                 } else {
@@ -1278,9 +1289,8 @@ impl Value {
             Value::WTFStringImpl(wtf) => {
                 let wtf = *wtf;
                 *self = Value::Used;
-                // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr; the +1 we
-                // hold keeps it alive across `to_utf8_if_needed`/`latin1_slice`.
-                let wtf_ref = unsafe { &*wtf };
+                // The body's +1 keeps it alive across `to_utf8_if_needed`/`latin1_slice`.
+                let wtf_ref = wtf_impl(&wtf);
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
@@ -1320,8 +1330,7 @@ impl Value {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
-                // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                if unsafe { (**str).can_use_as_utf8() } {
+                if wtf_impl(str).can_use_as_utf8() {
                     // Transfer the body's +1 to AnyBlob; `*self = Used` below drops nothing.
                     AnyBlob::WTFStringImpl(*str)
                 } else {
@@ -1346,8 +1355,7 @@ impl Value {
             Value::Blob(b) => AnyBlob::Blob(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(b),
             Value::WTFStringImpl(str) => 'brk: {
-                // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                let wtf_ref = unsafe { &*str };
+                let wtf_ref = wtf_impl(&str);
                 if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
                     // Zig: `defer str.deref()` — release the body's +1.
                     wtf_ref.deref();
@@ -1483,8 +1491,7 @@ impl Value {
                 // Zig: `this.WTFStringImpl.deref(); this.* = .Null;` — release the
                 // intrusive +1 the body holds. WTFStringImpl is a Copy raw ptr with no
                 // Drop, so we must deref explicitly.
-                // SAFETY: non-null live WTF::StringImpl; deref may free it.
-                unsafe { (**s).deref() };
+                wtf_impl(s).deref();
                 *self = Value::Null;
             }
             Value::Blob(b) => {
@@ -1637,8 +1644,7 @@ impl Value {
         }
 
         if let Value::WTFStringImpl(s) = *self {
-            // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr; bump +1.
-            unsafe { (*s).r#ref() };
+            wtf_impl(&s).r#ref();
             return Ok(Value::WTFStringImpl(s));
         }
 

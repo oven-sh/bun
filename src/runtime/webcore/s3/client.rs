@@ -527,7 +527,7 @@ pub fn writable_stream(
     // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink = bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
-        task: NonNull::new(task_ptr),
+        task: NonNull::new(task_ptr).map(bun_ptr::BackRef::from),
         global_this: Some(bun_ptr::BackRef::new(global_this)),
         high_water_mark: part_size as BlobSizeType,
         ..Default::default()

@@ -3204,23 +3204,35 @@ console.log(foo, array);
     });
   });
 
-  it("raw template literal preserves non-ASCII bytes verbatim", () => {
+  it("raw template literal preserves non-ASCII bytes verbatim (target=bun)", () => {
     // `TemplateStringsArray.raw` is spec-required to surface the source
     // bytes verbatim. The printer previously replaced codepoints > 0x7F
-    // with unicode escape sequences, which silently changed the runtime
-    // string value that `String.raw` reads. See #30563.
-    expectPrinted("String.raw`╭─╮`", "String.raw`╭─╮`");
-    expectPrinted("String.raw`你好世界`", "String.raw`你好世界`");
-    expectPrinted("String.raw`Redémarrage`", "String.raw`Redémarrage`");
-    expectPrinted("String.raw`Hello 🌍`", "String.raw`Hello 🌍`");
+    // with unicode escape sequences on the `ascii_only` /
+    // `is_bun_platform` path, silently changing the runtime string
+    // value that `String.raw` reads. See #30563. Target must be `bun`
+    // so the `is_bun_platform` branch runs — the browser default
+    // already printed verbatim before the PR.
+    const bunTargetTranspiler = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+    // Wrap each literal in a `var` so it isn't DCE'd as a side-effect-free
+    // expression statement; `target: "bun"` runs the full pipeline
+    // including dead-code elimination.
+    const bunPrint = code => bunTargetTranspiler.transformSync(`var x = ${code}`, "ts").trim();
+    expect(bunPrint("String.raw`╭─╮`")).toBe("var x = String.raw`╭─╮`;");
+    expect(bunPrint("String.raw`你好世界`")).toBe("var x = String.raw`你好世界`;");
+    expect(bunPrint("String.raw`Redémarrage`")).toBe("var x = String.raw`Redémarrage`;");
+    expect(bunPrint("String.raw`Hello 🌍`")).toBe("var x = String.raw`Hello 🌍`;");
   });
 
-  it("regex literal preserves non-ASCII bytes verbatim", () => {
+  it("regex literal preserves non-ASCII bytes verbatim (target=bun)", () => {
     // `RegExp.prototype.source` is spec-required to surface the source
-    // bytes verbatim. Same class of bug as raw template literals. See #30563.
-    expectPrinted("/╭─╮/", "/╭─╮/");
-    expectPrinted("/你好世界/", "/你好世界/");
-    expectPrinted("/æ™/", "/æ™/");
+    // bytes verbatim. Same class of bug as raw template literals — the
+    // previous `is_bun_platform` branch escaped codepoints > 0x7F.
+    // See #30563.
+    const bunTargetTranspiler = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+    const bunPrint = code => bunTargetTranspiler.transformSync(`var x = ${code}`, "ts").trim();
+    expect(bunPrint("/╭─╮/")).toBe("var x = /╭─╮/;");
+    expect(bunPrint("/你好世界/")).toBe("var x = /你好世界/;");
+    expect(bunPrint("/æ™/")).toBe("var x = /æ™/;");
   });
 
   it("raw template literal contents", () => {

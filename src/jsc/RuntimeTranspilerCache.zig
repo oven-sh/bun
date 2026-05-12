@@ -589,17 +589,13 @@ pub const RuntimeTranspilerCache = struct {
         features_hash: u64,
         sourcemap: []const u8,
         esm_record: []const u8,
-        source_code: bun.String,
+        output_code: Entry.OutputCode,
         exports_kind: bun.ast.ExportsKind,
     ) !void {
         var tracer = bun.perf.trace("RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;
-        const output_code: Entry.OutputCode = switch (source_code.encoding()) {
-            .utf8 => .{ .utf8 = source_code.byteSlice() },
-            else => .{ .string = source_code },
-        };
 
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
         debug("filename to put into: '{s}'", .{cache_file_path});
@@ -695,15 +691,22 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.cloneInferEncoding(output_code_bytes);
-        this.output_code = output_code;
 
-        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, output_code, this.exports_kind) catch |err| {
+        // Cache a `bun.String` view for in-process reuse (the runtime may
+        // serve this entry to JSC without hitting disk again via
+        // `this.output_code`), and pass the raw bytes straight through to
+        // the on-disk writer so the Latin-1/UTF-8 pick in `Entry.save`
+        // operates on the bytes — not on the WTFString's encoding tag,
+        // which would always be latin1/utf16 for `cloneInferEncoding`
+        // results and would pessimise non-ASCII files to UTF-16 on disk.
+        this.output_code = bun.String.cloneInferEncoding(output_code_bytes);
+
+        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, .{ .utf8 = output_code_bytes }, this.exports_kind) catch |err| {
             debug("put() = {s}", .{@errorName(err)});
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.byteSlice().len});
+            debug("put() = {d} bytes", .{output_code_bytes.len});
     }
 };
 

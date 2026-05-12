@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+
+// `bun build --compile` links a standalone binary which takes ~15s under
+// the debug build; give it headroom over the 5s default.
+const compileTimeout = isDebug ? 120_000 : 60_000;
 
 // The `.raw` portion of a tagged template literal and `RegExp.prototype.source`
 // must surface the source bytes verbatim. Bun's printer previously escaped
@@ -192,4 +196,105 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       });
     }
   });
+
+  // When the printer stopped escaping non-ASCII, the bundler started
+  // emitting raw UTF-8 into its outputs. Four bundler-side sinks used
+  // to assume Latin-1 and mis-decoded those bytes. The first three are
+  // reachable from `Bun.build`/CLI here; the Bake SSR paths are tested
+  // separately.
+
+  test("`bun build --target=bun` + re-run keeps non-ASCII in String.raw and RegExp.source", async () => {
+    // Bundler output passes through `OutputFile.toBunString` on the way
+    // back out of `Bun.build`, which previously wrapped the bytes in a
+    // Latin-1 external WTFString.
+    using dir = tempDir("issue-30563-bundle-run", {
+      "entry.ts": "console.log(JSON.stringify({raw: String.raw`╭─╮`, source: /╭─╮/.source}));\n",
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "entry.ts", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(await build.exited).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("`bun build --target=bun --bytecode` keeps non-ASCII in String.raw and RegExp.source", async () => {
+    // `--bytecode` compiles the bundled source through
+    // `generateCachedModuleByteCodeFromSourceCode`, which took the
+    // source as Latin-1. With the printer producing raw UTF-8 after
+    // #30563 that path now has to interpret bytes as UTF-8.
+    using dir = tempDir("issue-30563-bytecode", {
+      "entry.ts": "console.log(JSON.stringify({raw: String.raw`╭─╮`, source: /╭─╮/.source}));\n",
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "--bytecode", "entry.ts", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(await build.exited).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "out/entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
+    expect(exitCode).toBe(0);
+  });
+
+  test(
+    "`bun build --compile` single-file executable keeps non-ASCII in String.raw and RegExp.source",
+    async () => {
+      // Standalone graph stores bundler output as `.latin1`-tagged
+      // bytes; `StandaloneModuleGraph.File.toWTFString` used to build
+      // a Latin-1 external string regardless of the actual bytes.
+      using dir = tempDir("issue-30563-compile", {
+        "entry.ts": "console.log(JSON.stringify({raw: String.raw`╭─╮`, source: /╭─╮/.source}));\n",
+      });
+
+      const outname = process.platform === "win32" ? "bundled.exe" : "bundled";
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "entry.ts", `--outfile=${outname}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [`./${outname}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
+      expect(exitCode).toBe(0);
+    },
+    compileTimeout,
+  );
 });

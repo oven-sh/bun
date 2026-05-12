@@ -195,10 +195,23 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
+// Build a `WTF::String` that reflects the source bytes as JSC will see them
+// at runtime. Bundler/printer output is pure ASCII in the common case, so
+// the zero-copy Latin-1 span path is the fast path. When the bytes include
+// non-ASCII (e.g. from `String.raw`/`RegExp.source` after #30563) we decode
+// the whole buffer as UTF-8 so the bytecode cache is keyed on — and
+// compiled from — the same source the runtime loader produces.
+static WTF::String makeBytecodeSourceString(const Latin1Character* bytes, size_t size)
+{
+    std::span<const Latin1Character> byteSpan(bytes, size);
+    if (WTF::charactersAreAllASCII(byteSpan))
+        return WTF::String(byteSpan);
+    return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(bytes), size });
+}
+
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    JSC::SourceCode sourceCode = JSC::makeSource(makeBytecodeSourceString(inputSourceCode, inputSourceCodeSize), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
 
@@ -232,9 +245,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
 extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    JSC::SourceCode sourceCode = JSC::makeSource(makeBytecodeSourceString(inputSourceCode, inputSourceCodeSize), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

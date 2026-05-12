@@ -349,9 +349,10 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
         live_workers::MUTEX.lock();
         // MUTEX held while walking the intrusive list; HEAD load is safe.
         let mut it = live_workers::HEAD.load();
-        while !it.is_null() {
-            // SAFETY: worker valid while registered (removed only in shutdown()).
-            let w = unsafe { &*it };
+        while let Some(nn) = NonNull::new(it) {
+            // Worker valid while registered (removed only in shutdown());
+            // MUTEX held — `ParentRef` invariant (pointee outlives borrow) holds.
+            let w = bun_ptr::ParentRef::from(nn);
             // live_workers::MUTEX held; list links written only under it.
             it = w.live_next.get();
             if w.requested_terminate.swap(true, Ordering::Release) {
@@ -561,14 +562,19 @@ impl WebWorker {
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
         }));
+        // `worker` is non-null (just heap-allocated). Wrap once for the safe
+        // shared reborrows below; the raw `worker` is still used for
+        // `register`/`destroy`/the FFI return value.
+        let worker_ref =
+            bun_ptr::ParentRef::from(NonNull::new(worker).expect("heap::into_raw is non-null"));
 
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
         // worker keeping the process alive.
         if !default_unref {
-            // SAFETY: `worker` is a fresh heap allocation; not yet shared.
+            // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
-            unsafe { &*worker }.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
+            worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
         }
 
         // Register BEFORE spawning so terminateAllAndWait() can never miss a
@@ -600,8 +606,8 @@ impl WebWorker {
             }
             Err(_) => {
                 live_workers::unregister(worker);
-                // SAFETY: `worker` not yet shared (spawn failed); parent thread.
-                unsafe { &*worker }.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+                // `worker` not yet shared (spawn failed); parent thread.
+                worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 Self::destroy(worker);
                 *error_message = BunString::static_(b"Failed to spawn worker thread");
                 core::ptr::null_mut()
@@ -637,10 +643,12 @@ impl WebWorker {
     /// aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__setRef")]
     pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
-        // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
-        // only. `bun_io::js_vm_ctx()` resolves to this (parent) thread's
-        // loop, which IS `this.parent`'s loop.
-        unsafe { &*this }.with_parent_poll_ref(|poll| {
+        // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
+        // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
+        // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
+        // IS `this.parent`'s loop.
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        this.with_parent_poll_ref(|poll| {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
             } else {
@@ -661,10 +669,11 @@ impl WebWorker {
     /// thread while the worker holds any reference is aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__notifyNeedTermination")]
     pub extern "C" fn notify_need_termination(this: *mut WebWorker) {
-        // SAFETY: `this` is a valid heap allocation owned by C++ `WebCore::Worker`
-        // (alive while JSWorker holds its Ref). Only atomic / lock-guarded
-        // fields are touched cross-thread; never `&mut WebWorker`.
-        let this = unsafe { &*this };
+        // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
+        // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
+        // Only atomic / lock-guarded fields are touched cross-thread; never
+        // `&mut WebWorker`.
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         if this.set_requested_terminate() {
             return;
         }
@@ -696,9 +705,10 @@ impl WebWorker {
     /// sound here, but matching signatures avoids surprises).
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
-        // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
-        // only.
-        unsafe { &*this }.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+        // `this` is a valid heap allocation owned by C++ — `ParentRef` invariant
+        // holds; parent-thread only.
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
     /// Non-owning back-reference to the parent VM. See field doc for validity

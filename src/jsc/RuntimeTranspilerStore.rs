@@ -757,16 +757,20 @@ impl TranspilerJob {
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init (BACKREF).
-        let import_watcher: *mut ImportWatcher = unsafe { (*vm).bun_watcher }.cast();
-        if !import_watcher.is_null() {
-            // SAFETY: import_watcher is live. The watchlist *is* mutated
-            // cross-thread (the watcher thread's `flush_evictions` closes fds
-            // and `swap_remove`s), so snapshot under the watcher mutex — see
+        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
+        // (BACKREF — when non-null it points at the process-lifetime watcher
+        // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
+        // holds for this transpile job's duration). Raw `(*vm)` field
+        // projection avoids forming `&VirtualMachine` per the `vm` PORT NOTE.
+        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
+            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
+        if let Some(iw) = import_watcher {
+            // The watchlist *is* mutated cross-thread (the watcher thread's
+            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
+            // under the watcher mutex — see
             // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
             // race this closes (port improves on Zig spec; Zig
             // `RuntimeTranspilerStore.zig:344` reads unlocked).
-            let iw = unsafe { &*import_watcher };
             (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
             // On Linux, `addFileByPathSlow` inserts watchlist entries with
             // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
@@ -905,10 +909,10 @@ impl TranspilerJob {
         // Rust field is a type-erased `*mut ImportWatcher`, so a non-null
         // pointer may still hold `ImportWatcher::None`; both must be ruled out
         // or we'd skip closing `input_file_fd` without a watcher to adopt it.
-        // SAFETY: discriminant read on the BACKREF pointer captured above; only
-        // the JS thread mutates the variant.
-        let is_watcher_enabled = !import_watcher.is_null()
-            && !matches!(unsafe { &*import_watcher }, ImportWatcher::None);
+        // Discriminant read on the BACKREF captured above; only the JS thread
+        // mutates the variant.
+        let is_watcher_enabled =
+            import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
@@ -919,9 +923,11 @@ impl TranspilerJob {
                     && !strings::contains(path.text, b"node_modules")
                 {
                     should_close_input_file_fd.set(false);
-                    if !import_watcher.is_null() {
-                        // SAFETY: import_watcher is live; add_file is thread-safe via watcher mutex.
-                        let _ = unsafe { &mut *import_watcher }.add_file::<true>(
+                    if let Some(iw) = import_watcher {
+                        // SAFETY: BACKREF — process-lifetime watcher; no other
+                        // `&ImportWatcher` is live here, and `add_file` is
+                        // thread-safe via watcher mutex.
+                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
@@ -943,9 +949,11 @@ impl TranspilerJob {
                 && !strings::contains(path.text, b"node_modules")
             {
                 should_close_input_file_fd.set(false);
-                if !import_watcher.is_null() {
-                    // SAFETY: import_watcher is live; add_file is thread-safe via watcher mutex.
-                    let _ = unsafe { &mut *import_watcher }.add_file::<true>(
+                if let Some(iw) = import_watcher {
+                    // SAFETY: BACKREF — process-lifetime watcher; no other
+                    // `&ImportWatcher` is live here, and `add_file` is
+                    // thread-safe via watcher mutex.
+                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,

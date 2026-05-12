@@ -374,12 +374,12 @@ pub fn parseFromResolutions(
             // For scoped packages like @scope/parent/child, the first '/' belongs to the scope
             var last_slash: ?usize = null;
             if (k.len > 0 and k[0] == '@') {
-                // @scope/parent/child — first '/' belongs to the scope, take the LAST '/' after it
+                // @scope/parent/child — first '/' belongs to the scope, take the NEXT '/' after it
                 const first_slash = strings.indexOfChar(k, '/') orelse {
                     break :parseParentChild null;
                 };
                 if (first_slash < k.len - 1) {
-                    if (strings.lastIndexOfChar(k[first_slash + 1 ..], '/')) |rel| {
+                    if (strings.indexOfChar(k[first_slash + 1 ..], '/')) |rel| {
                         last_slash = first_slash + 1 + rel;
                     }
                 }
@@ -410,7 +410,9 @@ pub fn parseFromResolutions(
         )) |dep| {
             if (parent_child) |pc| {
                 // Scoped resolution: parent/child
-                if (strings.containsChar(pc.parent, '/') or strings.containsChar(pc.child, '/')) {
+                if ((!strings.hasPrefixComptime(pc.parent, "@") and strings.containsChar(pc.parent, '/')) or
+                    (!strings.hasPrefixComptime(pc.child, "@") and strings.containsChar(pc.child, '/')))
+                {
                     try log.addWarningFmt(source, key.loc, lockfile.allocator, "Deeply nested resolution \"{s}\" is not supported", .{k});
                     continue;
                 }

@@ -255,7 +255,7 @@ pub fn installWithManager(
                         while (i < result.len) {
                             if (std.mem.indexOfScalar(PackageNameHash, result[0..i], result[i]) != null) {
                                 result[i] = result[result.len - 1];
-                                result.len -= 1;
+                                result = result[0..result.len - 1];
                             } else {
                                 i += 1;
                             }

@@ -147,6 +147,15 @@ test("tagged template with substitutions", () => {
   });
 });
 
+test("tagged template substitution constant folding", () => {
+  // Matches identity("a" + "b") — substitutions should be folded before toJS.
+  expect(templateTag`x${"a" + "b"}y${1 + 2}z`).toEqual({
+    cooked: ["x", "y", "z"],
+    raw: ["x", "y", "z"],
+    values: ["ab", 3],
+  });
+});
+
 test("tagged template escape sequences", () => {
   expect(templateTag`line1\nline2`).toEqual({
     cooked: ["line1\nline2"],

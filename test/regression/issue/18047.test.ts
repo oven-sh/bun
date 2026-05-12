@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("bun build: macro called as tagged template literal", async () => {
+test.concurrent("bun build: macro called as tagged template literal", async () => {
   using dir = tempDir("issue-18047", {
     "macro.ts": `
       export const ico = (name: TemplateStringsArray) => \`/svg/spritesheet.svg#\${name[0]}\`;
@@ -37,7 +37,7 @@ test("bun build: macro called as tagged template literal", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("bun run: macro called as tagged template literal", async () => {
+test.concurrent("bun run: macro called as tagged template literal", async () => {
   using dir = tempDir("issue-18047-run", {
     "macro.ts": `
       export const ico = (name: TemplateStringsArray) => \`/svg/spritesheet.svg#\${name[0]}\`;

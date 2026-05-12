@@ -72,7 +72,11 @@ impl HPACK {
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
         let mut header = lshpack_header::default();
-        // SAFETY: self is a valid *HPACK from lshpack_wrapper_init; header is a #[repr(C)] out-param.
+        // SAFETY: genuine FFI — `self` is `&mut HPACK` (non-null, init'd by
+        // `lshpack_wrapper_init`); `src.as_ptr()/.len()` are a live `&[u8]`'s
+        // ptr+len pair so the C side reads in-bounds; `header` is a stack-local
+        // `#[repr(C)]` out-param. The ptr+len contract cannot be discharged at
+        // the type level over the C ABI, so this stays an `unsafe` call.
         let offset = unsafe {
             lshpack_wrapper_decode(std::ptr::from_mut::<HPACK>(self), src.as_ptr(), src.len(), &raw mut header)
         };
@@ -113,7 +117,11 @@ impl HPACK {
         dst_buffer: &mut [u8],
         dst_buffer_offset: usize,
     ) -> Result<usize, HpackError> {
-        // SAFETY: self is a valid *HPACK; all slices outlive the call.
+        // SAFETY: genuine FFI — `self` is `&mut HPACK` (non-null, init'd);
+        // `name`/`value`/`dst_buffer` ptr+len pairs come straight from live
+        // borrowed slices so the C side's reads/writes are in-bounds. The
+        // ptr+len contracts cannot be discharged at the type level over the
+        // C ABI, so this stays an `unsafe` call.
         let offset = unsafe {
             lshpack_wrapper_encode(
                 std::ptr::from_mut::<HPACK>(self),

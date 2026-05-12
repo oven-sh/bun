@@ -276,8 +276,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             };
 
             if report_progress {
-                // SAFETY: `this` dead; progress_update reborrows via raw ptrs.
-                unsafe { progress_update_for_proxy_socket(ctx, proxy_nn) };
+                // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 return;
             }
         }
@@ -296,8 +296,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             };
 
             if report_progress {
-                // SAFETY: see Body arm.
-                unsafe { progress_update_for_proxy_socket(ctx, proxy_nn) };
+                // `this` dead (NLL); see Body arm.
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 return;
             }
         }
@@ -489,8 +489,8 @@ fn on_close(ctx: *mut HTTPClient) {
             match this.state.chunked_decoder._state {
                 4 | 5 => {
                     this.state.flags.received_last_chunk = true;
-                    // SAFETY: `this` dead (NLL); reborrow via raw ptrs.
-                    unsafe { progress_update_for_proxy_socket(ctx, proxy_nn) };
+                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                    progress_update_for_proxy_socket(ctx, proxy_nn);
                     // Drop our temporary ref asynchronously to avoid freeing within callback
                     crate::http_thread().schedule_proxy_deref(proxy_ptr);
                     return;
@@ -501,8 +501,8 @@ fn on_close(ctx: *mut HTTPClient) {
             && this.state.response_stage == HTTPStage::Body
         {
             this.state.flags.received_last_chunk = true;
-            // SAFETY: `this` dead (NLL); reborrow via raw ptrs.
-            unsafe { progress_update_for_proxy_socket(ctx, proxy_nn) };
+            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+            progress_update_for_proxy_socket(ctx, proxy_nn);
             // Balance the ref we took asynchronously
             crate::http_thread().schedule_proxy_deref(proxy_ptr);
             return;
@@ -525,20 +525,18 @@ fn on_close(ctx: *mut HTTPClient) {
     crate::http_thread().schedule_proxy_deref(proxy_ptr);
 }
 
-/// # Safety
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
-/// `&mut ProxyTunnel` across this call (they are reborrowed inside).
-unsafe fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>) {
+/// `&mut ProxyTunnel` across this call (they are reborrowed inside via the
+/// module's `client_from_ctx` invariant — see ALIASING NOTE above).
+fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>) {
     match ProxyTunnel::socket_of(proxy) {
         &Socket::Ssl(socket) => {
             let hctx = &raw mut crate::http_thread().https_context;
-            // SAFETY: caller contract — no live `&mut *ctx`.
-            unsafe { (*ctx).progress_update::<true>(hctx, socket) };
+            client_from_ctx(ctx).progress_update::<true>(hctx, socket);
         }
         &Socket::Tcp(socket) => {
             let hctx = &raw mut crate::http_thread().http_context;
-            // SAFETY: caller contract — no live `&mut *ctx`.
-            unsafe { (*ctx).progress_update::<false>(hctx, socket) };
+            client_from_ctx(ctx).progress_update::<false>(hctx, socket);
         }
         Socket::None => {}
     }

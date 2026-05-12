@@ -180,34 +180,30 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     // to `'static` to match the Phase-A field type; remove once URLPath gains a
     // proper lifetime parameter for the input-borrow case.
     #[inline(always)]
-    unsafe fn extend(s: &[u8]) -> &'static [u8] {
-        // SAFETY: caller upholds that `s` outlives all uses of the returned URLPath
-        // (points into the URLPath's own `_decoded_storage` or the caller's input slice).
+    fn extend(s: &[u8]) -> &'static [u8] {
+        // SAFETY: local fn-item — every call below passes a slice that borrows
+        // either the parser's input or `decoded_storage`, both of which are
+        // moved into / outlive the returned `URLPath` (self-referential store).
         unsafe { bun_collections::detach_lifetime(s) }
     }
 
-    // SAFETY: every slice passed to `extend` below borrows either the caller's
-    // input or `decoded_storage`, which is moved into the same struct and thus
-    // outlives every read of these fields.
-    Ok(unsafe {
-        URLPath {
-            extname: extend(if !is_source_map { extname } else { backup_extname }),
-            is_source_map,
-            pathname: extend(decoded_pathname),
-            first_segment: extend(first_segment),
-            path: extend(if decoded_pathname.len() == 1 {
-                b"."
-            } else {
-                path
-            }),
-            query_string: extend(if question_mark_i > -1 {
-                &decoded_pathname[usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
-            } else {
-                b""
-            }),
-            needs_redirect,
-            _decoded_storage: decoded_storage,
-        }
+    Ok(URLPath {
+        extname: extend(if !is_source_map { extname } else { backup_extname }),
+        is_source_map,
+        pathname: extend(decoded_pathname),
+        first_segment: extend(first_segment),
+        path: extend(if decoded_pathname.len() == 1 {
+            b"."
+        } else {
+            path
+        }),
+        query_string: extend(if question_mark_i > -1 {
+            &decoded_pathname[usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
+        } else {
+            b""
+        }),
+        needs_redirect,
+        _decoded_storage: decoded_storage,
     })
 }
 

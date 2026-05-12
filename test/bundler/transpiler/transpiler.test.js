@@ -3204,6 +3204,25 @@ console.log(foo, array);
     });
   });
 
+  it("raw template literal preserves non-ASCII bytes verbatim", () => {
+    // `TemplateStringsArray.raw` is spec-required to surface the source
+    // bytes verbatim. The printer previously escaped codepoints > 0x7F to
+    // `\uXXXX`, which silently changed the runtime string value that
+    // `String.raw` reads. See #30563.
+    expectPrinted("String.raw`╭─╮`", "String.raw`╭─╮`");
+    expectPrinted("String.raw`你好世界`", "String.raw`你好世界`");
+    expectPrinted("String.raw`Redémarrage`", "String.raw`Redémarrage`");
+    expectPrinted("String.raw`Hello 🌍`", "String.raw`Hello 🌍`");
+  });
+
+  it("regex literal preserves non-ASCII bytes verbatim", () => {
+    // `RegExp.prototype.source` is spec-required to surface the source
+    // bytes verbatim. Same class of bug as raw template literals. See #30563.
+    expectPrinted("/╭─╮/", "/╭─╮/");
+    expectPrinted("/你好世界/", "/你好世界/");
+    expectPrinted("/æ™/", "/æ™/");
+  });
+
   it("raw template literal contents", () => {
     expectPrinted("String.raw`\r`", "String.raw`\n`");
     expectPrinted("String.raw`\r\n`", "String.raw`\n`");

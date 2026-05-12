@@ -204,6 +204,24 @@ pub const String = extern struct {
         return jsc.WebCore.encoding.toBunStringComptime(bytes, .utf8);
     }
 
+    /// Clone arbitrary bytes into a JS-visible `bun.String`, picking the
+    /// right WTF encoding from the byte content:
+    ///
+    ///   - pure ASCII → Latin-1 (fast path, one byte per char)
+    ///   - contains any byte > 0x7F → treat as UTF-8 and decode to UTF-16
+    ///
+    /// Use this when the bytes come from source code (or anything else that
+    /// isn't guaranteed ASCII) and will become a JavaScript string value —
+    /// `String.raw`, `RegExp.prototype.source`, module `source_code`, etc.
+    /// `cloneLatin1` on UTF-8 bytes would mis-interpret each multi-byte
+    /// sequence as several Latin-1 chars.
+    pub fn cloneInferEncoding(bytes: []const u8) String {
+        // cloneUTF8 already probes firstNonASCII via toUTF16Alloc and takes
+        // the Latin-1 fast path for all-ASCII input, so this is just a
+        // self-documenting alias.
+        return cloneUTF8(bytes);
+    }
+
     pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16(bytes) == null) {

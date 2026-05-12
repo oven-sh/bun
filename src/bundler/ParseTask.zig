@@ -1395,6 +1395,12 @@ pub fn runFromThreadPool(this: *ParseTask) void {
             // When using HMR, always flag asts with errors as parse failures.
             // Not done outside of the dev server out of fear of breaking existing code.
             if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
+                // The `.success` payload is being dropped on the floor
+                // by the `.err` overwrite — free any parsed inline
+                // sourcemap that would otherwise leak. Hot on HMR
+                // rebuilds of a file that both carries an inline map and
+                // logs parse errors.
+                if (ast.input_source_map) |ism| ism.deinit();
                 break :value .{
                     .err = .{
                         .err = error.SyntaxError,

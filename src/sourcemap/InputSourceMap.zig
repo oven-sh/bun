@@ -145,11 +145,18 @@ fn parseInternal(json_bytes: []const u8) ParseError!*InputSourceMap {
         contents_written = source_count;
     }
 
+    // `sources_count` bounds every `source_index` encoded in the VLQ
+    // mappings. The downstream consumers here (Chunk.Builder emits
+    // `1 + inner.source_index`; LinkerContext reserves exactly
+    // `1 + external_source_names.len` slots per file) DON'T defensively
+    // clamp — out-of-range indices would alias a neighboring input
+    // file's slot in the output sources[]. Pass the real source count
+    // so malformed maps hit `.fail` and we fall back cleanly.
     const map_data = switch (bun.SourceMap.Mapping.parse(
         allocator,
         mappings_str.data.e_string.slice(arena_allocator),
         null,
-        std.math.maxInt(i32),
+        std.math.cast(i32, source_count) orelse return error.InvalidSourceMap,
         std.math.maxInt(i32),
         .{ .allow_names = false, .sort = true },
     )) {

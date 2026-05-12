@@ -1430,7 +1430,17 @@ pub const LinkerContext = struct {
                 c,
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
-            .input_source_map = c.parse_graph.input_files.items(.input_source_map)[source_index.get()],
+            // Bake's DevServer has its own sourcemap stitcher
+            // (`SourceMapStore.joinVLQ` / `PackedMap`) that hard-codes one
+            // `sources[]` slot per file and discards `chunk.end_state.source_index`.
+            // The per-chunk `source_index` remapping this field enables
+            // would corrupt served stack traces there until that stitcher
+            // is taught the slot-expansion layout. Feed the inline map
+            // only on the non-dev-server path for now.
+            .input_source_map = if (c.dev_server == null)
+                c.parse_graph.input_files.items(.input_source_map)[source_index.get()]
+            else
+                null,
             .target = c.options.target,
 
             .hmr_ref = if (c.options.output_format == .internal_bake_dev)

@@ -134,11 +134,11 @@ impl MySQLRequestQueue {
                 && unsafe { (*connection).is_able_to_write() }
             {
                 let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(offset) };
-                // SAFETY: queue holds a ref on every request; pointer is live.
-                // `JSMySQLQuery` is a separate heap allocation — never aliases
-                // `*this` or `*connection`. R-2: shared deref — every method
-                // body is `&self` (interior mutability).
-                let req = unsafe { &*request };
+                // Queue holds a ref on every request; pointer is non-null and
+                // live. `JSMySQLQuery` is a separate heap allocation — never
+                // aliases `*this` or `*connection`. R-2: `ParentRef` yields
+                // `&T` only — every method body is `&self` (interior mutability).
+                let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
 
                 if req.is_completed() {
                     if offset > 0 {
@@ -184,7 +184,7 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // SAFETY: same as above — shared `&*connection` reborrow
                     // (R-2: `on_error` takes `&self`).
-                    unsafe { (*connection).on_error(Some(req), err) };
+                    unsafe { (*connection).on_error(Some(req.get()), err) };
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };
                         // SAFETY: queue held one ref; pointer is live until this deref.

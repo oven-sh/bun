@@ -1,7 +1,7 @@
 use core::mem::offset_of;
 
 use bun_collections::{VecExt, HashMap, OffsetByteList};
-use crate::jsc::JSValue;
+use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
@@ -313,14 +313,10 @@ impl MySQLConnection {
         let Socket::SocketTcp(tcp) = &self.socket else { return Ok(()) };
         let uws::InternalSocket::Connected(raw) = tcp.socket else { return Ok(()) };
 
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
-        // while `mysql_group` also wants `&VirtualMachine`; route through a raw
-        // pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut crate::jsc::VirtualMachine = crate::jsc::VirtualMachine::get_mut_ptr();
-        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
-        // produce overlapping `&mut` (rare_data accesses a disjoint field).
-        let tls_group: *mut bun_uws::SocketGroup =
-            unsafe { (*vm_ptr).rare_data().mysql_group::<true>(&*vm_ptr) };
+        // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
+        // not `*self` — and stays live across the field reads below.
+        let tls_group: &mut bun_uws::SocketGroup =
+            crate::jsc::VirtualMachine::get().as_mut().mysql_socket_group::<true>();
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested (Zig: `this.#secure.?`).
@@ -340,11 +336,10 @@ impl MySQLConnection {
         // the slot as `Option<NonNull<_>>`.
         let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
-        // live SocketGroup; adopt_tls may realloc and return a different ptr.
+        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
+        // realloc and return a different ptr.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            // SAFETY: `tls_group` is non-null (lazy-init in `mysql_group`).
-            unsafe { &mut *tls_group },
+            tls_group,
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,

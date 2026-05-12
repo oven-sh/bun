@@ -341,6 +341,13 @@ pub trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
+    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
+    /// Encapsulates the `rare_data(&mut self)` / `*_group(.., &VirtualMachine)`
+    /// borrowck conflict (the two borrows touch field-disjoint state) so the
+    /// four call sites need no per-site raw-pointer dance.
+    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    /// See [`Self::postgres_socket_group`].
+    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
     // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
     // accessor (single audited deref under the JS-thread-singleton invariant);
     // the former unsafe trait shim here was dead — inherent methods always win
@@ -369,6 +376,24 @@ impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+    }
+    #[inline]
+    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+        let p: *mut VirtualMachine = self;
+        // SAFETY: `p` derived from `&mut self` (live, exclusive). The two
+        // derefs touch field-disjoint state — `rare_data()` returns the
+        // separate `&mut RareData` allocation, and `&*p` is read-only for
+        // VM-level config inside `postgres_group`. One audited deref here
+        // replaces the per-caller raw-pointer dance (PORT NOTE at each
+        // former site).
+        unsafe { (*p).rare_data().postgres_group::<SSL>(&*p) }
+    }
+    #[inline]
+    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+        let p: *mut VirtualMachine = self;
+        // SAFETY: see `postgres_socket_group` — field-disjoint borrows of the
+        // live `&mut self` routed through one raw pointer.
+        unsafe { (*p).rare_data().mysql_group::<SSL>(&*p) }
     }
 }
 

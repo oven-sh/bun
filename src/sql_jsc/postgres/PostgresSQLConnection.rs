@@ -507,14 +507,10 @@ impl PostgresSQLConnection {
 
     pub fn setup_tls(&self) {
         debug!("setupTLS");
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
-        // while `postgres_group` also wants `&VirtualMachine`; route through a
-        // raw pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut VirtualMachine = self.vm.as_ptr();
-        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
-        // produce overlapping `&mut` (rare_data accesses a disjoint field).
-        let tls_group: *mut bun_uws::SocketGroup =
-            unsafe { (*vm_ptr).rare_data().postgres_group::<true>(&*vm_ptr) };
+        // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
+        // not `*self` — and stays live across the field reads below.
+        let tls_group: &mut bun_uws::SocketGroup =
+            self.vm_mut().postgres_socket_group::<true>();
 
         // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
         // a plain TCP socket in the Connected state.
@@ -545,11 +541,10 @@ impl PostgresSQLConnection {
         // the slot as `Option<NonNull<_>>`.
         let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
-        // live SocketGroup; adopt_tls may realloc and return a different ptr.
+        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
+        // realloc and return a different ptr.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            // SAFETY: `tls_group` is non-null (lazy-init in `postgres_group`).
-            unsafe { &mut *tls_group },
+            tls_group,
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
@@ -1285,8 +1280,10 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));
 
-    // SAFETY: ptr was just Box-allocated above; sole owner until `to_js` below.
-    let this = unsafe { &*ptr };
+    // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
+    // `to_js` below. R-2: every field is interior-mutable, so a shared
+    // `ParentRef` deref is sufficient for the writes below.
+    let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
     {
         let hostname = hostname_str.to_utf8();
@@ -1294,12 +1291,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `*vm_ptr`
-        // mutably and `postgres_group` needs a `&VirtualMachine`; route both
-        // through the raw singleton pointer (cf. `setup_tls`).
-        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
-        // overlap (rare_data() returns a disjoint `&mut RareData`).
-        let group = unsafe { (*vm_ptr).rare_data().postgres_group::<false>(&*vm_ptr) };
+        let group = vm.postgres_socket_group::<false>();
         let path_slice = this.path.slice();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(group, uws::SocketKind::Postgres, None, path_slice, ptr, false)

@@ -1016,7 +1016,9 @@ pub mod ssl_wrapper {
     /// `us_verify_callback` equivalent — let the handshake complete regardless of
     /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
     /// decides, instead of BoringSSL aborting mid-flight.
-    unsafe extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
+    // Body is a constant `1` with no preconditions; the safe fn item still
+    // coerces to the `SSL_verify_cb` fn-pointer type at the `Some(..)` site.
+    extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
         1
     }
 

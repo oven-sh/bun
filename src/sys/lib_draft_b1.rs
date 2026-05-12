@@ -95,8 +95,9 @@ use crate::raw::libc as syscall;
 
 #[inline]
 fn to_packed_o(number: u32) -> posix::OFlags {
-    // SAFETY: posix::OFlags is repr(transparent) over the same width integer.
-    unsafe { core::mem::transmute(number) }
+    // `OFlags` is a bitflags newtype over `u32`; use the typed constructor
+    // instead of transmute (matches `linux_syscall.rs`).
+    posix::OFlags::from_bits_retain(number)
 }
 
 pub type Mode = posix::mode_t;

@@ -298,7 +298,8 @@ pub mod c {
             options: BunSocketContextOptions,
             err: *mut create_bun_socket_error_t,
         ) -> *mut SSL_CTX;
-        pub fn us_ssl_ctx_live_count() -> c_long;
+        // safe: no args; reads a process-global counter — no preconditions.
+        pub safe fn us_ssl_ctx_live_count() -> c_long;
     }
 }
 

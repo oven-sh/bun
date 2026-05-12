@@ -63,10 +63,10 @@ fn raw(e: Errno) -> i32 {
 }
 
 /// Read the calling thread's `errno`. Canonical target_os→symbol ladder lives
-/// in `bun_core::ffi`; kept as a local `unsafe fn` so existing call sites
-/// (`unsafe { errno() }`) keep their shape.
+/// in `bun_core::ffi` (already a safe wrapper over `__errno_location()`), so
+/// this is just a local re-export — no caller obligation.
 #[inline(always)]
-unsafe fn errno() -> i32 { bun_core::ffi::errno() }
+fn errno() -> i32 { bun_core::ffi::errno() }
 
 /// EINTR-retry a rustix call. Matches the `while (true) { ...; if .INTR continue }`
 /// loop in the sys.zig Linux arms.
@@ -158,8 +158,7 @@ pub fn close(fd: i32) -> Result<(), i32> {
     if rc == 0 {
         Ok(())
     } else {
-        // SAFETY: errno() reads a valid thread-local int*.
-        Err(unsafe { errno() })
+        Err(errno())
     }
 }
 
@@ -235,16 +234,16 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 // decodes.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// EINTR-retry a raw `libc::syscall` returning a byte count.
+/// EINTR-retry a raw `libc::syscall` returning a byte count. The closure
+/// itself carries any FFI `unsafe`; the retry loop is pure control flow.
 #[inline(always)]
-unsafe fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
+fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
     loop {
         let rc = f();
         if rc >= 0 {
             return Ok(rc as usize);
         }
-        // SAFETY: errno() reads a valid thread-local int*.
-        let e = unsafe { errno() };
+        let e = errno();
         if e == libc::EINTR {
             continue;
         }
@@ -257,11 +256,11 @@ unsafe fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
 /// `iov_base`; the array itself is never mutated.
 #[inline]
 pub unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose `iov_base`
-    // are writable for `iov_len` bytes.
-    unsafe {
-        sys_retry(|| libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long))
-    }
+    sys_retry(|| {
+        // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
+        // `iov_base` are writable for `iov_len` bytes.
+        unsafe { libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long) }
+    })
 }
 
 /// Raw `writev(2)`.
@@ -284,13 +283,11 @@ pub unsafe fn preadv(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Re
     // documentation fidelity.
     let lo = off as libc::c_long;
     let hi = ((off as u64) >> 32) as libc::c_long;
-    // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose `iov_base`
-    // are writable for `iov_len` bytes.
-    unsafe {
-        sys_retry(|| {
-            libc::syscall(libc::SYS_preadv, fd.native(), vecs, n as libc::c_long, lo, hi)
-        })
-    }
+    sys_retry(|| {
+        // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
+        // `iov_base` are writable for `iov_len` bytes.
+        unsafe { libc::syscall(libc::SYS_preadv, fd.native(), vecs, n as libc::c_long, lo, hi) }
+    })
 }
 
 /// Raw `pwritev(2)`.
@@ -424,8 +421,7 @@ pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
     // SAFETY: raw `pidfd_open(2)`; kernel validates pid/flags.
     let rc = unsafe { libc::syscall(SYS_PIDFD_OPEN, pid, flags) };
     if rc < 0 {
-        // SAFETY: errno() reads a valid thread-local int*.
-        return Err(unsafe { errno() });
+        return Err(errno());
     }
     Ok(Fd::from_native(rc as i32))
 }

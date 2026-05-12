@@ -43,7 +43,9 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// `SetHandleInformation` (handleapi.h). Used by `bun_shim_impl` to
         /// strip `HANDLE_FLAG_INHERIT` before `CreateProcessW`.
-        pub fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+        // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
+        // remaining args are by-value DWORD flags.
+        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
     }
 
     #[link(name = "kernel32")]
@@ -412,13 +414,14 @@ pub use bun_windows_sys::externs::CommandLineToArgvW;
 
 // TODO(port): move to windows_sys
 unsafe extern "system" {
+    // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
+    // GetLastError, no UB.
     #[link_name = "GetFileType"]
-    fn GetFileType_raw(hFile: HANDLE) -> DWORD;
+    safe fn GetFileType_raw(hFile: HANDLE) -> DWORD;
 }
 
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
-    // SAFETY: hFile is a valid HANDLE owned by caller
-    let rc = unsafe { GetFileType_raw(hFile) };
+    let rc = GetFileType_raw(hFile);
     // `syslog!` self-gates on `cfg!(debug_assertions)` (see lib.rs); no extra
     // feature flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
@@ -5057,8 +5060,10 @@ pub mod env;
 
 unsafe extern "system" {
     /// kernel32 high-resolution timer.
-    pub fn QueryPerformanceCounter(lpPerformanceCount: *mut i64) -> BOOL;
-    pub fn QueryPerformanceFrequency(lpFrequency: *mut i64) -> BOOL;
+    // safe: out-param is `&mut i64` (non-null, valid for write); QPC/QPF only
+    // write the slot and never fail on XP+ — no other preconditions.
+    pub safe fn QueryPerformanceCounter(lpPerformanceCount: &mut i64) -> BOOL;
+    pub safe fn QueryPerformanceFrequency(lpFrequency: &mut i64) -> BOOL;
 }
 
 /// `bun.windows.translateNtStatusToErrno` — alias of

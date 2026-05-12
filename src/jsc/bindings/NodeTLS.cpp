@@ -274,31 +274,40 @@ JSC_DEFINE_HOST_FUNCTION(getUserRootCertificates, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    STACK_OF(X509)* certs = us_get_user_root_certs();
-    auto size = sk_X509_num(certs);
-    if (size < 0) size = 0; // nullptr == empty override
+    // Snapshot under the root-cert mutex so another Worker calling
+    // setDefaultCACertificates() can't free certs out from under us while
+    // we're writing PEM.
+    STACK_OF(X509)* certs = us_dup_user_root_certs();
+    auto freeCerts = [&]() {
+        if (certs) sk_X509_pop_free(certs, X509_free);
+    };
+    auto size = certs ? sk_X509_num(certs) : 0;
 
     JSC::MarkedArgumentBuffer args;
-    for (auto i = 0; i < size; i++) {
+    for (size_t i = 0; i < size; i++) {
         BIO* bio = BIO_new(BIO_s_mem());
         if (!bio) {
+            freeCerts();
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
         if (PEM_write_bio_X509(bio, sk_X509_value(certs, i)) != 1) {
             BIO_free(bio);
+            freeCerts();
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "X509 to PEM conversion"_str);
         }
         char* bioData = nullptr;
         long bioLen = BIO_get_mem_data(bio, &bioData);
         if (bioLen <= 0 || !bioData) {
             BIO_free(bio);
+            freeCerts();
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
         }
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         args.append(JSC::jsString(vm, str));
         BIO_free(bio);
     }
+    freeCerts();
 
     if (args.hasOverflowed()) {
         throwOutOfMemoryError(globalObject, scope);

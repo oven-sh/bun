@@ -176,7 +176,9 @@ describe.concurrent("tls.setDefaultCACertificates", () => {
         code: "ERR_CRYPTO_OPERATION_FAILED",
       });
       const after = tls.getCACertificates("default");
-      assert.strictEqual(after.length, before.length);
+      // The JS-side cache is only invalidated after the native store swap
+      // succeeds, so 'after' must be the same frozen array instance.
+      assert.strictEqual(after, before);
       console.log("ok");
     `);
     expect(stderr).toBe("");

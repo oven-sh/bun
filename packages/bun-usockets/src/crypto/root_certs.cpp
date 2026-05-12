@@ -221,12 +221,19 @@ extern "C" void us_set_user_root_certs(STACK_OF(X509) *certs) {
   }
 }
 
-STACK_OF(X509) *us_get_user_root_certs() {
-  // Returns the currently installed user CA set (or nullptr for the empty
-  // set). Callers must treat this as read-only and only call it from the
-  // thread that set it — in practice that's the JS thread during
-  // getCACertificates('default').
-  return user_root_certs;
+STACK_OF(X509) *us_dup_user_root_certs() {
+  // Hand back an owned, up-ref'd snapshot so the caller can serialise the
+  // certs to PEM without racing us_set_user_root_certs() on another Worker.
+  // nullptr means "no certs in the override" (empty set). Caller frees via
+  // sk_X509_pop_free(.., X509_free).
+  std::lock_guard<std::mutex> lock(shared_store_mutex);
+  if (user_root_certs == nullptr) return nullptr;
+  STACK_OF(X509) *dup = sk_X509_dup(user_root_certs);
+  if (dup == nullptr) return nullptr;
+  for (size_t i = 0; i < sk_X509_num(dup); i++) {
+    X509_up_ref(sk_X509_value(dup, i));
+  }
+  return dup;
 }
 
 // Single source of truth for the OS trust store. Loaded on first demand,

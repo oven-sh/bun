@@ -127,53 +127,227 @@ function receiveMessageOnPort(port: MessagePort) {
   };
 }
 
-// TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
+
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
+  // Adjust the worker event loop's concurrent ref count by the given delta. Used to implement
+  // Node's ref/unref/close semantics on top of the WorkerGlobalScope auto-ref (see
+  // BunWorkerGlobalScope.cpp), which takes one ref while any "message" listener is installed on
+  // `self` and can't express "deliver messages but don't keep the loop alive".
+  const incEventLoopRef = $newCppFunction("Worker.cpp", "jsFunctionNodeWorkerIncRef", 1);
+
+  // Node: parentPort starts unref'd; adding a "message" listener or calling ref() refs it.
+  let hasRefFlag = false;
+  let closed = false;
+
+  // For each event type parentPort forwards ("message", "messageerror"), we keep our own
+  // listener list and install a single forwarder on `self`. Installing a "message" listener on
+  // `self` contributes one auto-ref via WorkerGlobalScope; we cancel it out so the ref is purely
+  // driven by hasRefFlag/closed below.
+  const listeners: { message: Function[]; messageerror: Function[] } = {
+    message: [],
+    messageerror: [],
+  };
+  // onmessage/onmessageerror are stored in the same arrays so dispatch preserves registration
+  // order relative to addEventListener, matching Node. These point at the current entries (or
+  // null) so the setters can replace/remove them.
+  const onmessageEntry: { message: Function | null; messageerror: Function | null } = {
+    message: null,
+    messageerror: null,
+  };
+  const forwarderInstalled: { message: boolean; messageerror: boolean } = {
+    message: false,
+    messageerror: false,
+  };
+  const forwarders = {
+    message(event: MessageEvent) {
+      dispatch("message", event);
+    },
+    messageerror(event: MessageEvent) {
+      dispatch("messageerror", event);
+    },
+  };
+
+  // Adjustment we've applied on top of the WorkerGlobalScope auto-ref. In steady state this is
+  // (hasRefFlag && !closed ? 1 : 0) - (message forwarder installed ? 1 : 0).
+  let refAdjustment = 0;
+
+  function syncRef() {
+    const want = hasRefFlag && !closed ? 1 : 0;
+    const auto = forwarderInstalled.message ? 1 : 0;
+    const target = want - auto;
+    const delta = target - refAdjustment;
+    if (delta !== 0) {
+      incEventLoopRef(delta);
+      refAdjustment = target;
+    }
+  }
+
+  function ensureForwarder(type: "message" | "messageerror") {
+    if (closed || forwarderInstalled[type] || listeners[type].length === 0) return;
+    // Install first (auto-ref +1 for "message"), then cancel it in syncRef(); the concurrent ref
+    // never dips below its prior value.
+    self.addEventListener(type, forwarders[type]);
+    forwarderInstalled[type] = true;
+    syncRef();
+  }
+
+  function dropForwarder(type: "message" | "messageerror") {
+    if (!forwarderInstalled[type]) return;
+    // Undo our -1 adjustment first so removing the listener (auto-ref -1) doesn't momentarily
+    // take the concurrent ref negative.
+    forwarderInstalled[type] = false;
+    syncRef();
+    self.removeEventListener(type, forwarders[type]);
+  }
+
+  function dispatch(type: "message" | "messageerror", event: MessageEvent) {
+    if (closed) return;
+    // Copy so listeners added/removed during dispatch don't affect this round.
+    const list = listeners[type].slice();
+    for (let i = 0; i < list.length; i++) {
+      list[i].$call(fake, event);
+    }
+  }
+
+  function addEventListener(type: string, listener, options?) {
+    if (type !== "message" && type !== "messageerror") {
+      // Non-message events ("close", etc.) go straight to `self`; they don't touch the auto-ref.
+      self.addEventListener(type, listener, options);
+      return;
+    }
+    if (typeof listener !== "function" || closed) return;
+    let entry = listener;
+    if (options && typeof options === "object" && options.once) {
+      entry = function (event) {
+        removeEventListener(type, entry);
+        listener.$call(this, event);
+      };
+      // Remember the wrapper so removeEventListener(listener) before it fires still works.
+      listener[kOnceWrapper] = entry;
+    }
+    listeners[type].push(entry);
+    // Node: adding a 'message' or 'messageerror' listener refs the port.
+    hasRefFlag = true;
+    ensureForwarder(type);
+    syncRef();
+  }
+
+  function removeEventListener(type: string, listener?) {
+    if (type !== "message" && type !== "messageerror") {
+      self.removeEventListener(type, listener);
+      return;
+    }
+    const list = listeners[type];
+    if (listener) {
+      const target = listener[kOnceWrapper] || listener;
+      const idx = list.lastIndexOf(target);
+      if (idx !== -1) list.splice(idx, 1);
+    } else {
+      list.length = 0;
+    }
+    if (list.length === 0) dropForwarder(type);
+    afterListenerRemoved();
+  }
+
+  function afterListenerRemoved() {
+    // Node: once no 'message'/'messageerror' listeners remain, the port is implicitly unref'd
+    // (regardless of any prior explicit ref()).
+    if (listeners.message.length === 0 && listeners.messageerror.length === 0) hasRefFlag = false;
+    syncRef();
+  }
+
+  const kOnceWrapper = Symbol("kOnceWrapper");
+
+  function setOnHandler(type: "message" | "messageerror", value) {
+    const old = onmessageEntry[type];
+    if (old !== null) {
+      const idx = listeners[type].lastIndexOf(old);
+      if (idx !== -1) listeners[type].splice(idx, 1);
+    }
+    if (typeof value === "function") {
+      onmessageEntry[type] = value;
+      if (!closed) {
+        listeners[type].push(value);
+        hasRefFlag = true;
+        ensureForwarder(type);
+      }
+      syncRef();
+    } else {
+      onmessageEntry[type] = null;
+      if (listeners[type].length === 0) dropForwarder(type);
+      afterListenerRemoved();
+    }
+  }
+
   Object.defineProperty(fake, "onmessage", {
     get() {
-      return self.onmessage;
+      return onmessageEntry.message;
     },
     set(value) {
-      self.onmessage = value;
+      setOnHandler("message", value);
     },
   });
 
   Object.defineProperty(fake, "onmessageerror", {
     get() {
-      return self.onmessageerror;
+      return onmessageEntry.messageerror;
     },
     set(value) {
-      self.onmessageerror = value;
+      setOnHandler("messageerror", value);
     },
   });
 
-  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
+      if (closed) return;
       return postMessage.$apply(null, args);
     },
   });
 
   Object.defineProperty(fake, "close", {
-    value() {},
+    value() {
+      if (closed) return;
+      closed = true;
+      // Schedule the 'close' event before tearing down forwarders so it runs on this tick's
+      // nextTick queue even if removing the "message" forwarder drops the last loop ref.
+      process.nextTick(() => {
+        self.dispatchEvent(new Event("close"));
+      });
+      listeners.message.length = 0;
+      listeners.messageerror.length = 0;
+      onmessageEntry.message = null;
+      onmessageEntry.messageerror = null;
+      dropForwarder("message");
+      dropForwarder("messageerror");
+      syncRef();
+    },
   });
 
   Object.defineProperty(fake, "start", {
     value() {},
   });
 
-  Object.defineProperty(fake, "unref", {
-    value() {},
+  Object.defineProperty(fake, "ref", {
+    value() {
+      if (hasRefFlag) return;
+      hasRefFlag = true;
+      syncRef();
+    },
   });
 
-  Object.defineProperty(fake, "ref", {
-    value() {},
+  Object.defineProperty(fake, "unref", {
+    value() {
+      if (!hasRefFlag) return;
+      hasRefFlag = false;
+      syncRef();
+    },
   });
 
   Object.defineProperty(fake, "hasRef", {
     value() {
-      return false;
+      return hasRefFlag;
     },
   });
 
@@ -182,20 +356,20 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "addEventListener", {
-    value: self.addEventListener.bind(self),
+    value: addEventListener,
   });
 
   Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
-  });
-
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
+    value: removeEventListener,
   });
 
   Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
+    value: addEventListener,
+    enumerable: false,
+  });
+
+  Object.defineProperty(fake, "removeListener", {
+    value: removeEventListener,
     enumerable: false,
   });
 

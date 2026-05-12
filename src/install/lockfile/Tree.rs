@@ -76,6 +76,21 @@ pub const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
 
 pub type DepthBuf = [Id; MAX_DEPTH];
 
+/// Zig `var depth_buf: Tree.DepthBuf = undefined;` — write-only scratch buffer
+/// for [`relative_path_and_depth`]. Every slot is written before it is read
+/// (index 0 unconditionally, indices `1..depth_buf_len` in the parent-walk
+/// loop), so leaving the ~1.4 KB array uninitialised matches the spec and
+/// avoids a `memset` per tree in the `--frozen-lockfile` no-change path.
+/// Same shape/contract as [`bun_core::PathBuffer::uninit`].
+#[inline]
+#[allow(invalid_value, clippy::uninit_assumed_init)]
+pub fn depth_buf_uninit() -> DepthBuf {
+    // SAFETY: `DepthBuf` is `[u32; N]`; every bit pattern is a valid `u32`.
+    // Callers treat this as a write-only scratch buffer — no element is read
+    // before being assigned by `relative_path_and_depth`.
+    unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+}
+
 impl Tree {
     pub fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
         let dep_id = self.dependency_id;
@@ -231,7 +246,8 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             dependencies,
             string_bytes,
             path_buf: PathBuffer::uninit(),
-            depth_stack: [0; MAX_DEPTH],
+            // Zig: `depth_stack: DepthBuf = undefined` (Tree.zig:94)
+            depth_stack: depth_buf_uninit(),
         };
         if PATH_STYLE == IteratorPathStyle::NodeModules {
             iter.path_buf[0..b"node_modules".len()].copy_from_slice(b"node_modules");
@@ -961,19 +977,26 @@ impl Tree {
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
-        // `DependencyID` is `Copy`. Iterate by index and re-borrow `builder.list`
-        // per-iteration just long enough to copy out one id, so the loop body can
-        // freely take `&builder` / `&mut builder.log` without a lifetime-laundering
-        // raw-slice detach. `builder.list` is not mutated for the duration of
-        // this loop (the recursive call happens *after* it), so re-indexing is stable.
-        for i in 0..this.dependencies.len {
-            let dep_id: DependencyID = this
+        // Hoist the dep-id slice once (Zig: `this.dependencies.get(dependency_lists[this.id].items)`).
+        // `builder.list` is not mutated for the duration of this loop (the recursive call happens
+        // *after* it), so the slice is stable; detach to raw ptr/len so the loop body can freely
+        // take `&builder` / `&mut builder.log` without borrowck re-deriving the view per iteration.
+        let (this_deps_ptr, this_deps_len): (*const DependencyID, usize) = {
+            let s = this
                 .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i as usize];
+                .get(builder.list.items_dependencies()[self_id as usize].as_slice());
+            (s.as_ptr(), s.len())
+        };
+        // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
+        let target_name_hash = dependency.name_hash;
+        for i in 0..this_deps_len {
+            // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
+            // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
+            let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
             // Zig release builds have no bounds check here.
             let dep = unsafe { deps.get_unchecked(dep_id as usize) };
-            if dep.name_hash != dependency.name_hash {
+            if dep.name_hash != target_name_hash {
                 continue;
             }
 

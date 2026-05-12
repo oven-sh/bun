@@ -2901,9 +2901,8 @@ impl Lockfile {
         let mut r_buf = &mut r_buf_full[..];
 
         let mut path_buf = PathBuffer::uninit();
-        // Zig: `var depth_buf: Tree.DepthBuf = undefined;` — fixed-size `[Id; N]`
-        // has no `Default` past 32 entries; zero-init explicitly.
-        let mut depth_buf: tree::DepthBuf = [0; tree::MAX_DEPTH];
+        // Zig: `var depth_buf: Tree.DepthBuf = undefined;`
+        let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();

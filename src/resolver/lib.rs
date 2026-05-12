@@ -4165,21 +4165,21 @@ pub use bun_watcher::AnyResolveWatcher;
 // `AnyResolveWatcher` erased shim as Zig's monomorphized `wrap`.
 
 pub struct ResolveWatcher<C> {
-    on_watch: unsafe fn(*mut C, &[u8], FD),
+    on_watch: fn(*mut C, &[u8], FD),
     _marker: core::marker::PhantomData<*mut C>,
 }
 impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: unsafe fn(*mut C, &[u8], FD)) -> Self {
+    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
         Self { on_watch, _marker: core::marker::PhantomData }
     }
     pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
         AnyResolveWatcher {
             context: ctx.cast(),
-            // SAFETY: `unsafe fn(*mut C, ..)` and `unsafe fn(*mut (), ..)` are
-            // ABI-identical; the `wrap` shim in Zig did the same erase. The
-            // callback's safety contract is preserved (still `unsafe fn`).
+            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
+            // (Rust-ABI, thin-ptr first arg); the `wrap` shim in Zig did the
+            // same erase. The callback body discharges its own type-recovery.
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<unsafe fn(*mut C, &[u8], FD), unsafe fn(*mut (), &[u8], FD)>(
+                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(
                     self.on_watch,
                 )
             },

@@ -1322,11 +1322,21 @@ pub mod js_bundler {
         Load, LoadSuccess, LoadValue,
     };
 
-    /// SAFETY: caller guarantees `bv2` is a valid backref with `plugins.is_some()`.
+    /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
+    ///
+    /// Centralises the `Option<NonNull> → &mut T` deref so the three callers
+    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
+    /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `bv2` is
+    /// the back-reference set in `Resolve::init`/`Load::init`; the `BundleV2`
+    /// heap allocation outlives every plugin callback (owner-creates-child,
+    /// single-JS-thread), and `plugins` is `Some` whenever the plugin chain
+    /// is dispatched (asserted by `enqueue_on_js_loop_for_plugins`). The
+    /// `Plugin` storage is heap-disjoint from `Resolve`/`Load`, so the
+    /// returned `&mut` does not alias the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
-    unsafe fn bv2_plugin(bv2: *mut BundleV2<'static>) -> *mut Plugin {
-        // `Plugin` is the shared `bun_bundler` opaque — no cast needed.
-        unsafe { (*bv2).plugins.unwrap().as_ptr() }
+    fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
+        // SAFETY: see fn doc — live backref, `plugins.is_some()`, disjoint heap.
+        unsafe { &mut *(*bv2).plugins.unwrap().as_ptr() }
     }
 
     // TODO(port): move to runtime_sys
@@ -1344,8 +1354,7 @@ pub mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            // SAFETY: bv2 backref is valid; plugins is Some
-            let global = unsafe { (*bv2_plugin(resolve.bv2)).global_object() };
+            let global = bv2_plugin(resolve.bv2).global_object();
             // `to_slice_clone` already heap-allocates; `into_vec` moves that
             // buffer out instead of allocating a second copy.
             let path = path_value
@@ -1426,7 +1435,7 @@ pub mod js_bundler {
                     }
                 }
 
-                Ok((*bv2_plugin(self.bv2)).append_defer_promise())
+                Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
     }
@@ -1485,8 +1494,7 @@ pub mod js_bundler {
             }
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
-            // SAFETY: bv2 backref is valid; plugins is Some
-            let global = unsafe { (*bv2_plugin(this.bv2)).global_object() };
+            let global = bv2_plugin(this.bv2).global_object();
             let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
                 global,
                 source_code_value,

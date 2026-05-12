@@ -4863,7 +4863,7 @@ impl NodeFS {
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
-        let errno = unsafe { *bun_sys::c::errno_location() };
+        let errno = sys::last_errno();
         Err(sys::Error {
             errno: errno as _,
             syscall: sys::Tag::mkdtemp,

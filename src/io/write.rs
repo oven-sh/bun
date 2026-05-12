@@ -389,17 +389,22 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
     /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
     /// padding-sensitive invariants — same contract as Zig's `readStruct`.
     pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
-        let mut out = core::mem::MaybeUninit::<T>::uninit();
-        // SAFETY: writing `size_of::<T>()` bytes into MaybeUninit<T> storage.
-        let bytes = unsafe {
-            core::slice::from_raw_parts_mut(
-                out.as_mut_ptr().cast::<u8>(),
-                core::mem::size_of::<T>(),
-            )
-        };
-        self.read_exact(bytes)?;
-        // SAFETY: fully initialized by read_exact above.
-        Ok(unsafe { out.assume_init() })
+        let buf = self.buffer.as_ref();
+        let n = core::mem::size_of::<T>();
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+        if end > buf.len() {
+            return Err(bun_core::err!("EndOfStream"));
+        }
+        // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
+        // bytes from the safe slice borrow; caller contract guarantees `T` is
+        // `#[repr(C)]` POD where every byte pattern is valid (same as Zig
+        // `readStruct`). `read_unaligned` tolerates any source alignment.
+        let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
+        self.pos = end;
+        Ok(out)
     }
 }
 

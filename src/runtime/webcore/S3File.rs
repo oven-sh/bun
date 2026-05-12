@@ -840,8 +840,9 @@ pub fn construct_internal_js(
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
-    // SAFETY: BUN__createJSS3FileUnsafely is an FFI binding that takes ownership of the Blob pointer
-    unsafe { BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>()) }
+    // C++ adopts `this` opaquely (stored as `void* m_ctx` in the JS wrapper);
+    // ownership-transfer contract lives on `to_js_unchecked`'s callers.
+    BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 
 pub fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
@@ -946,8 +947,12 @@ pub mod exports {
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
     safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;
-    fn BUN__createJSS3FileUnsafely(
-        global: *const JSGlobalObject,
+    // `&JSGlobalObject` discharges the only deref'd-param precondition; `blob`
+    // is stored opaquely as `void* m_ctx` (module-private — sole caller is
+    // `to_js_unchecked`, whose own signature carries the ownership-transfer
+    // contract). Matches the `*__createObject` precedent.
+    safe fn BUN__createJSS3FileUnsafely(
+        global: &JSGlobalObject,
         blob: *mut core::ffi::c_void,
     ) -> JSValue;
 }

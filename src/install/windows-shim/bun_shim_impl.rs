@@ -57,7 +57,7 @@ use core::mem::{size_of, MaybeUninit};
 #[cfg(feature = "shim_standalone")]
 use crate::compat as w;
 #[cfg(feature = "shim_standalone")]
-use crate::{bun_core, bun_str};
+use crate::bun_core;
 #[cfg(not(feature = "shim_standalone"))]
 use bun_sys::windows as w;
 use w::{BOOL, DWORD, HANDLE, IO_STATUS_BLOCK, LARGE_INTEGER, NTSTATUS, PVOID, ULONG, UNICODE_STRING};

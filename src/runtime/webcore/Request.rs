@@ -848,18 +848,29 @@ impl Request {
         // hand ownership back to the raw pointer FIRST so a panic in the work
         // below leaks instead of Box-drop UAF-ing those weak holders.
         let this = bun_core::heap::release(self);
-        this.js_ref.with_mut(|r| r.finalize());
-        this.finalize_without_deinit();
         // Release the +1 hive ref handed out by `body::hive_alloc` /
         // `HiveRef::ref_()`; slot returns to the pool when the count hits
-        // zero (drops the payload in place). Deref is centralised in
+        // zero (drops the payload in place). `body: NonNull<_>` has no Drop,
+        // so this is the only release point. Deref is centralised in
         // `body_hive()`.
         this.body_hive().unref();
         if this.weak_ptr_data.on_finalize() {
-            // SAFETY: `this` is the live Box-allocated payload; reclaim and drop.
+            // Hot path: no outstanding weak refs. Reclaim and drop the whole
+            // allocation in one shot — `Box::from_raw`'s drop runs
+            // `drop_in_place` over every field (headers / url / signal /
+            // js_ref / internal_event_callback) once, matching Zig's
+            // plain-store `finalizeWithoutDeinit` without the 4× `Cell::set`
+            // read-write-drop round-trips the old `finalize_without_deinit()`
+            // call performed here before re-dropping the (now-empty) fields.
+            // SAFETY: `this` is the live Box-allocated payload.
             drop(unsafe { Box::from_raw(this) });
+        } else {
+            // Cold path: weak_ptr_data still has outstanding refs — keep the
+            // allocation alive, but release inner resources now so they aren't
+            // pinned until the last `WeakPtr` drops.
+            this.js_ref.with_mut(|r| r.finalize());
+            this.finalize_without_deinit();
         }
-        // else: weak_ptr_data still has outstanding refs — keep allocation alive.
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]

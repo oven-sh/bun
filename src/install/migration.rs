@@ -81,10 +81,7 @@ pub fn detect_and_load_other_lockfile<'a>(
 
     'yarn: {
         let timer = std::time::Instant::now();
-        let Ok(lockfile) = File::openat(dir, b"yarn.lock", O::RDONLY, 0) else {
-            break 'yarn;
-        };
-        let Ok(data) = lockfile.read_to_end() else {
+        let Ok(data) = File::read_from(dir, b"yarn.lock") else {
             break 'yarn;
         };
         let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir) {
@@ -111,10 +108,7 @@ pub fn detect_and_load_other_lockfile<'a>(
 
     'pnpm: {
         let timer = std::time::Instant::now();
-        let Ok(lockfile) = File::openat(dir, b"pnpm-lock.yaml", O::RDONLY, 0) else {
-            break 'pnpm;
-        };
-        let Ok(data) = lockfile.read_to_end() else {
+        let Ok(data) = File::read_from(dir, b"pnpm-lock.yaml") else {
             break 'pnpm;
         };
         let migrate_result = match pnpm::migrate_pnpm_lockfile(this, manager, log, &data, dir) {

@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use bun_core::{env_var, fmt as bun_fmt, output, ZStr};
-use bun_sys::{self, Fd, File, O};
+use bun_sys::{Fd, File, O};
 use parking_lot::Mutex;
 
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
@@ -25,10 +25,8 @@ pub fn init() {
         if !trace_path.is_empty() {
             let flags = O::WRONLY | O::CREAT | O::APPEND;
             let mode = 0o644;
-            if let Ok(fd) = bun_sys::open_a(trace_path, flags, mode) {
-                *slot = Some(File::from_fd(fd));
-            }
             // Silently ignore errors opening trace file
+            *slot = File::openat(Fd::cwd(), trace_path, flags, mode).ok();
         }
     }
 }

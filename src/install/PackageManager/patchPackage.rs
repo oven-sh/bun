@@ -488,22 +488,7 @@ pub fn do_patch_commit(
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name = bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle;
-    let tmpfd = match sys::openat(
-        tmpdir.fd,
-        tempfile_name,
-        sys::O::RDWR | sys::O::CREAT,
-        0o666,
-    ) {
-        Ok(fd) => fd,
-        Err(e) => {
-            Output::err(e, "failed to open temp file", ());
-            Global::crash();
-        }
-    };
-    // `defer tmpfd.close();`
-    let _tmpfd_guard = scopeguard::guard(tmpfd, |fd| fd.close());
-
-    if let Err(e) = sys::File::from_fd(tmpfd).write_all(&patchfile_contents) {
+    if let Err(e) = sys::File::write_file(tmpdir.fd, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
         Global::crash();
     }
@@ -571,12 +556,12 @@ fn patch_commit_get_version<'a>(
     buf: &'a mut [u8; 1024],
     patch_tag_path: &ZStr,
 ) -> sys::Maybe<&'a [u8]> {
-    let patch_tag_fd = sys::open(patch_tag_path, sys::O::RDONLY, 0)?;
+    let patch_tag = sys::File::open(patch_tag_path, sys::O::RDONLY, 0)?;
     // we actually need to delete this -- runs after fd close (LIFO drop order)
     scopeguard::defer! { let _ = sys::unlink(patch_tag_path); }
-    let _close = sys::CloseOnDrop::new(patch_tag_fd);
+    let _close = sys::CloseOnDrop::file(&patch_tag);
 
-    let version = sys::File::from_fd(patch_tag_fd).read_fill_buf(&mut buf[..])?;
+    let version = patch_tag.read_fill_buf(&mut buf[..])?;
 
     // maybe if someone opens it in their editor and hits save a newline will be inserted,
     // so trim that off

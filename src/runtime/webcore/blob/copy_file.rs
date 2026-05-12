@@ -1387,7 +1387,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match (bun_sys::File { handle: fd }).kind() {
+                    match bun_sys::File::from_fd(fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1432,7 +1432,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match (bun_sys::File { handle: fd }).kind() {
+                    match bun_sys::File::from_fd(fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;

@@ -2026,13 +2026,7 @@ fn update_package_json_after_migration(
         );
 
         // Write the updated package.json
-        let write_file =
-            match sys::File::openat(dir, b"package.json", sys::O::WRONLY | sys::O::TRUNC, 0) {
-                Ok(f) => f,
-                Err(_) => return Ok(()),
-            };
-        let _ = write_file.write_all(root_pkg_json.source.contents());
-        let _ = write_file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = sys::File::write_file(dir, bun_core::zstr!("package.json"), root_pkg_json.source.contents());
     }
 
     Ok(())

@@ -5141,13 +5141,7 @@ pub fn dump_bundle(
         Default::default(),
     )?;
 
-    // PORT NOTE: std.fs.Dir.createFile -> openat(CREAT|TRUNC|WRONLY).
-    let file = sys::File::openat(
-        inner_dir.fd,
-        paths::basename(name),
-        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-        0o664,
-    )?;
+    let file = sys::File::create(inner_dir.fd, paths::basename(name), true)?;
     let mut bufw = file.buffered_writer();
 
     if !strings::has_suffix_comptime(rel_path, b".map") {
@@ -5176,6 +5170,7 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
+    _ = file.close();
     Ok(())
 }
 

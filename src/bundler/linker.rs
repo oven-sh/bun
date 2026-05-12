@@ -329,6 +329,7 @@ impl Linker {
         } else {
             bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?
         };
+        let _close = fd.is_none().then(|| bun_sys::CloseOnDrop::file(&file));
         Fs::FileSystem::set_max_fd(file.handle().native());
         // PORT NOTE: spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
         // path, file)`; both leading args are unread (fs.rs:1386). The inline
@@ -336,11 +337,7 @@ impl Linker {
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
-        let modkey = Fs::ModKey::from_file(&file)?;
-        if fd.is_none() {
-            let _ = file.close();
-        }
-        Ok(modkey)
+        Fs::ModKey::from_file(&file)
     }
 
     pub fn get_hashed_filename(

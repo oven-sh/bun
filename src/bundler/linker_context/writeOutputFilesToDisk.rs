@@ -256,15 +256,10 @@ pub fn write_output_files_to_disk(
                     code_result.buffer = buf.into_boxed_slice();
                 }
 
-                match write_file_with_path_buffer(
-                    &mut pathbuf,
-                    WriteFileArgs {
-                        data: WriteFileData::Buffer { buffer: &output_source_map },
-                        encoding: WriteFileEncoding::Buffer,
-                        dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                        file: PathOrFileDescriptor::Path(PathString::init(&source_map_final_rel_path)),
-                        ..Default::default()
-                    },
+                match bun_sys::File::write_file(
+                    bun_sys::Fd::from_std_dir(&root_dir),
+                    paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
+                    &output_source_map,
                 ) {
                     Err(e) => {
                         c.log_mut().add_sys_error(
@@ -594,15 +589,10 @@ pub fn write_output_files_to_disk(
                 }
             }
 
-            match write_file_with_path_buffer(
-                &mut pathbuf,
-                WriteFileArgs {
-                    data: WriteFileData::Buffer { buffer: &bytes },
-                    encoding: WriteFileEncoding::Buffer,
-                    dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                    file: PathOrFileDescriptor::Path(PathString::init(&src.dest_path)),
-                    ..Default::default()
-                },
+            match bun_sys::File::write_file(
+                bun_sys::Fd::from_std_dir(&root_dir),
+                paths::resolve_path::z(&src.dest_path, &mut pathbuf),
+                &bytes,
             ) {
                 Err(e) => {
                     c.log_mut()

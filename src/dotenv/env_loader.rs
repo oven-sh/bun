@@ -876,8 +876,8 @@ impl<'a> Loader<'a> {
         // `bun_sys` is errno-based, so the match arms below approximate the Zig
         // error groups by errno. Any errno not listed propagates (matches the
         // Zig `else => return err`).
-        let file = match bun_sys::openat_a(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-            Ok(fd) => bun_sys::File::from_fd(fd),
+        let file = match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
+            Ok(file) => file,
             Err(err) => {
                 use bun_sys::E;
                 match err.get_errno() {
@@ -917,12 +917,8 @@ impl<'a> Loader<'a> {
                     );
                 }
             }
-            ReadEnvFile::Bytes(buf, amount_read) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(
-                    &buf[0..amount_read],
-                    &mut *self.map,
-                    value_buffer,
-                )?;
+            ReadEnvFile::Bytes(buf) => {
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
             }
         }
 
@@ -970,12 +966,8 @@ impl<'a> Loader<'a> {
                     );
                 }
             }
-            ReadEnvFile::Bytes(buf, amount_read) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(
-                    &buf[0..amount_read],
-                    &mut *self.map,
-                    value_buffer,
-                )?;
+            ReadEnvFile::Bytes(buf) => {
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
             }
         }
 
@@ -987,54 +979,32 @@ impl<'a> Loader<'a> {
 }
 
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// stat (or `get_end_pos` on Windows), allocate, `read_all`, NUL-terminate.
+/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
 /// The two callers differ in their open path, open-error handling, and the
 /// memo slot they write — those stay in the callers (see env_loader.zig
 /// :784 vs :874). Only the byte-identical read tail is factored here.
 enum ReadEnvFile {
-    /// Zero-length or not a regular file — caller marks the slot and returns.
+    /// Zero-length — caller marks the slot and returns.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
     ReadErr(bun_sys::Error),
-    /// `(buf, amount_read)`; `buf[amount_read..]` is slack incl. trailing NUL.
-    Bytes(Vec<u8>, usize),
+    /// File contents; `buf.len()` is the amount read.
+    Bytes(Vec<u8>),
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> Result<ReadEnvFile, bun_core::Error> {
-    #[cfg(windows)]
-    let end: usize = {
-        let pos = file.get_end_pos()?;
-        if pos == 0 {
-            return Ok(ReadEnvFile::Empty);
-        }
-        pos
-    };
-    #[cfg(not(windows))]
-    let end: usize = {
-        let stat = file.stat()?;
-        if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
-            return Ok(ReadEnvFile::Empty);
-        }
-        stat.st_size as usize
-    };
-
-    let mut buf: Vec<u8> = vec![0u8; end + 1];
-    // errdefer free(buf) — Vec drops automatically.
-    let amount_read = match file.read_all(&mut buf[0..end]) {
-        Ok(n) => n,
+    match file.read_to_end() {
+        Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
+        Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
         Err(err) => {
             use bun_sys::E;
-            return match err.get_errno() {
+            match err.get_errno() {
                 E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => Ok(ReadEnvFile::ReadErr(err)),
                 _ => Err(err.into()),
-            };
+            }
         }
-    };
-
-    // The null byte here is mostly for debugging purposes.
-    buf[end] = 0;
-    Ok(ReadEnvFile::Bytes(buf, amount_read))
+    }
 }
 
 struct Parser<'a> {

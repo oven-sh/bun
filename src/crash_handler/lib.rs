@@ -3074,13 +3074,8 @@ fn print_line_from_file_any_os(
 ) -> Result<(), bun_core::Error> {
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    // PORT NOTE: `File::open_at` wants `&ZStr` but `source_location.file_name`
-    // is a `Box<[u8]>` (no NUL guarantee from the debug-info backend), so route
-    // through the byte-slice `openat_a` and wrap the fd.
-    let fd = bun_sys::openat_a(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
+    let f = bun_sys::File::openat(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
         .map_err(bun_core::Error::from)?;
-    let f = bun_sys::File::from_fd(fd);
-    // TODO(port): errdefer — f closed on all paths via guard
     let _close_f = bun_sys::CloseOnDrop::file(&f);
 
     let mut line_buf: [u8; 4096] = [0; 4096];

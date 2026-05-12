@@ -645,7 +645,7 @@ pub fn compute_chunks(
             };
             let mut real_path_buf = PathBuffer::uninit();
             let dir: &[u8] = 'dir: {
-                let Ok(dir_fd) = bun_sys::openat_a(
+                let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
                     dir_path,
                     bun_sys::O::PATH | bun_sys::O::DIRECTORY,
@@ -656,13 +656,10 @@ pub fn compute_chunks(
                         &mut real_path_buf.0,
                     );
                 };
-                let dir_fd = scopeguard::guard(dir_fd, |fd| {
-                    use bun_sys::FdExt as _;
-                    fd.close();
-                });
+                let _close = bun_sys::CloseOnDrop::file(&dir_file);
 
-                match bun_sys::get_fd_path(*dir_fd, &mut real_path_buf) {
-                    Ok(p) => break 'dir &*p,
+                match dir_file.get_path(&mut real_path_buf) {
+                    Ok(p) => break 'dir p,
                     Err(err) => {
                         // SAFETY: split-borrow — see `LinkerContext::log_mut`.
                         unsafe { &mut *this.log }.add_error_fmt(

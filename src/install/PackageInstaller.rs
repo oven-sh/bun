@@ -201,10 +201,7 @@ impl NodeModulesFolder {
     ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
         // TODO(port): narrow error set
         let file = self.open_file(root_node_modules_dir, file_path)?;
-        // PORT NOTE: Zig `read_to_end_small` only differs by initial capacity
-        // (4KiB vs stat-sized). The lib.rs `bun_sys::File::read_to_end` shim
-        // does not surface that variant; reuse the regular path.
-        let res = file.read_to_end();
+        let res = file.read_to_end_small();
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
         Ok(match res {
             Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },

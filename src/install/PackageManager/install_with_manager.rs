@@ -950,7 +950,11 @@ pub fn install_with_manager(
         }
     }
 
-    let lockfile_before_install: *const Lockfile = &raw const *manager.lockfile;
+    // BACKREF: `manager.lockfile` is a `Box<Lockfile>` whose allocation is
+    // never replaced for the remainder of this function (only its fields
+    // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
+    // below deref through the safe abstraction instead of per-site raw deref.
+    let lockfile_before_install = bun_ptr::ParentRef::<Lockfile>::new(&*manager.lockfile);
 
     let save_format = load_result.save_format(&manager.options);
 
@@ -962,15 +966,12 @@ pub fn install_with_manager(
             packages_len_before_install,
         )?;
 
-        // SAFETY: `lockfile_before_install` was derived from `manager.lockfile`
-        // above and the box hasn't been replaced; it points at the same
-        // allocation `save_lockfile` will read against itself.
         save_lockfile(
             manager,
             &load_result,
             save_format,
             had_any_diffs,
-            unsafe { &*lockfile_before_install },
+            lockfile_before_install.get(),
             packages_len_before_install,
             log_level,
         )?;
@@ -1087,15 +1088,12 @@ pub fn install_with_manager(
                 || manager.options.enable.force_save_lockfile()));
 
     if should_save_lockfile {
-        // SAFETY: `lockfile_before_install` was derived from `manager.lockfile`
-        // above and the box hasn't been replaced; it points at the same
-        // allocation `save_lockfile` will read against itself.
         save_lockfile(
             manager,
             &load_result,
             save_format,
             had_any_diffs,
-            unsafe { &*lockfile_before_install },
+            lockfile_before_install.get(),
             packages_len_before_install,
             log_level,
         )?;
@@ -1317,11 +1315,14 @@ fn print_install_summary(
         // SAFETY: `mgr` is the sole provenance root from here through the
         // `Tree::print` call; the `Printer` reborrows shared `lockfile` /
         // `options` / `update_requests`, and the `&mut *mgr` passed to
-        // `Tree::print` only touches disjoint `PackageManager` fields.
+        // `Tree::print` only touches disjoint `PackageManager` fields. Wrapped
+        // once as `ParentRef` so the three read-only field reborrows go through
+        // safe `Deref` instead of three per-site raw projections.
+        let mgr_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(mgr) };
         let printer = Printer {
-            lockfile: unsafe { &(*mgr).lockfile },
-            options: unsafe { &(*mgr).options },
-            updates: unsafe { &(*mgr).update_requests },
+            lockfile: &mgr_ref.lockfile,
+            options: &mgr_ref.options,
+            updates: &mgr_ref.update_requests,
             successfully_installed: install_summary.successfully_installed.as_ref(),
         };
 

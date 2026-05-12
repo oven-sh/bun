@@ -2360,8 +2360,19 @@ impl Package<u64> {
         // may swallow it and re-enter for the next package. If we eagerly `set_len(total_len)`
         // and then bail, `dependencies.len() != resolutions.len()` on the next call and the
         // debug_assert above trips. Slots are only read after being written below.
-        // SAFETY: capacity reserved above; no realloc occurs until both lengths are
-        // committed at the end of this function.
+        //
+        // SAFETY: this is `spare_capacity_mut()[..total_dependencies_count]` viewed as
+        // `&mut [Dependency]` instead of `&mut [MaybeUninit<Dependency>]`:
+        // - `off == dependencies.len()` (asserted) and `reserve(total_dependencies_count)`
+        //   above guarantees `[off..total_len]` lies within the allocation; no realloc
+        //   occurs until both lengths are committed at the end of this function.
+        // - `Dependency: Copy` so writing `package_dependencies[i] = dep` does not drop
+        //   an uninitialized prior value.
+        // - Every slot is written before it is read (`parse_dependency`/the loop below
+        //   index by a monotone `dependencies_count`, then sort over `[..count]` only).
+        // The fully-safe alternative — threading `&mut [MaybeUninit<Dependency>]` through
+        // `parse_dependency` and the iteration/sort below — is net-neutral on `unsafe`
+        // (it just trades this `from_raw_parts_mut` for `slice_assume_init_mut`).
         let package_dependencies = unsafe {
             core::slice::from_raw_parts_mut(
                 lockfile.buffers.dependencies.as_mut_ptr().add(off),

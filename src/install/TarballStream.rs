@@ -149,7 +149,10 @@ pub struct TarballStream {
 
     /// Completion task that carries the final result back to the main
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
-    extract_task: *mut Task,
+    /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
+    /// read-only `request_extract()` accessor in `open_destination` goes
+    /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
+    extract_task: bun_ptr::ParentRef<Task>,
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
 }
@@ -173,12 +176,13 @@ impl TarballStream {
     ) -> *mut TarballStream {
         // SAFETY: caller guarantees `extract_task` is live for the lifetime
         // of this stream (it is published back to the main thread only in
-        // `finish()`); see Zig `init` which takes `*Task`. `request` is an
-        // untagged union; `extract` is the active variant for streaming
-        // tarballs (set by `enqueueExtractNPMPackage`). Explicit `&` (no
-        // implicit autoref through the raw-ptr deref) for the
-        // `ManuallyDrop` → `ExtractRequest` deref.
-        let tarball = unsafe { &(&(*extract_task).request.extract).tarball };
+        // `finish()`); see Zig `init` which takes `*Task`. Wrapped once as
+        // `ParentRef` so the union read goes through the centralised
+        // tag-checked `request_extract()` accessor; `extract` is the active
+        // `Request` variant for streaming tarballs (set by
+        // `enqueueExtractNPMPackage`, `tag == Tag::Extract`).
+        let extract_task = unsafe { bun_ptr::ParentRef::<Task>::from_raw_mut(extract_task) };
+        let tarball = &extract_task.request_extract().tarball;
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
@@ -626,11 +630,10 @@ impl TarballStream {
     }
 
     fn open_destination(&mut self) -> Result<(), bun_core::Error> {
-        // SAFETY: `extract_task` is live until `finish()` publishes it.
-        // `request` is an untagged union; `extract` is the active variant.
-        // Explicit `&` (no implicit autoref through the raw-ptr deref) for
-        // the `ManuallyDrop` → `ExtractRequest` deref.
-        let tarball = unsafe { &(&(*self.extract_task).request.extract).tarball };
+        // BACKREF: `extract_task` is live until `finish()` publishes it.
+        // `request_extract()` is the tag-checked union accessor (`tag ==
+        // Tag::Extract` for streaming tarballs).
+        let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
         let mut buf = PathBuffer::uninit();
         let tmpname = FileSystem::tmpname(
@@ -904,7 +907,7 @@ impl TarballStream {
         // Fields are already raw pointers (see struct PORT NOTE), so copying
         // them out before `heap::take(this)` is just a pointer copy — no
         // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
-        let task: *mut Task = (*this).extract_task;
+        let task: *mut Task = (*this).extract_task.as_mut_ptr();
         let network: *mut NetworkTask = (*this).network_task;
         let manager: *mut PackageManager = (*this).package_manager;
 

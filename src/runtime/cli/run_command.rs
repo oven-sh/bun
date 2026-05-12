@@ -1733,8 +1733,7 @@ impl RunCommand {
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
                 &temp_path_buffer[..len as usize],
-            )
-            .map_err(|_| bun_core::err!("InvalidUtf16"))?;
+            );
 
             const FILE_NAME: &str = const_format::concatcp!(
                 "bun-node",
@@ -3990,10 +3989,7 @@ impl BunXFastPath {
             let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
-        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {
-            Ok(u) => u,
-            Err(_) => return,
-        };
+        let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));

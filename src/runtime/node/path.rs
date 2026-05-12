@@ -3182,9 +3182,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                         // Reuse buf2 because it's used for path.
                         // T == u8 when !IS_U16; bytemuck statically checks the layout.
                         let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(&mut buf2[..]);
-                        buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r)
-                            .map(|s| s.len())
-                            .unwrap_or(0);
+                        buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
                     }
                     env_path_len = Some(buf_size);
                 }

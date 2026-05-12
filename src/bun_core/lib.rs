@@ -2309,36 +2309,22 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `convertUTF8ToUTF16InBuffer`. Writes WTF-16 into `out`; returns
-    /// the slice written. Caller must size `out` ≥ utf8.len() (worst case 1:1).
-    /// `strings.convertUTF16ToUTF8InBuffer` — write WTF-8 into `out`, return
-    /// the written sub-slice. Uses simdutf for valid input; falls back to a
-    /// `Vec`-backed scalar path on surrogate errors.
-    pub fn convert_utf16_to_utf8_in_buffer<'a>(
-        out: &'a mut [u8],
-        utf16: &[u16],
-    ) -> Result<&'a mut [u8], EncodeIntoResult> {
-        // Fast path: simdutf in-place. `utf8::from::utf16::le` returns the
-        // byte length needed; convert writes that many.
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        if need <= out.len() {
-            let r = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out);
-            if r.status == simdutf::Status::SUCCESS {
-                return Ok(&mut out[..r.count]);
-            }
+    /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
+    /// the written sub-slice. Infallible: Zig's `![]const u8` has an empty
+    /// inferred error set, so every `catch` at call sites is dead code. The
+    /// caller is responsible for sizing `out` for the worst case (≤ 3× input
+    /// code units); this is the implicit precondition the Zig original relies
+    /// on by passing `out` straight to simdutf without a bounds check.
+    pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
+        if utf16.is_empty() {
+            return &mut out[..0];
         }
-        // Fallback: append into a Vec (handles unpaired surrogates as WTF-8),
-        // then copy. PERF(port): Zig writes directly into `out`; revisit.
-        let mut v = Vec::with_capacity(need.max(utf16.len()));
-        convert_utf16_to_utf8_append(&mut v, utf16);
-        if v.len() > out.len() {
-            return Err(EncodeIntoResult {
-                read: 0,
-                written: 0,
-            });
-        }
-        out[..v.len()].copy_from_slice(&v);
-        Ok(&mut out[..v.len()])
+        debug_assert!(
+            simdutf::length::utf8::from::utf16::le(utf16) <= out.len(),
+            "caller must size buffer for worst-case UTF-8",
+        );
+        let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
+        &mut out[..result]
     }
     // ─── path basename (std.fs.path.basename{Posix,Windows}) ──────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0

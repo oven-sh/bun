@@ -11,7 +11,7 @@
 use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::collections::HashMap;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1017,29 +1017,62 @@ impl WTFStringImplStruct {
         // WTF::StringImpl::hasAtLeastOneRef
         self.m_ref_count.get() > 0
     }
+    /// Atomic view of `m_ref_count`. The C++ field is
+    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
+    /// `Cell<u32>` for the read-only accessors above but `ref`/`deref` must
+    /// issue real atomic RMWs to match `WTF::StringImpl::ref`/`deref` exactly.
+    /// `Cell<u32>` is `repr(transparent)` over `UnsafeCell<u32>` and
+    /// `AtomicU32` is `repr(C, align(4))` over `UnsafeCell<u32>`: same size,
+    /// same alignment (`m_ref_count` is the first field of a `#[repr(C)]`
+    /// struct so it is 4-aligned), so the in-place reborrow is sound.
+    #[inline(always)]
+    fn ref_count_atomic(&self) -> &AtomicU32 {
+        // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
+        // `AtomicU32`; see doc comment above.
+        unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
+    }
+    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
+    ///
+    /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
+    /// shim into Rust callers (2151 out-of-line `callq` sites in the release
+    /// binary vs 0 in the Zig build), so the one-instruction body is
+    /// reimplemented here. `Relaxed` matches WebKit's
+    /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn r#ref(&self) {
-        let current_count = self.ref_count();
-        debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
-        Bun__WTFStringImpl__ref(self);
-        debug_assert!(self.ref_count() > current_count || self.is_static());
-        let _ = current_count;
+        let old = self
+            .ref_count_atomic()
+            .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
+        debug_assert!(old > 0); // hasAtLeastOneRef — also true for static (flag bit set)
+        debug_assert!(
+            old.wrapping_add(Self::S_REF_COUNT_INCREMENT) / Self::S_REF_COUNT_INCREMENT
+                > old / Self::S_REF_COUNT_INCREMENT
+                || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+        );
+        let _ = old;
     }
+    /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
+    ///
+    /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
+    /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
+    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
+    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
+    /// counters from ever equalling `s_refCountIncrement`, so no separate
+    /// `isStatic()` check is needed.
     #[inline]
     pub fn deref(&self) {
-        let current_count = self.ref_count();
-        debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
-        // SAFETY: `self` is a live WTF::StringImpl; FFI decrements (and may free) the WTF impl.
-        // `m_ref_count` is `Cell<u32>` so the C++-side write is sound; the
-        // post-FFI re-read below is gated on `current_count > 1`, i.e. the
-        // impl is guaranteed to still be alive when we touch `self` again.
-        unsafe { Bun__WTFStringImpl__deref(self) };
-        if cfg!(debug_assertions) {
-            if current_count > 1 {
-                debug_assert!(self.ref_count() < current_count || self.is_static());
-            }
+        let old = self
+            .ref_count_atomic()
+            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
+        debug_assert!(old > 0); // hasAtLeastOneRef
+        if old != Self::S_REF_COUNT_INCREMENT {
+            return;
         }
-        let _ = current_count;
+        // Cold path: last reference dropped — hand the impl to C++ for
+        // destruction (handles substring/symbol/external buffer ownership).
+        // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
+        // the sole ref; `self` is not touched again after this call.
+        unsafe { Bun__WTFStringImpl__destroy(self) };
     }
     #[inline]
     pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
@@ -1117,8 +1150,11 @@ unsafe extern "C" {
     // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
     // a `&`-derived pointer are sound. The type encodes the only validity
     // precondition, so `safe fn` discharges the link-time proof.
-    // `deref` stays `*const` + `unsafe`: it may free the allocation backing
-    // the reference when the count reaches zero.
+    // `ref`/`deref` are inlined in Rust above; only the cold last-ref
+    // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
+    // allocation backing the pointer.
+    pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
+    // Kept for Zig callers (`src/string/wtf.zig`); Rust no longer calls these.
     pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
     pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;

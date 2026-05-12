@@ -779,21 +779,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // iteration on the heap instead of recursion on the call stack to avoid
         // stack overflow for deeply-nested ASTs.
         //
-        // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `StoreRef<E::Binary>` wraps a
-        // `NonNull` but its `DerefMut` borrows the *handle*, not the arena, so the
-        // resulting `&mut` is tied to a stack local. Detach via raw ptr → `&'a mut`
-        // (the actual lifetime is the AST arena, same contract as Zig's `*E.Binary`).
-        macro_rules! arena_mut {
-            ($store:expr) => {{
-                let mut __h = $store;
-                let __p: *mut E::Binary = &mut *__h;
-                // SAFETY: arena-owned node; outlives `'a`. No outstanding `&mut`
-                // alias for this node during the visit pass.
-                unsafe { &mut *__p }
-            }};
-        }
-        let mut v: BinaryExpressionVisitor<'a> = BinaryExpressionVisitor {
-            e: arena_mut!(e_),
+        // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `BinaryExpressionVisitor.e`
+        // is the `StoreRef<E::Binary>` arena handle directly — `Copy` + safe
+        // `Deref`/`DerefMut`, so no raw-pointer detach is needed here.
+        let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
+            e: e_,
             loc: expr.loc,
             in_,
             left_in: ExprIn::default(),
@@ -843,7 +833,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // expression doesn't add anything to the stack.
             p.binary_expression_stack.push(v);
             v = BinaryExpressionVisitor {
-                e: arena_mut!(left_binary.unwrap()),
+                e: left_binary.unwrap(),
                 loc: left.loc,
                 in_: left_in,
                 left_in: ExprIn::default(),

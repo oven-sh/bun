@@ -87,8 +87,12 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, J: JsxT, const SCAN_
     }
 }
 
-pub struct BinaryExpressionVisitor<'arena> {
-    pub e: &'arena mut E::Binary,
+pub struct BinaryExpressionVisitor {
+    /// Arena handle to the in-place `E::Binary` node (Zig: `*E.Binary`).
+    /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
+    /// encapsulate the AST-store invariant, so call sites need no raw-pointer
+    /// round-trip to forge an `'arena` borrow.
+    pub e: StoreRef<E::Binary>,
     pub loc: bun_ast::Loc,
     // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
     pub in_: ExprIn,
@@ -100,18 +104,19 @@ pub struct BinaryExpressionVisitor<'arena> {
     pub is_stmt_expr: bool, // = false (set by caller / Default)
 }
 
-impl<'arena> BinaryExpressionVisitor<'arena> {
+impl BinaryExpressionVisitor {
     pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Expr {
-        // PORT NOTE: reshaped for borrowck — `e_` reborrows the arena slot. We need a raw
-        // pointer to (a) compare against `p.call_target` by address and (b) re-wrap into
-        // `ExprData::EBinary(StoreRef)` at the tail without overlapping the `e_` borrow.
-        let e_ptr: *mut E::Binary = &raw mut *v.e;
-        // SAFETY: `v.e` points into the AST arena which outlives this call; same contract
-        // as Zig's `*E.Binary`. Detaching to a raw deref keeps the borrow disjoint from `v`.
-        let e_ = unsafe { &mut *e_ptr };
+        // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
+        // Snapshot the handle for the identity check / tail re-wrap, then take
+        // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
+        // invariant is encapsulated there. The borrow is on the `v.e` field
+        // only, so `v.loc` reads below split-borrow cleanly.
+        let e_handle: StoreRef<E::Binary> = v.e;
+        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        let e_ = &mut *v.e;
 
         let is_call_target =
             matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
@@ -653,8 +658,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 
         Expr {
             loc: v.loc,
-            // `v.e: &'arena mut E::Binary` — same arena slot Zig threads as `*E.Binary`.
-            data: ExprData::EBinary(StoreRef::from_non_null(core::ptr::NonNull::from(&mut *v.e))),
+            // Same arena slot Zig threads as `*E.Binary` — re-wrap the handle.
+            data: ExprData::EBinary(e_handle),
         }
     }
 
@@ -662,6 +667,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Option<Expr> {
+        // Snapshot the `Copy` arena handle before taking the working `&mut`
+        // via `StoreRef::DerefMut`, so the early-return re-wrap below does not
+        // overlap `e_`'s borrow of `v.e`.
+        let e_handle: StoreRef<E::Binary> = v.e;
         let e_: &mut E::Binary = &mut *v.e;
         match e_.left.data {
             // Special-case private identifiers
@@ -696,14 +705,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     };
 
                     // privateSymbolNeedsToBeLowered
-                    // PORT NOTE: re-wrap the in-place E::Binary as a StoreRef so the
-                    // returned Expr aliases the same arena slot.
-                    return Some(Expr {
-                        loc: v.loc,
-                        data: ExprData::EBinary(StoreRef::from_non_null(
-                            core::ptr::NonNull::from(&mut *v.e),
-                        )),
-                    });
+                    return Some(Expr { loc: v.loc, data: ExprData::EBinary(e_handle) });
                 }
             }
             _ => {}

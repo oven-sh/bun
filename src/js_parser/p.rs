@@ -567,7 +567,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     // PERF(port): was stack-fallback alloc — profile in Phase B
-    pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor<'a>>,
+    pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 

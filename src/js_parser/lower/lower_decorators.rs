@@ -878,19 +878,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: Stmt,
         out: &mut BumpVec<'a, Stmt>,
     ) {
-        // SAFETY: every call site is the visitStmt s_class branch; the StoreRef
-        // payload outlives `stmt` (arena-owned). Take a raw pointer so the
-        // value `stmt` itself can be pushed into `out` after we finish mutating
-        // the class body.
-        let class_ptr: *mut G::Class = match &mut stmt.clone().data {
-            // `stmt` is Copy; cloning the handle is fine — the StoreRef points
-            // at the same arena-backed `S::Class`.
-            js_ast::StmtData::SClass(c) => &raw mut c.class,
+        // Every call site is the visitStmt `s_class` branch. `Stmt` and the
+        // `StoreRef<S::Class>` payload are both `Copy`, so we can hold a copy
+        // of the arena handle while still passing `stmt` by value below.
+        // `StoreRef::DerefMut` is the safe arena-backref accessor; no raw
+        // pointer round-trip needed.
+        let mut s_class = match stmt.data {
+            js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        // SAFETY: arena-owned; exclusive access during visit.
-        let class = unsafe { &mut *class_ptr };
-        self.lower_impl(class, stmt.loc, None, false, Some(stmt), out);
+        self.lower_impl(&mut s_class.class, stmt.loc, None, false, Some(stmt), out);
     }
 
     pub fn lower_standard_decorators_expr(

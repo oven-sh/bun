@@ -82,7 +82,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        unsafe { event_loop_ctx.platform_event_loop() }.sub_active(1);
+        event_loop_ctx.loop_sub_active(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -100,7 +100,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        unsafe { vm.platform_event_loop() }.dec();
+        vm.loop_dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
@@ -110,7 +110,7 @@ impl KeepAlive {
         }
         self.status = Status::Inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        unsafe { vm.platform_event_loop() }.dec();
+        vm.loop_dec();
     }
 
     /// Allow a poll to keep the process alive.
@@ -119,7 +119,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Active;
-        unsafe { event_loop_ctx.platform_event_loop() }.ref_();
+        event_loop_ctx.loop_ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -196,8 +196,7 @@ impl FilePoll {
         }
         self.flags.insert(Flags::Closed);
 
-        unsafe { vm.platform_event_loop() }
-            .sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
+        vm.loop_sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
@@ -337,8 +336,7 @@ impl FilePoll {
         self.flags.remove(Flags::Closed);
 
         // vm.event_loop_handle.?.active_handles += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
-        unsafe { vm.platform_event_loop() }
-            .add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
+        vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
     pub fn can_activate(&self) -> bool {

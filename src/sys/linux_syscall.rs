@@ -266,12 +266,15 @@ pub unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize,
 /// Raw `writev(2)`.
 #[inline]
 pub unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s.
-    let slice = unsafe {
-        core::slice::from_raw_parts(vecs as *const rustix::io::IoSlice<'_>, n)
-    };
-    let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::writev(fd, slice))
+    // Same shape as `readv` above: hand the raw `(iovec*, n)` pair straight to
+    // the kernel rather than fabricating a `&[IoSlice]` just to satisfy
+    // rustix's typed wrapper. The caller already owns a `&[PlatformIoVec]`;
+    // round-tripping through a reconstructed borrowed slice buys nothing.
+    sys_retry(|| {
+        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
+        // `iov_base` are readable for `iov_len` bytes.
+        unsafe { libc::syscall(libc::SYS_writev, fd.native(), vecs, n as libc::c_long) }
+    })
 }
 
 /// Raw `preadv(2)`.
@@ -293,11 +296,16 @@ pub unsafe fn preadv(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Re
 /// Raw `pwritev(2)`.
 #[inline]
 pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Result<usize, i32> {
-    let slice = unsafe {
-        core::slice::from_raw_parts(vecs as *const rustix::io::IoSlice<'_>, n)
-    };
-    let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::pwritev(fd, slice, off as u64))
+    // Mirror `preadv`: split offset per the kernel `pwritev` ABI and pass the
+    // raw `(iovec*, n)` straight through instead of reconstructing a borrowed
+    // `&[IoSlice]` for rustix's typed wrapper.
+    let lo = off as libc::c_long;
+    let hi = ((off as u64) >> 32) as libc::c_long;
+    sys_retry(|| {
+        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
+        // `iov_base` are readable for `iov_len` bytes.
+        unsafe { libc::syscall(libc::SYS_pwritev, fd.native(), vecs, n as libc::c_long, lo, hi) }
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

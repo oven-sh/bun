@@ -122,6 +122,47 @@ impl EventLoopCtx {
     pub unsafe fn file_polls(&self) -> &mut Store {
         unsafe { &mut *self.file_polls_ptr() }
     }
+
+    // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
+    // The platform loop / poll store are per-thread, set-once back-pointers
+    // (`BackRef`-shaped). [`platform_event_loop`] cannot be a safe fn because
+    // handing out `&mut Loop` from `&self` would let a caller alias two
+    // copies; these wrappers instead perform one counter adjustment and drop
+    // the borrow before returning, so no `&mut` escapes. Collapses N
+    // identical `ctx.platform_event_loop().op()` call sites into the single
+    // deref inside each wrapper.
+    #[inline]
+    pub fn loop_ref(&self) {
+        // SAFETY: per-thread set-once pointer; sole `&mut Loop` for this call.
+        unsafe { &mut *self.platform_event_loop_ptr() }.ref_();
+    }
+    #[inline]
+    pub fn loop_unref(&self) {
+        // SAFETY: see `loop_ref`.
+        unsafe { &mut *self.platform_event_loop_ptr() }.unref();
+    }
+    #[inline]
+    pub fn loop_dec(&self) {
+        // SAFETY: see `loop_ref`.
+        unsafe { &mut *self.platform_event_loop_ptr() }.dec();
+    }
+    #[inline]
+    pub fn loop_add_active(&self, n: u32) {
+        // SAFETY: see `loop_ref`.
+        unsafe { &mut *self.platform_event_loop_ptr() }.add_active(n);
+    }
+    #[inline]
+    pub fn loop_sub_active(&self, n: u32) {
+        // SAFETY: see `loop_ref`.
+        unsafe { &mut *self.platform_event_loop_ptr() }.sub_active(n);
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
+        // SAFETY: per-thread set-once pointer; sole `&mut Store` for this call.
+        unsafe { &mut *self.file_polls_ptr() }.get_init(value)
+    }
+
     #[inline]
     pub fn is_js(&self) -> bool { self.is(EventLoopCtxKind::Js) }
     #[inline]

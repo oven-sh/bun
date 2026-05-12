@@ -4393,12 +4393,13 @@ pub use crate::coreutils_error_map::coreutils_error_map;
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn getRSS(rss: *mut usize) -> c_int;
+    // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
+    // only writes the slot and returns a status code — no other preconditions.
+    safe fn getRSS(rss: &mut usize) -> c_int;
 }
 pub fn self_process_memory_usage() -> Option<usize> {
     let mut rss: usize = 0;
-    // SAFETY: FFI call; arguments are valid for the duration of the call.
-    if unsafe { getRSS(&mut rss) } != 0 {
+    if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
@@ -4731,8 +4732,9 @@ pub use c::umask;
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #[cfg(windows)]
 unsafe extern "C" {
+    // safe: by-value `u16` mode; CRT `_umask` has no preconditions and never fails.
     #[link_name = "_umask"]
-    pub fn umask(mode: u16) -> u16;
+    pub safe fn umask(mode: u16) -> u16;
 }
 
 // TODO(port): move to *_jsc
@@ -5067,9 +5069,9 @@ pub mod os {
     /// Backed by `Bun__Os__getFreeMemory` in OsBinding.cpp.
     #[inline]
     pub fn freemem() -> u64 {
-        unsafe extern "C" { fn Bun__Os__getFreeMemory() -> u64; }
-        // SAFETY: FFI call with no arguments.
-        unsafe { Bun__Os__getFreeMemory() }
+        // safe: no args; C++ side reads OS counters and returns a u64 — no preconditions.
+        unsafe extern "C" { safe fn Bun__Os__getFreeMemory() -> u64; }
+        Bun__Os__getFreeMemory()
     }
 
     /// Total physical memory in bytes (Node `os.totalmem()`).
@@ -5120,9 +5122,9 @@ pub mod os {
         }
         #[cfg(windows)]
         {
-            unsafe extern "C" { fn uv_get_total_memory() -> u64; }
-            // SAFETY: FFI call with no arguments.
-            unsafe { uv_get_total_memory() }
+            // safe: no args; libuv reads OS state and returns a u64 — no preconditions.
+            unsafe extern "C" { safe fn uv_get_total_memory() -> u64; }
+            uv_get_total_memory()
         }
     }
 }

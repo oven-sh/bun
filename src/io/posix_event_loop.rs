@@ -159,8 +159,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-        // SAFETY: sole `&mut Loop` borrow in this scope.
-        unsafe { event_loop_ctx.platform_event_loop() }.unref();
+        event_loop_ctx.loop_unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -198,8 +197,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-        // SAFETY: sole `&mut Loop` borrow in this scope.
-        unsafe { event_loop_ctx.platform_event_loop() }.ref_();
+        event_loop_ctx.loop_ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -566,11 +564,7 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        loop_sub_active(
-            // SAFETY: sole `&mut Loop` borrow in this scope.
-            unsafe { event_loop_ctx.platform_event_loop() },
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        event_loop_ctx.loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -595,11 +589,8 @@ impl FilePoll {
             return;
         }
 
-        loop_add_active(
-            // SAFETY: sole `&mut Loop` borrow in this scope.
-            unsafe { event_loop_ctx.platform_event_loop() },
-            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-        );
+        event_loop_ctx
+            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -664,8 +655,7 @@ impl FilePoll {
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
-        // SAFETY: sole `&mut Store` borrow in this scope.
-        let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
+        let poll = vm.alloc_file_poll(value).as_ptr();
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
             poll as usize,
@@ -678,8 +668,7 @@ impl FilePoll {
     pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
-        // SAFETY: sole `&mut Store` borrow in this scope.
-        let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
+        let poll = vm.alloc_file_poll(value).as_ptr();
         syslog!(
             "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,

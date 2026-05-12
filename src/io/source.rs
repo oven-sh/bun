@@ -445,7 +445,7 @@ pub mod stdin_tty {
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
 pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
-    let tty = match Source::open_tty(uv_loop, Fd::stdin()) {
+    let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,
     };
@@ -455,9 +455,10 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     // closely with POSIX platforms. This is also required to support some
     // control sequences at all on Windows, such as bracketed paste mode. The
     // Node.js readline implementation handles differences between these modes.
-    // SAFETY: tty points to the static stdin tty (fd 0 → get_stdin_tty path);
-    // live for process lifetime. NonNull means no drop concern.
-    if let Some(err) = unsafe { &mut *tty.as_ptr() }
+    // `tty` is the static stdin tty (fd 0 → `get_stdin_tty`), live for the
+    // process — same invariant the `Source::Tty` arm relies on, so reuse the
+    // shared `tty_mut` accessor.
+    if let Some(err) = Source::tty_mut(&mut tty)
         .set_mode(if raw { uv::TtyMode::Vt } else { uv::TtyMode::Normal })
         .to_error(bun_sys::Tag::uv_tty_set_mode)
     {

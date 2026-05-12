@@ -1860,34 +1860,27 @@ impl RealFS {
             dir.fd = handle_fd;
         }
 
-        // PERF: drain `getdents64` to completion before populating `dir.data`
-        // so the dirent count is known up front and the `StringHashMap` can be
-        // sized once instead of rehashing log2(N) times. `IteratorResult` already
-        // owns its `Name` (heap `Vec`), so collecting just delays `Drop` — same
-        // total allocations, one extra `Vec` per directory vs ~14 rehashes for
-        // an 11k-entry directory. Seed the buffer from `prev_map` (re-reads are
-        // the common watch-mode path and the directory size rarely jumps).
-        let mut entries: Vec<bun_sys::dir_iterator::IteratorResult> = Vec::with_capacity(
-            prev_map.as_deref().map(|m| m.count()).unwrap_or(0),
-        );
-        while let Some(entry_) = iter.next()? {
-            entries.push(entry_);
-        }
-
-        // One reserve for the whole directory — eliminates the incremental
-        // grow/rehash chain in `put_static_key`.
-        dir.data.ensure_unused_capacity(entries.len())?;
+        // PERF: pre-size `dir.data` from `prev_map` to skip the log2(N) rehash
+        // chain on watch-mode re-reads (directory size rarely jumps), and fall
+        // back to a small floor for cold reads. Do NOT collect dirents into a
+        // `Vec` first — that costs N `push`es + ~log2(N) Vec grows just to learn
+        // the count, and forces every `Name` allocation to outlive the loop.
+        // Stream `getdents64` straight into `add_entry` like Zig's
+        // `while (try iter.next()) |*e| dir.addEntry(e)`.
+        dir.data.ensure_unused_capacity(
+            prev_map.as_deref().map(|m| m.count()).unwrap_or(64),
+        )?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.
         let mut filename_store = FilenameStoreAppender::new();
 
-        for entry_ in &entries {
+        while let Some(entry_) = iter.next()? {
             debug!("readdir entry {}", BStr::new(entry_.name.slice_u8()));
 
             dir.add_entry_with_store(
                 prev_map.as_deref_mut(),
-                entry_,
+                &entry_,
                 &mut filename_store,
                 &iterator,
             )?;

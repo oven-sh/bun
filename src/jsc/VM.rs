@@ -19,7 +19,11 @@ unsafe extern "C" {
     safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
     safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
-    fn JSC__VM__holdAPILock(
+    // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
+    // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
+    // to `callback` (never dereferenced as Rust data) — same contract as
+    // `JSC__JSGlobalObject__queueMicrotaskCallback`.
+    safe fn JSC__VM__holdAPILock(
         this: &VM,
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void),
@@ -86,9 +90,7 @@ impl VM {
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper
     #[deprecated = "use get_api_lock"]
     pub fn hold_api_lock(&self, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void)) {
-        // SAFETY: `ctx` is an opaque round-trip pointer; C++ only forwards it to
-        // `callback` and never dereferences it as Rust data.
-        unsafe { JSC__VM__holdAPILock(self, ctx, callback) }
+        JSC__VM__holdAPILock(self, ctx, callback)
     }
 
     /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.

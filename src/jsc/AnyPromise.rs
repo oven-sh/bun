@@ -150,18 +150,15 @@ impl AnyPromise {
         crate::top_scope!(scope, global_object);
 
         let mut ctx = Wrapper { f: Some(f) };
-        // SAFETY: `ctx` lives on the stack for the duration of the synchronous FFI call;
-        // `call::<F>` matches the expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue`
-        // shape. `as_ptr()` routes through JSGlobalObject's UnsafeCell interior so the
-        // `*mut` handed to C++ carries write provenance (no `&T -> *mut T` UB).
-        unsafe {
-            JSC__AnyPromise__wrap(
-                global_object.as_ptr(),
-                self.as_value(),
-                (&raw mut ctx).cast::<c_void>(),
-                call::<F>,
-            );
-        }
+        // `ctx` lives on the stack for the duration of the synchronous FFI call;
+        // `call::<F>` matches the expected `extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue`
+        // shape.
+        JSC__AnyPromise__wrap(
+            global_object,
+            self.as_value(),
+            (&raw mut ctx).cast::<c_void>(),
+            call::<F>,
+        );
         // C++ converts any thrown exception into a rejection, so a pending non-termination
         // exception here indicates a bug; surface termination as JsTerminated.
         scope.assert_no_exception_except_termination()
@@ -170,8 +167,12 @@ impl AnyPromise {
 }
 
 unsafe extern "C" {
-    fn JSC__AnyPromise__wrap(
-        global: *mut JSGlobalObject,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to a non-null `*mut` and C++ mutation is interior to the cell);
+    // `ctx` is an opaque round-trip pointer C++ only forwards to `f` (never
+    // dereferenced as Rust data).
+    safe fn JSC__AnyPromise__wrap(
+        global: &JSGlobalObject,
         promise: JSValue,
         ctx: *mut c_void,
         f: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,

@@ -32,9 +32,10 @@ pub enum Status {
 // `JSPromise` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles
 // (so `&T` is ABI-identical to non-null `*const T` and C++ mutating through
 // the pointer is interior mutation invisible to Rust). The shims that take
-// only such handles + scalars are declared `safe fn`. `JSC__JSPromise__wrap`
-// keeps a raw `*mut c_void` ctx so it stays `unsafe fn`; the
-// `*mut JSPromise`-returning constructors stay raw (caller derefs).
+// only such handles + scalars are declared `safe fn`. `JSC__JSPromise__wrap`'s
+// `ctx` is an opaque round-trip pointer C++ only forwards to `call` (never
+// dereferenced as Rust data); the `*mut JSPromise`-returning constructors stay
+// raw (caller derefs).
 unsafe extern "C" {
     safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
     safe fn JSC__JSPromise__rejectedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
@@ -44,8 +45,8 @@ unsafe extern "C" {
     safe fn JSC__JSPromise__rejectedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
     safe fn JSC__JSPromise__resolvedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
     safe fn JSC__JSPromise__resolvedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
-    fn JSC__JSPromise__wrap(
-        arg0: *mut JSGlobalObject,
+    safe fn JSC__JSPromise__wrap(
+        arg0: &JSGlobalObject,
         ctx: *mut c_void,
         call: extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue,
     ) -> JSValue;
@@ -338,17 +339,13 @@ impl JSPromise {
         crate::top_scope!(scope, global);
 
         let mut ctx = Wrapper { f: Some(f) };
-        // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
-        // expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
-        // `global.as_ptr()` yields the FFI `*mut` for the opaque ZST handle — no
-        // Rust-visible bytes are aliased (see JSGlobalObject::as_ptr).
-        let promise = unsafe {
-            JSC__JSPromise__wrap(
-                global.as_ptr(),
-                (&raw mut ctx).cast::<c_void>(),
-                call::<F>,
-            )
-        };
+        // `ctx` outlives the synchronous FFI call; `call::<F>` matches the expected
+        // `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
+        let promise = JSC__JSPromise__wrap(
+            global,
+            (&raw mut ctx).cast::<c_void>(),
+            call::<F>,
+        );
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
         // so a pending non-termination exception here indicates a bug; assert and
         // surface termination as JsTerminated (matching JSPromise.zig:202-207).

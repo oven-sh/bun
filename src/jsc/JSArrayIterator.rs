@@ -39,10 +39,7 @@ impl<'a> JSArrayIterator<'a> {
         let i = self.i;
         self.i += 1;
         if let Some(elements) = self.fast {
-            // SAFETY: FFI call into JSC; `elements` was obtained from
-            // Bun__JSArray__getContiguousVector for `self.array` and `self.len`.
-            if unsafe { Bun__JSArray__contiguousVectorIsStillValid(self.array, elements, self.len) }
-            {
+            if Bun__JSArray__contiguousVectorIsStillValid(self.array, elements, self.len) {
                 // SAFETY: validity check above guarantees `elements[0..self.len]`
                 // still backs the array's butterfly; `i < self.len`.
                 let val = unsafe { *elements.add(i as usize) };
@@ -61,7 +58,10 @@ impl<'a> JSArrayIterator<'a> {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn Bun__JSArray__getContiguousVector(value: JSValue, out_len: &mut u32) -> *const JSValue;
-    fn Bun__JSArray__contiguousVectorIsStillValid(
+    // safe: by-value `JSValue`/`u32`; `elements` is only pointer-compared against
+    // the array's current butterfly storage (bindings.cpp `== expected`), never
+    // dereferenced — no validity precondition.
+    safe fn Bun__JSArray__contiguousVectorIsStillValid(
         value: JSValue,
         elements: *const JSValue,
         len: u32,

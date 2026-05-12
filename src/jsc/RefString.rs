@@ -54,9 +54,19 @@ impl RefString {
         self.leak()
     }
 
+    /// Single audited deref of the set-once `impl_` backref so `ref_` /
+    /// `deref` below are safe callers. `impl_` is assigned at construction
+    /// from a live refcounted `WTF::StringImpl*` and remains valid until
+    /// `destroy` consumes `self`.
+    #[inline]
+    fn wtf_impl(&self) -> &bun_string::WTFStringImplStruct {
+        // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of
+        // `self` (set at construction; freed only after `destroy`).
+        unsafe { &*self.impl_ }
+    }
+
     pub fn ref_(&self) {
-        // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of `self`.
-        unsafe { (*self.impl_).r#ref() };
+        self.wtf_impl().r#ref();
     }
 
     pub fn leak(&self) -> &[u8] {
@@ -67,8 +77,7 @@ impl RefString {
     }
 
     pub fn deref(&self) {
-        // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of `self`.
-        unsafe { (*self.impl_).deref() };
+        self.wtf_impl().deref();
     }
 
     /// Called when the underlying `WTF::StringImpl` refcount reaches zero.

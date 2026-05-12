@@ -17,8 +17,11 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         arg1: &ZigString,
     ) -> JSValue;
-    fn WebCore__DOMFormData__toQueryString(
-        arg0: *mut DOMFormData,
+    // safe: `DOMFormData` is an `opaque_ffi!` ZST handle (`&mut` is ABI-identical
+    // to a non-null `*mut`); `arg1` is an opaque round-trip pointer C++ only
+    // forwards to `arg2` (synchronous, never retained or dereferenced as Rust data).
+    safe fn WebCore__DOMFormData__toQueryString(
+        arg0: &mut DOMFormData,
         arg1: *mut c_void,
         arg2: unsafe extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
     );
@@ -46,7 +49,8 @@ unsafe extern "C" {
         callback: unsafe extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),
     );
 
-    fn DOMFormData__forEach(this: *mut DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
+    // safe: same opaque-handle/round-trip-ctx contract as `toQueryString` above.
+    safe fn DOMFormData__forEach(this: &mut DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
 }
 
 impl DOMFormData {
@@ -77,15 +81,13 @@ impl DOMFormData {
             cb(unsafe { *str_ });
         }
 
-        // SAFETY: `self` is a valid opaque handle; `callback` lives for the duration of the call
-        // (C++ invokes the fn pointer synchronously, does not retain it).
-        unsafe {
-            WebCore__DOMFormData__toQueryString(
-                self,
-                std::ptr::from_mut::<F>(callback).cast::<c_void>(),
-                run::<F>,
-            );
-        }
+        // `callback` lives for the duration of the call (C++ invokes the fn pointer
+        // synchronously, does not retain it).
+        WebCore__DOMFormData__toQueryString(
+            self,
+            std::ptr::from_mut::<F>(callback).cast::<c_void>(),
+            run::<F>,
+        );
     }
 
     pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
@@ -166,15 +168,13 @@ impl DOMFormData {
         }
 
         // TODO(port): jsc.markBinding(@src()) — debug-only binding tracker; no Rust equivalent yet.
-        // SAFETY: `self` is a valid handle; C++ invokes the callback synchronously and does not
-        // retain `ctx` or the fn pointer past this call.
-        unsafe {
-            DOMFormData__forEach(
-                self,
-                std::ptr::from_mut::<F>(callback).cast::<c_void>(),
-                for_each_wrapper::<B, F>,
-            );
-        }
+        // C++ invokes the callback synchronously and does not retain `ctx` or the fn
+        // pointer past this call.
+        DOMFormData__forEach(
+            self,
+            std::ptr::from_mut::<F>(callback).cast::<c_void>(),
+            for_each_wrapper::<B, F>,
+        );
     }
 }
 

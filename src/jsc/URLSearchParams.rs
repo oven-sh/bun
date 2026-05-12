@@ -14,8 +14,11 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
-    fn URLSearchParams__toString(
-        self_: *mut URLSearchParams,
+    // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&mut` is
+    // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
+    // C++ only forwards to `callback` (synchronous, never retained).
+    safe fn URLSearchParams__toString(
+        self_: &mut URLSearchParams,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(ctx: *mut c_void, str: *const ZigString),
     );
@@ -49,11 +52,9 @@ impl URLSearchParams {
         }
 
         let mut w = Wrap { ctx, callback };
-        // SAFETY: self is a valid *mut URLSearchParams; w lives for the duration of the call
-        // (URLSearchParams__toString invokes the callback synchronously, does not retain it).
-        unsafe {
-            URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
-        }
+        // `w` lives for the duration of the call (URLSearchParams__toString invokes
+        // the callback synchronously, does not retain it).
+        URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
     }
 }
 

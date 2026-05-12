@@ -242,6 +242,19 @@ function fakeParentPort() {
     if (typeof listener !== "function") {
       if (listener == null || typeof listener !== "object" || typeof listener.handleEvent !== "function") return;
     }
+    // DOM EventTarget dedup: (type, callback, capture) is the key regardless of `once`, so a
+    // second add of the same listener — in either once or non-once form — is a no-op. Check
+    // before creating a once-wrapper so we don't overwrite listener[kOnceWrapper] and orphan
+    // the first wrapper. (.on() from injectFakeEmitter wraps every call in a fresh closure so
+    // it never hits this path — Node EventEmitter-style duplicates still work.)
+    const list = listeners[type];
+    const existingWrapper = listener[kOnceWrapper];
+    if (
+      list.lastIndexOf(listener) !== -1 ||
+      (existingWrapper !== undefined && list.lastIndexOf(existingWrapper) !== -1)
+    ) {
+      return;
+    }
     let entry = listener;
     if (options && typeof options === "object" && options.once) {
       entry = function (event) {
@@ -250,13 +263,8 @@ function fakeParentPort() {
       };
       // Remember the wrapper so removeEventListener(listener) before it fires still works.
       listener[kOnceWrapper] = entry;
-    } else if (listeners[type].lastIndexOf(entry) !== -1) {
-      // DOM EventTarget dedup: a non-once listener already registered is a no-op. (.on() from
-      // injectFakeEmitter wraps every call so it never hits this path — Node EventEmitter
-      // allows duplicates and that still works.)
-      return;
     }
-    listeners[type].push(entry);
+    list.push(entry);
     // Node: adding a 'message' or 'messageerror' listener refs the port.
     hasRefFlag = true;
     ensureForwarder(type);

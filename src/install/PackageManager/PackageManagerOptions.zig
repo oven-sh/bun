@@ -683,6 +683,50 @@ pub fn load(
         PackageManager.verbose_install = false;
     }
 
+    // Forced registry: pins every package (scoped and unscoped) to a single
+    // registry regardless of per-project configuration. Applied last so it
+    // wins over bunfig/npmrc `registry`, `install.scopes`, `--registry`, and
+    // `NPM_CONFIG_REGISTRY`. Set via `install.forceRegistry` in the global
+    // bunfig or the `BUN_CONFIG_FORCE_REGISTRY` environment variable. Intended
+    // for IT-managed devices that must always use a corporate registry.
+    {
+        var forced: ?Api.NpmRegistry = null;
+
+        if (env.get("BUN_CONFIG_FORCE_REGISTRY")) |registry_| {
+            if (registry_.len > 0 and
+                (strings.startsWith(registry_, "https://") or
+                    strings.startsWith(registry_, "http://")))
+            {
+                var api_registry = std.mem.zeroes(Api.NpmRegistry);
+                api_registry.url = registry_;
+                forced = api_registry;
+            }
+        }
+
+        if (forced == null) {
+            if (bun_install_) |config| {
+                if (config.force_registry) |force_registry| {
+                    if (force_registry.url.len > 0) {
+                        forced = force_registry;
+                    }
+                }
+            }
+        }
+
+        if (forced) |*force_registry| {
+            // If the forced registry did not supply its own token (env var, or
+            // string form in bunfig), inherit the one already resolved from
+            // `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token` — same
+            // behaviour as `BUN_CONFIG_REGISTRY`.
+            if (force_registry.token.len == 0) force_registry.token = this.scope.token;
+            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
+            // Discard scoped registries so `scopeForPackageName` always falls
+            // back to `this.scope` — every package resolves through the
+            // forced registry.
+            this.registries.clearRetainingCapacity();
+        }
+    }
+
     // If the lockfile is frozen, don't save it to disk.
     if (this.enable.frozen_lockfile) {
         this.do.save_lockfile = false;

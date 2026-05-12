@@ -469,9 +469,9 @@ impl Cmd {
         // for each short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
-        let mut arena = bun_alloc::Arena::new();
+        let arena = bun_alloc::Arena::new();
         let mut spawn_args =
-            SpawnArgs::default::<false>(&mut arena, interp.as_ctx_ptr(), event_loop);
+            SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
         // Cache the raw `*mut ShellExecEnv` and deref it directly so the
         // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
         // `*interp` — `Base::shell()` would tie the slice's lifetime to

@@ -708,10 +708,13 @@ where
             where [F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static]
             {
                 let f: F = bun_core::ffi::conjure_zst::<F>();
-                // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
-                let global = unsafe { &*g };
-                let frame = unsafe { &*c };
-                match f(global, frame) {
+                // JSC passes live non-null `*JSGlobalObject` / `*CallFrame`; both
+                // strictly outlive the host-fn call, satisfying the `ParentRef`
+                // invariant. Safe `From<NonNull>` + `Deref` collapse the per-thunk
+                // raw `&*ptr` pair to one audited deref site in `bun_ptr`.
+                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                match f(&global, &frame) {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
                     Err(_) => JSValue::ZERO,
@@ -733,8 +736,11 @@ where
             where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
             {
                 let f: F = bun_core::ffi::conjure_zst::<F>();
-                // SAFETY: JSC passes live non-null pointers.
-                f(unsafe { &*g }, unsafe { &*c })
+                // JSC passes live non-null pointers; both outlive the host-fn
+                // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
+                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                f(&global, &frame)
             }
         }
         thunk::<F>

@@ -1465,20 +1465,24 @@ impl PostgresSQLConnection {
 
     /// Shared borrow of the queue's head request, if any.
     ///
-    /// Encapsulates the single backref deref (`&*ptr`) so the dozen-plus callers
-    /// in `on()` need no per-site `unsafe`. The queue holds an intrusive ref on
-    /// every `*mut PostgresSQLQuery` it stores; `PostgresSQLQuery` is `Cell`/
-    /// `JsCell`-backed (R-2), so a shared `&` is sound even across re-entrant JS.
-    fn current(&self) -> Option<&PostgresSQLQuery> {
+    /// The queue holds an intrusive ref on every `*mut PostgresSQLQuery` it
+    /// stores; `PostgresSQLQuery` is `Cell`/`JsCell`-backed (R-2), so a shared
+    /// `&` is sound even across re-entrant JS. Returned as a [`ParentRef`]
+    /// (lifetime-erased `&T` via safe `Deref`) — same shape as
+    /// `clean_up_requests`/`advance` already use for queue items, so the
+    /// dozen-plus callers in `on()` need no per-site `unsafe`.
+    fn current(&self) -> Option<ParentRef<PostgresSQLQuery>> {
         let q = self.requests.get();
         if q.readable_length() == 0 {
             return None;
         }
-        let ptr: *mut PostgresSQLQuery = q.peek_item(0);
-        // SAFETY: queue invariant — every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it cannot
-        // be freed while still enqueued. R-2: deref as shared (`&*`) only.
-        Some(unsafe { &*ptr })
+        // Queue invariant: every stored pointer is a live, heap-allocated
+        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it
+        // cannot be freed while still enqueued — satisfies the `ParentRef`
+        // liveness contract for the duration of every caller's use.
+        Some(ParentRef::from(
+            NonNull::new(q.peek_item(0)).expect("queue item non-null"),
+        ))
     }
 
     /// Drop the queue-held intrusive ref on `request` and pop one entry from
@@ -2243,7 +2247,7 @@ impl PostgresSQLConnection {
 
                 if let Some(request) = self.current() {
                     if request.status.get() == QueryStatus::PartialResponse {
-                        self.finish_request(request);
+                        self.finish_request(&request);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(b"", self.global(), self.js_value.get().try_get().unwrap_or(JSValue::ZERO), true);
                     }
@@ -2594,7 +2598,7 @@ impl PostgresSQLConnection {
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.
 
-                self.finish_request(request);
+                self.finish_request(&request);
                 self.update_ref();
                 request.on_js_error(js_err, self.global());
             }

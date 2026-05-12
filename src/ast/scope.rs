@@ -113,8 +113,22 @@ impl Scope {
         self.kind = Kind::Block;
     }
 
+    #[inline]
     pub fn can_merge_symbols<const IS_TYPESCRIPT_ENABLED: bool>(
         &self,
+        existing: symbol::Kind,
+        new: symbol::Kind,
+    ) -> SymbolMergeResult {
+        Self::can_merge_symbol_kinds::<IS_TYPESCRIPT_ENABLED>(self.kind, existing, new)
+    }
+
+    /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]
+    /// by value instead of `&self`. Lets the parser hold a single-probe
+    /// `members.entry()` borrow across the merge decision without re-borrowing
+    /// the whole `Scope` (which would alias the live entry under Stacked
+    /// Borrows). The method body only ever read `self.kind`.
+    pub fn can_merge_symbol_kinds<const IS_TYPESCRIPT_ENABLED: bool>(
+        scope_kind: Kind,
         existing: symbol::Kind,
         new: symbol::Kind,
     ) -> SymbolMergeResult {
@@ -162,9 +176,9 @@ impl Scope {
         // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
         if Symbol::is_kind_hoisted_or_function(new)
             && Symbol::is_kind_hoisted_or_function(existing)
-            && (self.kind == Kind::Entry
-                || self.kind == Kind::FunctionBody
-                || self.kind == Kind::FunctionArgs
+            && (scope_kind == Kind::Entry
+                || scope_kind == Kind::FunctionBody
+                || scope_kind == Kind::FunctionArgs
                 || (new == existing && Symbol::is_kind_hoisted(existing)))
         {
             return SymbolMergeResult::ReplaceWithNew;

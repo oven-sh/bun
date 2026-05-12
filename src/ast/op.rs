@@ -1,6 +1,4 @@
-use std::sync::LazyLock;
-
-use enum_map::{enum_map, Enum, EnumMap};
+use enum_map::Enum;
 use strum::IntoStaticStr;
 
 use crate::AssignTarget;
@@ -283,104 +281,107 @@ impl Op {
 // This declared an `undefined` value (vestigial / used only for @TypeOf at callsites).
 // Ported as a type alias since Rust statics cannot be uninitialized.
 // TODO(port): verify no callsite reads TableType as a value.
-pub type TableType = EnumMap<Code, Op>;
+pub type TableType = Table;
 
-/// Newtype around the lazily-built `EnumMap<Code, Op>` so downstream callers
-/// can use the Zig `std.EnumArray` surface (`getPtrConst`/`get`) without
-/// knowing about `LazyLock`/`EnumMap`. Derefs to `EnumMap` so `TABLE[code]`
-/// keeps working.
-pub struct Table(LazyLock<EnumMap<Code, Op>>);
+/// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes the
+/// Zig `std.EnumArray` surface (`getPtrConst`/`get`/`[]`) so downstream
+/// callers don't see the raw array.
+#[repr(transparent)]
+pub struct Table(pub [Op; <Code as Enum>::LENGTH]);
 
 impl Table {
     /// Zig: `Op.Table.getPtrConst(code) -> *const Op`.
     #[inline]
     pub fn get_ptr_const(&'static self, code: Code) -> &'static Op {
-        &(*self.0)[code]
+        &self.0[code as usize]
     }
     /// Zig: `Op.Table.get(code) -> Op`.
     #[inline]
-    pub fn get(&'static self, code: Code) -> Op {
-        (*self.0)[code]
+    pub fn get(&self, code: Code) -> Op {
+        self.0[code as usize]
     }
 }
 
-impl core::ops::Deref for Table {
-    type Target = EnumMap<Code, Op>;
+impl core::ops::Index<Code> for Table {
+    type Output = Op;
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn index(&self, code: Code) -> &Op {
+        &self.0[code as usize]
     }
 }
 
-// PERF(port): Zig built this at comptime via labeled block; enum_map! is not
-// const-evaluable so we use LazyLock — profile (likely cold).
-pub static TABLE: Table = Table(LazyLock::new(|| {
-    enum_map! {
-        // Prefix
-        Code::UnPos    => Op::init(b"+", Level::Prefix, false),
-        Code::UnNeg    => Op::init(b"-", Level::Prefix, false),
-        Code::UnCpl    => Op::init(b"~", Level::Prefix, false),
-        Code::UnNot    => Op::init(b"!", Level::Prefix, false),
-        Code::UnVoid   => Op::init(b"void", Level::Prefix, true),
-        Code::UnTypeof => Op::init(b"typeof", Level::Prefix, true),
-        Code::UnDelete => Op::init(b"delete", Level::Prefix, true),
+// Built at const-eval time so it lives in `.rodata` with zero init code on the
+// startup path (matches the Zig `comptime` labeled block).
+pub static TABLE: Table = Table({
+    const NIL: Op = Op::init(b"", Level::Lowest, false);
+    let mut t = [NIL; <Code as Enum>::LENGTH];
 
-        // Prefix update
-        Code::UnPreDec => Op::init(b"--", Level::Prefix, false),
-        Code::UnPreInc => Op::init(b"++", Level::Prefix, false),
+    // Prefix
+    t[Code::UnPos as usize]    = Op::init(b"+", Level::Prefix, false);
+    t[Code::UnNeg as usize]    = Op::init(b"-", Level::Prefix, false);
+    t[Code::UnCpl as usize]    = Op::init(b"~", Level::Prefix, false);
+    t[Code::UnNot as usize]    = Op::init(b"!", Level::Prefix, false);
+    t[Code::UnVoid as usize]   = Op::init(b"void", Level::Prefix, true);
+    t[Code::UnTypeof as usize] = Op::init(b"typeof", Level::Prefix, true);
+    t[Code::UnDelete as usize] = Op::init(b"delete", Level::Prefix, true);
 
-        // Postfix update
-        Code::UnPostDec => Op::init(b"--", Level::Postfix, false),
-        Code::UnPostInc => Op::init(b"++", Level::Postfix, false),
+    // Prefix update
+    t[Code::UnPreDec as usize] = Op::init(b"--", Level::Prefix, false);
+    t[Code::UnPreInc as usize] = Op::init(b"++", Level::Prefix, false);
 
-        // Left-associative
-        Code::BinAdd               => Op::init(b"+", Level::Add, false),
-        Code::BinSub               => Op::init(b"-", Level::Add, false),
-        Code::BinMul               => Op::init(b"*", Level::Multiply, false),
-        Code::BinDiv               => Op::init(b"/", Level::Multiply, false),
-        Code::BinRem               => Op::init(b"%", Level::Multiply, false),
-        Code::BinPow               => Op::init(b"**", Level::Exponentiation, false),
-        Code::BinLt                => Op::init(b"<", Level::Compare, false),
-        Code::BinLe                => Op::init(b"<=", Level::Compare, false),
-        Code::BinGt                => Op::init(b">", Level::Compare, false),
-        Code::BinGe                => Op::init(b">=", Level::Compare, false),
-        Code::BinIn                => Op::init(b"in", Level::Compare, true),
-        Code::BinInstanceof        => Op::init(b"instanceof", Level::Compare, true),
-        Code::BinShl               => Op::init(b"<<", Level::Shift, false),
-        Code::BinShr               => Op::init(b">>", Level::Shift, false),
-        Code::BinUShr              => Op::init(b">>>", Level::Shift, false),
-        Code::BinLooseEq           => Op::init(b"==", Level::Equals, false),
-        Code::BinLooseNe           => Op::init(b"!=", Level::Equals, false),
-        Code::BinStrictEq          => Op::init(b"===", Level::Equals, false),
-        Code::BinStrictNe          => Op::init(b"!==", Level::Equals, false),
-        Code::BinNullishCoalescing => Op::init(b"??", Level::NullishCoalescing, false),
-        Code::BinLogicalOr         => Op::init(b"||", Level::LogicalOr, false),
-        Code::BinLogicalAnd        => Op::init(b"&&", Level::LogicalAnd, false),
-        Code::BinBitwiseOr         => Op::init(b"|", Level::BitwiseOr, false),
-        Code::BinBitwiseAnd        => Op::init(b"&", Level::BitwiseAnd, false),
-        Code::BinBitwiseXor        => Op::init(b"^", Level::BitwiseXor, false),
+    // Postfix update
+    t[Code::UnPostDec as usize] = Op::init(b"--", Level::Postfix, false);
+    t[Code::UnPostInc as usize] = Op::init(b"++", Level::Postfix, false);
 
-        // Non-associative
-        Code::BinComma => Op::init(b",", Level::Comma, false),
+    // Left-associative
+    t[Code::BinAdd as usize]               = Op::init(b"+", Level::Add, false);
+    t[Code::BinSub as usize]               = Op::init(b"-", Level::Add, false);
+    t[Code::BinMul as usize]               = Op::init(b"*", Level::Multiply, false);
+    t[Code::BinDiv as usize]               = Op::init(b"/", Level::Multiply, false);
+    t[Code::BinRem as usize]               = Op::init(b"%", Level::Multiply, false);
+    t[Code::BinPow as usize]               = Op::init(b"**", Level::Exponentiation, false);
+    t[Code::BinLt as usize]                = Op::init(b"<", Level::Compare, false);
+    t[Code::BinLe as usize]                = Op::init(b"<=", Level::Compare, false);
+    t[Code::BinGt as usize]                = Op::init(b">", Level::Compare, false);
+    t[Code::BinGe as usize]                = Op::init(b">=", Level::Compare, false);
+    t[Code::BinIn as usize]                = Op::init(b"in", Level::Compare, true);
+    t[Code::BinInstanceof as usize]        = Op::init(b"instanceof", Level::Compare, true);
+    t[Code::BinShl as usize]               = Op::init(b"<<", Level::Shift, false);
+    t[Code::BinShr as usize]               = Op::init(b">>", Level::Shift, false);
+    t[Code::BinUShr as usize]              = Op::init(b">>>", Level::Shift, false);
+    t[Code::BinLooseEq as usize]           = Op::init(b"==", Level::Equals, false);
+    t[Code::BinLooseNe as usize]           = Op::init(b"!=", Level::Equals, false);
+    t[Code::BinStrictEq as usize]          = Op::init(b"===", Level::Equals, false);
+    t[Code::BinStrictNe as usize]          = Op::init(b"!==", Level::Equals, false);
+    t[Code::BinNullishCoalescing as usize] = Op::init(b"??", Level::NullishCoalescing, false);
+    t[Code::BinLogicalOr as usize]         = Op::init(b"||", Level::LogicalOr, false);
+    t[Code::BinLogicalAnd as usize]        = Op::init(b"&&", Level::LogicalAnd, false);
+    t[Code::BinBitwiseOr as usize]         = Op::init(b"|", Level::BitwiseOr, false);
+    t[Code::BinBitwiseAnd as usize]        = Op::init(b"&", Level::BitwiseAnd, false);
+    t[Code::BinBitwiseXor as usize]        = Op::init(b"^", Level::BitwiseXor, false);
 
-        // Right-associative
-        Code::BinAssign                  => Op::init(b"=", Level::Assign, false),
-        Code::BinAddAssign               => Op::init(b"+=", Level::Assign, false),
-        Code::BinSubAssign               => Op::init(b"-=", Level::Assign, false),
-        Code::BinMulAssign               => Op::init(b"*=", Level::Assign, false),
-        Code::BinDivAssign               => Op::init(b"/=", Level::Assign, false),
-        Code::BinRemAssign               => Op::init(b"%=", Level::Assign, false),
-        Code::BinPowAssign               => Op::init(b"**=", Level::Assign, false),
-        Code::BinShlAssign               => Op::init(b"<<=", Level::Assign, false),
-        Code::BinShrAssign               => Op::init(b">>=", Level::Assign, false),
-        Code::BinUShrAssign              => Op::init(b">>>=", Level::Assign, false),
-        Code::BinBitwiseOrAssign         => Op::init(b"|=", Level::Assign, false),
-        Code::BinBitwiseAndAssign        => Op::init(b"&=", Level::Assign, false),
-        Code::BinBitwiseXorAssign        => Op::init(b"^=", Level::Assign, false),
-        Code::BinNullishCoalescingAssign => Op::init(b"??=", Level::Assign, false),
-        Code::BinLogicalOrAssign         => Op::init(b"||=", Level::Assign, false),
-        Code::BinLogicalAndAssign        => Op::init(b"&&=", Level::Assign, false),
-    }
-}));
+    // Non-associative
+    t[Code::BinComma as usize] = Op::init(b",", Level::Comma, false);
+
+    // Right-associative
+    t[Code::BinAssign as usize]                  = Op::init(b"=", Level::Assign, false);
+    t[Code::BinAddAssign as usize]               = Op::init(b"+=", Level::Assign, false);
+    t[Code::BinSubAssign as usize]               = Op::init(b"-=", Level::Assign, false);
+    t[Code::BinMulAssign as usize]               = Op::init(b"*=", Level::Assign, false);
+    t[Code::BinDivAssign as usize]               = Op::init(b"/=", Level::Assign, false);
+    t[Code::BinRemAssign as usize]               = Op::init(b"%=", Level::Assign, false);
+    t[Code::BinPowAssign as usize]               = Op::init(b"**=", Level::Assign, false);
+    t[Code::BinShlAssign as usize]               = Op::init(b"<<=", Level::Assign, false);
+    t[Code::BinShrAssign as usize]               = Op::init(b">>=", Level::Assign, false);
+    t[Code::BinUShrAssign as usize]              = Op::init(b">>>=", Level::Assign, false);
+    t[Code::BinBitwiseOrAssign as usize]         = Op::init(b"|=", Level::Assign, false);
+    t[Code::BinBitwiseAndAssign as usize]        = Op::init(b"&=", Level::Assign, false);
+    t[Code::BinBitwiseXorAssign as usize]        = Op::init(b"^=", Level::Assign, false);
+    t[Code::BinNullishCoalescingAssign as usize] = Op::init(b"??=", Level::Assign, false);
+    t[Code::BinLogicalOrAssign as usize]         = Op::init(b"||=", Level::Assign, false);
+    t[Code::BinLogicalAndAssign as usize]        = Op::init(b"&&=", Level::Assign, false);
+
+    t
+});
 
 // ported from: src/js_parser/ast/Op.zig

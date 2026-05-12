@@ -1,5 +1,5 @@
 use bun_string::strings::CodePoint;
-use enum_map::{Enum, EnumMap};
+use enum_map::Enum;
 use phf::{phf_map, phf_set};
 
 #[repr(u8)]
@@ -454,133 +454,152 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
     }
 }
 
-pub type TokenEnumType = EnumMap<T, &'static [u8]>;
+/// `.rodata` `[&[u8]; T::COUNT]` indexed by [`T`] discriminant. Replaces the
+/// `LazyLock<EnumMap<T, _>>` Phase-A scaffolding so lookup is a plain array
+/// index with zero init code (matches Zig `std.EnumArray`).
+#[repr(transparent)]
+pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
 
-// PERF(port): was comptime-built std.EnumArray — LazyLock builds once at first access; profile (consider const [&[u8]; N] indexed by discriminant if hot).
-pub static TOKEN_TO_STRING: std::sync::LazyLock<TokenEnumType> = std::sync::LazyLock::new(|| {
-    let mut token_enums: TokenEnumType = EnumMap::from_fn(|_| b"" as &'static [u8]);
+impl core::ops::Index<T> for TokenEnumType {
+    type Output = &'static [u8];
+    #[inline]
+    fn index(&self, t: T) -> &&'static [u8] {
+        &self.0[t as usize]
+    }
+}
 
-    token_enums[T::TEndOfFile] = b"end of file";
-    token_enums[T::TSyntaxError] = b"syntax error";
-    token_enums[T::THashbang] = b"hashbang comment";
+impl TokenEnumType {
+    /// Zig: `tokenToString.get(token)`.
+    #[inline]
+    pub fn get(&self, t: T) -> &'static [u8] {
+        self.0[t as usize]
+    }
+}
+
+pub static TOKEN_TO_STRING: TokenEnumType = TokenEnumType({
+    let mut token_enums: [&'static [u8]; <T as Enum>::LENGTH] = [b""; <T as Enum>::LENGTH];
+
+    token_enums[T::TEndOfFile as usize] = b"end of file";
+    token_enums[T::TSyntaxError as usize] = b"syntax error";
+    token_enums[T::THashbang as usize] = b"hashbang comment";
 
     // Literals
-    token_enums[T::TNoSubstitutionTemplateLiteral] = b"template literal";
-    token_enums[T::TNumericLiteral] = b"number";
-    token_enums[T::TStringLiteral] = b"string";
-    token_enums[T::TBigIntegerLiteral] = b"bigint";
+    token_enums[T::TNoSubstitutionTemplateLiteral as usize] = b"template literal";
+    token_enums[T::TNumericLiteral as usize] = b"number";
+    token_enums[T::TStringLiteral as usize] = b"string";
+    token_enums[T::TBigIntegerLiteral as usize] = b"bigint";
 
     // Pseudo-literals
-    token_enums[T::TTemplateHead] = b"template literal";
-    token_enums[T::TTemplateMiddle] = b"template literal";
-    token_enums[T::TTemplateTail] = b"template literal";
+    token_enums[T::TTemplateHead as usize] = b"template literal";
+    token_enums[T::TTemplateMiddle as usize] = b"template literal";
+    token_enums[T::TTemplateTail as usize] = b"template literal";
 
     // Punctuation
-    token_enums[T::TAmpersand] = b"\"&\"";
-    token_enums[T::TAmpersandAmpersand] = b"\"&&\"";
-    token_enums[T::TAsterisk] = b"\"*\"";
-    token_enums[T::TAsteriskAsterisk] = b"\"**\"";
-    token_enums[T::TAt] = b"\"@\"";
-    token_enums[T::TBar] = b"\"|\"";
-    token_enums[T::TBarBar] = b"\"||\"";
-    token_enums[T::TCaret] = b"\"^\"";
-    token_enums[T::TCloseBrace] = b"\"}\"";
-    token_enums[T::TCloseBracket] = b"\"]\"";
-    token_enums[T::TCloseParen] = b"\")\"";
-    token_enums[T::TColon] = b"\" =\"";
-    token_enums[T::TComma] = b"\",\"";
-    token_enums[T::TDot] = b"\".\"";
-    token_enums[T::TDotDotDot] = b"\"...\"";
-    token_enums[T::TEqualsEquals] = b"\"==\"";
-    token_enums[T::TEqualsEqualsEquals] = b"\"===\"";
-    token_enums[T::TEqualsGreaterThan] = b"\"=>\"";
-    token_enums[T::TExclamation] = b"\"!\"";
-    token_enums[T::TExclamationEquals] = b"\"!=\"";
-    token_enums[T::TExclamationEqualsEquals] = b"\"!==\"";
-    token_enums[T::TGreaterThan] = b"\">\"";
-    token_enums[T::TGreaterThanEquals] = b"\">=\"";
-    token_enums[T::TGreaterThanGreaterThan] = b"\">>\"";
-    token_enums[T::TGreaterThanGreaterThanGreaterThan] = b"\">>>\"";
-    token_enums[T::TLessThan] = b"\"<\"";
-    token_enums[T::TLessThanEquals] = b"\"<=\"";
-    token_enums[T::TLessThanLessThan] = b"\"<<\"";
-    token_enums[T::TMinus] = b"\"-\"";
-    token_enums[T::TMinusMinus] = b"\"--\"";
-    token_enums[T::TOpenBrace] = b"\"{\"";
-    token_enums[T::TOpenBracket] = b"\"[\"";
-    token_enums[T::TOpenParen] = b"\"(\"";
-    token_enums[T::TPercent] = b"\"%\"";
-    token_enums[T::TPlus] = b"\"+\"";
-    token_enums[T::TPlusPlus] = b"\"++\"";
-    token_enums[T::TQuestion] = b"\"?\"";
-    token_enums[T::TQuestionDot] = b"\"?.\"";
-    token_enums[T::TQuestionQuestion] = b"\"??\"";
-    token_enums[T::TSemicolon] = b"\";\"";
-    token_enums[T::TSlash] = b"\"/\"";
-    token_enums[T::TTilde] = b"\"~\"";
+    token_enums[T::TAmpersand as usize] = b"\"&\"";
+    token_enums[T::TAmpersandAmpersand as usize] = b"\"&&\"";
+    token_enums[T::TAsterisk as usize] = b"\"*\"";
+    token_enums[T::TAsteriskAsterisk as usize] = b"\"**\"";
+    token_enums[T::TAt as usize] = b"\"@\"";
+    token_enums[T::TBar as usize] = b"\"|\"";
+    token_enums[T::TBarBar as usize] = b"\"||\"";
+    token_enums[T::TCaret as usize] = b"\"^\"";
+    token_enums[T::TCloseBrace as usize] = b"\"}\"";
+    token_enums[T::TCloseBracket as usize] = b"\"]\"";
+    token_enums[T::TCloseParen as usize] = b"\")\"";
+    token_enums[T::TColon as usize] = b"\" =\"";
+    token_enums[T::TComma as usize] = b"\",\"";
+    token_enums[T::TDot as usize] = b"\".\"";
+    token_enums[T::TDotDotDot as usize] = b"\"...\"";
+    token_enums[T::TEqualsEquals as usize] = b"\"==\"";
+    token_enums[T::TEqualsEqualsEquals as usize] = b"\"===\"";
+    token_enums[T::TEqualsGreaterThan as usize] = b"\"=>\"";
+    token_enums[T::TExclamation as usize] = b"\"!\"";
+    token_enums[T::TExclamationEquals as usize] = b"\"!=\"";
+    token_enums[T::TExclamationEqualsEquals as usize] = b"\"!==\"";
+    token_enums[T::TGreaterThan as usize] = b"\">\"";
+    token_enums[T::TGreaterThanEquals as usize] = b"\">=\"";
+    token_enums[T::TGreaterThanGreaterThan as usize] = b"\">>\"";
+    token_enums[T::TGreaterThanGreaterThanGreaterThan as usize] = b"\">>>\"";
+    token_enums[T::TLessThan as usize] = b"\"<\"";
+    token_enums[T::TLessThanEquals as usize] = b"\"<=\"";
+    token_enums[T::TLessThanLessThan as usize] = b"\"<<\"";
+    token_enums[T::TMinus as usize] = b"\"-\"";
+    token_enums[T::TMinusMinus as usize] = b"\"--\"";
+    token_enums[T::TOpenBrace as usize] = b"\"{\"";
+    token_enums[T::TOpenBracket as usize] = b"\"[\"";
+    token_enums[T::TOpenParen as usize] = b"\"(\"";
+    token_enums[T::TPercent as usize] = b"\"%\"";
+    token_enums[T::TPlus as usize] = b"\"+\"";
+    token_enums[T::TPlusPlus as usize] = b"\"++\"";
+    token_enums[T::TQuestion as usize] = b"\"?\"";
+    token_enums[T::TQuestionDot as usize] = b"\"?.\"";
+    token_enums[T::TQuestionQuestion as usize] = b"\"??\"";
+    token_enums[T::TSemicolon as usize] = b"\";\"";
+    token_enums[T::TSlash as usize] = b"\"/\"";
+    token_enums[T::TTilde as usize] = b"\"~\"";
 
     // Assignments
-    token_enums[T::TAmpersandAmpersandEquals] = b"\"&&=\"";
-    token_enums[T::TAmpersandEquals] = b"\"&=\"";
-    token_enums[T::TAsteriskAsteriskEquals] = b"\"**=\"";
-    token_enums[T::TAsteriskEquals] = b"\"*=\"";
-    token_enums[T::TBarBarEquals] = b"\"||=\"";
-    token_enums[T::TBarEquals] = b"\"|=\"";
-    token_enums[T::TCaretEquals] = b"\"^=\"";
-    token_enums[T::TEquals] = b"\"=\"";
-    token_enums[T::TGreaterThanGreaterThanEquals] = b"\">>=\"";
-    token_enums[T::TGreaterThanGreaterThanGreaterThanEquals] = b"\">>>=\"";
-    token_enums[T::TLessThanLessThanEquals] = b"\"<<=\"";
-    token_enums[T::TMinusEquals] = b"\"-=\"";
-    token_enums[T::TPercentEquals] = b"\"%=\"";
-    token_enums[T::TPlusEquals] = b"\"+=\"";
-    token_enums[T::TQuestionQuestionEquals] = b"\"??=\"";
-    token_enums[T::TSlashEquals] = b"\"/=\"";
+    token_enums[T::TAmpersandAmpersandEquals as usize] = b"\"&&=\"";
+    token_enums[T::TAmpersandEquals as usize] = b"\"&=\"";
+    token_enums[T::TAsteriskAsteriskEquals as usize] = b"\"**=\"";
+    token_enums[T::TAsteriskEquals as usize] = b"\"*=\"";
+    token_enums[T::TBarBarEquals as usize] = b"\"||=\"";
+    token_enums[T::TBarEquals as usize] = b"\"|=\"";
+    token_enums[T::TCaretEquals as usize] = b"\"^=\"";
+    token_enums[T::TEquals as usize] = b"\"=\"";
+    token_enums[T::TGreaterThanGreaterThanEquals as usize] = b"\">>=\"";
+    token_enums[T::TGreaterThanGreaterThanGreaterThanEquals as usize] = b"\">>>=\"";
+    token_enums[T::TLessThanLessThanEquals as usize] = b"\"<<=\"";
+    token_enums[T::TMinusEquals as usize] = b"\"-=\"";
+    token_enums[T::TPercentEquals as usize] = b"\"%=\"";
+    token_enums[T::TPlusEquals as usize] = b"\"+=\"";
+    token_enums[T::TQuestionQuestionEquals as usize] = b"\"??=\"";
+    token_enums[T::TSlashEquals as usize] = b"\"/=\"";
 
     // Class-private fields and methods
-    token_enums[T::TPrivateIdentifier] = b"private identifier";
+    token_enums[T::TPrivateIdentifier as usize] = b"private identifier";
 
     // Identifiers
-    token_enums[T::TIdentifier] = b"identifier";
-    token_enums[T::TEscapedKeyword] = b"escaped keyword";
+    token_enums[T::TIdentifier as usize] = b"identifier";
+    token_enums[T::TEscapedKeyword as usize] = b"escaped keyword";
 
     // Reserved words
-    token_enums[T::TBreak] = b"\"break\"";
-    token_enums[T::TCase] = b"\"case\"";
-    token_enums[T::TCatch] = b"\"catch\"";
-    token_enums[T::TClass] = b"\"class\"";
-    token_enums[T::TConst] = b"\"const\"";
-    token_enums[T::TContinue] = b"\"continue\"";
-    token_enums[T::TDebugger] = b"\"debugger\"";
-    token_enums[T::TDefault] = b"\"default\"";
-    token_enums[T::TDelete] = b"\"delete\"";
-    token_enums[T::TDo] = b"\"do\"";
-    token_enums[T::TElse] = b"\"else\"";
-    token_enums[T::TEnum] = b"\"enum\"";
-    token_enums[T::TExport] = b"\"export\"";
-    token_enums[T::TExtends] = b"\"extends\"";
-    token_enums[T::TFalse] = b"\"false\"";
-    token_enums[T::TFinally] = b"\"finally\"";
-    token_enums[T::TFor] = b"\"for\"";
-    token_enums[T::TFunction] = b"\"function\"";
-    token_enums[T::TIf] = b"\"if\"";
-    token_enums[T::TImport] = b"\"import\"";
-    token_enums[T::TIn] = b"\"in\"";
-    token_enums[T::TInstanceof] = b"\"instanceof\"";
-    token_enums[T::TNew] = b"\"new\"";
-    token_enums[T::TNull] = b"\"null\"";
-    token_enums[T::TReturn] = b"\"return\"";
-    token_enums[T::TSuper] = b"\"super\"";
-    token_enums[T::TSwitch] = b"\"switch\"";
-    token_enums[T::TThis] = b"\"this\"";
-    token_enums[T::TThrow] = b"\"throw\"";
-    token_enums[T::TTrue] = b"\"true\"";
-    token_enums[T::TTry] = b"\"try\"";
-    token_enums[T::TTypeof] = b"\"typeof\"";
-    token_enums[T::TVar] = b"\"var\"";
-    token_enums[T::TVoid] = b"\"void\"";
-    token_enums[T::TWhile] = b"\"while\"";
-    token_enums[T::TWith] = b"\"with\"";
+    token_enums[T::TBreak as usize] = b"\"break\"";
+    token_enums[T::TCase as usize] = b"\"case\"";
+    token_enums[T::TCatch as usize] = b"\"catch\"";
+    token_enums[T::TClass as usize] = b"\"class\"";
+    token_enums[T::TConst as usize] = b"\"const\"";
+    token_enums[T::TContinue as usize] = b"\"continue\"";
+    token_enums[T::TDebugger as usize] = b"\"debugger\"";
+    token_enums[T::TDefault as usize] = b"\"default\"";
+    token_enums[T::TDelete as usize] = b"\"delete\"";
+    token_enums[T::TDo as usize] = b"\"do\"";
+    token_enums[T::TElse as usize] = b"\"else\"";
+    token_enums[T::TEnum as usize] = b"\"enum\"";
+    token_enums[T::TExport as usize] = b"\"export\"";
+    token_enums[T::TExtends as usize] = b"\"extends\"";
+    token_enums[T::TFalse as usize] = b"\"false\"";
+    token_enums[T::TFinally as usize] = b"\"finally\"";
+    token_enums[T::TFor as usize] = b"\"for\"";
+    token_enums[T::TFunction as usize] = b"\"function\"";
+    token_enums[T::TIf as usize] = b"\"if\"";
+    token_enums[T::TImport as usize] = b"\"import\"";
+    token_enums[T::TIn as usize] = b"\"in\"";
+    token_enums[T::TInstanceof as usize] = b"\"instanceof\"";
+    token_enums[T::TNew as usize] = b"\"new\"";
+    token_enums[T::TNull as usize] = b"\"null\"";
+    token_enums[T::TReturn as usize] = b"\"return\"";
+    token_enums[T::TSuper as usize] = b"\"super\"";
+    token_enums[T::TSwitch as usize] = b"\"switch\"";
+    token_enums[T::TThis as usize] = b"\"this\"";
+    token_enums[T::TThrow as usize] = b"\"throw\"";
+    token_enums[T::TTrue as usize] = b"\"true\"";
+    token_enums[T::TTry as usize] = b"\"try\"";
+    token_enums[T::TTypeof as usize] = b"\"typeof\"";
+    token_enums[T::TVar as usize] = b"\"var\"";
+    token_enums[T::TVoid as usize] = b"\"void\"";
+    token_enums[T::TWhile as usize] = b"\"while\"";
+    token_enums[T::TWith as usize] = b"\"with\"";
 
     token_enums
 });

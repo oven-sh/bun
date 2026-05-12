@@ -4,7 +4,6 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 
 use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, ZBox};
-use bun_core::fmt::{buf_print_len as buf_print, buf_print_z};
 use bun_dotenv::Loader as DotEnvLoader;
 use crate::bun_fs::FileSystem;
 use bun_install::lockfile::{self, Lockfile, LoadResult, Format as LockfileFormat};
@@ -279,7 +278,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     if verbose_install() {
                         Output::pretty_errorln(format_args!(
                             "<r><d>info<r>: cannot move files from tempdir: {}, using fallback",
-                            bstr::BStr::new(err.name())
+                            bun_fmt::s(err.name())
                         ));
                     }
 
@@ -288,7 +287,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    bstr::BStr::new(err.name())
+                    bun_fmt::s(err.name())
                 ));
                 Global::crash();
             }
@@ -312,7 +311,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 };
             Output::pretty_errorln(format_args!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                bstr::BStr::new(cache_dir_path)
+                bun_fmt::s(cache_dir_path)
             ));
         }
     }
@@ -324,7 +323,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
             Output::err(
                 err,
                 "Failed to read temporary directory path: '{}'",
-                (bstr::BStr::new(temp_dir_name),),
+                (bun_fmt::s(temp_dir_name),),
             );
             Global::exit(1);
         }
@@ -430,10 +429,139 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────
+//
+// PERF(port): the Zig originals lean on `std.fmt.bufPrint{,Z}`, which the
+// straight port mapped to `core::fmt::write` over a `format_args!` of
+// `bun_fmt::s` / `CacheVersionFormatter` / `PatchHashFmt` / `hex_int_*`
+// pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
+// `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
+// `core::fmt::write` call drags in `Formatter` padding/alignment machinery
+// plus a panic-format landing pad for the trailing `.expect("unreachable")`.
+// Profiling `install/create-next` showed those vtable + panic-format pages
+// getting faulted on the per-package hot path (this runs once per cache
+// lookup / extract). Rewrite as straight-line byte copies into the caller's
+// buffer: no `dyn`, no `Result`, no panic-format `.text`, no `Location`
+// relocs.
+
+/// Append-only cursor over a caller-owned `&mut [u8]`. All writers are
+/// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
+/// asserted ≥ 1024 elsewhere) and the longest possible payload here —
+/// `name@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
+/// `@@host__16hex` scope suffix — is bounded well under that. Debug builds
+/// keep the bounds check; release elides it so no panic-format code is
+/// reachable from this module.
+struct ByteCursor<'a> {
+    buf: &'a mut [u8],
+    at: usize,
+}
+
+impl<'a> ByteCursor<'a> {
+    #[inline(always)]
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, at: 0 }
+    }
+
+    #[inline(always)]
+    fn put(&mut self, bytes: &[u8]) {
+        let end = self.at + bytes.len();
+        debug_assert!(end <= self.buf.len(), "cached folder name overflowed PathBuffer");
+        // SAFETY: `buf` is a `PathBuffer`-sized slice; the maximum formatted
+        // length (see type doc) cannot exceed it. Debug-asserted above.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf.as_mut_ptr().add(self.at), bytes.len());
+        }
+        self.at = end;
+    }
+
+    #[inline(always)]
+    fn put_byte(&mut self, b: u8) {
+        debug_assert!(self.at < self.buf.len());
+        // SAFETY: see `put`.
+        unsafe { *self.buf.as_mut_ptr().add(self.at) = b };
+        self.at += 1;
+    }
+
+    /// `{}` for `u64` — decimal, no padding. Semver components are tiny in
+    /// practice (1–3 digits) so the 20-byte scratch + reverse-fill beats any
+    /// table lookup for code size.
+    #[inline(always)]
+    fn put_u64_dec(&mut self, mut n: u64) {
+        let mut tmp = [0u8; 20];
+        let mut i = tmp.len();
+        loop {
+            i -= 1;
+            tmp[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 { break; }
+        }
+        self.put(&tmp[i..]);
+    }
+
+    /// `{:016x}` / `{:016X}` — fixed 16-nibble u64. Mirrors
+    /// `bun_core::fmt::HexIntFormatter::get_out_buf` byte-for-byte.
+    #[inline(always)]
+    fn put_u64_hex16<const LOWER: bool>(&mut self, v: u64) {
+        let table = if LOWER { &bun_fmt::LOWER_HEX_TABLE } else { &bun_fmt::UPPER_HEX_TABLE };
+        let mut tmp = [0u8; 16];
+        let mut i = 0;
+        while i < 16 {
+            tmp[i] = table[((v >> ((15 - i) * 4)) as u8 & 0xF) as usize];
+            i += 1;
+        }
+        self.put(&tmp);
+    }
+
+    /// `{:x}` — variable-width lower-hex (no leading zeros), as used by
+    /// `PatchHashFmt`.
+    #[inline(always)]
+    fn put_u64_hex_var(&mut self, mut n: u64) {
+        let mut tmp = [0u8; 16];
+        let mut i = tmp.len();
+        loop {
+            i -= 1;
+            tmp[i] = bun_fmt::LOWER_HEX_TABLE[(n & 0xF) as usize];
+            n >>= 4;
+            if n == 0 { break; }
+        }
+        self.put(&tmp[i..]);
+    }
+
+    /// Inlined body of `CacheVersionFormatter` — `@@@{d}` when set.
+    #[inline(always)]
+    fn put_cache_version(&mut self, v: Option<usize>) {
+        if let Some(v) = v {
+            self.put(b"@@@");
+            self.put_u64_dec(v as u64);
+        }
+    }
+
+    /// Inlined body of `PatchHashFmt` — `_patch_hash={x}` when set.
+    #[inline(always)]
+    fn put_patch_hash(&mut self, hash: Option<u64>) {
+        if let Some(h) = hash {
+            self.put(b"_patch_hash=");
+            self.put_u64_hex_var(h);
+        }
+    }
+
+    /// NUL-terminate and hand back the borrowed `ZStr`.
+    #[inline(always)]
+    fn finish_z(self) -> &'a ZStr {
+        let at = self.at;
+        debug_assert!(at < self.buf.len());
+        // SAFETY: see `put`; one byte of headroom for the NUL is part of the
+        // PathBuffer-size invariant.
+        unsafe { *self.buf.as_mut_ptr().add(at) = 0 };
+        ZStr::from_buf(self.buf, at)
+    }
+}
 
 pub fn cached_git_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
-    buf_print_z(buf, format_args!("@G@{}{}", bstr::BStr::new(resolved), PatchHashFmt { hash: patch_hash }))
-        .expect("unreachable")
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@G@");
+    w.put(resolved);
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 pub fn cached_git_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
@@ -451,32 +579,24 @@ pub fn cached_git_folder_name_print_auto(this: &PackageManager, repository: &Rep
 
     if !repository.repo.is_empty() && !repository.committish.is_empty() {
         let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-        return buf_print_z(
-            cached_package_folder_name_buf(),
-            format_args!(
-                "@G@{}{}{}",
-                repository.committish.fmt(string_buf),
-                CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-                PatchHashFmt { hash: patch_hash },
-            ),
-        )
-        .expect("unreachable");
+        let mut w = ByteCursor::new(cached_package_folder_name_buf());
+        w.put(b"@G@");
+        w.put(repository.committish.slice(string_buf));
+        w.put_cache_version(Some(CacheVersion::CURRENT));
+        w.put_patch_hash(patch_hash);
+        return w.finish_z();
     }
 
     ZStr::EMPTY
 }
 
 pub fn cached_github_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
-    buf_print_z(
-        buf,
-        format_args!(
-            "@GH@{}{}{}",
-            bstr::BStr::new(resolved),
-            CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-            PatchHashFmt { hash: patch_hash },
-        ),
-    )
-    .expect("unreachable")
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@GH@");
+    w.put(resolved);
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 pub fn cached_github_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
@@ -520,41 +640,27 @@ pub fn cached_npm_package_folder_name_print<'a>(
     }
 
     let include_version_number = false;
-    let basename = cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number);
-
-    let spanned_len = basename.as_bytes().len();
-    // PORT NOTE: reshaped for borrowck — drop `basename` borrow before re-borrowing `buf`
-    let available = &mut buf[spanned_len..];
+    let spanned_len = cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
+        .as_bytes()
+        .len();
+    // PORT NOTE: reshaped for borrowck — resume the cursor at the basename's
+    // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
-    let end_len: usize;
-    if scope_url.hostname.len() > 32 || available.len() < 64 {
+    let mut w = ByteCursor { buf, at: spanned_len };
+    let available = w.buf.len() - spanned_len;
+    if scope_url.hostname.len() > 32 || available < 64 {
         let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
-        end_len = buf_print(
-            available,
-            format_args!(
-                "@@{}__{}{}{}",
-                bstr::BStr::new(visible_hostname),
-                bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(scope_url.href)),
-                CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-                PatchHashFmt { hash: patch_hash },
-            ),
-        )
-        .expect("unreachable");
+        w.put(b"@@");
+        w.put(visible_hostname);
+        w.put(b"__");
+        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
     } else {
-        end_len = buf_print(
-            available,
-            format_args!(
-                "@@{}{}{}",
-                bstr::BStr::new(scope_url.hostname),
-                CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-                PatchHashFmt { hash: patch_hash },
-            ),
-        )
-        .expect("unreachable");
+        w.put(b"@@");
+        w.put(scope_url.hostname);
     }
-
-    buf[spanned_len + end_len] = 0;
-    ZStr::from_buf(buf, spanned_len + end_len)
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 fn cached_github_folder_name_print_guess<'a>(
@@ -563,18 +669,16 @@ fn cached_github_folder_name_print_guess<'a>(
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    buf_print_z(
-        buf,
-        format_args!(
-            "@GH@{}-{}-{}{}{}",
-            repository.owner.fmt(string_buf),
-            repository.repo.fmt(string_buf),
-            repository.committish.fmt(string_buf),
-            CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-            PatchHashFmt { hash: patch_hash },
-        ),
-    )
-    .expect("unreachable")
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@GH@");
+    w.put(repository.owner.slice(string_buf));
+    w.put_byte(b'-');
+    w.put(repository.repo.slice(string_buf));
+    w.put_byte(b'-');
+    w.put(repository.committish.slice(string_buf));
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 pub fn cached_npm_package_folder_name(this: &PackageManager, name: &[u8], version: Semver::Version, patch_hash: Option<u64>) -> &'static ZStr {
@@ -589,84 +693,35 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     patch_hash: Option<u64>,
     include_cache_version: bool,
 ) -> &'a ZStr {
-    let cache_ver = CacheVersionFormatter {
-        version_number: if include_cache_version { Some(CacheVersion::CURRENT) } else { None },
-    };
+    let cache_ver = if include_cache_version { Some(CacheVersion::CURRENT) } else { None };
+    let mut w = ByteCursor::new(buf);
+    w.put(name);
+    w.put_byte(b'@');
+    w.put_u64_dec(version.major);
+    w.put_byte(b'.');
+    w.put_u64_dec(version.minor);
+    w.put_byte(b'.');
+    w.put_u64_dec(version.patch);
     if version.tag.has_pre() {
-        if version.tag.has_build() {
-            return buf_print_z(
-                buf,
-                format_args!(
-                    "{}@{}.{}.{}-{}+{}{}{}",
-                    bstr::BStr::new(name),
-                    version.major,
-                    version.minor,
-                    version.patch,
-                    bun_fmt::hex_int_lower::<16>(version.tag.pre.hash),
-                    bun_fmt::hex_int_upper::<16>(version.tag.build.hash),
-                    cache_ver,
-                    PatchHashFmt { hash: patch_hash },
-                ),
-            )
-            .expect("unreachable");
-        }
-        return buf_print_z(
-            buf,
-            format_args!(
-                "{}@{}.{}.{}-{}{}{}",
-                bstr::BStr::new(name),
-                version.major,
-                version.minor,
-                version.patch,
-                bun_fmt::hex_int_lower::<16>(version.tag.pre.hash),
-                cache_ver,
-                PatchHashFmt { hash: patch_hash },
-            ),
-        )
-        .expect("unreachable");
+        w.put_byte(b'-');
+        w.put_u64_hex16::<true>(version.tag.pre.hash);
     }
     if version.tag.has_build() {
-        return buf_print_z(
-            buf,
-            format_args!(
-                "{}@{}.{}.{}+{}{}{}",
-                bstr::BStr::new(name),
-                version.major,
-                version.minor,
-                version.patch,
-                bun_fmt::hex_int_upper::<16>(version.tag.build.hash),
-                cache_ver,
-                PatchHashFmt { hash: patch_hash },
-            ),
-        )
-        .expect("unreachable");
+        w.put_byte(b'+');
+        w.put_u64_hex16::<false>(version.tag.build.hash);
     }
-    buf_print_z(
-        buf,
-        format_args!(
-            "{}@{}.{}.{}{}{}",
-            bstr::BStr::new(name),
-            version.major,
-            version.minor,
-            version.patch,
-            cache_ver,
-            PatchHashFmt { hash: patch_hash },
-        ),
-    )
-    .expect("unreachable")
+    w.put_cache_version(cache_ver);
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
-    buf_print_z(
-        buf,
-        format_args!(
-            "@T@{}{}{}",
-            bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(url)),
-            CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
-            PatchHashFmt { hash: patch_hash },
-        ),
-    )
-    .expect("unreachable")
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@T@");
+    w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
 }
 
 pub fn cached_tarball_folder_name(this: &PackageManager, url: SemverString, patch_hash: Option<u64>) -> &'static ZStr {

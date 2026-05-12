@@ -924,13 +924,10 @@ impl<'a> PackageInstall<'a> {
         mutable.expand_to_capacity();
 
         let dest_len = self.destination_dir_subpath.len();
-        let suffix = {
-            let mut s = Vec::with_capacity(SEP_STR.len() + b"package.json".len());
-            s.push(SEP);
-            s.extend_from_slice(b"package.json");
-            s
-        };
-        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(&suffix);
+        // Zig: `bun.copy(u8, buf[len..], sep_str ++ "package.json")` — write the
+        // literal directly into the path buffer; no intermediate Vec.
+        let suffix: &[u8] = &[SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n'];
+        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
         // SAFETY: NUL written above.
         let package_json_path = unsafe {
@@ -1024,9 +1021,14 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        // PORT NOTE: Zig passed `allocator` (heap); Rust `PackageJSONVersionChecker`
-        // requires a `bumpalo::Bump` for the lexer scratch.
-        let bump = bun_alloc::Arena::new();
+        // PORT NOTE: Zig passed `allocator` (= `bun.default_allocator`, the global
+        // mimalloc heap). `Arena::new()` here was creating + destroying a fresh
+        // `mi_heap` per package — measurable on no-op installs (~390× heap churn
+        // on create-next/elysia). `borrowing_default()` wraps `mi_heap_main()`
+        // with a no-op Drop, matching the Zig semantics exactly. The lexer
+        // scratch frees its own buffers on `Lexer::deinit()` via the checker's
+        // Drop, so nothing leaks.
+        let bump = bun_alloc::Arena::borrowing_default();
         let Ok(mut package_json_checker) =
             bun_json::PackageJSONVersionChecker::init(&bump, source, &mut log)
         else {

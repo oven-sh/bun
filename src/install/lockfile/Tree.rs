@@ -489,7 +489,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
             // `child` (Vec) drops at end of `slice` scope; explicit deinit removed.
 
-            let off: u32 = u32::try_from(dep_ids.len()).expect("int cast");
+            // PERF(port): `dep_ids` is pre-reserved to `total` (sum of all
+            // `tree.dependencies.len: u32`), so `len()` is provably < 2^32.
+            // Avoid the `try_from` panic-format path on this per-tree hot loop.
+            let off: u32 = dep_ids.len() as u32;
             for &dep_id in child.iter() {
                 let pkg_id = self.resolutions[dep_id as usize];
                 if pkg_id == invalid_package_id {
@@ -500,7 +503,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                 // PERF(port): was assume_capacity
                 dep_ids.push(dep_id);
             }
-            let len: u32 = u32::try_from(dep_ids.len() - off as usize).expect("int cast");
+            let len: u32 = dep_ids.len() as u32 - off;
 
             tree.dependencies.off = off;
             tree.dependencies.len = len;
@@ -704,8 +707,9 @@ impl Tree {
             .reserve(resolution_list.len as usize);
 
         for dep_id in resolution_list.begin()..resolution_list.end() {
-            // PERF(port): was assume_capacity
-            builder.sort_buf.push(u32::try_from(dep_id).expect("int cast"));
+            // PERF(port): was assume_capacity. `resolution_list` bounds are u32
+            // (`ExternalSlice<u32>`); the range value is already u32-ranged.
+            builder.sort_buf.push(dep_id as u32);
         }
 
         {
@@ -947,16 +951,20 @@ impl Tree {
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
-        let this_dependencies_len = this
-            .dependencies
-            .get(builder.list.items_dependencies()[self_id as usize].as_slice())
-            .len();
-        for i in 0..this_dependencies_len {
-            // Re-derive on each access so `builder` is not borrowed across the loop body.
-            let dep_id = this
+        // Snapshot the dep-id slice as raw ptr+len, detached from `builder`, so the loop body
+        // can freely take `&builder` / `&mut builder`. SAFETY: `builder.list` is not mutated
+        // for the duration of this loop (the recursive call happens *after* the loop), so the
+        // backing storage for `items_dependencies()[self_id]` is neither reallocated nor moved.
+        let dep_ids: &[DependencyID] = {
+            let view = this
                 .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i];
-            let dep = &deps[dep_id as usize];
+                .get(builder.list.items_dependencies()[self_id as usize].as_slice());
+            unsafe { core::slice::from_raw_parts(view.as_ptr(), view.len()) }
+        };
+        for &dep_id in dep_ids {
+            // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
+            // Zig release builds have no bounds check here.
+            let dep = unsafe { deps.get_unchecked(dep_id as usize) };
             if dep.name_hash != dependency.name_hash {
                 continue;
             }
@@ -1059,14 +1067,20 @@ impl Tree {
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
-            let id = Tree::hoist_dependency::<false, METHOD>(
+            let id = match Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,
                 package_id,
                 input_dep_id,
                 builder,
-            )
-            .expect("unreachable");
+            ) {
+                Ok(id) => id,
+                // SAFETY: `hoist_dependency::<false, _>` never returns `Err` —
+                // the only `Err(SubtreeError::DependencyLoop)` site above is
+                // gated on `AS_DEFINED`. Avoids faulting panic-format pages on
+                // the per-dependency recursion.
+                Err(_) => unsafe { core::hint::unreachable_unchecked() },
+            };
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2
             }

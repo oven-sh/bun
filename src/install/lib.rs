@@ -906,12 +906,25 @@ pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
     buf[0..BUN_HASH_TAG.len()].copy_from_slice(BUN_HASH_TAG);
     // std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash})
+    //
+    // PERF(port): direct nibble write instead of `core::fmt` `{:x}` — avoids
+    // the `&dyn LowerHex` vtable + `.expect("unreachable")` panic-format
+    // landing pad on the per-package install hot path. `buf` is sized exactly
+    // `BUN_HASH_TAG.len() + 16 + 1` (see `MAX_BUNTAG_HASH_BUF_LEN`), so the
+    // 16-byte scratch always fits.
     let digits_len = {
-        use std::io::Write;
-        let mut cursor = &mut buf[BUN_HASH_TAG.len()..];
-        let before = cursor.len();
-        write!(cursor, "{:x}", patch_hash).expect("unreachable"); // error.NoSpaceLeft => unreachable
-        before - cursor.len()
+        let mut tmp = [0u8; 16];
+        let mut i = tmp.len();
+        let mut n = patch_hash;
+        loop {
+            i -= 1;
+            tmp[i] = bun_core::fmt::LOWER_HEX_TABLE[(n & 0xF) as usize];
+            n >>= 4;
+            if n == 0 { break; }
+        }
+        let digits = &tmp[i..];
+        buf[BUN_HASH_TAG.len()..BUN_HASH_TAG.len() + digits.len()].copy_from_slice(digits);
+        digits.len()
     };
     buf[BUN_HASH_TAG.len() + digits_len] = 0;
     &mut buf[..BUN_HASH_TAG.len() + digits_len]

@@ -3086,4 +3086,21 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     Ordering::Equal
 }
 
+#[cfg(test)]
+mod tests {
+    // Regression guard for 3e7f1dabc079: `crate::strings::{first_non_ascii,
+    // eql_case_insensitive_ascii}` are explicit re-exports of the wrappers in
+    // *this* module (lib.rs `pub mod strings`), so the wrappers must call
+    // `crate::strings_impl::*` directly. Routing through `crate::strings::*`
+    // tail-recurses; rustc's `unconditional_recursion` lint does NOT fire
+    // across `pub use` re-export chains, so assert termination here instead.
+    #[test]
+    fn strings_reexport_wrappers_terminate() {
+        assert_eq!(super::first_non_ascii(b"abc"), None);
+        assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
+        assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
+        assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+}
+
 // ported from: src/string/immutable.zig

@@ -678,8 +678,10 @@ impl VirtualMachine {
     /// lifetime, and the VM is the per-thread singleton.
     #[inline(always)]
     pub fn global(&self) -> &'static JSGlobalObject {
-        // SAFETY: `global` is set during init and live for the VM lifetime.
-        unsafe { &*self.global }
+        // `global` is set during init and live for the VM lifetime.
+        // `JSGlobalObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null-ZST deref proof.
+        JSGlobalObject::opaque_ref(self.global)
     }
 
     /// Spec VirtualMachine.zig: `pub fn eventLoop(this: *VirtualMachine) *EventLoop`
@@ -731,8 +733,10 @@ impl VirtualMachine {
     /// `init()` and live for the VM lifetime.
     #[inline(always)]
     pub fn jsc_vm(&self) -> &VM {
-        // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime.
-        unsafe { &*self.jsc_vm }
+        // `jsc_vm` set in `init()`, valid for VM lifetime. `VM` is an
+        // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
+        // non-null-ZST deref proof.
+        VM::opaque_ref(self.jsc_vm)
     }
 
     /// Safe `&mut VM` accessor for the JSC VM. Set once in `init()` and live
@@ -740,9 +744,10 @@ impl VirtualMachine {
     /// so this never aliases another field of `self`.
     #[inline]
     pub fn jsc_vm_mut(&mut self) -> &mut VM {
-        // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime; unique
-        // access guaranteed by `&mut self`.
-        unsafe { &mut *self.jsc_vm }
+        // `jsc_vm` set in `init()`, valid for VM lifetime. `VM` is an
+        // `opaque_ffi!` ZST handle; `opaque_mut` is the centralised
+        // non-null-ZST deref proof (zero-byte `&mut` cannot alias).
+        VM::opaque_mut(self.jsc_vm)
     }
 
     /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the

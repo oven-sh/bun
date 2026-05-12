@@ -814,7 +814,9 @@ pub const Loader = struct {
                 .result => |n| n,
                 .err => |err| return bun.errnoToZigErr(err.errno),
             };
-            buf[pos] = 0;
+            // Sentinel at `amount_read`, not `pos` — `pos` came from `getFileSize` so
+            // the file could have shrunk between stat and readAll.
+            buf[amount_read] = 0;
             return .{ .buf = buf, .amount_read = amount_read };
         }
 
@@ -869,7 +871,9 @@ pub const Loader = struct {
             .result => |n| n,
             .err => |err| return bun.errnoToZigErr(err.errno),
         };
-        buf[size] = 0;
+        // Sentinel at `amount_read`, not `size` — `size` came from `stat.size` so
+        // the file could have shrunk between fstat and readAll.
+        buf[amount_read] = 0;
         return .{ .buf = buf, .amount_read = amount_read };
     }
 

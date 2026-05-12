@@ -130,9 +130,10 @@ impl FileRoute {
     }
 
     pub fn from_js(global: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut FileRoute>> {
-        if let Some(response_ptr) = argument.as_::<Response>() {
-            // SAFETY: non-null per JsClass::from_js contract.
-            let response = unsafe { &mut *response_ptr };
+        // `as_class_ref` is the safe shared-borrow downcast (one audited
+        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
+        // `status_code` all take `&self`.
+        if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
             let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());

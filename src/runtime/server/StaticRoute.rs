@@ -144,11 +144,10 @@ impl StaticRoute {
     }
 
     pub fn from_js(global_this: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut StaticRoute>> {
-        if let Some(response_ptr) = argument.as_::<Response>() {
-            // SAFETY: `JSValue::as_` returns a live JSC-owned Response cell
-            // valid for the duration of this call (GC cannot run mid-function).
-            let response = unsafe { &mut *response_ptr };
-
+        // `as_class_ref` is the safe shared-borrow downcast (one audited
+        // unsafe in `JSValue`); every `Response` accessor used below takes
+        // `&self` (interior mutability for `body`), so no `&mut` is needed.
+        if let Some(response) = argument.as_class_ref::<Response>() {
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();

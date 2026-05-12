@@ -442,9 +442,8 @@ impl Request {
 
     pub fn get_content_type(&self) -> JsResult<Option<bun_str::ZigStringSlice>> {
         if let Some(req) = self.request_context.get_request() {
-            // SAFETY: `req` points to a live uWS HttpRequest for the duration
-            // of the request handler; header() returns a view into its buffer.
-            let req = unsafe { &*req };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+            let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
                 return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(value)));
             }
@@ -982,9 +981,8 @@ impl Request {
         }
 
         if let Some(req) = self.request_context.get_request() {
-            // SAFETY: `req` points to a live uWS HttpRequest for the duration
-            // of the request handler.
-            let req = unsafe { &*req };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+            let req = bun_opaque::opaque_deref(req);
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
@@ -1018,9 +1016,8 @@ impl Request {
         }
 
         if let Some(req) = self.request_context.get_request() {
-            // SAFETY: `req` points to a live uWS HttpRequest for the duration
-            // of the request handler.
-            let req = unsafe { &*req };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+            let req = bun_opaque::opaque_deref(req);
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {

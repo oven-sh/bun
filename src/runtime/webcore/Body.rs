@@ -77,12 +77,6 @@ fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
     // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
     URLSearchParams::from_js(value).map(|p| p.as_ptr())
 }
-#[inline]
-fn as_image(value: JSValue) -> Option<*mut crate::image::Image> {
-    // `Image` is `#[bun_jsc::JsClass]`, so `JSValue::as_<T>()` resolves via the
-    // generated `Image__fromJS` extern.
-    value.as_::<crate::image::Image>()
-}
 
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
@@ -1030,20 +1024,21 @@ impl Value {
         }
 
         if js_type == jsc::JSType::DOMWrapper {
-            if let Some(blob) = value.as_::<Blob>() {
+            // `as_class_ref` is the safe shared-borrow downcast (one audited
+            // unsafe in `JSValue`); `dupe_with_content_type` / `encode_for_body`
+            // both take `&self`.
+            if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
-                    // SAFETY: as_ returns a live *mut Blob backed by a JS wrapper.
-                    unsafe { (*blob).dupe_with_content_type(true) },
+                    blob.dupe_with_content_type(true),
                 ));
             }
 
-            if let Some(image) = as_image(value) {
+            if let Some(image) = value.as_class_ref::<crate::image::Image>() {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
-                // SAFETY: as_image returns a live *mut Image backed by a JS wrapper.
-                let (encoded, mime) = unsafe { (*image).encode_for_body(global_this, value)? };
+                let (encoded, mime) = image.encode_for_body(global_this, value)?;
                 // Blob.Store frees via an Allocator, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.

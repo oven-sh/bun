@@ -4663,9 +4663,10 @@ pub fn write_file_internal(
             }
         };
 
-        if let Some(response) = data.as_::<Response>() {
-            // SAFETY: `as_` returns the live `m_ctx` pointer.
-            let response = unsafe { &mut *response };
+        // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
+        // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
+        // take `&self` (interior mutability for the body cell).
+        if let Some(response) = data.as_class_ref::<Response>() {
             let bv = std::ptr::from_mut(response.get_body_value());
             match body_dispatch(bv, &mut |g| response.get_body_readable_stream(g))? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
@@ -4673,9 +4674,7 @@ pub fn write_file_internal(
             }
         }
 
-        if let Some(request) = data.as_::<Request>() {
-            // SAFETY: `as_` returns the live `m_ctx` pointer.
-            let request = unsafe { &mut *request };
+        if let Some(request) = data.as_class_ref::<Request>() {
             let bv = std::ptr::from_mut(request.get_body_value());
             match body_dispatch(bv, &mut |g| request.get_body_readable_stream(g))? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),

@@ -1205,9 +1205,10 @@ impl Response {
         let arguments = callframe.arguments_as_array::<2>();
 
         if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
-            if let Some(blob) = arguments[0].as_::<Blob>() {
-                // SAFETY: `as_` returned a live `*mut Blob` owned by the JS wrapper.
-                let blob = unsafe { &mut *blob };
+            // `as_class_ref` is the safe shared-borrow downcast (one audited
+            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
+            // are touched on this path.
+            if let Some(blob) = arguments[0].as_class_ref::<Blob>() {
                 if blob.is_s3() {
                     if !arguments[1].is_empty_or_undefined_or_null() {
                         return Err(global_this.throw_invalid_arguments(format_args!(

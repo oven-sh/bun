@@ -956,17 +956,19 @@ function cacheBundledRootCertificates(): string[] {
 const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
-let hasResetDefaultCACertificates = false;
 function cacheDefaultCACertificates() {
-  if (defaultCACertificates) return defaultCACertificates;
-
-  // Once setDefaultCACertificates() has been called the native user-supplied
-  // set is the sole source of truth — don't re-merge bundled/system/extra.
-  if (hasResetDefaultCACertificates) {
-    defaultCACertificates = getUserRootCertificates() as string[];
-    return defaultCACertificates;
+  // The override is process-global (see root_certs.cpp), so ask native
+  // first: another Worker may have installed it and this VM's module
+  // state wouldn't know. undefined means "no override" — fall through to
+  // the (per-VM-cached) bundled/system/extra merge. A frozen array (maybe
+  // empty) means "override installed" — return it uncached so subsequent
+  // setDefaultCACertificates() calls from any Worker are reflected.
+  const override = getUserRootCertificates() as string[] | undefined;
+  if (override !== undefined) {
+    return override;
   }
 
+  if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
   const bundled = cacheBundledRootCertificates();
@@ -1033,8 +1035,10 @@ function setDefaultCACertificates(certs) {
   }
 
   resetRootCertStore(certs);
+  // Drop any cached bundled+system+extra merge in THIS VM; other Workers'
+  // caches are bypassed on their next query because getUserRootCertificates()
+  // now returns the override (see cacheDefaultCACertificates).
   defaultCACertificates = undefined;
-  hasResetDefaultCACertificates = true;
 }
 
 function tlsCipherFilter(a: string) {

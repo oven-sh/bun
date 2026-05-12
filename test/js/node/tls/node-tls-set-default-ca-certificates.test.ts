@@ -186,6 +186,34 @@ describe.concurrent("tls.setDefaultCACertificates", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("override set on the main thread is visible from a Worker", async () => {
+    // The override is process-global in Bun (Node.js scopes it per-thread).
+    // getCACertificates('default') must agree with what the TLS layer will
+    // actually verify against, so a Worker that never called the setter
+    // must still report the main thread's override — not the bundled set.
+    const { stdout, stderr, exitCode } = await run(`
+      const tls = require("node:tls");
+      const fs = require("node:fs");
+      const { Worker } = require("node:worker_threads");
+      const pem = fs.readFileSync(${JSON.stringify(fakeRootCert)}, "utf8");
+      tls.setDefaultCACertificates([pem]);
+      const w = new Worker(
+        'const tls = require("node:tls");' +
+        'const { parentPort } = require("node:worker_threads");' +
+        'parentPort.postMessage(tls.getCACertificates("default").length);',
+        { eval: true },
+      );
+      w.on("message", n => {
+        console.log("worker-default-count:" + n);
+        w.terminate();
+      });
+      w.on("error", e => { console.log("worker-error:" + e.message); });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("worker-default-count:1");
+    expect(exitCode).toBe(0);
+  });
+
   test("overrides the trust store used for new TLS connections", async () => {
     // agent8-cert.pem is signed by fake-startcom-root-cert.pem. A client that
     // trusts only fake-startcom-root should verify the server; after swapping

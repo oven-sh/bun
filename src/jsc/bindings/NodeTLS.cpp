@@ -278,8 +278,14 @@ JSC_DEFINE_HOST_FUNCTION(getUserRootCertificates, (JSC::JSGlobalObject * globalO
 
     // Snapshot under the root-cert mutex so another Worker calling
     // setDefaultCACertificates() can't free certs out from under us while
-    // we're writing PEM.
-    STACK_OF(X509)* certs = us_dup_user_root_certs();
+    // we're writing PEM. hasOverride distinguishes "no override installed"
+    // (return undefined so the JS side falls back to bundled/system/extra)
+    // from "empty override installed" (return a frozen empty array).
+    bool hasOverride = false;
+    STACK_OF(X509)* certs = us_dup_user_root_certs(&hasOverride);
+    if (!hasOverride) {
+        return JSValue::encode(jsUndefined());
+    }
     auto freeCerts = [&]() {
         if (certs) sk_X509_pop_free(certs, X509_free);
     };

@@ -221,12 +221,14 @@ extern "C" void us_set_user_root_certs(STACK_OF(X509) *certs) {
   }
 }
 
-STACK_OF(X509) *us_dup_user_root_certs() {
+STACK_OF(X509) *us_dup_user_root_certs(bool *out_has_override) {
   // Hand back an owned, up-ref'd snapshot so the caller can serialise the
   // certs to PEM without racing us_set_user_root_certs() on another Worker.
-  // nullptr means "no certs in the override" (empty set). Caller frees via
-  // sk_X509_pop_free(.., X509_free).
+  // *out_has_override distinguishes "no override installed" from "empty
+  // override installed" (both return nullptr). Caller frees the returned
+  // stack via sk_X509_pop_free(.., X509_free).
   std::lock_guard<std::mutex> lock(shared_store_mutex);
+  if (out_has_override) *out_has_override = has_user_root_certs;
   if (user_root_certs == nullptr) return nullptr;
   STACK_OF(X509) *dup = sk_X509_dup(user_root_certs);
   if (dup == nullptr) return nullptr;

@@ -457,9 +457,7 @@ pub fn VisitExpr(
                                 // The macro returned the original tagged template (e.g. because
                                 // it threw or returned undefined at top level). Parts were
                                 // already visited above, so skip the second visit below.
-                                if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
-                                    return e_.fold(p.allocator, expr.loc);
-                                }
+                                // `E.Template.fold` is a no-op when `tag != null`, so no fold here.
                                 return expr;
                             }
                         }

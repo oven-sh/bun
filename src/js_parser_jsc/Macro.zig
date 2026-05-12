@@ -545,6 +545,12 @@ pub const Runner = struct {
             return .js_undefined;
         }
 
+        if (buf.items.len == 0) {
+            // A segment that is only a line continuation (`\<newline>`) cooks to "".
+            var empty = bun.String.empty;
+            return empty.toJS(globalObject);
+        }
+
         var out, const chars = bun.String.createUninitialized(.utf16, buf.items.len);
         @memcpy(chars, buf.items);
         return out.transferToJS(globalObject);
